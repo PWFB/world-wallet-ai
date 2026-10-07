@@ -1,18 +1,116 @@
-import { useEffect, useState } from "react";
+import { useMemo, useState } from "react";
+import "./App.css";
+
+const assets = [
+  { symbol: "BALMZ", name: "BALMZ Token", balance: "18,420.00", value: "$18,420.00", change: "+4.82%", icon: "B" },
+  { symbol: "USDT", name: "Tether USD", balance: "8,250.40", value: "$8,250.40", change: "+0.08%", icon: "$" },
+  { symbol: "ETH", name: "Ethereum", balance: "2.184", value: "$7,842.60", change: "+2.14%", icon: "Ξ" },
+  { symbol: "BNB", name: "BNB", balance: "8.42", value: "$5,914.20", change: "-0.61%", icon: "B" },
+];
+
+const activity = [
+  ["Received", "BALMZ • Wallet funding", "+2,500.00 BALMZ", "2 min ago"],
+  ["Sent", "USDT • External wallet", "-420.00 USDT", "1 hour ago"],
+  ["Swap", "ETH → USDT", "+1,120.50 USDT", "Yesterday"],
+  ["Staking", "BALMZ staking reward", "+86.40 BALMZ", "Yesterday"],
+];
 
 function App() {
-  const [status, setStatus] = useState("");
+  const [active, setActive] = useState("Dashboard");
+  const [showBalance, setShowBalance] = useState(true);
 
-  useEffect(() => {
-    fetch("http://localhost:8000/")
-      .then((res) => res.json())
-      .then((data) => setStatus(data.status));
-  }, []);
+  const nav = useMemo(() => ({
+    Main: ["Dashboard", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
+    Tools: ["Wallet Connect", "API Keys", "Withdraw", "Request Center", "Verify Contract", "Address Book"],
+    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
+    Support: ["Support Center", "Help & Docs"],
+  }), []);
 
   return (
-    <div style={{ padding: 40 }}>
-      <h1>World Wallet AI</h1>
-      <p>Backend Status: {status}</p>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">W</div>
+          <div><strong>WORLD WALLET</strong><span>AI</span></div>
+        </div>
+
+        <div className="network-pill"><i /> Mainnet <b>⌄</b></div>
+
+        <nav>
+          {Object.entries(nav).map(([group, items]) => (
+            <div className="nav-group" key={group}>
+              <small>{group}</small>
+              {items.map(item => (
+                <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
+                  <span className="nav-icon">{item.slice(0,1)}</span>{item}
+                </button>
+              ))}
+            </div>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <div className="secure"><span>✓</span><div><b>Secure wallet</b><small>Non-custodial</small></div></div>
+          <button className="profile"><span className="avatar">BA</span><div><b>Wallet Owner</b><small>0x84...A921</small></div><span>⋮</span></button>
+        </div>
+      </aside>
+
+      <main className="main">
+        <header className="topbar">
+          <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
+          <div className="top-actions"><button>⌕ <span>Search</span></button><button>◐</button><button>◔</button><button className="top-avatar">BA</button></div>
+        </header>
+
+        <section className="content">
+          <div className="page-heading">
+            <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
+            <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
+          </div>
+
+          <div className="balance-grid">
+            <article className="hero-card">
+              <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
+              <div className="hero-balance">{showBalance ? "$40,427.20" : "••••••••"} <small>USD</small></div>
+              <div className="balance-meta"><span>≈ 40,427.20 USDT</span><b>+3.84% <small>24h</small></b></div>
+              <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
+            </article>
+            <article className="stat-card"><span>Total received</span><strong>$92,814.60</strong><b className="positive">+12.4%</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
+            <article className="stat-card"><span>Total sent</span><strong>$51,238.14</strong><b className="neutral">24 transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
+            <article className="stat-card"><span>Portfolio profit</span><strong>$8,942.76</strong><b className="positive">+28.46%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
+          </div>
+
+          <div className="dashboard-grid">
+            <article className="panel chart-panel">
+              <div className="panel-head"><div><h2>Portfolio performance</h2><span>Asset value over time</span></div><div className="ranges"><button>1D</button><button>1W</button><button className="selected">1M</button><button>1Y</button></div></div>
+              <div className="chart"><div className="chart-labels"><span>$45k</span><span>$35k</span><span>$25k</span><span>$15k</span><span>$5k</span></div><svg viewBox="0 0 700 250" preserveAspectRatio="none" aria-label="Portfolio chart"><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#00d4ff" stopOpacity=".30"/><stop offset="100%" stopColor="#00d4ff" stopOpacity="0"/></linearGradient></defs><path d="M0 195 C55 190 75 150 120 166 S175 125 220 142 S275 90 320 120 S375 105 420 125 S475 70 520 86 S575 58 620 78 S665 42 700 48 L700 250 L0 250Z" fill="url(#fill)"/><path d="M0 195 C55 190 75 150 120 166 S175 125 220 142 S275 90 320 120 S375 105 420 125 S475 70 520 86 S575 58 620 78 S665 42 700 48" fill="none" stroke="#00d4ff" strokeWidth="3"/></svg></div>
+              <div className="chart-foot"><span>Sep 08</span><span>Sep 15</span><span>Sep 22</span><span>Sep 29</span><span>Oct 07</span></div>
+            </article>
+
+            <article className="panel ai-panel">
+              <div className="ai-title"><div className="ai-orb">✦</div><div><h2>BALMZ AI</h2><span>Your intelligent wallet assistant</span></div><b>LIVE</b></div>
+              <div className="ai-message">Your portfolio is up <strong>3.84%</strong> today. BALMZ has the strongest momentum. Would you like a quick risk and opportunity scan?</div>
+              <div className="ai-actions"><button>Run portfolio scan</button><button>Ask BALMZ AI</button></div>
+              <div className="ai-input">Ask anything about your wallet... <span>↗</span></div>
+            </article>
+
+            <article className="panel assets-panel">
+              <div className="panel-head"><div><h2>Your assets</h2><span>4 assets • $40,427.20 total</span></div><button className="text-btn">View portfolio →</button></div>
+              <div className="asset-list">{assets.map(a => <div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{a.balance}</b><small>{a.value}</small></div><b className={a.change.startsWith("+") ? "positive" : "negative"}>{a.change}</b></div>)}</div>
+            </article>
+
+            <article className="panel activity-panel">
+              <div className="panel-head"><div><h2>Recent activity</h2><span>Latest wallet events</span></div><button className="text-btn">View all →</button></div>
+              <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a[0][0]}</span><div><b>{a[0]}</b><small>{a[1]}</small></div><div className="activity-value"><b className={a[2].startsWith("+") ? "positive" : ""}>{a[2]}</b><small>{a[3]}</small></div></div>)}</div>
+            </article>
+          </div>
+
+          <div className="quick-grid">
+            <button onClick={() => setActive("Wallet Connect")}><span>◈</span><div><b>Connect wallet</b><small>Manage connected accounts</small></div>→</button>
+            <button onClick={() => setActive("Withdraw")}><span>↗</span><div><b>Direct withdrawal</b><small>Move funds securely</small></div>→</button>
+            <button onClick={() => setActive("Request Center")}><span>◎</span><div><b>Request funds</b><small>Create a payment request</small></div>→</button>
+            <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
+          </div>
+        </section>
+      </main>
     </div>
   );
 }
