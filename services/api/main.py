@@ -20,6 +20,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 
@@ -112,7 +113,7 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
-        for symbol,asset_name in [("BALMZ","BALMZ Token"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
             conn.execute(
                 "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0) ON CONFLICT(wallet_id,symbol) DO NOTHING",
                 (wallet_id,symbol,asset_name)
@@ -170,6 +171,18 @@ def evm_balance(url: str, address: str):
     raw = rpc_call(url, "eth_getBalance", [address, "latest"])
     return int(raw, 16) / 10**18 if raw else 0.0
 
+
+def btc_balance(address: str):
+    if not address:
+        return None
+    response = httpx.get(f"https://blockstream.info/api/address/{address}", timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    chain = data.get("chain_stats", {})
+    mempool = data.get("mempool_stats", {})
+    confirmed = int(chain.get("funded_txo_sum", 0)) - int(chain.get("spent_txo_sum", 0))
+    pending = int(mempool.get("funded_txo_sum", 0)) - int(mempool.get("spent_txo_sum", 0))
+    return (confirmed + pending) / 100_000_000
 
 def erc20_balance(url: str, contract: str, address: str):
     if not contract or not valid_evm_address(contract):
@@ -258,14 +271,22 @@ def sync_wallet(user: dict = Depends(current_user)):
     address = addresses[0]["address"]
     updates = []
     with db() as conn:
+        if BTC_ADDRESS:
+            try:
+                btc = btc_balance(BTC_ADDRESS)
+                if btc is not None:
+                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (btc,user["wallet_id"]))
+                    updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
+            except Exception:
+                pass
         if ETH_RPC_URL:
-            eth = evm_balance(ETH_RPC_URL, address)
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
-            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-            usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
-            if usdt is not None:
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-                updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+        eth = evm_balance(ETH_RPC_URL, address)
+        conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
+        updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+        usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
+        if usdt is not None:
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+            updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
         if BSC_RPC_URL:
             bnb = evm_balance(BSC_RPC_URL, address)
             conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
@@ -281,7 +302,7 @@ def sync_wallet(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/prices/refresh")
 def refresh_prices(user: dict = Depends(current_user)):
-    coin_ids = {"USDT":"tether","ETH":"ethereum","BNB":"binancecoin"}
+    coin_ids = {"BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin"}
     try:
         response = httpx.get(
             "https://api.coingecko.com/api/v3/simple/price",
