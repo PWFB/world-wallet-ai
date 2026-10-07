@@ -105,14 +105,18 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
     with db() as conn:
         if user:
             conn.execute("UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s", (name, google_subject, user["id"]))
+            wallet_id = user["wallet_id"]
         else:
             user_id = "usr_" + sha(email.lower())[:24]
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
-            for symbol,asset_name in [("BALMZ","BALMZ Token"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
-                conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)", (wallet_id,symbol,asset_name))
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
+            conn.execute(
+                "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0) ON CONFLICT(wallet_id,symbol) DO NOTHING",
+                (wallet_id,symbol,asset_name)
+            )
         conn.commit()
     return get_user(email)
 
@@ -289,12 +293,17 @@ def refresh_prices(user: dict = Depends(current_user)):
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
     with db() as conn:
+        market_prices = {}
         for symbol, coin_id in coin_ids.items():
-            price = float(raw.get(coin_id, {}).get("usd", 0))
+            market_prices[symbol] = float(raw.get(coin_id, {}).get("usd", 0))
+        # BALMZ is intentionally priced at the current ETH price in World Wallet AI.
+        # This is an application pricing rule, not an external-market claim.
+        market_prices["BALMZ"] = market_prices.get("ETH", 0.0)
+        for symbol, price in market_prices.items():
             conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
         conn.commit()
     assets, _, summary = wallet_snapshot(user)
-    return {"assets":assets,"wallet":summary,"source":"coingecko"}
+    return {"assets":assets,"wallet":summary,"source":"coingecko+world_wallet_balmz_eth_price_rule","balmz_price_usd":market_prices["BALMZ"]}
 
 @app.get("/api/v1/assets")
 def assets(user: dict = Depends(current_user)):
