@@ -1,11 +1,34 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.5.0",
+    version="0.6.0",
 )
+
+DEMO_USERS = {
+    "demo-user": {
+        "id": "demo-user",
+        "email": "demo@worldwallet.ai",
+        "name": "Demo Wallet User",
+        "wallet_id": "wallet_demo_001",
+    }
+}
+
+DEMO_BEARER_TOKEN = "demo-user-token"
+
+
+def get_current_user(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if token != DEMO_BEARER_TOKEN:
+        raise HTTPException(status_code=401, detail="Invalid access token")
+
+    return DEMO_USERS["demo-user"]
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -56,7 +79,7 @@ class WithdrawalRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.5.0"}
+    return {"status": "World Wallet AI API running", "version": "0.6.0", "auth": "demo"}
 
 
 @app.get("/health")
@@ -64,18 +87,31 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/v1/auth/me")
+def auth_me(current_user: dict = Depends(get_current_user)):
+    return {"user": current_user, "mode": "demo"}
+
+ 
 @app.get("/api/v1/wallet")
-def wallet():
-    return {"wallet": WALLET_SUMMARY, "assets": ASSETS}
+def wallet(current_user: dict = Depends(get_current_user)):
+    return {
+        "user": current_user,
+        "wallet": {
+            **WALLET_SUMMARY,
+            "wallet_id": current_user["wallet_id"],
+            "owner_id": current_user["id"],
+        },
+        "assets": ASSETS,
+    }
 
 
 @app.get("/api/v1/assets")
-def assets():
+def assets(current_user: dict = Depends(get_current_user)):
     return {"assets": ASSETS}
 
 
 @app.get("/api/v1/portfolio/performance")
-def portfolio_performance():
+def portfolio_performance(current_user: dict = Depends(get_current_user)):
     return {
         "currency": "USD",
         "period": "24h",
@@ -92,7 +128,7 @@ def portfolio_performance():
 
 
 @app.get("/api/v1/transactions")
-def transactions():
+def transactions(current_user: dict = Depends(get_current_user)):
     return {"transactions": TRANSACTIONS}
 
 
@@ -116,7 +152,7 @@ def validate_asset_amount(asset: str, amount: float):
 
 
 @app.post("/api/v1/transfers")
-def create_transfer(request: TransferRequest):
+def create_transfer(request: TransferRequest, current_user: dict = Depends(get_current_user)):
     asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
 
     if rejection:
@@ -140,7 +176,7 @@ def create_transfer(request: TransferRequest):
 
 
 @app.post("/api/v1/withdrawals")
-def create_withdrawal(request: WithdrawalRequest):
+def create_withdrawal(request: WithdrawalRequest, current_user: dict = Depends(get_current_user)):
     asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
 
     if rejection:
