@@ -86,8 +86,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
-          status TEXT NOT NULL, destination TEXT, network TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          status TEXT NOT NULL, destination TEXT, network TEXT, tx_hash TEXT, confirmations INTEGER NOT NULL DEFAULT 0,
+          block_height INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
         """)
         conn.commit()
 
@@ -195,14 +199,62 @@ def erc20_balance(url: str, contract: str, address: str):
     return int(raw, 16) / 10**6 if raw else 0.0
 
 
+
+def bitcoin_address_transactions(address: str):
+    if not address:
+        return []
+    response = httpx.get(f"https://blockstream.info/api/address/{address}/txs", timeout=15)
+    response.raise_for_status()
+    txs = response.json()
+    tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
+    tip_response.raise_for_status()
+    tip_height = int(tip_response.text.strip())
+    results = []
+    for tx in txs:
+        received = sum(int(v.get("value", 0)) for v in tx.get("vout", []) if v.get("scriptpubkey_address") == address)
+        spent = sum(int((v.get("prevout") or {}).get("value", 0)) for v in tx.get("vin", []) if (v.get("prevout") or {}).get("scriptpubkey_address") == address)
+        net_sats = received - spent
+        if net_sats == 0:
+            continue
+        status = tx.get("status") or {}
+        confirmed = bool(status.get("confirmed"))
+        block_height = status.get("block_height")
+        confirmations = max(0, tip_height - int(block_height) + 1) if confirmed and block_height else 0
+        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height})
+    return results
+
+def sync_bitcoin_transactions(user):
+    if not BTC_ADDRESS:
+        return []
+    try:
+        chain_txs = bitcoin_address_transactions(BTC_ADDRESS)
+    except Exception:
+        return []
+    imported = []
+    with db() as conn:
+        for item in chain_txs:
+            tx_hash = item["tx_hash"]
+            if not tx_hash:
+                continue
+            existing = conn.execute("SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",(user["wallet_id"],tx_hash)).fetchone()
+            tx_id = existing[0] if existing else "btc_" + tx_hash
+            description = "Bitcoin transaction " + tx_hash[:12] + "…"
+            if existing:
+                conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s WHERE id=%s",(item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],tx_id))
+            else:
+                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],BTC_ADDRESS,item["tx_hash"],item["confirmations"],item["block_height"]))
+            imported.append(item)
+        conn.commit()
+    return imported
+
 def wallet_snapshot(user):
     with db() as conn:
         assets = []
         for symbol,name,balance,price in conn.execute("SELECT symbol,name,balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
             assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":float(price or 0),"value_usd":float(balance)*float(price or 0),"change_24h":0})
         txs = []
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
-            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"time":row[6].isoformat()})
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
+            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"time":row[9].isoformat()})
     total = sum(x["value_usd"] for x in assets)
     return assets,txs,{"available_balance_usd":total,"total_received_usd":sum(x["amount"] for x in txs if x["type"]=="received"),"total_sent_usd":abs(sum(x["amount"] for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0)),"profit_usd":0,"change_24h":0}
 
@@ -300,7 +352,9 @@ def sync_wallet(user: dict = Depends(current_user)):
                 updates.append({"network":"bnb","asset":"USDT","balance":usdt})
         conn.commit()
     assets, _, summary = wallet_snapshot(user)
-    return {"status":"synced","wallet":summary,"assets":assets,"updates":updates}
+    imported_transactions = sync_bitcoin_transactions(user)
+    assets, _, summary = wallet_snapshot(user)
+    return {"status":"synced","wallet":summary,"assets":assets,"updates":updates,"bitcoin_transactions":imported_transactions}
 
 
 @app.post("/api/v1/prices/refresh")
@@ -345,6 +399,12 @@ def performance(user: dict = Depends(current_user)):
 def transactions(user: dict = Depends(current_user)):
     _,tx,_ = wallet_snapshot(user)
     return {"transactions":tx}
+
+@app.post("/api/v1/transactions/sync")
+def sync_transactions(user: dict = Depends(current_user)):
+    imported = sync_bitcoin_transactions(user)
+    _,tx,_ = wallet_snapshot(user)
+    return {"status":"synced","imported":imported,"transactions":tx}
 
 
 def reserve_asset(user, symbol: str, amount: float):
