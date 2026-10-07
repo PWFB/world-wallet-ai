@@ -53,3 +53,15 @@
 .login-security span{color:#22c55e}
 @media(max-width:850px){.login-layout{grid-template-columns:1fr;gap:24px;max-width:500px}.login-brand-panel{padding:0}.login-copy{margin-top:42px}.login-copy h1{font-size:40px}.login-feature-list,.login-network{display:none}.login-card{justify-self:stretch;max-width:none;padding:27px}.login-shell{padding:22px 15px}}
 @media(max-width:480px){.login-copy{margin-top:35px}.login-copy h1{font-size:33px;letter-spacing:-1px}.login-copy>p:not(.eyebrow){font-size:11px}.login-card{border-radius:14px;padding:22px}.login-card-header h2{font-size:17px}}
+
+.auth-methods{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:4px 0 20px}
+.auth-method{min-height:62px;padding:8px 4px;border:1px solid #1b304c;border-radius:9px;background:#091426;color:#5f738f;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:8px}
+.auth-method span{font-size:15px;color:#7890ad}
+.auth-method b{font-size:8px;font-weight:600}
+.auth-method:hover{border-color:#285074;color:#a9bad0}
+.auth-method.active{border-color:#00bde8;background:linear-gradient(145deg,#0c2940,#0a182b);color:#fff;box-shadow:inset 0 -2px #00d4ff}
+.auth-method.active span{color:#00d4ff}
+.login-submit:disabled{opacity:.55;cursor:not-allowed}
+.google-submit{background:linear-gradient(135deg,#23466a,#183554)}
+.biometric-submit{background:linear-gradient(135deg,#164e55,#12343f)}
+@media(max-width:480px){.auth-methods{grid-template-columns:repeat(2,1fr)}.auth-method{min-height:56px}}
