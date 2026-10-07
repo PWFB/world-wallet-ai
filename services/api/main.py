@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel, Field
+import httpx
 
 app = FastAPI(title="World Wallet AI API", version="0.9.0")
 
@@ -70,7 +71,7 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS assets(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
-          balance NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
+          balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
         );
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
@@ -102,7 +103,7 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
             for symbol,asset_name in [("BALMZ","BALMZ Token"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
-                conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance) VALUES(%s,%s,%s,0)", (wallet_id,symbol,asset_name))
+                conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)", (wallet_id,symbol,asset_name))
         conn.commit()
     return get_user(email)
 
@@ -127,8 +128,8 @@ def session(user):
 def wallet_snapshot(user):
     with db() as conn:
         assets = []
-        for symbol,name,balance in conn.execute("SELECT symbol,name,balance FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
-            assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":0,"value_usd":0,"change_24h":0})
+        for symbol,name,balance,price in conn.execute("SELECT symbol,name,balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
+            assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":float(price or 0),"value_usd":float(balance)*float(price or 0),"change_24h":0})
         txs = []
         for row in conn.execute("SELECT id,type,asset,description,amount,status,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"time":row[6].isoformat()})
@@ -188,6 +189,27 @@ def wallet(user: dict = Depends(current_user)):
     assets,_,summary = wallet_snapshot(user)
     return {"user":user,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets}
 
+
+@app.post("/api/v1/prices/refresh")
+def refresh_prices(user: dict = Depends(current_user)):
+    coin_ids = {"USDT":"tether","ETH":"ethereum","BNB":"binancecoin"}
+    try:
+        response = httpx.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={"ids":",".join(coin_ids.values()),"vs_currencies":"usd"},
+            timeout=8,
+        )
+        response.raise_for_status()
+        raw = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
+    with db() as conn:
+        for symbol, coin_id in coin_ids.items():
+            price = float(raw.get(coin_id, {}).get("usd", 0))
+            conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
+        conn.commit()
+    assets, _, summary = wallet_snapshot(user)
+    return {"assets":assets,"wallet":summary,"source":"coingecko"}
 
 @app.get("/api/v1/assets")
 def assets(user: dict = Depends(current_user)):
