@@ -1,12 +1,22 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
-const assets = [
-  { symbol: "BALMZ", name: "BALMZ Token", balance: "18,420.00", value: "$18,420.00", change: "+4.82%", icon: "B" },
-  { symbol: "USDT", name: "Tether USD", balance: "8,250.40", value: "$8,250.40", change: "+0.08%", icon: "$" },
-  { symbol: "ETH", name: "Ethereum", balance: "2.184", value: "$7,842.60", change: "+2.14%", icon: "Ξ" },
-  { symbol: "BNB", name: "BNB", balance: "8.42", value: "$5,914.20", change: "-0.61%", icon: "B" },
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+
+const fallbackAssets = [
+  { symbol: "BALMZ", name: "BALMZ Token", balance: 18420, value_usd: 18420, change_24h: 4.82, icon: "B" },
+  { symbol: "USDT", name: "Tether USD", balance: 8250.4, value_usd: 8250.4, change_24h: 0.08, icon: "$" },
+  { symbol: "ETH", name: "Ethereum", balance: 2.184, value_usd: 7842.6, change_24h: 2.14, icon: "Ξ" },
+  { symbol: "BNB", name: "BNB", balance: 8.42, value_usd: 5914.2, change_24h: -0.61, icon: "B" },
 ];
+
+const fallbackWallet = {
+  available_balance_usd: 40427.2,
+  total_received_usd: 92814.6,
+  total_sent_usd: 51238.14,
+  profit_usd: 8942.76,
+  change_24h: 2.31,
+};
 
 const activity = [
   ["Received", "BALMZ • Wallet funding", "+2,500.00 BALMZ", "2 min ago"],
@@ -15,9 +25,39 @@ const activity = [
   ["Staking", "BALMZ staking reward", "+86.40 BALMZ", "Yesterday"],
 ];
 
+const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+
 function App() {
   const [active, setActive] = useState("Dashboard");
   const [showBalance, setShowBalance] = useState(true);
+  const [wallet, setWallet] = useState(fallbackWallet);
+  const [assets, setAssets] = useState(fallbackAssets);
+  const [apiStatus, setApiStatus] = useState("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadWallet() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/wallet`);
+        if (!response.ok) throw new Error(`Wallet API returned ${response.status}`);
+        const data = await response.json();
+        if (cancelled) return;
+        setWallet(data.wallet || fallbackWallet);
+        setAssets((data.assets || fallbackAssets).map(asset => ({
+          ...asset,
+          icon: asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : "B",
+        })));
+        setApiStatus("online");
+      } catch {
+        if (!cancelled) setApiStatus("demo");
+      }
+    }
+
+    loadWallet();
+    return () => { cancelled = true; };
+  }, []);
 
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
@@ -42,7 +82,7 @@ function App() {
               <small>{group}</small>
               {items.map(item => (
                 <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
-                  <span className="nav-icon">{item.slice(0,1)}</span>{item}
+                  <span className="nav-icon">{item.slice(0, 1)}</span>{item}
                 </button>
               ))}
             </div>
@@ -69,13 +109,13 @@ function App() {
           <div className="balance-grid">
             <article className="hero-card">
               <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
-              <div className="hero-balance">{showBalance ? "$40,427.20" : "••••••••"} <small>USD</small></div>
-              <div className="balance-meta"><span>≈ 40,427.20 USDT</span><b>+3.84% <small>24h</small></b></div>
+              <div className="hero-balance">{showBalance ? money(wallet.available_balance_usd) : "••••••••"} <small>USD</small></div>
+              <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USDT</span><b>+3.84% <small>24h</small></b></div>
               <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
             </article>
-            <article className="stat-card"><span>Total received</span><strong>$92,814.60</strong><b className="positive">+12.4%</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
-            <article className="stat-card"><span>Total sent</span><strong>$51,238.14</strong><b className="neutral">24 transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
-            <article className="stat-card"><span>Portfolio profit</span><strong>$8,942.76</strong><b className="positive">+28.46%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
+            <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="positive">+12.4%</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
+            <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">24 transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
+            <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className="positive">+28.46%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
           </div>
 
           <div className="dashboard-grid">
@@ -87,14 +127,14 @@ function App() {
 
             <article className="panel ai-panel">
               <div className="ai-title"><div className="ai-orb">✦</div><div><h2>BALMZ AI</h2><span>Your intelligent wallet assistant</span></div><b>LIVE</b></div>
-              <div className="ai-message">Your portfolio is up <strong>3.84%</strong> today. BALMZ has the strongest momentum. Would you like a quick risk and opportunity scan?</div>
+              <div className="ai-message">Your portfolio is up <strong>{Number(wallet.change_24h || 0).toFixed(2)}%</strong> today. BALMZ has the strongest momentum. Would you like a quick risk and opportunity scan?</div>
               <div className="ai-actions"><button>Run portfolio scan</button><button>Ask BALMZ AI</button></div>
               <div className="ai-input">Ask anything about your wallet... <span>↗</span></div>
             </article>
 
             <article className="panel assets-panel">
-              <div className="panel-head"><div><h2>Your assets</h2><span>4 assets • $40,427.20 total</span></div><button className="text-btn">View portfolio →</button></div>
-              <div className="asset-list">{assets.map(a => <div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{a.balance}</b><small>{a.value}</small></div><b className={a.change.startsWith("+") ? "positive" : "negative"}>{a.change}</b></div>)}</div>
+              <div className="panel-head"><div><h2>Your assets</h2><span>{assets.length} assets • {money(wallet.available_balance_usd)} total</span></div><button className="text-btn">View portfolio →</button></div>
+              <div className="asset-list">{assets.map(a => <div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{money(a.value_usd)}</small></div><b className={Number(a.change_24h) >= 0 ? "positive" : "negative"}>{Number(a.change_24h) >= 0 ? "+" : ""}{Number(a.change_24h || 0).toFixed(2)}%</b></div>)}</div>
             </article>
 
             <article className="panel activity-panel">
@@ -109,6 +149,8 @@ function App() {
             <button onClick={() => setActive("Request Center")}><span>◎</span><div><b>Request funds</b><small>Create a payment request</small></div>→</button>
             <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
           </div>
+
+          <div className="api-status">API: <strong>{apiStatus}</strong></div>
         </section>
       </main>
     </div>
