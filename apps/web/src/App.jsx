@@ -18,11 +18,11 @@ const fallbackWallet = {
   change_24h: 2.31,
 };
 
-const activity = [
-  ["Received", "BALMZ • Wallet funding", "+2,500.00 BALMZ", "2 min ago"],
-  ["Sent", "USDT • External wallet", "-420.00 USDT", "1 hour ago"],
-  ["Swap", "ETH → USDT", "+1,120.50 USDT", "Yesterday"],
-  ["Staking", "BALMZ staking reward", "+86.40 BALMZ", "Yesterday"],
+const fallbackActivity = [
+  { type: "received", description: "BALMZ • Wallet funding", amount: "+2,500.00 BALMZ", time: "2 min ago" },
+  { type: "sent", description: "USDT • External wallet", amount: "-420.00 USDT", time: "1 hour ago" },
+  { type: "swap", description: "ETH → USDT", amount: "+1,120.50 USDT", time: "Yesterday" },
+  { type: "staking", description: "BALMZ staking reward", amount: "+86.40 BALMZ", time: "Yesterday" },
 ];
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -33,7 +33,7 @@ function App() {
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
-  const [apiStatus, setApiStatus] = useState("loading");
+  const [apiStatus, setApiStatus] = useState("loading");\n  const [activity, setActivity] = useState(fallbackActivity);
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +56,25 @@ function App() {
     }
 
     loadWallet();
+
+    async function loadTransactions() {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/v1/transactions`);
+        if (!response.ok) throw new Error("Transactions API unavailable");
+        const data = await response.json();
+        if (cancelled) return;
+        setActivity((data.transactions || []).map(tx => ({
+          type: tx.type,
+          description: `${tx.asset} • ${tx.description}`,
+          amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tx.asset}`,
+          time: tx.time,
+        })));
+      } catch {
+        // Keep the local fallback activity when the API is unavailable.
+      }
+    }
+
+    loadTransactions();
     return () => { cancelled = true; };
   }, []);
 
@@ -139,7 +158,7 @@ function App() {
 
             <article className="panel activity-panel">
               <div className="panel-head"><div><h2>Recent activity</h2><span>Latest wallet events</span></div><button className="text-btn">View all →</button></div>
-              <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a[0][0]}</span><div><b>{a[0]}</b><small>{a[1]}</small></div><div className="activity-value"><b className={a[2].startsWith("+") ? "positive" : ""}>{a[2]}</b><small>{a[3]}</small></div></div>)}</div>
+              <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
             </article>
           </div>
 
