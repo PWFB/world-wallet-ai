@@ -36,12 +36,15 @@ function App() {
   const [assets, setAssets] = useState(fallbackAssets);
   const [apiStatus, setApiStatus] = useState("loading");
   const [user, setUser] = useState(null);
+  const [accessToken, setAccessToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
   const [activity, setActivity] = useState(fallbackActivity);
 
   useEffect(() => {
     let cancelled = false;
 
     async function loadWallet() {
+      if (!accessToken) return;
+      const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
         if (!response.ok) throw new Error(`Wallet API returned ${response.status}`);
@@ -62,6 +65,8 @@ function App() {
     loadWallet();
 
     async function loadTransactions() {
+      if (!accessToken) return;
+      const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
         if (!response.ok) throw new Error("Transactions API unavailable");
@@ -80,7 +85,7 @@ function App() {
 
     loadTransactions();
     return () => { cancelled = true; };
-  }, []);
+  }, [accessToken]);
 
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
