@@ -3,7 +3,7 @@ import { useState } from "react";
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
-export default function FeaturePage({ active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated }) {
+export default function FeaturePage({ active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -88,6 +88,8 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Bitcoin transaction sync failed.");
         onTransactionsUpdated?.(data.transactions || []);
+        if (data.wallet) onWalletUpdated?.(data.wallet);
+        if (data.assets) onWalletUpdated?.({ wallet: data.wallet, assets: data.assets });
         setSyncMessage(data.imported?.length ? `Synced ${data.imported.length} Bitcoin transaction(s).` : "No new Bitcoin transactions found.");
       } catch (error) {
         setSyncMessage(error.message || "Bitcoin transaction sync failed.");
