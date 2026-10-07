@@ -88,8 +88,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Bitcoin transaction sync failed.");
         onTransactionsUpdated?.(data.transactions || []);
-        if (data.wallet) onWalletUpdated?.(data.wallet);
-        if (data.assets) onWalletUpdated?.({ wallet: data.wallet, assets: data.assets });
+        onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
         setSyncMessage(data.imported?.length ? `Synced ${data.imported.length} Bitcoin transaction(s).` : "No new Bitcoin transactions found.");
       } catch (error) {
         setSyncMessage(error.message || "Bitcoin transaction sync failed.");
