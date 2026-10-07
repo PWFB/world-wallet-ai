@@ -1,9 +1,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 app.add_middleware(
@@ -37,9 +38,17 @@ TRANSACTIONS = [
 ]
 
 
+class TransferRequest(BaseModel):
+    asset: str = Field(min_length=2, max_length=12)
+    amount: float = Field(gt=0)
+    recipient: str = Field(min_length=4, max_length=128)
+    network: str = Field(default="mainnet", min_length=3, max_length=32)
+    note: str | None = Field(default=None, max_length=200)
+
+
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.3.0"}
+    return {"status": "World Wallet AI API running", "version": "0.4.0"}
 
 
 @app.get("/health")
@@ -77,3 +86,37 @@ def portfolio_performance():
 @app.get("/api/v1/transactions")
 def transactions():
     return {"transactions": TRANSACTIONS}
+
+
+@app.post("/api/v1/transfers")
+def create_transfer(request: TransferRequest):
+    asset = request.asset.upper()
+    supported = next((item for item in ASSETS if item["symbol"] == asset), None)
+
+    if supported is None:
+        return {"status": "rejected", "reason": "Unsupported asset", "asset": asset}
+
+    if request.amount > supported["balance"]:
+        return {
+            "status": "rejected",
+            "reason": "Insufficient available asset balance",
+            "asset": asset,
+            "available": supported["balance"],
+            "requested": request.amount,
+        }
+
+    transfer_id = f"transfer_demo_{len(TRANSACTIONS) + 1:04d}"
+    return {
+        "status": "pending",
+        "mode": "demo",
+        "transfer": {
+            "id": transfer_id,
+            "type": "send",
+            "asset": asset,
+            "amount": request.amount,
+            "recipient": request.recipient,
+            "network": request.network,
+            "note": request.note,
+            "message": "Transfer request accepted for review; no blockchain transaction has been broadcast.",
+        },
+    }
