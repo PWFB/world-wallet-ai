@@ -37,6 +37,9 @@ function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
   const [activity, setActivity] = useState(fallbackActivity);
 
   useEffect(() => {
@@ -87,12 +90,54 @@ function App() {
     return () => { cancelled = true; };
   }, [accessToken]);
 
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginError("");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Login failed");
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      setAccessToken(data.access_token);
+      setUser(data.user || null);
+    } catch (error) {
+      setLoginError(error.message || "Unable to sign in");
+    }
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(TOKEN_KEY);
+    setAccessToken("");
+    setUser(null);
+  }
+
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
     Tools: ["Wallet Connect", "API Keys", "Withdraw", "Request Center", "Verify Contract", "Address Book"],
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
     Support: ["Support Center", "Help & Docs"],
   }), []);
+
+  if (!accessToken) {
+    return (
+      <div className="login-shell">
+        <form className="login-card" onSubmit={handleLogin}>
+          <div className="brand"><div className="brand-mark">W</div><div><strong>WORLD WALLET</strong><span>AI</span></div></div>
+          <p className="eyebrow">SECURE ACCESS</p>
+          <h1>Welcome back</h1>
+          <p className="muted">Sign in to access your available balance and wallet dashboard.</p>
+          <label>Email<input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} required /></label>
+          <label>Password<input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required /></label>
+          {loginError ? <div className="login-error">{loginError}</div> : null}
+          <button className="primary" type="submit">Sign in</button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="app-shell">
@@ -118,7 +163,7 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="secure"><span>✓</span><div><b>{user ? "Authenticated wallet" : "Wallet session"}</b><small>{user?.email || "Demo authentication"}</small></div></div>
-          <button className="profile"><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "wallet_demo_001"}</small></div><span>⋮</span></button>
+          <button className="profile" onClick={handleLogout}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "wallet_demo_001"}</small></div><span>↪</span></button>
         </div>
       </aside>
 
