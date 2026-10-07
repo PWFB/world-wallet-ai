@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const DEMO_ACCESS_TOKEN = import.meta.env.VITE_DEMO_ACCESS_TOKEN || "demo-user-token";
+const authHeaders = { Authorization: `Bearer ${DEMO_ACCESS_TOKEN}` };
 
 const fallbackAssets = [
   { symbol: "BALMZ", name: "BALMZ Token", balance: 18420, value_usd: 18420, change_24h: 4.82, icon: "B" },
@@ -40,10 +42,11 @@ function App() {
 
     async function loadWallet() {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/wallet`);
+        const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
         if (!response.ok) throw new Error(`Wallet API returned ${response.status}`);
         const data = await response.json();
         if (cancelled) return;
+        setUser(data.user || null);
         setWallet(data.wallet || fallbackWallet);
         setAssets((data.assets || fallbackAssets).map(asset => ({
           ...asset,
@@ -59,7 +62,7 @@ function App() {
 
     async function loadTransactions() {
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/transactions`);
+        const response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
         if (!response.ok) throw new Error("Transactions API unavailable");
         const data = await response.json();
         if (cancelled) return;
@@ -108,15 +111,15 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <div className="secure"><span>✓</span><div><b>Secure wallet</b><small>Non-custodial</small></div></div>
-          <button className="profile"><span className="avatar">BA</span><div><b>Wallet Owner</b><small>0x84...A921</small></div><span>⋮</span></button>
+          <div className="secure"><span>✓</span><div><b>{user ? "Authenticated wallet" : "Wallet session"}</b><small>{user?.email || "Demo authentication"}</small></div></div>
+          <button className="profile"><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "wallet_demo_001"}</small></div><span>⋮</span></button>
         </div>
       </aside>
 
       <main className="main">
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
-          <div className="top-actions"><button>⌕ <span>Search</span></button><button>◐</button><button>◔</button><button className="top-avatar">BA</button></div>
+          <div className="top-actions"><button>⌕ <span>Search</span></button><button>◐</button><button>◔</button><button className="top-avatar" title={user?.email || "Wallet account"}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button></div>
         </header>
 
         <section className="content">
@@ -169,7 +172,7 @@ function App() {
             <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
           </div>
 
-          <div className="api-status">API: <strong>{apiStatus}</strong></div>
+          <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}</div>
         </section>
       </main>
     </div>
