@@ -280,13 +280,13 @@ def sync_wallet(user: dict = Depends(current_user)):
             except Exception:
                 pass
         if ETH_RPC_URL:
-        eth = evm_balance(ETH_RPC_URL, address)
-        conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
-        updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-        usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
-        if usdt is not None:
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-            updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+            eth = evm_balance(ETH_RPC_URL, address)
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
+            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+            usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
+            if usdt is not None:
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+                updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
         if BSC_RPC_URL:
             bnb = evm_balance(BSC_RPC_URL, address)
             conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
