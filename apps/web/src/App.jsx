@@ -78,8 +78,13 @@ function App() {
         setActivity((data.transactions || []).map(tx => ({
           type: tx.type,
           description: `${tx.asset} • ${tx.description}`,
-          amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${tx.asset}`,
+          amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${tx.asset}`,
+          raw_amount: Number(tx.amount),
           time: tx.time,
+          status: tx.status,
+          tx_hash: tx.tx_hash,
+          confirmations: Number(tx.confirmations || 0),
+          block_height: tx.block_height,
         })));
       } catch {
         if (!cancelled) setActivity([]);
@@ -387,7 +392,17 @@ function App() {
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}</div>
                     </section>
         ) : (
-          <FeaturePage active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} />
+          <FeaturePage active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+            type: tx.type,
+            description: `${tx.asset} • ${tx.description}`,
+            amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${tx.asset}`,
+            raw_amount: Number(tx.amount),
+            time: tx.time,
+            status: tx.status,
+            tx_hash: tx.tx_hash,
+            confirmations: Number(tx.confirmations || 0),
+            block_height: tx.block_height,
+          }))))} />
         )}
       </main>
     </div>
