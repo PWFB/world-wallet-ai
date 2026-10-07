@@ -191,27 +191,29 @@ function App() {
             </div>
 
             {authMethod === "password" ? <>
-            <label className="login-field">
-              <span>Email address</span>
-              <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
-            </label>
+              <label className="login-field">
+                <span>Email address</span>
+                <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
+              </label>
+              <label className="login-field">
+                <span>Password</span>
+                <div className="login-input-wrap"><span>⌑</span><input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required /></div>
+              </label>
+              <div className="login-options"><label className="remember"><input type="checkbox" /> <span>Remember me</span></label><button type="button" className="forgot">Forgot password?</button></div>
+              <button className="login-submit" type="submit">Sign in with password <span>→</span></button>
+            </> : null}
 
-            <label className="login-field">
-              <span>Password</span>
-              <div className="login-input-wrap"><span>⌑</span><input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required /></div>
-            </label>
-
-            <div className="login-options"><label className="remember"><input type="checkbox" /> <span>Remember me</span></label><button type="button" className="forgot">Forgot password?</button></div>
-
-            {loginError ? <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div> : null}
-
-            {authMethod === "password" ? <button className="login-submit" type="submit">Sign in with password <span>→</span></button> : null}
             {authMethod === "google" ? <button className="login-submit google-submit" type="button" onClick={handleGoogleSignIn} disabled={authBusy}>Continue with Google <span>G</span></button> : null}
+
             {authMethod === "biometric" ? <button className="login-submit biometric-submit" type="button" onClick={handleBiometricSignIn} disabled={authBusy}>Use fingerprint / Face Unlock <span>◉</span></button> : null}
+
             {authMethod === "authenticator" ? <>
               <label className="login-field"><span>6-digit authenticator code</span><div className="login-input-wrap"><span>⌗</span><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="000000" onChange={e => setLoginPassword(e.target.value)} /></div></label>
               <button className="login-submit" type="submit">Verify authenticator <span>→</span></button>
             </> : null}
+
+            {loginError ? <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div>}
+
             <div className="login-divider"><span>WORLD WALLET AI</span></div>
             <p className="login-security"><span>✓</span> Your session is protected by authenticated API access.</p>
           </form>
