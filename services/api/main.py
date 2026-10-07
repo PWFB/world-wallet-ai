@@ -2,25 +2,28 @@ import os
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token
 from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.7.0",
+    version="0.8.0",
 )
-
-DEMO_USERS = {
-    "demo-user": {
-        "id": "demo-user",
-        "email": "demo@worldwallet.ai",
-        "name": "Demo Wallet User",
-        "wallet_id": "wallet_demo_001",
-    }
-}
 
 DEMO_BEARER_TOKEN = "demo-user-token"
 DEMO_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "demo@worldwallet.ai")
 DEMO_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "demo1234")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+
+DEMO_USERS = {
+    "demo-user": {
+        "id": "demo-user",
+        "email": DEMO_EMAIL,
+        "name": "World Wallet User",
+        "wallet_id": "wallet_demo_001",
+    }
+}
 
 
 def get_current_user(authorization: str | None = Header(default=None)):
@@ -70,6 +73,10 @@ class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(min_length=20, max_length=10000)
+
+
 class TransferRequest(BaseModel):
     asset: str = Field(min_length=2, max_length=12)
     amount: float = Field(gt=0)
@@ -88,7 +95,7 @@ class WithdrawalRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.7.0", "auth": "demo"}
+    return {"status": "World Wallet AI API running", "version": "0.8.0", "auth": "demo+google"}
 
 
 @app.get("/health")
@@ -96,18 +103,63 @@ def health_check():
     return {"status": "ok"}
 
 
+def issue_demo_session():
+    return {
+        "access_token": DEMO_BEARER_TOKEN,
+        "token_type": "bearer",
+        "user": DEMO_USERS["demo-user"],
+        "mode": "demo",
+    }
+
+
 @app.post("/api/v1/auth/login")
 def login(request: LoginRequest):
-    if request.email.strip().lower() != DEMO_EMAIL or request.password != DEMO_PASSWORD:
+    if request.email.strip().lower() != DEMO_EMAIL.lower() or request.password != DEMO_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return {"access_token": DEMO_BEARER_TOKEN, "token_type": "bearer", "user": DEMO_USERS["demo-user"], "mode": "demo"}
+    return issue_demo_session()
+
+
+@app.post("/api/v1/auth/google")
+def google_login(request: GoogleLoginRequest):
+    if not GOOGLE_CLIENT_ID:
+        raise HTTPException(status_code=503, detail="Google Sign-In is not configured on the server")
+
+    try:
+        claims = id_token.verify_oauth2_token(
+            request.credential,
+            google_requests.Request(),
+            GOOGLE_CLIENT_ID,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Google identity token") from exc
+
+    if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
+        raise HTTPException(status_code=401, detail="Invalid Google token issuer")
+
+    if claims.get("email_verified") is not True:
+        raise HTTPException(status_code=403, detail="Google account email is not verified")
+
+    google_email = str(claims.get("email", "")).strip().lower()
+    if google_email != DEMO_EMAIL.lower():
+        raise HTTPException(status_code=403, detail="This Google account is not linked to this World Wallet")
+
+    user = DEMO_USERS["demo-user"].copy()
+    user["name"] = claims.get("name") or claims.get("given_name") or user["name"]
+    user["google_subject"] = claims.get("sub")
+
+    return {
+        **issue_demo_session(),
+        "user": user,
+        "mode": "google",
+        "provider": "google",
+    }
 
 
 @app.get("/api/v1/auth/me")
 def auth_me(current_user: dict = Depends(get_current_user)):
     return {"user": current_user, "mode": "demo"}
 
- 
+
 @app.get("/api/v1/wallet")
 def wallet(current_user: dict = Depends(get_current_user)):
     return {
