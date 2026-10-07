@@ -5,27 +5,9 @@ import FeaturePage from "./FeaturePage.jsx";
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
 
-const fallbackAssets = [
-  { symbol: "BALMZ", name: "BALMZ Token", balance: 18420, value_usd: 18420, change_24h: 4.82, icon: "B" },
-  { symbol: "USDT", name: "Tether USD", balance: 8250.4, value_usd: 8250.4, change_24h: 0.08, icon: "$" },
-  { symbol: "ETH", name: "Ethereum", balance: 2.184, value_usd: 7842.6, change_24h: 2.14, icon: "Ξ" },
-  { symbol: "BNB", name: "BNB", balance: 8.42, value_usd: 5914.2, change_24h: -0.61, icon: "B" },
-];
-
-const fallbackWallet = {
-  available_balance_usd: 40427.2,
-  total_received_usd: 92814.6,
-  total_sent_usd: 51238.14,
-  profit_usd: 8942.76,
-  change_24h: 2.31,
-};
-
-const fallbackActivity = [
-  { type: "received", description: "BALMZ • Wallet funding", amount: "+2,500.00 BALMZ", time: "2 min ago" },
-  { type: "sent", description: "USDT • External wallet", amount: "-420.00 USDT", time: "1 hour ago" },
-  { type: "swap", description: "ETH → USDT", amount: "+1,120.50 USDT", time: "Yesterday" },
-  { type: "staking", description: "BALMZ staking reward", amount: "+86.40 BALMZ", time: "Yesterday" },
-];
+const fallbackAssets = [];
+const fallbackWallet = { available_balance_usd: 0, total_received_usd: 0, total_sent_usd: 0, profit_usd: 0, change_24h: 0 };
+const fallbackActivity = [];
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -44,6 +26,7 @@ function App() {
   const [authMethod, setAuthMethod] = useState("password");
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
+  const [performance, setPerformance] = useState({ points: [] });
 
   useEffect(() => {
     let cancelled = false;
@@ -64,7 +47,7 @@ function App() {
         })));
         setApiStatus("online");
       } catch {
-        if (!cancelled) setApiStatus("demo");
+        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); }
       }
     }
 
@@ -85,11 +68,20 @@ function App() {
           time: tx.time,
         })));
       } catch {
-        // Keep the local fallback activity when the API is unavailable.
+        if (!cancelled) setActivity([]);
       }
     }
 
     loadTransactions();
+    async function loadPerformance() {
+      try {
+        const response = await fetch(API_BASE_URL + "/api/v1/portfolio/performance", { headers: authHeaders });
+        if (!response.ok) throw new Error("Performance API unavailable");
+        const data = await response.json();
+        if (!cancelled) setPerformance(data);
+      } catch { if (!cancelled) setPerformance({ points: [] }); }
+    }
+    loadPerformance();
     return () => { cancelled = true; };
   }, [accessToken]);
 
@@ -332,12 +324,12 @@ function App() {
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
                 <div className="hero-balance">{showBalance ? money(wallet.available_balance_usd) : "••••••••"} <small>USD</small></div>
-                <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USDT</span><b>+3.84% <small>24h</small></b></div>
+                <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USD</span><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}% <small>24h</small></b></div>
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
               <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="positive">+12.4%</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
-              <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">24 transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
-              <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className="positive">+28.46%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
+              <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
+              <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
             </div>
 
             <div className="dashboard-grid">
