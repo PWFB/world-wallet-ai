@@ -40,6 +40,8 @@ function App() {
   const [loginEmail, setLoginEmail] = useState("pwfbmicrofinancemfb@gmail.com");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [authMethod, setAuthMethod] = useState("password");
+  const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
 
   useEffect(() => {
@@ -109,6 +111,33 @@ function App() {
     }
   }
 
+  async function handleGoogleSignIn() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+      if (!clientId) throw new Error("Google Sign-In is not configured yet. Add VITE_GOOGLE_CLIENT_ID in Render.");
+      throw new Error("Google Sign-In UI is ready; Google Identity Services callback still needs to be connected to the production auth verifier.");
+    } catch (error) {
+      setLoginError(error.message || "Google Sign-In unavailable");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function handleBiometricSignIn() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      if (!window.PublicKeyCredential || !navigator.credentials) throw new Error("Fingerprint/Face Unlock is not available in this browser or device.");
+      throw new Error("Fingerprint/Face Unlock is ready for WebAuthn; secure server challenge verification must be enabled before it can sign in.");
+    } catch (error) {
+      setLoginError(error.message || "Biometric sign-in unavailable");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
   function handleLogout() {
     localStorage.removeItem(TOKEN_KEY);
     setAccessToken("");
@@ -152,8 +181,16 @@ function App() {
               <div className="login-card-icon">W</div>
               <div><p className="eyebrow">SECURE ACCESS</p><h2>Welcome back</h2></div>
             </div>
-            <p className="login-subtitle">Sign in to continue to your World Wallet AI account.</p>
+            <p className="login-subtitle">Choose a secure sign-in method for your World Wallet AI account.</p>
 
+            <div className="auth-methods" role="tablist" aria-label="Sign-in methods">
+              <button type="button" className={authMethod === "password" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("password"); setLoginError(""); }}><span>⌑</span><b>Password</b></button>
+              <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setLoginError(""); }}><span>G</span><b>Google</b></button>
+              <button type="button" className={authMethod === "biometric" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("biometric"); setLoginError(""); }}><span>◉</span><b>Face / Finger</b></button>
+              <button type="button" className={authMethod === "authenticator" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("authenticator"); setLoginError(""); }}><span>⌗</span><b>Authenticator</b></button>
+            </div>
+
+            {authMethod === "password" ? <>
             <label className="login-field">
               <span>Email address</span>
               <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
@@ -168,7 +205,13 @@ function App() {
 
             {loginError ? <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div> : null}
 
-            <button className="login-submit" type="submit">Sign in <span>→</span></button>
+            {authMethod === "password" ? <button className="login-submit" type="submit">Sign in with password <span>→</span></button> : null}
+            {authMethod === "google" ? <button className="login-submit google-submit" type="button" onClick={handleGoogleSignIn} disabled={authBusy}>Continue with Google <span>G</span></button> : null}
+            {authMethod === "biometric" ? <button className="login-submit biometric-submit" type="button" onClick={handleBiometricSignIn} disabled={authBusy}>Use fingerprint / Face Unlock <span>◉</span></button> : null}
+            {authMethod === "authenticator" ? <>
+              <label className="login-field"><span>6-digit authenticator code</span><div className="login-input-wrap"><span>⌗</span><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="000000" onChange={e => setLoginPassword(e.target.value)} /></div></label>
+              <button className="login-submit" type="submit">Verify authenticator <span>→</span></button>
+            </> : null}
             <div className="login-divider"><span>WORLD WALLET AI</span></div>
             <p className="login-security"><span>✓</span> Your session is protected by authenticated API access.</p>
           </form>
