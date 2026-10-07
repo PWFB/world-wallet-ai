@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -15,38 +15,10 @@ app.add_middleware(
 )
 
 ASSETS = [
-    {
-        "symbol": "BALMZ",
-        "name": "BALMZ Token",
-        "balance": 18420.0,
-        "price_usd": 1.0,
-        "value_usd": 18420.0,
-        "change_24h": 4.82,
-    },
-    {
-        "symbol": "USDT",
-        "name": "Tether USD",
-        "balance": 8250.40,
-        "price_usd": 1.0,
-        "value_usd": 8250.40,
-        "change_24h": 0.08,
-    },
-    {
-        "symbol": "ETH",
-        "name": "Ethereum",
-        "balance": 2.184,
-        "price_usd": 3590.20,
-        "value_usd": 7842.60,
-        "change_24h": 2.14,
-    },
-    {
-        "symbol": "BNB",
-        "name": "BNB",
-        "balance": 8.42,
-        "price_usd": 702.40,
-        "value_usd": 5914.20,
-        "change_24h": -0.61,
-    },
+    {"symbol": "BALMZ", "name": "BALMZ Token", "balance": 18420.0, "price_usd": 1.0, "value_usd": 18420.0, "change_24h": 4.82},
+    {"symbol": "USDT", "name": "Tether USD", "balance": 8250.40, "price_usd": 1.0, "value_usd": 8250.40, "change_24h": 0.08},
+    {"symbol": "ETH", "name": "Ethereum", "balance": 2.184, "price_usd": 3590.20, "value_usd": 7842.60, "change_24h": 2.14},
+    {"symbol": "BNB", "name": "BNB", "balance": 8.42, "price_usd": 702.40, "value_usd": 5914.20, "change_24h": -0.61},
 ]
 
 WALLET_SUMMARY = {
@@ -57,10 +29,17 @@ WALLET_SUMMARY = {
     "change_24h": 2.31,
 }
 
+TRANSACTIONS = [
+    {"id": "tx_1004", "type": "received", "asset": "BALMZ", "description": "Wallet funding", "amount": 2500.0, "status": "confirmed", "time": "2 min ago"},
+    {"id": "tx_1003", "type": "sent", "asset": "USDT", "description": "External wallet", "amount": -420.0, "status": "confirmed", "time": "1 hour ago"},
+    {"id": "tx_1002", "type": "swap", "asset": "USDT", "description": "ETH → USDT", "amount": 1120.50, "status": "confirmed", "time": "Yesterday"},
+    {"id": "tx_1001", "type": "staking", "asset": "BALMZ", "description": "BALMZ staking reward", "amount": 86.40, "status": "confirmed", "time": "Yesterday"},
+]
+
 
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.2.0"}
+    return {"status": "World Wallet AI API running", "version": "0.3.0"}
 
 
 @app.get("/health")
@@ -70,10 +49,7 @@ def health_check():
 
 @app.get("/api/v1/wallet")
 def wallet():
-    return {
-        "wallet": WALLET_SUMMARY,
-        "assets": ASSETS,
-    }
+    return {"wallet": WALLET_SUMMARY, "assets": ASSETS}
 
 
 @app.get("/api/v1/assets")
@@ -96,3 +72,8 @@ def portfolio_performance():
             {"label": "20:00", "value_usd": 40427.20},
         ],
     }
+
+
+@app.get("/api/v1/transactions")
+def transactions():
+    return {"transactions": TRANSACTIONS}
