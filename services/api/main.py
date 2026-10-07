@@ -402,9 +402,20 @@ def transactions(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/transactions/sync")
 def sync_transactions(user: dict = Depends(current_user)):
+    if not BTC_ADDRESS:
+        raise HTTPException(status_code=503, detail="No production Bitcoin wallet address is configured")
+    balance = None
+    try:
+        balance = btc_balance(BTC_ADDRESS)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Bitcoin blockchain balance service unavailable") from exc
+    if balance is not None:
+        with db() as conn:
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
+            conn.commit()
     imported = sync_bitcoin_transactions(user)
-    _,tx,_ = wallet_snapshot(user)
-    return {"status":"synced","imported":imported,"transactions":tx}
+    assets,tx,summary = wallet_snapshot(user)
+    return {"status":"synced","imported":imported,"transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
 
 
 def reserve_asset(user, symbol: str, amount: float):
