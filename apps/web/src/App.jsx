@@ -57,7 +57,7 @@ function App() {
         setWallet(data.wallet || fallbackWallet);
         setAssets((data.assets || fallbackAssets).map(asset => ({
           ...asset,
-          icon: asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : "B",
+          icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
         setApiStatus("online");
       } catch {
