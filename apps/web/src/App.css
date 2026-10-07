@@ -65,3 +65,4 @@
 .google-submit{background:linear-gradient(135deg,#23466a,#183554)}
 .biometric-submit{background:linear-gradient(135deg,#164e55,#12343f)}
 @media(max-width:480px){.auth-methods{grid-template-columns:repeat(2,1fr)}.auth-method{min-height:56px}}
+\n.logout-button{padding:0 11px!important;display:flex;align-items:center;justify-content:center;gap:6px;color:#fca5a5!important;border-color:#3b2630!important}.logout-button:hover{border-color:#7f3344!important;background:#21131c!important;color:#fff!important}@media(max-width:480px){.logout-button{min-width:35px!important;padding:0 8px!important}.logout-button span{display:none}}\n
