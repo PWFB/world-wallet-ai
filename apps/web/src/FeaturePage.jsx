@@ -11,6 +11,8 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [addresses, setAddresses] = useState([]);
+  const [addressMessage, setAddressMessage] = useState("");
 
   async function submit(endpoint) {
     setBusy(true); setMessage("");
@@ -42,7 +44,35 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
     </section>;
   }
 
-  if (active === "Receive") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Receive assets into your World Wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="feature-grid"><article className="panel receive-panel"><div className="receive-qr">WW</div><p className="feature-kicker">WALLET ID</p><h2>{wallet.wallet_id}</h2><p className="muted">Network-specific deposit addresses will be enabled with live custody integration.</p><button className="primary" onClick={()=>navigator.clipboard?.writeText(wallet.wallet_id || "")}>Copy wallet ID</button></article><article className="panel feature-summary"><span className="feature-kicker">SUPPORTED ASSETS</span>{assets.map(a=><div className="receive-asset" key={a.symbol}><span className="asset-icon">{a.icon}</span><div><b>{a.symbol}</b><small>{a.name}</small></div></div>)}</article></div></section>;
+  if (active === "Receive") {
+    const loadAddresses = async () => {
+      try {
+        const r = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } });
+        const data = await r.json();
+        setAddresses(data.addresses || []);
+        setAddressMessage(data.message || "");
+      } catch {
+        setAddresses([]);
+        setAddressMessage("Unable to load wallet addresses.");
+      }
+    };
+    if (!addresses.length && !addressMessage) loadAddresses();
+
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Use a configured production blockchain address to receive assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="feature-grid">
+        <article className="panel receive-panel">
+          <p className="feature-kicker">PRODUCTION DEPOSIT ADDRESSES</p>
+          {addresses.length ? addresses.map(item => <div className="receive-address" key={item.network}><div><b>{item.network.toUpperCase()}</b><small>{item.label}</small></div><code>{item.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(item.address)}>Copy</button></div>) : <div className="live-chart-empty">{addressMessage || "No production wallet address configured."}</div>}
+        </article>
+        <article className="panel feature-summary">
+          <span className="feature-kicker">SUPPORTED ASSETS</span>
+          {assets.map(a=><div className="receive-asset" key={a.symbol}><span className="asset-icon">{a.icon}</span><div><b>{a.symbol}</b><small>{a.name}</small></div></div>)}
+          <div className="security-note">✓ Addresses are read-only for receiving. No private key is stored by this API.</div>
+        </article>
+      </div>
+    </section>;
+  }
 
   if (active === "Transactions") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WALLET HISTORY</p><h1>Transactions</h1><p className="muted">Track recent wallet activity.</p></div><button className="primary" onClick={()=>setActive("Send")}>+ Send funds</button></div><article className="panel transaction-panel">{activity.map((a,i)=><div className="transaction-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><strong className={a.amount.startsWith("+")?"positive":""}>{a.amount}</strong><small>{a.time}</small></div>)}</article></section>;
 
