@@ -117,10 +117,60 @@ function App() {
     try {
       const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
       if (!clientId) throw new Error("Google Sign-In is not configured yet. Add VITE_GOOGLE_CLIENT_ID in Render.");
-      throw new Error("Google Sign-In UI is ready; Google Identity Services callback still needs to be connected to the production auth verifier.");
+
+      if (!window.google?.accounts?.id) {
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
+          if (existing) {
+            existing.addEventListener("load", resolve, { once: true });
+            existing.addEventListener("error", () => reject(new Error("Unable to load Google Sign-In.")), { once: true });
+            return;
+          }
+          const script = document.createElement("script");
+          script.src = "https://accounts.google.com/gsi/client";
+          script.async = true;
+          script.defer = true;
+          script.onload = resolve;
+          script.onerror = () => reject(new Error("Unable to load Google Sign-In."));
+          document.head.appendChild(script);
+        });
+      }
+
+      if (!window.google?.accounts?.id) throw new Error("Google Sign-In could not be initialized.");
+
+      await new Promise((resolve, reject) => {
+        window.google.accounts.id.initialize({
+          client_id: clientId,
+          callback: async response => {
+            try {
+              const apiResponse = await fetch(API_BASE_URL + "/api/v1/auth/google", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ credential: response.credential }),
+              });
+              const data = await apiResponse.json();
+              if (!apiResponse.ok) throw new Error(data.detail || "Google Sign-In failed");
+              localStorage.setItem(TOKEN_KEY, data.access_token);
+              setAccessToken(data.access_token);
+              setUser(data.user || null);
+              resolve();
+            } catch (error) {
+              reject(error);
+            } finally {
+              setAuthBusy(false);
+            }
+          },
+          auto_select: false,
+          cancel_on_tap_outside: true,
+        });
+        window.google.accounts.id.prompt(notification => {
+          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
+            reject(new Error("Google Sign-In was not displayed. Check the authorized JavaScript origin in Google Cloud."));
+          }
+        });
+      });
     } catch (error) {
       setLoginError(error.message || "Google Sign-In unavailable");
-    } finally {
       setAuthBusy(false);
     }
   }
