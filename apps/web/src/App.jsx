@@ -37,7 +37,21 @@ function App() {
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
         if (!response.ok) throw new Error(`Wallet API returned ${response.status}`);
-        const data = await response.json();
+        let data = await response.json();
+
+        // Refresh supported market prices before rendering balances.
+        try {
+          const priceResponse = await fetch(`${API_BASE_URL}/api/v1/prices/refresh`, {
+            method: "POST",
+            headers: authHeaders,
+          });
+          if (priceResponse.ok) {
+            const priced = await priceResponse.json();
+            data = { ...data, wallet: { ...data.wallet, ...(priced.wallet || {}) }, assets: priced.assets || data.assets };
+          }
+        } catch {
+          // Keep authenticated wallet data if the public price service is temporarily unavailable.
+        }
         if (cancelled) return;
         setUser(data.user || null);
         setWallet(data.wallet || fallbackWallet);
@@ -327,7 +341,7 @@ function App() {
                 <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USD</span><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}% <small>24h</small></b></div>
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
-              <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="positive">+12.4%</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
+              <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="neutral">Live wallet data</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
               <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
               <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
             </div>
@@ -335,8 +349,14 @@ function App() {
             <div className="dashboard-grid">
               <article className="panel chart-panel">
                 <div className="panel-head"><div><h2>Portfolio performance</h2><span>Asset value over time</span></div><div className="ranges"><button>1D</button><button>1W</button><button className="selected">1M</button><button>1Y</button></div></div>
-                <div className="chart"><div className="chart-labels"><span>$45k</span><span>$35k</span><span>$25k</span><span>$15k</span><span>$5k</span></div><svg viewBox="0 0 700 250" preserveAspectRatio="none" aria-label="Portfolio chart"><defs><linearGradient id="fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stopColor="#00d4ff" stopOpacity=".30"/><stop offset="100%" stopColor="#00d4ff" stopOpacity="0"/></linearGradient></defs><path d="M0 195 C55 190 75 150 120 166 S175 125 220 142 S275 90 320 120 S375 105 420 125 S475 70 520 86 S575 58 620 78 S665 42 700 48 L700 250 L0 250Z" fill="url(#fill)"/><path d="M0 195 C55 190 75 150 120 166 S175 125 220 142 S275 90 320 120 S375 105 420 125 S475 70 520 86 S575 58 620 78 S665 42 700 48" fill="none" stroke="#00d4ff" strokeWidth="3"/></svg></div>
-                <div className="chart-foot"><span>Sep 08</span><span>Sep 15</span><span>Sep 22</span><span>Sep 29</span><span>Oct 07</span></div>
+                <div className="chart">
+                  {performance.points.length > 1 ? (
+                    <div className="live-chart-note">Live performance history available.</div>
+                  ) : (
+                    <div className="live-chart-empty">No portfolio performance history recorded yet.</div>
+                  )}
+                </div>
+                <div className="chart-foot"><span>Source: wallet database</span><span>{performance.points.length} recorded point{performance.points.length === 1 ? "" : "s"}</span></div>
               </article>
 
               <article className="panel ai-panel">
