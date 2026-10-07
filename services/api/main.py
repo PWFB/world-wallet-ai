@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.6.0",
+    version="0.7.0",
 )
 
 DEMO_USERS = {
@@ -17,6 +17,8 @@ DEMO_USERS = {
 }
 
 DEMO_BEARER_TOKEN = "demo-user-token"
+DEMO_EMAIL = "demo@worldwallet.ai"
+DEMO_PASSWORD = "demo1234"
 
 
 def get_current_user(authorization: str | None = Header(default=None)):
@@ -61,6 +63,11 @@ TRANSACTIONS = [
 ]
 
 
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
 class TransferRequest(BaseModel):
     asset: str = Field(min_length=2, max_length=12)
     amount: float = Field(gt=0)
@@ -79,12 +86,19 @@ class WithdrawalRequest(BaseModel):
 
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.6.0", "auth": "demo"}
+    return {"status": "World Wallet AI API running", "version": "0.7.0", "auth": "demo"}
 
 
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.post("/api/v1/auth/login")
+def login(request: LoginRequest):
+    if request.email.strip().lower() != DEMO_EMAIL or request.password != DEMO_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+    return {"access_token": DEMO_BEARER_TOKEN, "token_type": "bearer", "user": DEMO_USERS["demo-user"], "mode": "demo"}
 
 
 @app.get("/api/v1/auth/me")
