@@ -373,10 +373,10 @@ function App() {
             </div>
 
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}</div>
-          </section
+                    </section>
         ) : (
           <FeaturePage active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} />
-        )}>
+        )}
       </main>
     </div>
   );
