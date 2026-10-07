@@ -1,71 +1,23 @@
 import os
+import hashlib
+from datetime import datetime, timezone
 
+import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel, Field
 
-app = FastAPI(
-    title="World Wallet AI API",
-    version="0.8.0",
-)
+app = FastAPI(title="World Wallet AI API", version="0.9.0")
 
-DEMO_BEARER_TOKEN = "demo-user-token"
-DEMO_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "demo@worldwallet.ai")
-DEMO_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "demo1234")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
+IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
+IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 
-DEMO_USERS = {
-    "demo-user": {
-        "id": "demo-user",
-        "email": DEMO_EMAIL,
-        "name": "World Wallet User",
-        "wallet_id": "wallet_demo_001",
-    }
-}
-
-
-def get_current_user(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-
-    token = authorization.removeprefix("Bearer ").strip()
-    if token != DEMO_BEARER_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid access token")
-
-    return DEMO_USERS["demo-user"]
-
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-ASSETS = [
-    {"symbol": "BALMZ", "name": "BALMZ Token", "balance": 18420.0, "price_usd": 1.0, "value_usd": 18420.0, "change_24h": 4.82},
-    {"symbol": "USDT", "name": "Tether USD", "balance": 8250.40, "price_usd": 1.0, "value_usd": 8250.40, "change_24h": 0.08},
-    {"symbol": "ETH", "name": "Ethereum", "balance": 2.184, "price_usd": 3590.20, "value_usd": 7842.60, "change_24h": 2.14},
-    {"symbol": "BNB", "name": "BNB", "balance": 8.42, "price_usd": 702.40, "value_usd": 5914.20, "change_24h": -0.61},
-]
-
-WALLET_SUMMARY = {
-    "available_balance_usd": 40427.20,
-    "total_received_usd": 92814.60,
-    "total_sent_usd": 51238.14,
-    "profit_usd": 8942.76,
-    "change_24h": 2.31,
-}
-
-TRANSACTIONS = [
-    {"id": "tx_1004", "type": "received", "asset": "BALMZ", "description": "Wallet funding", "amount": 2500.0, "status": "confirmed", "time": "2 min ago"},
-    {"id": "tx_1003", "type": "sent", "asset": "USDT", "description": "External wallet", "amount": -420.0, "status": "confirmed", "time": "1 hour ago"},
-    {"id": "tx_1002", "type": "swap", "asset": "USDT", "description": "ETH → USDT", "amount": 1120.50, "status": "confirmed", "time": "Yesterday"},
-    {"id": "tx_1001", "type": "staking", "asset": "BALMZ", "description": "BALMZ staking reward", "amount": 86.40, "status": "confirmed", "time": "Yesterday"},
-]
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
 
 class LoginRequest(BaseModel):
@@ -93,175 +45,204 @@ class WithdrawalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+def db():
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="World Wallet database is not configured")
+    return psycopg.connect(DATABASE_URL)
+
+
+def sha(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def init_db():
+    if not DATABASE_URL:
+        return
+    with db() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS users(
+          id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
+          password_sha256 TEXT, google_subject TEXT UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS wallets(
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+          currency TEXT NOT NULL DEFAULT 'USD', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS assets(
+          wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
+          balance NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
+        );
+        CREATE TABLE IF NOT EXISTS transactions(
+          id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
+          asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
+          status TEXT NOT NULL, destination TEXT, network TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """)
+        conn.commit()
+
+
+def get_user(email: str):
+    with db() as conn:
+        row = conn.execute("SELECT id,email,name FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
+        if not row:
+            return None
+        wallet = conn.execute("SELECT id FROM wallets WHERE owner_id=%s", (row[0],)).fetchone()
+        return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": wallet[0] if wallet else None}
+
+
+def provision_identity(email: str, password: str | None = None, name: str = "World Wallet User", google_subject: str | None = None):
+    user = get_user(email)
+    with db() as conn:
+        if user:
+            conn.execute("UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s", (name, google_subject, user["id"]))
+        else:
+            user_id = "usr_" + sha(email.lower())[:24]
+            conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
+                         (user_id,email,name,sha(password) if password else None,google_subject))
+            wallet_id = "wallet_" + sha(user_id)[:24]
+            conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
+            for symbol,asset_name in [("BALMZ","BALMZ Token"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
+                conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance) VALUES(%s,%s,%s,0)", (wallet_id,symbol,asset_name))
+        conn.commit()
+    return get_user(email)
+
+
+def current_user(authorization: str | None = Header(default=None)):
+    if not SESSION_TOKEN or not authorization or authorization != "Bearer " + SESSION_TOKEN:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if not IDENTITY_EMAIL:
+        raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
+    user = get_user(IDENTITY_EMAIL)
+    if not user:
+        raise HTTPException(status_code=401, detail="Wallet user not found")
+    return user
+
+
+def session(user):
+    if not SESSION_TOKEN:
+        raise HTTPException(status_code=503, detail="World Wallet session signing is not configured")
+    return {"access_token": SESSION_TOKEN, "token_type": "bearer", "user": user, "mode": "database"}
+
+
+def wallet_snapshot(user):
+    with db() as conn:
+        assets = []
+        for symbol,name,balance in conn.execute("SELECT symbol,name,balance FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
+            assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":0,"value_usd":0,"change_24h":0})
+        txs = []
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
+            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"time":row[6].isoformat()})
+    total = sum(x["value_usd"] for x in assets)
+    return assets,txs,{"available_balance_usd":total,"total_received_usd":sum(x["amount"] for x in txs if x["type"]=="received"),"total_sent_usd":abs(sum(x["amount"] for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0)),"profit_usd":0,"change_24h":0}
+
+
+@app.on_event("startup")
+def startup():
+    init_db()
+    if DATABASE_URL and IDENTITY_EMAIL and IDENTITY_PASSWORD:
+        provision_identity(IDENTITY_EMAIL, IDENTITY_PASSWORD)
+
+
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.8.0", "auth": "demo+google"}
+    return {"status":"World Wallet AI API running","version":"0.9.0","data_source":"postgresql"}
 
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"}
-
-
-def issue_demo_session():
-    return {
-        "access_token": DEMO_BEARER_TOKEN,
-        "token_type": "bearer",
-        "user": DEMO_USERS["demo-user"],
-        "mode": "demo",
-    }
+def health():
+    return {"status":"ok","database_configured":bool(DATABASE_URL)}
 
 
 @app.post("/api/v1/auth/login")
 def login(request: LoginRequest):
-    if request.email.strip().lower() != DEMO_EMAIL.lower() or request.password != DEMO_PASSWORD:
+    if request.email.strip().lower() != IDENTITY_EMAIL.lower() or request.password != IDENTITY_PASSWORD:
         raise HTTPException(status_code=401, detail="Invalid email or password")
-    return issue_demo_session()
+    user = provision_identity(IDENTITY_EMAIL, IDENTITY_PASSWORD)
+    return session(user)
 
 
 @app.post("/api/v1/auth/google")
 def google_login(request: GoogleLoginRequest):
     if not GOOGLE_CLIENT_ID:
         raise HTTPException(status_code=503, detail="Google Sign-In is not configured on the server")
-
     try:
-        claims = id_token.verify_oauth2_token(
-            request.credential,
-            google_requests.Request(),
-            GOOGLE_CLIENT_ID,
-        )
+        claims = id_token.verify_oauth2_token(request.credential, google_requests.Request(), GOOGLE_CLIENT_ID)
     except Exception as exc:
         raise HTTPException(status_code=401, detail="Invalid Google identity token") from exc
-
-    if claims.get("iss") not in {"accounts.google.com", "https://accounts.google.com"}:
-        raise HTTPException(status_code=401, detail="Invalid Google token issuer")
-
-    if claims.get("email_verified") is not True:
-        raise HTTPException(status_code=403, detail="Google account email is not verified")
-
-    google_email = str(claims.get("email", "")).strip().lower()
-    if google_email != DEMO_EMAIL.lower():
+    if claims.get("iss") not in {"accounts.google.com","https://accounts.google.com"} or claims.get("email_verified") is not True:
+        raise HTTPException(status_code=401, detail="Invalid or unverified Google identity")
+    email = str(claims.get("email","")).strip().lower()
+    if email != IDENTITY_EMAIL.strip().lower():
         raise HTTPException(status_code=403, detail="This Google account is not linked to this World Wallet")
-
-    user = DEMO_USERS["demo-user"].copy()
-    user["name"] = claims.get("name") or claims.get("given_name") or user["name"]
-    user["google_subject"] = claims.get("sub")
-
-    return {
-        **issue_demo_session(),
-        "user": user,
-        "mode": "google",
-        "provider": "google",
-    }
+    user = provision_identity(email, name=claims.get("name") or "World Wallet User", google_subject=claims.get("sub"))
+    return {**session(user),"mode":"google","provider":"google"}
 
 
 @app.get("/api/v1/auth/me")
-def auth_me(current_user: dict = Depends(get_current_user)):
-    return {"user": current_user, "mode": "demo"}
+def auth_me(user: dict = Depends(current_user)):
+    return {"user":user,"mode":"database"}
 
 
 @app.get("/api/v1/wallet")
-def wallet(current_user: dict = Depends(get_current_user)):
-    return {
-        "user": current_user,
-        "wallet": {
-            **WALLET_SUMMARY,
-            "wallet_id": current_user["wallet_id"],
-            "owner_id": current_user["id"],
-        },
-        "assets": ASSETS,
-    }
+def wallet(user: dict = Depends(current_user)):
+    assets,_,summary = wallet_snapshot(user)
+    return {"user":user,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets}
 
 
 @app.get("/api/v1/assets")
-def assets(current_user: dict = Depends(get_current_user)):
-    return {"assets": ASSETS}
+def assets(user: dict = Depends(current_user)):
+    a,_,_ = wallet_snapshot(user)
+    return {"assets":a}
 
 
 @app.get("/api/v1/portfolio/performance")
-def portfolio_performance(current_user: dict = Depends(get_current_user)):
-    return {
-        "currency": "USD",
-        "period": "24h",
-        "change_percent": WALLET_SUMMARY["change_24h"],
-        "points": [
-            {"label": "00:00", "value_usd": 39640.00},
-            {"label": "04:00", "value_usd": 39880.00},
-            {"label": "08:00", "value_usd": 40120.00},
-            {"label": "12:00", "value_usd": 39980.00},
-            {"label": "16:00", "value_usd": 40310.00},
-            {"label": "20:00", "value_usd": 40427.20},
-        ],
-    }
+def performance(user: dict = Depends(current_user)):
+    _,_,summary = wallet_snapshot(user)
+    return {"currency":"USD","period":"all","change_percent":summary["change_24h"],"points":[{"label":"Current","value_usd":summary["available_balance_usd"]}]}
 
 
 @app.get("/api/v1/transactions")
-def transactions(current_user: dict = Depends(get_current_user)):
-    return {"transactions": TRANSACTIONS}
+def transactions(user: dict = Depends(current_user)):
+    _,tx,_ = wallet_snapshot(user)
+    return {"transactions":tx}
 
 
-def validate_asset_amount(asset: str, amount: float):
-    symbol = asset.upper()
-    supported = next((item for item in ASSETS if item["symbol"] == symbol), None)
-
-    if supported is None:
-        return symbol, None, {"status": "rejected", "reason": "Unsupported asset", "asset": symbol}
-
-    if amount > supported["balance"]:
-        return symbol, supported, {
-            "status": "rejected",
-            "reason": "Insufficient available asset balance",
-            "asset": symbol,
-            "available": supported["balance"],
-            "requested": amount,
-        }
-
-    return symbol, supported, None
+def reserve_asset(user, symbol: str, amount: float):
+    with db() as conn:
+        row = conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE", (user["wallet_id"],symbol)).fetchone()
+        if not row:
+            conn.rollback()
+            return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
+        if amount > float(row[0]):
+            conn.rollback()
+            return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":amount}
+        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(amount,user["wallet_id"],symbol))
+        return conn
 
 
 @app.post("/api/v1/transfers")
-def create_transfer(request: TransferRequest, current_user: dict = Depends(get_current_user)):
-    asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
-
-    if rejection:
-        return rejection
-
-    transfer_id = f"transfer_demo_{len(TRANSACTIONS) + 1:04d}"
-    return {
-        "status": "pending",
-        "mode": "demo",
-        "transfer": {
-            "id": transfer_id,
-            "type": "send",
-            "asset": asset,
-            "amount": request.amount,
-            "recipient": request.recipient,
-            "network": request.network,
-            "note": request.note,
-            "message": "Transfer request accepted for review; no blockchain transaction has been broadcast.",
-        },
-    }
+def transfer(request: TransferRequest, user: dict = Depends(current_user)):
+    symbol=request.asset.upper()
+    with db() as conn:
+        row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
+        if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
+        if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
+        txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
+        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",(txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,request.network))
+        conn.commit()
+    return {"status":"pending","mode":"database","transfer":{"id":txid,"asset":symbol,"amount":request.amount,"recipient":request.recipient,"network":request.network}}
 
 
 @app.post("/api/v1/withdrawals")
-def create_withdrawal(request: WithdrawalRequest, current_user: dict = Depends(get_current_user)):
-    asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
-
-    if rejection:
-        return rejection
-
-    withdrawal_id = f"withdrawal_demo_{len(TRANSACTIONS) + 1:04d}"
-    return {
-        "status": "pending_review",
-        "mode": "demo",
-        "withdrawal": {
-            "id": withdrawal_id,
-            "type": "withdrawal",
-            "asset": asset,
-            "amount": request.amount,
-            "destination": request.destination,
-            "network": request.network,
-            "note": request.note,
-            "message": "Withdrawal request received for review; no blockchain transaction has been broadcast.",
-        },
-    }
+def withdrawal(request: WithdrawalRequest, user: dict = Depends(current_user)):
+    symbol=request.asset.upper()
+    with db() as conn:
+        row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
+        if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
+        if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
+        txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
+        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",(txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,request.network))
+        conn.commit()
+    return {"status":"pending_review","mode":"database","withdrawal":{"id":txid,"asset":symbol,"amount":request.amount,"destination":request.destination,"network":request.network}}
