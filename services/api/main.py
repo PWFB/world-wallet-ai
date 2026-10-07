@@ -1,3 +1,5 @@
+import os
+
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -17,8 +19,8 @@ DEMO_USERS = {
 }
 
 DEMO_BEARER_TOKEN = "demo-user-token"
-DEMO_EMAIL = "demo@worldwallet.ai"
-DEMO_PASSWORD = "demo1234"
+DEMO_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "demo@worldwallet.ai")
+DEMO_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "demo1234")
 
 
 def get_current_user(authorization: str | None = Header(default=None)):
