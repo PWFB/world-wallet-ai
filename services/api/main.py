@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(
     title="World Wallet AI API",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 app.add_middleware(
@@ -46,9 +46,17 @@ class TransferRequest(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+class WithdrawalRequest(BaseModel):
+    asset: str = Field(min_length=2, max_length=12)
+    amount: float = Field(gt=0)
+    destination: str = Field(min_length=4, max_length=128)
+    network: str = Field(default="mainnet", min_length=3, max_length=32)
+    note: str | None = Field(default=None, max_length=200)
+
+
 @app.get("/")
 def root():
-    return {"status": "World Wallet AI API running", "version": "0.4.0"}
+    return {"status": "World Wallet AI API running", "version": "0.5.0"}
 
 
 @app.get("/health")
@@ -88,22 +96,31 @@ def transactions():
     return {"transactions": TRANSACTIONS}
 
 
-@app.post("/api/v1/transfers")
-def create_transfer(request: TransferRequest):
-    asset = request.asset.upper()
-    supported = next((item for item in ASSETS if item["symbol"] == asset), None)
+def validate_asset_amount(asset: str, amount: float):
+    symbol = asset.upper()
+    supported = next((item for item in ASSETS if item["symbol"] == symbol), None)
 
     if supported is None:
-        return {"status": "rejected", "reason": "Unsupported asset", "asset": asset}
+        return symbol, None, {"status": "rejected", "reason": "Unsupported asset", "asset": symbol}
 
-    if request.amount > supported["balance"]:
-        return {
+    if amount > supported["balance"]:
+        return symbol, supported, {
             "status": "rejected",
             "reason": "Insufficient available asset balance",
-            "asset": asset,
+            "asset": symbol,
             "available": supported["balance"],
-            "requested": request.amount,
+            "requested": amount,
         }
+
+    return symbol, supported, None
+
+
+@app.post("/api/v1/transfers")
+def create_transfer(request: TransferRequest):
+    asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
+
+    if rejection:
+        return rejection
 
     transfer_id = f"transfer_demo_{len(TRANSACTIONS) + 1:04d}"
     return {
@@ -118,5 +135,29 @@ def create_transfer(request: TransferRequest):
             "network": request.network,
             "note": request.note,
             "message": "Transfer request accepted for review; no blockchain transaction has been broadcast.",
+        },
+    }
+
+
+@app.post("/api/v1/withdrawals")
+def create_withdrawal(request: WithdrawalRequest):
+    asset, supported, rejection = validate_asset_amount(request.asset, request.amount)
+
+    if rejection:
+        return rejection
+
+    withdrawal_id = f"withdrawal_demo_{len(TRANSACTIONS) + 1:04d}"
+    return {
+        "status": "pending_review",
+        "mode": "demo",
+        "withdrawal": {
+            "id": withdrawal_id,
+            "type": "withdrawal",
+            "asset": asset,
+            "amount": request.amount,
+            "destination": request.destination,
+            "network": request.network,
+            "note": request.note,
+            "message": "Withdrawal request received for review; no blockchain transaction has been broadcast.",
         },
     }
