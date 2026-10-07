@@ -37,7 +37,7 @@ function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
-  const [loginEmail, setLoginEmail] = useState("");
+  const [loginEmail, setLoginEmail] = useState("pwfbmicrofinancemfb@gmail.com");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [activity, setActivity] = useState(fallbackActivity);
@@ -125,16 +125,54 @@ function App() {
   if (!accessToken) {
     return (
       <div className="login-shell">
-        <form className="login-card" onSubmit={handleLogin}>
-          <div className="brand"><div className="brand-mark">W</div><div><strong>WORLD WALLET</strong><span>AI</span></div></div>
-          <p className="eyebrow">SECURE ACCESS</p>
-          <h1>Welcome back</h1>
-          <p className="muted">Sign in to access your available balance and wallet dashboard.</p>
-          <label>Email<input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} required /></label>
-          <label>Password<input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} required /></label>
-          {loginError ? <div className="login-error">{loginError}</div> : null}
-          <button className="primary" type="submit">Sign in</button>
-        </form>
+        <div className="login-background login-background-one" />
+        <div className="login-background login-background-two" />
+
+        <section className="login-layout">
+          <div className="login-brand-panel">
+            <div className="login-brand-row">
+              <div className="brand-mark login-mark">W</div>
+              <div><strong>WORLD WALLET</strong><span>AI</span></div>
+            </div>
+            <div className="login-copy">
+              <p className="eyebrow">THE INTELLIGENT DIGITAL WALLET</p>
+              <h1>One wallet.<br /><em>Global control.</em></h1>
+              <p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard.</p>
+            </div>
+            <div className="login-feature-list">
+              <div><span>✓</span><div><b>Available balance</b><small>See your spendable wallet value at a glance.</small></div></div>
+              <div><span>✓</span><div><b>AI-powered insights</b><small>Use BALMZ AI to understand your portfolio.</small></div></div>
+              <div><span>✓</span><div><b>Secure wallet access</b><small>Authenticated access to your wallet workspace.</small></div></div>
+            </div>
+            <div className="login-network"><span /> World Wallet AI • Mainnet ready</div>
+          </div>
+
+          <form className="login-card" onSubmit={handleLogin}>
+            <div className="login-card-header">
+              <div className="login-card-icon">W</div>
+              <div><p className="eyebrow">SECURE ACCESS</p><h2>Welcome back</h2></div>
+            </div>
+            <p className="login-subtitle">Sign in to continue to your World Wallet AI account.</p>
+
+            <label className="login-field">
+              <span>Email address</span>
+              <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
+            </label>
+
+            <label className="login-field">
+              <span>Password</span>
+              <div className="login-input-wrap"><span>⌑</span><input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required /></div>
+            </label>
+
+            <div className="login-options"><label className="remember"><input type="checkbox" /> <span>Remember me</span></label><button type="button" className="forgot">Forgot password?</button></div>
+
+            {loginError ? <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div> : null}
+
+            <button className="login-submit" type="submit">Sign in <span>→</span></button>
+            <div className="login-divider"><span>WORLD WALLET AI</span></div>
+            <p className="login-security"><span>✓</span> Your session is protected by authenticated API access.</p>
+          </form>
+        </section>
       </div>
     );
   }
