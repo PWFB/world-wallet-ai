@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-const DEMO_ACCESS_TOKEN = import.meta.env.VITE_DEMO_ACCESS_TOKEN || "demo-user-token";
-const authHeaders = { Authorization: `Bearer ${DEMO_ACCESS_TOKEN}` };
+const TOKEN_KEY = "world_wallet_access_token";
 
 const fallbackAssets = [
   { symbol: "BALMZ", name: "BALMZ Token", balance: 18420, value_usd: 18420, change_24h: 4.82, icon: "B" },
