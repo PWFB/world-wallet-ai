@@ -35,7 +35,9 @@ function App() {
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
-  const [apiStatus, setApiStatus] = useState("loading");\n  const [activity, setActivity] = useState(fallbackActivity);
+  const [apiStatus, setApiStatus] = useState("loading");
+  const [user, setUser] = useState(null);
+  const [activity, setActivity] = useState(fallbackActivity);
 
   useEffect(() => {
     let cancelled = false;
