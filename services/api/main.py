@@ -10,13 +10,18 @@ from google.oauth2 import id_token
 from pydantic import BaseModel, Field
 import httpx
 
-app = FastAPI(title="World Wallet AI API", version="0.9.0")
+app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
+ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
+BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
+USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -73,6 +78,10 @@ def init_db():
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
           balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
         );
+        CREATE TABLE IF NOT EXISTS wallet_addresses(
+          wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
+          label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
+        );
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
@@ -125,6 +134,47 @@ def session(user):
     return {"access_token": SESSION_TOKEN, "token_type": "bearer", "user": user, "mode": "database"}
 
 
+def valid_evm_address(address: str) -> bool:
+    return len(address) == 42 and address.startswith("0x") and all(c in "0123456789abcdefABCDEF" for c in address[2:])
+
+
+def configured_addresses(user):
+    if not EVM_WALLET_ADDRESS or not valid_evm_address(EVM_WALLET_ADDRESS):
+        return []
+    with db() as conn:
+        rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network", (user["wallet_id"],)).fetchall()
+        if not rows:
+            for network in ("ethereum", "bnb"):
+                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
+            conn.commit()
+            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network", (user["wallet_id"],)).fetchall()
+    return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
+
+
+def rpc_call(url: str, method: str, params: list):
+    if not url:
+        return None
+    response = httpx.post(url, json={"jsonrpc":"2.0","id":1,"method":method,"params":params}, timeout=10)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("error"):
+        raise ValueError(payload["error"].get("message","RPC error"))
+    return payload.get("result")
+
+
+def evm_balance(url: str, address: str):
+    raw = rpc_call(url, "eth_getBalance", [address, "latest"])
+    return int(raw, 16) / 10**18 if raw else 0.0
+
+
+def erc20_balance(url: str, contract: str, address: str):
+    if not contract or not valid_evm_address(contract):
+        return None
+    data = "0x70a08231" + address[2:].lower().rjust(64, "0")
+    raw = rpc_call(url, "eth_call", [{"to":contract,"data":data}, "latest"])
+    return int(raw, 16) / 10**6 if raw else 0.0
+
+
 def wallet_snapshot(user):
     with db() as conn:
         assets = []
@@ -146,7 +196,7 @@ def startup():
 
 @app.get("/")
 def root():
-    return {"status":"World Wallet AI API running","version":"0.9.0","data_source":"postgresql"}
+    return {"status":"World Wallet AI API running","version":"1.0.0","data_source":"postgresql","chain_data":"configured_evm_only"}
 
 
 @app.get("/health")
@@ -188,6 +238,41 @@ def auth_me(user: dict = Depends(current_user)):
 def wallet(user: dict = Depends(current_user)):
     assets,_,summary = wallet_snapshot(user)
     return {"user":user,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets}
+
+
+@app.get("/api/v1/wallet/addresses")
+def wallet_addresses(user: dict = Depends(current_user)):
+    addresses = configured_addresses(user)
+    return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "A production EVM wallet address is not configured yet"}
+
+
+@app.post("/api/v1/wallet/sync")
+def sync_wallet(user: dict = Depends(current_user)):
+    addresses = configured_addresses(user)
+    if not addresses:
+        raise HTTPException(status_code=503, detail="Production EVM wallet address is not configured")
+    address = addresses[0]["address"]
+    updates = []
+    with db() as conn:
+        if ETH_RPC_URL:
+            eth = evm_balance(ETH_RPC_URL, address)
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
+            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+            usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
+            if usdt is not None:
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+                updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+        if BSC_RPC_URL:
+            bnb = evm_balance(BSC_RPC_URL, address)
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
+            updates.append({"network":"bnb","asset":"BNB","balance":bnb})
+            usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
+            if usdt is not None:
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+                updates.append({"network":"bnb","asset":"USDT","balance":usdt})
+        conn.commit()
+    assets, _, summary = wallet_snapshot(user)
+    return {"status":"synced","wallet":summary,"assets":assets,"updates":updates}
 
 
 @app.post("/api/v1/prices/refresh")
