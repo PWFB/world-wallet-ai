@@ -212,7 +212,7 @@ function App() {
               <button className="login-submit" type="submit">Verify authenticator <span>→</span></button>
             </>}
 
-            {loginError ? <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div>}
+            {loginError && <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div>}
 
             <div className="login-divider"><span>WORLD WALLET AI</span></div>
             <p className="login-security"><span>✓</span> Your session is protected by authenticated API access.</p>
