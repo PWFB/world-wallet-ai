@@ -19,6 +19,19 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [toolItems, setToolItems] = useState([]);
   const [toolBusy, setToolBusy] = useState(false);
 
+  useEffect(() => {
+    if (active !== "Receive") return;
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async r => ({ ok: r.ok, data: await r.json() }))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        setAddresses(ok ? (data.addresses || []) : []);
+        setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load wallet addresses."));
+      })
+      .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
   async function submit(endpoint) {
     setBusy(true); setMessage("");
     try {
@@ -56,26 +69,6 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   }
 
   if (active === "Receive") {
-    useEffect(() => {
-      let cancelled = false;
-      async function loadAddresses() {
-        try {
-          const r = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } });
-          const data = await r.json();
-          if (cancelled) return;
-          setAddresses(data.addresses || []);
-          setAddressMessage(data.message || "");
-        } catch {
-          if (!cancelled) {
-            setAddresses([]);
-            setAddressMessage("Unable to load wallet addresses.");
-          }
-        }
-      }
-      loadAddresses();
-      return () => { cancelled = true; };
-    }, [apiBaseUrl, accessToken]);
-
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Use a configured production blockchain address to receive assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid">
