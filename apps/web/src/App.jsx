@@ -9,6 +9,12 @@ const TOKEN_KEY = "world_wallet_access_token";
 const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: 0, actual_balance_usd: 0, reserved_balance_usd: 0, total_received_usd: 0, total_sent_usd: 0, profit_usd: 0, change_24h: 0 };
 const fallbackActivity = [];
+const walletCoinCatalogWithRegistry = walletCoinCatalog.map(coin => {
+  const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
+  const liveRecord = records.find(t => t.wallet_network_connected);
+  return { ...coin, registry: liveRecord || records[0] || null, connected: Boolean(liveRecord) };
+});
+
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
@@ -43,6 +49,7 @@ function App() {
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
+  const [tokenRegistry, setTokenRegistry] = useState([]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -117,9 +124,20 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
+    async function loadTokenRegistry(authHeaders) {
+      try {
+        const response = await fetch(API_BASE_URL + "/api/v1/tokens", { headers: authHeaders });
+        const data = await response.json();
+        if (response.ok) setTokenRegistry(data.tokens || []);
+      } catch {
+        setTokenRegistry([]);
+      }
+    }
+
     async function loadWallet() {
       if (!accessToken) return;
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
+      loadTokenRegistry(authHeaders);
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
           method: "POST",
@@ -783,7 +801,7 @@ function App() {
 
               <article className="panel assets-panel">
                 <div className="panel-head">
-                  <div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalog.length} assets in catalog • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
+                  <div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalogWithRegistry.length} assets in catalog • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} network-ready • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
                   <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
                 </div>
                 <div className="coin-toolbar">
