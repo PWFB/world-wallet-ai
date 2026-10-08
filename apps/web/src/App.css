@@ -161,3 +161,21 @@
 .coin-catalog-note{padding:10px 2px 2px;color:#536984;font-size:8px;line-height:1.5}
 .asset-network{font-size:8px;color:#617793;text-align:right;max-width:130px}
 @media(max-width:650px){.coin-toolbar{flex-direction:column;align-items:stretch}.coin-tabs{width:max-content}.asset-network{display:none}}
+
+.asset-row-button{width:100%;border:0;text-align:left;color:inherit;cursor:pointer;background:transparent}
+.asset-row-button:hover{background:#0b1b2d}
+.coin-detail-page .page-heading{align-items:flex-start}
+.back-btn{border:0;background:transparent;color:#6e87a4;padding:0;margin-bottom:12px;font-size:9px;cursor:pointer}
+.back-btn:hover{color:#00d4ff}
+.coin-detail-grid{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(260px,1fr);gap:14px;margin-bottom:14px}
+.coin-detail-card{min-height:190px}
+.coin-stats{display:grid;grid-template-columns:1fr;gap:0}
+.coin-stats>div{padding:17px 20px;border-bottom:1px solid #172943}
+.coin-stats>div:last-child{border-bottom:0}
+.coin-stats small{display:block;color:#5e7591;font-size:8px;margin-bottom:6px}
+.coin-stats b{font-size:13px;color:#e4edf7}
+.coin-action-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px}
+.coin-action-grid button{border:1px solid #1d3d58;background:#0b1a2b;color:#dbe7f5;border-radius:9px;padding:13px;font-size:10px;font-weight:700;cursor:pointer}
+.coin-action-grid button:hover{border-color:#00d4ff;color:#fff}
+.coin-detail-note{font-size:8px;color:#536984;line-height:1.6;padding:4px 2px 20px}
+@media(max-width:760px){.coin-detail-grid{grid-template-columns:1fr}.coin-action-grid{grid-template-columns:1fr}.coin-detail-page .page-heading{gap:15px}}
