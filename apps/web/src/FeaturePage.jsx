@@ -70,6 +70,56 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     setMessage("");
   }
 
+  async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination }) {
+    if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
+    const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
+    const config = await configResponse.json();
+    if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
+    const networkConfig = config.networks?.[network];
+    if (!networkConfig?.wallet_address) throw new Error("Production " + network + " signing address is not configured.");
+    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    const signer = accounts?.[0];
+    if (!signer || signer.toLowerCase() !== networkConfig.wallet_address.toLowerCase()) {
+      throw new Error("Connect the configured production wallet address before signing this transaction.");
+    }
+    const chainId = await window.ethereum.request({ method: "eth_chainId" });
+    if (chainId.toLowerCase() !== networkConfig.chain_id.toLowerCase()) {
+      try {
+        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
+      } catch {
+        throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum" : "BNB Chain") + " mainnet.");
+      }
+    }
+
+    const tx = { from: signer, to: destination };
+    if (asset === "ETH" || asset === "BNB") {
+      tx.value = "0x" + BigInt(Math.round(Number(amount) * 1e18)).toString(16);
+    } else if (asset === "USDT") {
+      if (!networkConfig.usdt_contract || !networkConfig.usdt_decimals) throw new Error("USDT external signing is not configured for this network.");
+      const decimals = Number(networkConfig.usdt_decimals);
+      const units = BigInt(Math.round(Number(amount) * (10 ** decimals)));
+      const cleanDestination = destination.replace(/^0x/, "").toLowerCase();
+      if (!/^[0-9a-f]{40}$/.test(cleanDestination)) throw new Error("Invalid EVM destination address.");
+      tx.to = networkConfig.usdt_contract;
+      tx.data = "0xa9059cbb" + cleanDestination.padStart(64, "0") + units.toString(16).padStart(64, "0");
+      tx.value = "0x0";
+    } else {
+      throw new Error("This asset is not available for live external EVM broadcast yet.");
+    }
+
+    const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [tx] });
+    if (!txHash) throw new Error("External wallet did not return a transaction hash.");
+
+    const settleResponse = await fetch(apiBaseUrl + "/api/v1/transactions/settle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+      body: JSON.stringify({ transaction_id: transactionId, tx_hash: txHash }),
+    });
+    const settleData = await settleResponse.json();
+    if (!settleResponse.ok) throw new Error(settleData.detail || "Broadcast was sent but verification failed.");
+    return settleData;
+  }
+
   async function submit(endpoint) {
     setBusy(true); setMessage("");
     try {
@@ -78,15 +128,12 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       if (!destination.trim()) throw new Error("Enter a destination address.");
       const selectedAsset = assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
-      const availableBalance = Math.max(0, Number(
-        selectedAsset.available_balance ??
-        selectedAsset.available ??
-        selectedAsset.balance ??
-        0
-      ));
-      if (parsedAmount > availableBalance) throw new Error(
-        `Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`
-      );
+      const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
+      if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
+
+      const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT"].includes(asset);
+      if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
+
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
       const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
@@ -94,8 +141,25 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
       if (!r.ok || data.status === "rejected") throw new Error(data.detail || data.reason || "Request failed");
-      setMessage("Request accepted: " + data.status.replace("_"," "));
+
+      const transactionId = data.transfer?.id || data.withdrawal?.id;
+      if (isLiveEvm && transactionId) {
+        const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim() });
+        setMessage(settlement.status === "broadcast_pending"
+          ? "Live transaction broadcast. Waiting for blockchain confirmation."
+          : "Live transaction verified and wallet accounting reconciled.");
+      } else {
+        setMessage("Request accepted: " + data.status.replace("_"," "));
+      }
       setAmount(""); setDestination(""); setNote(""); requestKeyRef.current = "";
+      if (onTransactionsUpdated) {
+        const refresh = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method:"POST", headers:{ Authorization:"Bearer "+accessToken } });
+        const refreshed = await refresh.json();
+        if (refresh.ok) {
+          onTransactionsUpdated(refreshed.transactions || []);
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
+        }
+      }
     } catch (e) { setMessage(e.message); } finally { setBusy(false); }
   }
 
