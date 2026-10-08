@@ -52,7 +52,7 @@ function App() {
         try {
           const result = await authClient.getSession();
           const session = result?.data;
-          const sessionUser = session?.user || session?.session?.user;
+          const sessionUser = result?.data?.user || session?.user || session?.session?.user;
           if (sessionUser) {
             const token = await getNeonAccessToken();
             if (token) {
