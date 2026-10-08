@@ -50,21 +50,27 @@ function App() {
       if (sessionState.isPending) return;
 
       if (neonSessionUser) {
-        try {
-          const token = await getNeonAccessToken();
-          if (!cancelled && token) {
-            sessionStorage.removeItem("world_wallet_google_return");
-            setUser(neonSessionUser);
-            setAccessToken(token);
-            setActive("Dashboard");
-            setShowLogin(false);
-            if (window.location.search) {
-              window.history.replaceState({}, document.title, window.location.pathname);
+        // The Better Auth session cookie can become visible before the short-lived
+        // Neon JWT endpoint is ready. Retry the token exchange instead of sending
+        // the user back to the landing page.
+        for (let attempt = 0; attempt < 10 && !cancelled; attempt += 1) {
+          try {
+            const token = await getNeonAccessToken();
+            if (token) {
+              sessionStorage.removeItem("world_wallet_google_return");
+              setUser(neonSessionUser);
+              setAccessToken(token);
+              setActive("Dashboard");
+              setShowLogin(false);
+              if (window.location.search) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
+              return;
             }
-            return;
+          } catch {
+            // Keep retrying while Neon Auth finishes the JWT exchange.
           }
-        } catch {
-          // Token retrieval can briefly lag behind the managed auth session.
+          await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
