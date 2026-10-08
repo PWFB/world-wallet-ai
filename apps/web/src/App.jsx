@@ -810,7 +810,7 @@ function App() {
                     <button className={coinFilter === "held" ? "active" : ""} onClick={() => setCoinFilter("held")}>Held</button>
                   </div>
                 </div>
-                <div className="asset-list">{walletCoinCatalog
+                <div className="asset-list">{walletCoinCatalogWithRegistry
                   .filter(c => !coinSearch.trim() || `${c.symbol} ${c.name}`.toLowerCase().includes(coinSearch.trim().toLowerCase()))
                   .filter(c => coinFilter === "all" || Number((assets.find(a => a.symbol === c.symbol) || {}).balance || 0) !== 0)
                   .map(c => {
@@ -818,7 +818,7 @@ function App() {
                     const balance = live ? live.balance : 0;
                     const value = live ? live.value_usd : 0;
                     const price = live ? live.price_usd : 0;
-                    const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : "Catalog only • live wallet not connected";
+                    const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : (c.registry?.status === "pending_contract" ? "Contract pending" : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected");
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
