@@ -213,9 +213,11 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
-            <span className={a.status === "confirmed" ? "positive" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>
+            <span className={a.status === "confirmed" ? "positive" : a.status === "failed" || a.status === "reorged" ? "negative" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>
             {a.block_height ? <small>Block {a.block_height}</small> : null}
             {a.tx_hash && a.network === "bitcoin" ? <a href={`https://blockstream.info/tx/${a.tx_hash}`} target="_blank" rel="noreferrer">View on Blockstream ↗</a> : null}
+            {a.status === "reorged" ? <small className="negative">Chain reorganization detected — waiting for a replacement confirmation.</small> : null}
+            {a.status === "failed" ? <small className="negative">On-chain execution failed. This record is not a confirmed transfer.</small> : null}
             {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={()=>settleTransaction(a)} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
