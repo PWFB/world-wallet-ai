@@ -551,12 +551,15 @@ def btc_balance(address: str):
     confirmed = int(chain.get("funded_txo_sum", 0)) - int(chain.get("spent_txo_sum", 0))
     return confirmed / 100_000_000
 
-def erc20_balance(url: str, contract: str, address: str):
-    if not contract or not valid_evm_address(contract):
+def erc20_balance(url: str, contract: str, address: str, decimals: int = 18):
+    """Read a real ERC-20 balance using registry metadata."""
+    if not url or not contract or not valid_evm_address(contract) or not valid_evm_address(address):
         return None
     data = "0x70a08231" + address[2:].lower().rjust(64, "0")
     raw = rpc_call(url, "eth_call", [{"to":contract,"data":data}, "latest"])
-    return int(raw, 16) / 10**6 if raw else 0.0
+    if not raw:
+        return 0.0
+    return int(raw, 16) / (10 ** max(0, int(decimals)))
 
 
 
@@ -984,8 +987,6 @@ def sync_wallet(user: dict = Depends(current_user)):
         raise HTTPException(status_code=503, detail="No production wallet address is configured")
     updates = []
     warnings = []
-    eth_usdt = None
-    bsc_usdt = None
     with db() as conn:
         if btc_address:
             try:
@@ -1000,9 +1001,6 @@ def sync_wallet(user: dict = Depends(current_user)):
                 eth = evm_balance(ETH_RPC_URL, address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
                 updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-                eth_usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
-                if eth_usdt is not None:
-                    updates.append({"network":"ethereum","asset":"USDT","balance":eth_usdt})
             except Exception:
                 warnings.append("Ethereum balance service unavailable")
         if BSC_RPC_URL and address:
@@ -1010,15 +1008,32 @@ def sync_wallet(user: dict = Depends(current_user)):
                 bnb = evm_balance(BSC_RPC_URL, address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
                 updates.append({"network":"bnb","asset":"BNB","balance":bnb})
-                bsc_usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
-                if bsc_usdt is not None:
-                    updates.append({"network":"bnb","asset":"USDT","balance":bsc_usdt})
             except Exception:
                 warnings.append("BNB Chain balance service unavailable")
-        usdt_balances = [x for x in (eth_usdt, bsc_usdt) if x is not None]
-        if usdt_balances:
-            total_usdt = sum(usdt_balances)
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (total_usdt,user["wallet_id"]))
+
+        token_rows = conn.execute(
+            "SELECT symbol,name,network,contract_address,decimals,status "
+            "FROM token_registry WHERE contract_address IS NOT NULL "
+            "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
+        ).fetchall()
+        token_totals = {}
+        for symbol, name, network, contract, decimals, status in token_rows:
+            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else None
+            token_address = address if network in ("ethereum","bnb") else None
+            if not rpc_url or not token_address:
+                continue
+            try:
+                balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
+                if balance is None:
+                    continue
+                token_totals[symbol] = token_totals.get(symbol, 0.0) + balance
+                updates.append({"network":network,"asset":symbol,"balance":balance,
+                                "contract_address":contract,"decimals":int(decimals)})
+            except Exception:
+                warnings.append(f"{network} {symbol} token balance service unavailable")
+        for symbol, total in token_totals.items():
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s",
+                         (total,user["wallet_id"],symbol))
         conn.commit()
     imported_transactions = sync_bitcoin_transactions(user, btc_address)
     evm_transactions = []
@@ -1071,14 +1086,13 @@ def refresh_prices(user: dict = Depends(current_user)):
         market_prices = {}
         for symbol, coin_id in coin_ids.items():
             market_prices[symbol] = float(raw.get(coin_id, {}).get("usd", 0))
-        # BALMZ is intentionally priced at the current ETH price in World Wallet AI.
-        # This is an application pricing rule, not an external-market claim.
-        market_prices["BALMZ"] = market_prices.get("ETH", 0.0)
+        # BALMZ has no deployed contract or verified market price yet.
+        market_prices["BALMZ"] = 0.0
         for symbol, price in market_prices.items():
             conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
         conn.commit()
     assets, _, summary = wallet_snapshot(user)
-    return {"assets":assets,"wallet":summary,"source":"coingecko+world_wallet_balmz_eth_price_rule","balmz_price_usd":market_prices["BALMZ"]}
+    return {"assets":assets,"wallet":summary,"source":"coingecko+token_registry","balmz_price_usd":0.0}
 
 @app.post("/api/v1/wallet/refresh")
 def refresh_wallet(user: dict = Depends(current_user)):
