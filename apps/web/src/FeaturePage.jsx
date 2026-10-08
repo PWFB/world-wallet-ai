@@ -283,7 +283,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       const units = decimalToUnits(amount, decimals);
       const cleanDestination = destination.replace(/^0x/, "").toLowerCase();
       if (!/^[0-9a-f]{40}$/.test(cleanDestination)) throw new Error("Invalid EVM destination address.");
-      tx.to = networkConfig.usdt_contract;
+      tx.to = contract;
       tx.data = "0xa9059cbb" + cleanDestination.padStart(64, "0") + units.toString(16).padStart(64, "0");
       tx.value = "0x0";
     } else {
@@ -333,7 +333,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT"].includes(asset);
+      const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT", "BALMZ"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
