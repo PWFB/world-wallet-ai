@@ -511,6 +511,56 @@ def evm_transfer_logs(url: str, contract: str, wallet_address: str, from_block: 
     return logs
 
 
+def sync_evm_native_transactions(user, url: str, network: str):
+    if not url or not EVM_WALLET_ADDRESS:
+        return [], None
+    try:
+        latest = evm_block_number(url)
+        if latest is None:
+            return [], "latest block unavailable"
+        lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
+        start = max(0, latest - lookback + 1)
+        wallet_lower = EVM_WALLET_ADDRESS.lower()
+        imported = []
+        for block_number in range(start, latest + 1):
+            block = rpc_call(url, "eth_getBlockByNumber", [hex(block_number), True])
+            if not block:
+                continue
+            for tx in block.get("transactions", []):
+                sender = str(tx.get("from") or "").lower()
+                recipient = str(tx.get("to") or "").lower()
+                if sender != wallet_lower and recipient != wallet_lower:
+                    continue
+                value = int(tx.get("value") or "0x0", 16) / 10**18
+                if value <= 0:
+                    continue
+                direction = "received" if recipient == wallet_lower else "sent"
+                signed_amount = value if direction == "received" else -value
+                tx_hash = tx.get("hash")
+                if not tx_hash:
+                    continue
+                receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
+                success = receipt is not None and receipt.get("status") in (None, "0x1")
+                confirmations = max(0, latest - block_number + 1)
+                status = "confirmed" if success and confirmations > 0 else "pending"
+                tx_id = "evm_" + tx_hash
+                existing = conn.execute("SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s", (user["wallet_id"], tx_hash)).fetchone()
+                if existing:
+                    conn.execute("UPDATE transactions SET confirmations=%s,block_height=%s,status=%s WHERE id=%s AND wallet_id=%s",
+                                 (confirmations, block_number, status, existing[0], user["wallet_id"]))
+                else:
+                    conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                                 (tx_id,user["wallet_id"],direction,"ETH" if network=="ethereum" else "BNB",
+                                  f"{network} native {direction}",signed_amount,status,
+                                  recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number))
+                imported.append({"tx_hash":tx_hash,"asset":"ETH" if network=="ethereum" else "BNB","network":network,
+                                 "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,"block_height":block_number})
+        conn.commit()
+        return imported, None
+    except Exception:
+        return [], f"{network} native transaction service unavailable"
+
+
 def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6):
     if not url or not contract or not EVM_WALLET_ADDRESS:
         return [], None
@@ -566,9 +616,22 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
 def bitcoin_address_transactions(address: str):
     if not address:
         return []
-    response = httpx.get(f"https://blockstream.info/api/address/{address}/txs", timeout=15)
-    response.raise_for_status()
-    txs = response.json()
+    txs = []
+    next_url = f"https://blockstream.info/api/address/{address}/txs"
+    max_pages = max(1, min(int(os.getenv("WORLD_WALLET_BTC_TX_PAGES", "3")), 10))
+    for page in range(max_pages):
+        response = httpx.get(next_url, timeout=15)
+        response.raise_for_status()
+        page_txs = response.json()
+        if not page_txs:
+            break
+        txs.extend(page_txs)
+        if len(page_txs) < 25:
+            break
+        last_txid = page_txs[-1].get("txid")
+        if not last_txid:
+            break
+        next_url = f"https://blockstream.info/api/address/{address}/txs/chain/{last_txid}"
     tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
     tip_response.raise_for_status()
     tip_height = int(tip_response.text.strip())
@@ -748,11 +811,16 @@ def sync_wallet(user: dict = Depends(current_user)):
             (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
             (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
         ):
-            if rpc_url and contract:
-                imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
-                evm_transactions.extend(imported)
-                if warning:
-                    evm_warnings.append(warning)
+            if rpc_url:
+                native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network)
+                evm_transactions.extend(native_imported)
+                if native_warning:
+                    evm_warnings.append(native_warning)
+                if contract:
+                    imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+                    evm_transactions.extend(imported)
+                    if warning:
+                        evm_warnings.append(warning)
     warnings.extend(evm_warnings)
     assets, all_transactions, summary = wallet_snapshot(user)
     if BTC_ADDRESS and not imported_transactions:
