@@ -1033,12 +1033,17 @@ def sync_transactions(user: dict = Depends(current_user)):
         (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
         (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
     ):
-        if rpc_url and contract:
-            token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
-            imported.extend(token_imported)
-            if warning:
-                warnings.append(warning)
-    if not imported and not BTC_ADDRESS and not (ETH_RPC_URL and USDT_ETH_CONTRACT) and not (BSC_RPC_URL and USDT_BSC_CONTRACT):
+        if rpc_url:
+            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network)
+            imported.extend(native_imported)
+            if native_warning:
+                warnings.append(native_warning)
+            if contract:
+                token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+                imported.extend(token_imported)
+                if warning:
+                    warnings.append(warning)
+    if not imported and not BTC_ADDRESS and not (ETH_RPC_URL or BSC_RPC_URL):
         raise HTTPException(status_code=503, detail="No live transaction source is configured")
     assets,tx,summary = wallet_snapshot(user)
     return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
