@@ -494,6 +494,10 @@ def configured_addresses(user):
     return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
 
 
+def wallet_network_address(user, network):
+    return next((a["address"] for a in configured_addresses(user) if a["network"] == network), None)
+
+
 def rpc_call(url: str, method: str, params: list):
     if not url:
         return None
@@ -817,7 +821,7 @@ def sync_bitcoin_transactions(user, address=None):
                     conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s",
                                  (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],item.get("block_hash"),tx_id))
             else:
-                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],BTC_ADDRESS,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
+                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],address,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
             imported.append(item)
         conn.commit()
     return imported
@@ -920,15 +924,15 @@ def _chain_heights():
     return heights
 
 
-def _network_sync_status(warnings, updates, transaction_sync_at=None):
+def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
     now = datetime.now(timezone.utc).isoformat()
     warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb")}
     updated_networks = {str(item.get("network")) for item in updates}
     chain_heights = _chain_heights()
     configured = {
-        "bitcoin": bool(BTC_ADDRESS),
-        "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
-        "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
+        "bitcoin": bool(wallet_network_address(user, "bitcoin")),
+        "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
+        "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
     }
     result = {}
     for network in ("bitcoin", "ethereum", "bnb"):
@@ -1017,7 +1021,7 @@ def sync_wallet(user: dict = Depends(current_user)):
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
     last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or address) else None
-    network_status = _network_sync_status(warnings, updates, last_transaction_sync_at)
+    network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
@@ -1084,7 +1088,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
 
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
     warnings = [x for x in (sync_error, price_error) if x]
-    network_status = sync_result.get("network_status") or _network_sync_status(warnings, [])
+    network_status = sync_result.get("network_status") or _network_sync_status(user, warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
         "wallet": {**summary_now, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
@@ -1138,14 +1142,15 @@ def transactions(user: dict = Depends(current_user)):
 def sync_transactions(user: dict = Depends(current_user)):
     imported = []
     warnings = []
-    if BTC_ADDRESS:
+    btc_address = wallet_network_address(user, "bitcoin")
+    if btc_address:
         try:
-            balance = btc_balance(BTC_ADDRESS)
+            balance = btc_balance(btc_address)
             if balance is not None:
                 with db() as conn:
                     conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
                     conn.commit()
-            imported.extend(sync_bitcoin_transactions(user))
+            imported.extend(sync_bitcoin_transactions(user, btc_address))
         except Exception:
             warnings.append("Bitcoin transaction service unavailable")
     for rpc_url, network, contract in (
@@ -1153,16 +1158,16 @@ def sync_transactions(user: dict = Depends(current_user)):
         (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
     ):
         if rpc_url:
-            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network)
+            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, wallet_network_address(user, network))
             imported.extend(native_imported)
             if native_warning:
                 warnings.append(native_warning)
             if contract:
-                token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+                token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT", wallet_address=wallet_network_address(user, network))
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
-    if not imported and not BTC_ADDRESS and not (ETH_RPC_URL or BSC_RPC_URL):
+    if not imported and not btc_address and not any(wallet_network_address(user,n) and u for n,u in (("ethereum",ETH_RPC_URL),("bnb",BSC_RPC_URL))):
         raise HTTPException(status_code=503, detail="No live transaction source is configured")
     assets,tx,summary = wallet_snapshot(user)
     return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
@@ -1174,26 +1179,29 @@ def sync_transactions(user: dict = Depends(current_user)):
 @app.get("/api/v1/wallet/signing-config")
 def wallet_signing_config(user: dict = Depends(current_user)):
     # External-wallet signing only: the API never receives or stores a private key.
+    ethereum_address = wallet_network_address(user, "ethereum")
+    bnb_address = wallet_network_address(user, "bnb")
+    bitcoin_address = wallet_network_address(user, "bitcoin")
     return {
         "mode": "external_signer",
         "networks": {
             "ethereum": {
                 "chain_id": "0x1",
-                "wallet_address": EVM_WALLET_ADDRESS if ETH_RPC_URL else None,
+                "wallet_address": ethereum_address if ETH_RPC_URL else None,
                 "usdt_contract": USDT_ETH_CONTRACT or None,
                 "usdt_decimals": erc20_decimals(ETH_RPC_URL, USDT_ETH_CONTRACT) if ETH_RPC_URL and USDT_ETH_CONTRACT else None,
             },
             "bnb": {
                 "chain_id": "0x38",
-                "wallet_address": EVM_WALLET_ADDRESS if BSC_RPC_URL else None,
+                "wallet_address": bnb_address if BSC_RPC_URL else None,
                 "usdt_contract": USDT_BSC_CONTRACT or None,
                 "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
             },
         },
         "broadcast_policy": "user_signed_only",
         "bitcoin": {
-            "wallet_address": BTC_ADDRESS or None,
-            "signer": "unisat" if BTC_ADDRESS else None,
+            "wallet_address": bitcoin_address,
+            "signer": "unisat" if bitcoin_address else None,
         },
     }
 
@@ -1474,7 +1482,7 @@ def erc20_decimals(url: str, contract: str):
     return _hex_int(raw) if raw is not None else None
 
 
-def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal):
+def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, wallet_address: str):
     response = httpx.get(f"https://blockstream.info/api/tx/{tx_hash}", timeout=15)
     if response.status_code == 404:
         return {"state": "not_found"}
@@ -1482,7 +1490,7 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal):
     tx = response.json()
     status = tx.get("status") or {}
     vins = tx.get("vin") or []
-    if not any(_same_address((v.get("prevout") or {}).get("scriptpubkey_address"), BTC_ADDRESS) for v in vins):
+    if not any(_same_address((v.get("prevout") or {}).get("scriptpubkey_address"), wallet_address) for v in vins):
         raise HTTPException(status_code=409, detail="Bitcoin transaction is not spending the configured wallet address")
     paid = sum(int(v.get("value", 0)) for v in tx.get("vout", []) if _same_address(v.get("scriptpubkey_address"), destination))
     expected = int((amount * Decimal("100000000")).to_integral_value())
@@ -1500,9 +1508,9 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal):
     }
 
 
-def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: str, amount: Decimal):
+def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: str, amount: Decimal, wallet_address: str):
     rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
-    if not rpc or not EVM_WALLET_ADDRESS:
+    if not rpc or not wallet_address:
         raise HTTPException(status_code=503, detail=f"{network.title()} settlement RPC or wallet is not configured")
     try:
         tx = rpc_call(rpc, "eth_getTransactionByHash", [tx_hash])
@@ -1513,7 +1521,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": None}
         if str(receipt.get("status", "")).lower() != "0x1":
             raise HTTPException(status_code=409, detail="Blockchain transaction failed and cannot settle the wallet request")
-        if not _same_address(tx.get("from"), EVM_WALLET_ADDRESS):
+        if not _same_address(tx.get("from"), wallet_address):
             raise HTTPException(status_code=409, detail="Blockchain transaction sender does not match the configured wallet")
         block_number = _hex_int(receipt.get("blockNumber"))
         latest = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
@@ -1540,7 +1548,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
                 topics = log.get("topics") or []
                 if len(topics) < 3 or str(topics[0]).lower() != ERC20_TRANSFER_TOPIC.lower():
                     continue
-                if not _same_address("0x" + topics[1][-40:], EVM_WALLET_ADDRESS):
+                if not _same_address("0x" + topics[1][-40:], wallet_address):
                     continue
                 if not _same_address("0x" + topics[2][-40:], destination):
                     continue
@@ -1568,7 +1576,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
 def reconcile_settled_asset(conn, user, symbol, network):
     # Chain synchronization is authoritative for actual balance. Re-read it after
     # verification instead of subtracting the request amount a second time.
-    address = EVM_WALLET_ADDRESS if network in {"ethereum", "bnb"} else BTC_ADDRESS
+    address = wallet_network_address(user, network)
     value = None
     try:
         if symbol == "BTC" and address:
@@ -1617,11 +1625,11 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
         if network == "bitcoin":
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
-            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)))
+            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
         elif network in {"ethereum","bnb"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
-            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)))
+            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),wallet_network_address(user,network))
         else:
             raise HTTPException(status_code=400,detail="Unsupported settlement network")
 
