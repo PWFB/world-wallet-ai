@@ -212,4 +212,16 @@
 .live-wallet-address b{font-size:9px;color:#00d4ff}
 .live-wallet-address code{font-size:8px;color:#8da1bb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .live-wallet-empty{margin-top:13px;padding:10px 12px;border:1px dashed #28415c;border-radius:8px;color:#657a94;font-size:9px;line-height:1.5}
-@media(max-width:760px){.live-wallet-main{align-items:flex-start;flex-direction:column}.live-wallet-main .secondary{width:100%}.live-wallet-addresses{grid-template-columns:1fr}.live-wallet-address code{white-space:normal;word-break:break-all}}
+.network-sync-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:13px}
+.network-sync-card{display:grid;gap:6px;padding:10px 11px;border:1px solid #17304a;border-radius:8px;background:#091321;min-width:0}
+.network-sync-card>div{display:flex;align-items:center;gap:6px}
+.network-sync-card b{font-size:9px;color:#e6eef8}
+.network-sync-card small{font-size:7px;letter-spacing:.7px;color:#657a94}
+.network-sync-card>span{font-size:8px;color:#607792;line-height:1.4}
+.network-sync-card em{font-size:8px;color:#e55b6f;font-style:normal;line-height:1.35}
+.sync-dot{width:6px;height:6px;border-radius:50%;display:inline-block;background:#64748b}
+.sync-dot.healthy{background:#22c55e}
+.sync-dot.warning{background:#d4af37}
+.sync-dot.not_configured{background:#64748b}
+.live-sync-meta{display:flex;justify-content:space-between;gap:12px;margin-top:10px;color:#536a84;font-size:8px;line-height:1.4}
+@media(max-width:760px){.live-wallet-main{align-items:flex-start;flex-direction:column}.live-wallet-main .secondary{width:100%}.live-wallet-addresses{grid-template-columns:1fr}.live-wallet-address code{white-space:normal;word-break:break-all}.network-sync-grid{grid-template-columns:1fr}.live-sync-meta{flex-direction:column;gap:4px}}
