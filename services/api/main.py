@@ -150,6 +150,8 @@ def init_db():
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_hash TEXT;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS log_index INTEGER;
         ALTER TABLE assets ADD COLUMN IF NOT EXISTS reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0;
         CREATE TABLE IF NOT EXISTS accounting_migrations(
           wallet_id TEXT NOT NULL REFERENCES wallets(id),
@@ -545,14 +547,20 @@ def sync_evm_native_transactions(user, url: str, network: str):
         source = network + ":native"
         wallet_lower = EVM_WALLET_ADDRESS.lower()
         imported = []
+        reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
+        required_confirmations = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
         with db() as conn:
             cursor = _sync_cursor(conn, user["wallet_id"], source)
-            reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
             start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
+            block_hashes = {}
+            seen_hashes = set()
             for block_number in range(start, latest + 1):
                 block = rpc_call(url, "eth_getBlockByNumber", [hex(block_number), True])
                 if not block:
                     continue
+                block_hash = block.get("hash")
+                if block_hash:
+                    block_hashes[block_number] = block_hash
                 for tx in block.get("transactions", []):
                     sender = str(tx.get("from") or "").lower()
                     recipient = str(tx.get("to") or "").lower()
@@ -561,27 +569,60 @@ def sync_evm_native_transactions(user, url: str, network: str):
                     value = int(tx.get("value") or "0x0", 16) / 10**18
                     if value <= 0:
                         continue
-                    direction = "received" if recipient == wallet_lower else "sent"
-                    signed_amount = value if direction == "received" else -value
                     tx_hash = tx.get("hash")
                     if not tx_hash:
                         continue
+                    seen_hashes.add(tx_hash.lower())
+                    direction = "received" if recipient == wallet_lower else "sent"
+                    signed_amount = value if direction == "received" else -value
                     receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
-                    success = receipt is not None and receipt.get("status") in (None, "0x1")
+                    receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
                     confirmations = max(0, latest - block_number + 1)
-                    status = "confirmed" if success and confirmations > 0 else "pending"
-                    tx_id = "evm_" + tx_hash
-                    existing = conn.execute("SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s", (user["wallet_id"], tx_hash)).fetchone()
-                    if existing:
-                        conn.execute("UPDATE transactions SET confirmations=%s,block_height=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                                     (confirmations, block_number, status, existing[0], user["wallet_id"]))
+                    if receipt_status == "0x0":
+                        status = "failed"
+                    elif receipt is None:
+                        status = "pending"
+                    elif confirmations >= required_confirmations:
+                        status = "confirmed"
                     else:
-                        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                                     (tx_id,user["wallet_id"],direction,"ETH" if network=="ethereum" else "BNB",
-                                      f"{network} native {direction}",signed_amount,status,
-                                      recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number))
+                        status = "pending"
+                    tx_id = "evm_" + tx_hash
+                    existing = conn.execute(
+                        "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
+                        (user["wallet_id"], tx_hash),
+                    ).fetchone()
+                    values=(confirmations, block_number, block_hash, status, existing[0] if existing else tx_id, user["wallet_id"])
+                    if existing:
+                        conn.execute(
+                            "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,status=%s WHERE id=%s AND wallet_id=%s",
+                            values,
+                        )
+                    else:
+                        conn.execute(
+                            "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) "
+                            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                            (tx_id,user["wallet_id"],direction,"ETH" if network=="ethereum" else "BNB",
+                             f"{network} native {direction}",signed_amount,status,
+                             recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number,block_hash),
+                        )
                     imported.append({"tx_hash":tx_hash,"asset":"ETH" if network=="ethereum" else "BNB","network":network,
-                                     "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,"block_height":block_number})
+                                     "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,
+                                     "block_height":block_number,"block_hash":block_hash})
+            # A block hash changing inside the overlap means an old record can no longer
+            # be treated as confirmed. Mark it explicitly so accounting/UI never lies.
+            for row in conn.execute(
+                "SELECT id,tx_hash,block_height,block_hash FROM transactions "
+                "WHERE wallet_id=%s AND network=%s AND asset=%s AND block_height BETWEEN %s AND %s "
+                "AND status IN ('confirmed','pending','failed')",
+                (user["wallet_id"],network,"ETH" if network=="ethereum" else "BNB",start,latest),
+            ).fetchall():
+                txid, old_hash, old_height, old_block_hash = row
+                current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
+                if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
+                    conn.execute(
+                        "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
+                        (txid,user["wallet_id"]),
+                    )
             _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
         return imported, None
@@ -606,43 +647,76 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         return [], f"{network} {symbol} transaction service unavailable"
     imported = []
     wallet_lower = EVM_WALLET_ADDRESS.lower()
-    with db() as conn:
-        for log in logs:
-            topics = log.get("topics") or []
-            if len(topics) < 3:
-                continue
-            sender = "0x" + topics[1][-40:]
-            recipient = "0x" + topics[2][-40:]
-            raw_value = int(log.get("data") or "0x0", 16)
-            amount = raw_value / (10 ** decimals)
-            if amount <= 0:
-                continue
-            direction = "received" if recipient.lower() == wallet_lower else "sent"
-            signed_amount = amount if direction == "received" else -amount
-            tx_hash = log.get("transactionHash")
-            block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
-            if not tx_hash:
-                continue
-            tx_id = "evm_" + tx_hash
-            confirmations = max(0, latest - block_number + 1) if block_number is not None else 0
-            status = "confirmed" if confirmations > 0 else "pending"
-            description = f"{symbol} {direction} on {network}"
-            existing = conn.execute("SELECT id,type FROM transactions WHERE wallet_id=%s AND tx_hash=%s", (user["wallet_id"], tx_hash)).fetchone()
-            if existing:
-                conn.execute("UPDATE transactions SET confirmations=%s,block_height=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                             (confirmations, block_number, status, existing[0], user["wallet_id"]))
-            else:
-                conn.execute(
-                    "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) "
-                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                    (tx_id, user["wallet_id"], direction, symbol, description, signed_amount, status,
-                     recipient if direction == "sent" else sender, network, tx_hash, confirmations, block_number),
-                )
-            imported.append({"tx_hash": tx_hash, "asset": symbol, "network": network, "type": direction,
-                             "amount": signed_amount, "status": status, "confirmations": confirmations,
-                             "block_height": block_number})
-        _set_sync_cursor(conn, user["wallet_id"], source, latest)
-        conn.commit()
+    block_hashes = {}
+    try:
+        with db() as conn:
+            for log in logs:
+                topics = log.get("topics") or []
+                if len(topics) < 3:
+                    continue
+                sender = "0x" + topics[1][-40:]
+                recipient = "0x" + topics[2][-40:]
+                raw_value = int(log.get("data") or "0x0", 16)
+                amount = raw_value / (10 ** decimals)
+                if amount <= 0:
+                    continue
+                direction = "received" if recipient.lower() == wallet_lower else "sent"
+                signed_amount = amount if direction == "received" else -amount
+                tx_hash = log.get("transactionHash")
+                block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
+                log_index = int(log.get("logIndex"), 16) if log.get("logIndex") else None
+                block_hash = log.get("blockHash")
+                if not tx_hash:
+                    continue
+                if block_number is not None and block_hash:
+                    block_hashes[block_number] = block_hash
+                confirmations = max(0, latest - block_number + 1) if block_number is not None else 0
+                receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
+                receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
+                if receipt_status == "0x0":
+                    status = "failed"
+                elif receipt is None:
+                    status = "pending"
+                else:
+                    status = "confirmed" if confirmations >= max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100)) else "pending"
+                description = f"{symbol} {direction} on {network}"
+                existing = conn.execute(
+                    "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
+                    "AND COALESCE(log_index,-1)=COALESCE(%s,-1)",
+                    (user["wallet_id"],tx_hash,network,symbol,log_index),
+                ).fetchone()
+                tx_id = existing[0] if existing else "evm_" + tx_hash + "_" + str(log_index if log_index is not None else 0)
+                if existing:
+                    conn.execute(
+                        "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
+                        (confirmations,block_number,block_hash,log_index,status,tx_id,user["wallet_id"]),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash,log_index) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (tx_id,user["wallet_id"],direction,symbol,description,signed_amount,status,
+                         recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number,block_hash,log_index),
+                    )
+                imported.append({"tx_hash":tx_hash,"asset":symbol,"network":network,"type":direction,"amount":signed_amount,
+                                 "status":status,"confirmations":confirmations,"block_height":block_number,"block_hash":block_hash,
+                                 "log_index":log_index})
+            for row in conn.execute(
+                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network=%s AND asset=%s "
+                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','pending','failed')",
+                (user["wallet_id"],network,symbol,start,latest),
+            ).fetchall():
+                txid, old_height, old_block_hash = row
+                current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
+                if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
+                    conn.execute(
+                        "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
+                        (txid,user["wallet_id"]),
+                    )
+            _set_sync_cursor(conn, user["wallet_id"], source, latest)
+            conn.commit()
+    except Exception:
+        return [], f"{network} {symbol} transaction service unavailable"
     return imported, None
 
 
@@ -679,7 +753,7 @@ def bitcoin_address_transactions(address: str):
         confirmed = bool(status.get("confirmed"))
         block_height = status.get("block_height")
         confirmations = max(0, tip_height - int(block_height) + 1) if confirmed and block_height else 0
-        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height})
+        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
     return results
 
 def sync_bitcoin_transactions(user):
@@ -701,13 +775,13 @@ def sync_bitcoin_transactions(user):
             if existing:
                 existing_row = conn.execute("SELECT type,status FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
                 if existing_row and existing_row[0] in {"sent","withdrawal"}:
-                    conn.execute("UPDATE transactions SET tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
-                                 (tx_hash,item["confirmations"],item["block_height"],tx_id,user["wallet_id"]))
+                    conn.execute("UPDATE transactions SET tx_hash=%s,confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
+                                 (tx_hash,item["confirmations"],item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
                 else:
-                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s WHERE id=%s",
-                                 (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],tx_id))
+                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s",
+                                 (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],item.get("block_hash"),tx_id))
             else:
-                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],BTC_ADDRESS,item["tx_hash"],item["confirmations"],item["block_height"]))
+                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],BTC_ADDRESS,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
             imported.append(item)
         conn.commit()
     return imported
@@ -723,8 +797,8 @@ def wallet_snapshot(user):
                 "reserved_balance":float(reserved),"price_usd":float(p),"value_usd":float(available*p),
                 "actual_value_usd":float(actual*p),"change_24h":0})
         txs=[]
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
-            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"time":row[10].isoformat()})
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
+            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
     prices={x["symbol"]:x["price_usd"] for x in assets}
     return assets,txs,{"available_balance_usd":sum(x["value_usd"] for x in assets),"actual_balance_usd":sum(x["actual_value_usd"] for x in assets),
         "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets),
@@ -828,7 +902,7 @@ def _network_sync_status(warnings, updates, transaction_sync_at=None):
                 "warning" if configured[network] and warning else "not_configured"
             ),
             "last_balance_sync_at": now if network in updated_networks else None,
-            "last_transaction_sync_at": transaction_sync_at if configured[network] and not warning else None,
+            "last_transaction_sync_at": transaction_sync_at if network in updated_networks and not warning else None,
             "chain_height": chain_heights.get(network),
             "warning": warning,
         }
