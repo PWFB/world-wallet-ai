@@ -643,7 +643,7 @@ function App() {
             </article>
             <div className="coin-detail-note">Only authenticated wallet data is displayed. Catalog entries never create balances, prices, or transaction history.</div>
           </section>;
-        })() :         
+        })() : active === "Dashboard" ? (
           <section className="content">
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
