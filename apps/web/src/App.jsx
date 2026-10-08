@@ -709,8 +709,9 @@ function App() {
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}{price ? ` • ${money(price)}/coin` : ""}</small></div>
                       <small className="asset-network">{c.status}</small>
-                    </div>;
-                  })}</button>>
+                    </button>;
+                  })}
+                </div>
                 <div className="coin-catalog-note">Balances and prices are shown only when supplied by the authenticated wallet data source. Catalog entries never create a fake balance.</div>
               </article>
 
