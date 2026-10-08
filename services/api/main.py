@@ -793,8 +793,9 @@ def wallet_snapshot(user):
             "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
         ):
             actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
-            assets.append({"symbol":symbol,"name":name,"balance":float(available),"actual_balance":float(actual),
-                "reserved_balance":float(reserved),"price_usd":float(p),"value_usd":float(available*p),
+            assets.append({"symbol":symbol,"name":name,"balance":float(available),"available_balance":float(available),
+                "actual_balance":float(actual),"reserved_balance":float(reserved),"price_usd":float(p),
+                "live_price_usd":float(p),"value_usd":float(available*p),
                 "actual_value_usd":float(actual*p),"change_24h":0})
         txs=[]
         for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
@@ -985,7 +986,11 @@ def sync_wallet(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/prices/refresh")
 def refresh_prices(user: dict = Depends(current_user)):
-    coin_ids = {"BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin"}
+    coin_ids = {
+        "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
+        "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
+        "LTC":"litecoin","DOGE":"dogecoin",
+    }
     try:
         response = httpx.get(
             "https://api.coingecko.com/api/v3/simple/price",
@@ -1068,8 +1073,10 @@ def system_status(user: dict = Depends(current_user)):
         "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
         "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
         "live_prices": True,
+        "price_assets": ["BALMZ","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
-        "transaction_broadcast": False,
+        "transaction_broadcast": True,
+        "transaction_broadcast_mode": "external_wallet_signed",
     }
 
 @app.get("/api/v1/assets")
