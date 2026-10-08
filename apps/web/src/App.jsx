@@ -48,6 +48,7 @@ function App() {
   const [syncMessage, setSyncMessage] = useState("");
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
+  const [networkStatus, setNetworkStatus] = useState({});
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -146,6 +147,7 @@ function App() {
         })));
         setApiStatus("online");
         setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
+        setNetworkStatus(data.network_status || {});
         setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
       try {
         const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: { Authorization: "Bearer " + accessToken } });
@@ -698,6 +700,21 @@ function App() {
               ) : (
                 <div className="live-wallet-empty">{liveWallet.message || "Configure the production wallet address and chain RPC settings on the backend to enable live balances."}</div>
               )}
+              <div className="network-sync-grid">
+                {["bitcoin", "ethereum", "bnb"].map(network => {
+                  const item = networkStatus[network] || {};
+                  const label = network === "bitcoin" ? "Bitcoin" : network === "ethereum" ? "Ethereum" : "BNB Chain";
+                  return <div className="network-sync-card" key={network}>
+                    <div><b>{label}</b><span className={"sync-dot " + (item.status || "not_configured")} /> <small>{item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : item.configured ? "CHECKING" : "NOT CONFIGURED"}</small></div>
+                    <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : "No successful balance sync recorded."}</span>
+                    {item.warning && <em>{item.warning}</em>}
+                  </div>;
+                })}
+              </div>
+              <div className="live-sync-meta">
+                <span>Last wallet refresh: {lastSyncedAt ? lastSyncedAt.toLocaleString() : "Not yet"}</span>
+                <span>Transaction sync: {networkStatus.bitcoin?.last_balance_sync_at || networkStatus.ethereum?.last_balance_sync_at || networkStatus.bnb?.last_balance_sync_at ? "Live source checked" : "No successful chain sync recorded"}</span>
+              </div>
             </div>
 
             <div className="dashboard-grid">
