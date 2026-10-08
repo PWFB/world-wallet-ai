@@ -184,3 +184,7 @@
 .receive-selected span{font-size:8px;color:#5e7591;text-transform:uppercase;letter-spacing:1px}
 .receive-selected strong{font-size:15px;color:#00d4ff}
 .receive-selected small{font-size:8px;color:#71849f}
+
+.network-safety{display:flex;gap:8px;align-items:center;padding:9px 11px;margin-top:-5px;border:1px solid #1b314b;border-radius:7px;background:#081321;font-size:8px}
+.network-safety b{color:#00d4ff}
+.network-safety span{color:#667c98;line-height:1.4}
