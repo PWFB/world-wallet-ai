@@ -25,6 +25,7 @@ function App() {
   const [loginPassword, setLoginPassword] = useState("");
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
+  const [recoveryMode, setRecoveryMode] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [authMethod, setAuthMethod] = useState("email");
   const [authBusy, setAuthBusy] = useState(false);
@@ -261,35 +262,44 @@ function App() {
           <form className="login-card" onSubmit={event => event.preventDefault()}>
             <div className="login-card-header">
               <div className="login-card-icon">W</div>
-              <div><p className="eyebrow">SECURE ACCESS</p><h2>Welcome back</h2></div>
+              <div><p className="eyebrow">{recoveryMode ? "ACCOUNT RECOVERY" : "SECURE ACCESS"}</p><h2>{recoveryMode ? "Recover wallet access" : "Welcome back"}</h2></div>
             </div>
-            <p className="login-subtitle">Passwordless access powered by World Wallet AI + Neon Auth.</p>
+            <p className="login-subtitle">
+              {recoveryMode
+                ? "Forgot your password? World Wallet AI uses a one-time email code to verify you and sign you back into your wallet."
+                : "Passwordless access powered by World Wallet AI + Neon Auth."}
+            </p>
 
-            <div className="auth-methods" role="tablist" aria-label="Sign-in methods">
-              <button type="button" className={authMethod === "email" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setLoginError(""); }}><span>✉</span><b>Email code</b></button>
-              <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setLoginError(""); }}><span>G</span><b>Google</b></button>
-              <button type="button" className={authMethod === "biometric" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("biometric"); setLoginError(""); }}><span>◉</span><b>Face / Finger</b></button>
-            </div>
+            {!recoveryMode && (
+              <div className="auth-methods" role="tablist" aria-label="Sign-in methods">
+                <button type="button" className={authMethod === "email" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setLoginError(""); }}><span>✉</span><b>Email code</b></button>
+                <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setLoginError(""); }}><span>G</span><b>Google</b></button>
+                <button type="button" className={authMethod === "biometric" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("biometric"); setLoginError(""); }}><span>◉</span><b>Face / Finger</b></button>
+              </div>
+            )}
 
-            {authMethod === "email" && (
+            {(authMethod === "email" || recoveryMode) && (
               <div className="auth-method-form">
                 <label className="login-field">
                   <span>Email address</span>
                   <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
                 </label>
                 {!otpRequested ? (
-                  <button className="login-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send secure code <span>→</span></button>
+                  <button className="login-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>{recoveryMode ? "Send recovery code" : "Send secure code"} <span>→</span></button>
                 ) : (
                   <>
                     <label className="login-field">
                       <span>6-digit code</span>
                       <div className="login-input-wrap"><span>⌗</span><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e => setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required /></div>
                     </label>
-                    <button className="login-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy || otpCode.length !== 6}>Verify & enter wallet <span>→</span></button>
+                    <button className="login-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy || otpCode.length !== 6}>{recoveryMode ? "Verify code & sign in" : "Verify & enter wallet"} <span>→</span></button>
                     <button className="forgot" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send a new code</button>
                   </>
                 )}
-                <p className="login-security"><span>✓</span> We never ask you to store a wallet password in this app.</p>
+                {recoveryMode && (
+                  <button className="forgot recovery-back" type="button" onClick={() => { setRecoveryMode(false); setOtpRequested(false); setOtpCode(""); setLoginError(""); }}>← Back to sign in</button>
+                )}
+                <p className="login-security"><span>✓</span> No password is stored in World Wallet AI. The recovery code verifies your email and signs you into your wallet.</p>
               </div>
             )}
 
@@ -306,8 +316,12 @@ function App() {
               </div>
             )}
 
+            {!recoveryMode && authMethod === "email" && (
+              <button className="forgot recovery-link" type="button" onClick={() => { setRecoveryMode(true); setAuthMethod("email"); setOtpRequested(false); setOtpCode(""); setLoginError(""); }}>Forgot password? Recover with email OTP</button>
+            )}
+
             {loginError && (
-              <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div>
+              <div className="login-error"><span>!</span><div><b>{recoveryMode ? "Recovery failed" : "Sign-in failed"}</b><small>{loginError}</small></div></div>
             )}
 
             <div className="login-divider"><span>WORLD WALLET AI</span></div>
