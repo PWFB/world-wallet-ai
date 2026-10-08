@@ -29,7 +29,17 @@ BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
+TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+if not TRUSTED_ORIGINS:
+    TRUSTED_ORIGINS = ["https://world-wallet-ai-frontend.onrender.com", "http://localhost:5173", "http://localhost:4173"]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=TRUSTED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
 
 
 class LoginRequest(BaseModel):
@@ -149,6 +159,9 @@ def neon_auth_user(token: str):
     email = str(claims.get("email") or "").strip().lower()
     if not subject or not email:
         raise HTTPException(status_code=401, detail="Neon Auth token has no user identity")
+    issuer = str(claims.get("iss") or "").strip()
+    if issuer and NEON_AUTH_BASE_URL and issuer.rstrip("/") != NEON_AUTH_BASE_URL.rstrip("/"):
+        raise HTTPException(status_code=401, detail="Invalid Neon Auth issuer")
 
     name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
     user = get_user(email)
@@ -298,7 +311,10 @@ def wallet_snapshot(user):
         for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"time":row[9].isoformat()})
     total = sum(x["value_usd"] for x in assets)
-    return assets,txs,{"available_balance_usd":total,"total_received_usd":sum(x["amount"] for x in txs if x["type"]=="received"),"total_sent_usd":abs(sum(x["amount"] for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0)),"profit_usd":0,"change_24h":0}
+    prices = {x["symbol"]: x["price_usd"] for x in assets}
+    total_received = sum(abs(x["amount"]) * prices.get(x["asset"], 0) for x in txs if x["type"] == "received")
+    total_sent = sum(abs(x["amount"]) * prices.get(x["asset"], 0) for x in txs if x["type"] in ("sent", "withdrawal") and x["amount"] < 0)
+    return assets,txs,{"available_balance_usd":total,"total_received_usd":total_received,"total_sent_usd":total_sent,"profit_usd":0,"change_24h":0}
 
 
 @app.on_event("startup")
