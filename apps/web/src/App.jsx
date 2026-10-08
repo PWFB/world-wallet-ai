@@ -707,13 +707,14 @@ function App() {
                   return <div className="network-sync-card" key={network}>
                     <div><b>{label}</b><span className={"sync-dot " + (item.status || "not_configured")} /> <small>{item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : item.configured ? "CHECKING" : "NOT CONFIGURED"}</small></div>
                     <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : "No successful balance sync recorded."}</span>
+                    <span>{item.chain_height != null ? "Chain height " + Number(item.chain_height).toLocaleString() : "Chain height unavailable."}</span>
                     {item.warning && <em>{item.warning}</em>}
                   </div>;
                 })}
               </div>
               <div className="live-sync-meta">
                 <span>Last wallet refresh: {lastSyncedAt ? lastSyncedAt.toLocaleString() : "Not yet"}</span>
-                <span>Transaction sync: {networkStatus.bitcoin?.last_balance_sync_at || networkStatus.ethereum?.last_balance_sync_at || networkStatus.bnb?.last_balance_sync_at ? "Live source checked" : "No successful chain sync recorded"}</span>
+                <span>Last transaction sync: {networkStatus.bitcoin?.last_transaction_sync_at || networkStatus.ethereum?.last_transaction_sync_at || networkStatus.bnb?.last_transaction_sync_at ? new Date(networkStatus.bitcoin?.last_transaction_sync_at || networkStatus.ethereum?.last_transaction_sync_at || networkStatus.bnb?.last_transaction_sync_at).toLocaleString() : "Not yet"}</span>
               </div>
             </div>
 
