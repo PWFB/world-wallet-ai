@@ -383,6 +383,7 @@ def sync_wallet(user: dict = Depends(current_user)):
     if not BTC_ADDRESS and not address:
         raise HTTPException(status_code=503, detail="No production wallet address is configured")
     updates = []
+    warnings = []
     with db() as conn:
         if BTC_ADDRESS:
             try:
@@ -391,29 +392,37 @@ def sync_wallet(user: dict = Depends(current_user)):
                     conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (btc,user["wallet_id"]))
                     updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
             except Exception:
-                pass
+                warnings.append("Bitcoin balance service unavailable")
         if ETH_RPC_URL and address:
-            eth = evm_balance(ETH_RPC_URL, address)
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
-            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-            usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
-            if usdt is not None:
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-                updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+            try:
+                eth = evm_balance(ETH_RPC_URL, address)
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
+                updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+                usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
+                if usdt is not None:
+                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+                    updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+            except Exception:
+                warnings.append("Ethereum balance service unavailable")
         if BSC_RPC_URL and address:
-            bnb = evm_balance(BSC_RPC_URL, address)
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
-            updates.append({"network":"bnb","asset":"BNB","balance":bnb})
-            usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
-            if usdt is not None:
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-                updates.append({"network":"bnb","asset":"USDT","balance":usdt})
+            try:
+                bnb = evm_balance(BSC_RPC_URL, address)
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
+                updates.append({"network":"bnb","asset":"BNB","balance":bnb})
+                usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
+                if usdt is not None:
+                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
+                    updates.append({"network":"bnb","asset":"USDT","balance":usdt})
+            except Exception:
+                warnings.append("BNB Chain balance service unavailable")
         conn.commit()
-    assets, _, summary = wallet_snapshot(user)
     imported_transactions = sync_bitcoin_transactions(user)
-    assets, _, summary = wallet_snapshot(user)
     assets, all_transactions, summary = wallet_snapshot(user)
-    return {"status":"synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"bitcoin_transactions":imported_transactions,"transactions":all_transactions}
+    if BTC_ADDRESS and not imported_transactions:
+        # An empty result can be a legitimate zero-transaction wallet; do not label it
+        # as an error because the balance and transaction endpoint may still be healthy.
+        pass
+    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"transactions":all_transactions}
 
 
 @app.post("/api/v1/prices/refresh")
