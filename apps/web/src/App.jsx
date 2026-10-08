@@ -343,20 +343,17 @@ function App() {
       if (!email) throw new Error("Enter your email address.");
       if (!loginPassword) throw new Error("Enter your password.");
 
-      const result = await authClient.signIn.email({
-        email,
-        password: loginPassword,
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: loginPassword }),
       });
-
-      if (result?.error) {
-        throw new Error(authErrorMessage(result.error, "Invalid email or password."));
-      }
-
-      const token = await getWalletTokenWithRetry();
-      if (!token) throw new Error("Password sign-in succeeded, but the secure wallet token could not be created. Please try again.");
-
-      setUser(result?.data?.user || null);
-      setAccessToken(token);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Unable to sign in with password.");
+      if (!data.access_token) throw new Error("Secure wallet token was not returned.");
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      setUser(data.user || null);
+      setAccessToken(data.access_token);
       setLoginPassword("");
       setPasswordMode(false);
     } catch (error) {
@@ -372,11 +369,13 @@ function App() {
     try {
       const email = loginEmail.trim().toLowerCase();
       if (!email) throw new Error("Enter your email address.");
-      const result = await authClient.emailOtp.sendVerificationOtp({
-        email,
-        type: "sign-in",
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/send-otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
       });
-      if (result?.error) throw new Error(authErrorMessage(result.error, "Unable to send the sign-in code."));
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Unable to send the sign-in code.");
       setOtpRequested(true);
     } catch (error) {
       setLoginError(error.message || "Unable to send the sign-in code");
@@ -390,15 +389,17 @@ function App() {
     setAuthBusy(true);
     try {
       const email = loginEmail.trim().toLowerCase();
-      const result = await authClient.signIn.emailOtp({
-        email,
-        otp: otpCode.trim(),
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/otp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp: otpCode.trim() }),
       });
-      if (result?.error) throw new Error(authErrorMessage(result.error, "Invalid or expired code."));
-      const token = await getWalletTokenWithRetry();
-      if (!token) throw new Error("Email verification succeeded, but the secure wallet token could not be created. Please try again.");
-      setUser(result?.data?.user || null);
-      setAccessToken(token);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Invalid or expired code.");
+      if (!data.access_token) throw new Error("Secure wallet token was not returned.");
+      localStorage.setItem(TOKEN_KEY, data.access_token);
+      setUser(data.user || null);
+      setAccessToken(data.access_token);
       setOtpCode("");
       setOtpRequested(false);
     } catch (error) {
