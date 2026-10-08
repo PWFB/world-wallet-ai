@@ -241,11 +241,22 @@ def neon_auth_user(token: str):
     if not NEON_JWKS_CLIENT:
         raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
     try:
+        # Neon Auth is the issuer of the JWT used by the wallet API. Do not
+        # hard-code an algorithm: use the algorithm advertised by the
+        # verified JWKS key, which keeps this compatible with Neon key
+        # rotation while still binding the token to the expected public key.
         signing_key = NEON_JWKS_CLIENT.get_signing_key_from_jwt(token)
+        header = jwt.get_unverified_header(token)
+        algorithm = str(header.get("alg") or "").strip()
+        key_algorithm = str(getattr(signing_key, "algorithm_name", "") or "").strip()
+        if not algorithm or not key_algorithm or algorithm != key_algorithm:
+            raise ValueError("JWT signing algorithm does not match the Neon JWKS key")
+        if algorithm not in {"EdDSA", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512"}:
+            raise ValueError("Unsupported Neon Auth signing algorithm")
         claims = jwt.decode(
             token,
             signing_key.key,
-            algorithms=["EdDSA"],
+            algorithms=[algorithm],
             options={"verify_aud": False},
         )
     except Exception as exc:
