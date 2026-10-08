@@ -9,6 +9,8 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
 from pydantic import BaseModel, Field
 import httpx
+import jwt
+from jwt import PyJWKClient
 
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
@@ -17,6 +19,9 @@ SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
+NEON_AUTH_JWKS_URL = os.getenv("NEON_AUTH_JWKS_URL", "").strip()
+NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else None
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
@@ -126,15 +131,52 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
     return get_user(email)
 
 
-def current_user(authorization: str | None = Header(default=None)):
-    if not SESSION_TOKEN or not authorization or authorization != "Bearer " + SESSION_TOKEN:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    if not IDENTITY_EMAIL:
-        raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
-    user = get_user(IDENTITY_EMAIL)
+def neon_auth_user(token: str):
+    if not NEON_JWKS_CLIENT:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    try:
+        signing_key = NEON_JWKS_CLIENT.get_signing_key_from_jwt(token)
+        claims = jwt.decode(
+            token,
+            signing_key.key,
+            algorithms=["EdDSA"],
+            options={"verify_aud": False},
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail="Invalid Neon Auth session") from exc
+
+    subject = str(claims.get("sub") or "").strip()
+    email = str(claims.get("email") or "").strip().lower()
+    if not subject or not email:
+        raise HTTPException(status_code=401, detail="Neon Auth token has no user identity")
+
+    name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
+    user = get_user(email)
     if not user:
-        raise HTTPException(status_code=401, detail="Wallet user not found")
+        user = provision_identity(email, name=name, google_subject=subject)
+    else:
+        with db() as conn:
+            conn.execute(
+                "UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s",
+                (name, subject, user["id"]),
+            )
+            conn.commit()
+        user = get_user(email)
     return user
+
+
+def current_user(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization[7:].strip()
+    if SESSION_TOKEN and token == SESSION_TOKEN:
+        if not IDENTITY_EMAIL:
+            raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
+        user = get_user(IDENTITY_EMAIL)
+        if not user:
+            raise HTTPException(status_code=401, detail="Wallet user not found")
+        return user
+    return neon_auth_user(token)
 
 
 def session(user):
@@ -303,7 +345,7 @@ def google_login(request: GoogleLoginRequest):
 
 @app.get("/api/v1/auth/me")
 def auth_me(user: dict = Depends(current_user)):
-    return {"user":user,"mode":"database"}
+    return {"user":user,"mode":"neon_auth" if NEON_JWKS_CLIENT else "database"}
 
 
 @app.get("/api/v1/wallet")
