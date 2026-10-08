@@ -9,12 +9,6 @@ const TOKEN_KEY = "world_wallet_access_token";
 const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: 0, actual_balance_usd: 0, reserved_balance_usd: 0, total_received_usd: 0, total_sent_usd: 0, profit_usd: 0, change_24h: 0 };
 const fallbackActivity = [];
-const walletCoinCatalogWithRegistry = walletCoinCatalog.map(coin => {
-  const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
-  const liveRecord = records.find(t => t.wallet_network_connected);
-  return { ...coin, registry: liveRecord || records[0] || null, connected: Boolean(liveRecord) };
-});
-
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
@@ -50,6 +44,11 @@ function App() {
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
   const [tokenRegistry, setTokenRegistry] = useState([]);
+  const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
+    const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
+    const liveRecord = records.find(t => t.wallet_network_connected);
+    return { ...coin, registry: liveRecord || records[0] || null, connected: Boolean(liveRecord) };
+  }), [tokenRegistry]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
