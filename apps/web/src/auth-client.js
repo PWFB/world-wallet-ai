@@ -10,9 +10,30 @@ export const authClient = createAuthClient(authUrl, {
 export async function getNeonAccessToken() {
   if (!authUrl) return "";
 
+  // Neon Auth's JWT plugin exposes GET /token. Fetch it directly with the
+  // Better Auth session cookie so OAuth callbacks do not depend on the
+  // React session cache already containing the JWT.
   try {
-    // Use the same Better Auth client that owns the browser session.
-    // Neon exposes getJWTToken() for authenticated API bearer tokens.
+    const response = await fetch(`${authUrl.replace(/\\/$/, "")}/token`, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        Accept: "application/json",
+      },
+      cache: "no-store",
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      if (typeof data?.token === "string" && data.token) return data.token;
+    }
+  } catch {
+    // Fall through to the SDK helper below.
+  }
+
+  try {
+    // SDK fallback for environments where the direct token endpoint is not
+    // available but the authenticated client session already has a JWT.
     if (typeof authClient.getJWTToken === "function") {
       const result = await authClient.getJWTToken();
       if (typeof result === "string") return result;
