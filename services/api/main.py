@@ -216,7 +216,10 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
-        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("USDT","Tether USD"),("ETH","Ethereum"),("BNB","BNB")]:
+        for symbol,asset_name in [
+            ("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
+            ("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")
+        ]:
             conn.execute(
                 "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0) ON CONFLICT(wallet_id,symbol) DO NOTHING",
                 (wallet_id,symbol,asset_name)
