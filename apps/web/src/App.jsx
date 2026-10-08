@@ -144,6 +144,9 @@ function App() {
           tx_hash: tx.tx_hash,
           confirmations: Number(tx.confirmations || 0),
           block_height: tx.block_height,
+          network: tx.network,
+          block_hash: tx.block_hash,
+          log_index: tx.log_index,
         })));
         setApiStatus("online");
         setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
@@ -788,7 +791,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}{price ? ` • ${money(price)}/coin` : ""}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price ? `Live price ${money(price)}/coin • ${money(value)} available value` : "Live price unavailable"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
