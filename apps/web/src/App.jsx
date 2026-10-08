@@ -186,6 +186,15 @@ function App() {
     }
   }
 
+  async function getWalletTokenWithRetry(attempts = 8) {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      const token = await getNeonAccessToken();
+      if (token) return token;
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    return "";
+  }
+
   async function handlePasswordSignIn() {
     setLoginError("");
     setAuthBusy(true);
@@ -203,8 +212,8 @@ function App() {
         throw new Error(authErrorMessage(result.error, "Invalid email or password."));
       }
 
-      const token = await getNeonAccessToken();
-      if (!token) throw new Error("Password sign-in succeeded, but the wallet session token is not available yet.");
+      const token = await getWalletTokenWithRetry();
+      if (!token) throw new Error("Password sign-in succeeded, but the secure wallet token could not be created. Please try again.");
 
       setUser(result?.data?.user || null);
       setAccessToken(token);
@@ -246,8 +255,8 @@ function App() {
         otp: otpCode.trim(),
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, "Invalid or expired code."));
-      const token = await getNeonAccessToken();
-      if (!token) throw new Error("Neon Auth signed in, but the wallet session token could not be obtained.");
+      const token = await getWalletTokenWithRetry();
+      if (!token) throw new Error("Email verification succeeded, but the secure wallet token could not be created. Please try again.");
       setUser(result?.data?.user || null);
       setAccessToken(token);
       setOtpCode("");
@@ -414,15 +423,17 @@ function App() {
             </div>
             <p className="login-subtitle">
               {recoveryMode
-                ? "Forgot your password? World Wallet AI uses a one-time email code to verify you and sign you back into your wallet."
-                : "Passwordless access powered by World Wallet AI + Neon Auth."}
+                ? "Use the one-time code sent to your email to recover wallet access."
+                : passwordMode
+                  ? "Sign in with your Neon Auth password."
+                  : "Use a one-time email code for secure passwordless access."}
             </p>
 
             {!recoveryMode && (
               <div className="auth-methods" role="tablist" aria-label="Sign-in methods">
-                <button type="button" className={authMethod === "email" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setLoginError(""); }}><span>✉</span><b>Email code</b></button>
-                <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setLoginError(""); }}><span>G</span><b>Google</b></button>
-                <button type="button" className={authMethod === "biometric" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("biometric"); setLoginError(""); }}><span>◉</span><b>Face / Finger</b></button>
+                <button type="button" className={authMethod === "email" && !passwordMode ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setPasswordMode(false); setLoginPassword(""); setLoginError(""); }}><span>✉</span><b>Email OTP</b></button>
+                <button type="button" className={authMethod === "email" && passwordMode ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setPasswordMode(true); setOtpRequested(false); setOtpCode(""); setLoginError(""); }}><span>⌘</span><b>Password</b></button>
+                <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setPasswordMode(false); setLoginError(""); }}><span>G</span><b>Google</b></button>
               </div>
             )}
 
@@ -476,7 +487,7 @@ function App() {
               </div>
             )}
 
-            {!recoveryMode && authMethod === "email" && (
+            {!recoveryMode && authMethod === "email" && !passwordMode && (
               <button className="forgot recovery-link" type="button" onClick={() => { setRecoveryMode(true); setAuthMethod("email"); setOtpRequested(false); setOtpCode(""); setLoginError(""); }}>Forgot password? Recover with email OTP</button>
             )}
 
