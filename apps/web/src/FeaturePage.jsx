@@ -135,7 +135,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
           </div>
           {addresses.length ? addresses.filter(item => !networksForAsset(asset).length || networksForAsset(asset).some(n => n.value === item.network)).map(item => <div className="receive-address" key={item.network}>
             <div><b>{item.network.toUpperCase()}</b><small>{item.label} • {asset}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button>
-          </div>) : <div className="live-chart-empty">{addressMessage || `No production ${asset} address configured for a compatible network.`}</div>
+          </div>) : <div className="live-chart-empty">{addressMessage || `No production ${asset} address configured for a compatible network.`}</div>}
         </article>
         <article className="panel feature-summary">
           <span className="feature-kicker">RECEIVE SAFETY</span>
