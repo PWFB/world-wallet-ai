@@ -20,7 +20,13 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   async function submit(endpoint) {
     setBusy(true); setMessage("");
     try {
-      const body = { asset, amount: Number(amount), network, note: note || null };
+      const parsedAmount = Number(amount);
+      if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) throw new Error("Enter an amount greater than zero.");
+      if (!destination.trim()) throw new Error("Enter a destination address.");
+      const selectedAsset = assets.find(item => item.symbol === asset);
+      if (!selectedAsset) throw new Error("Select a supported wallet asset.");
+      if (parsedAmount > Number(selectedAsset.balance || 0)) throw new Error("Amount exceeds the selected asset's available balance.");
+      const body = { asset, amount: parsedAmount, network, note: note || null };
       body[endpoint.includes("transfers") ? "recipient" : "destination"] = destination;
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
@@ -36,13 +42,13 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
       <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>{active}</h1><p className="muted">{send ? "Send assets to an external wallet." : "Request a secure withdrawal."}</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel">
         <div className="feature-icon">{send ? "↗" : "⇥"}</div><h2>{send ? "Send funds" : "Direct withdrawal"}</h2>
-        <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
+        <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol} value={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
         <label>Amount<input type="number" min="0" step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00"/></label>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
         <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="mainnet">Mainnet</option><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
-        <button className="primary feature-submit" disabled={busy || !amount || !destination} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
+        <button className="primary feature-submit" disabled={busy || !amount || !destination || !assets.some(item => item.symbol === asset)} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
       </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Secure request workflow: this action records a wallet request; no blockchain transaction is broadcast by this API.</div></aside></div>
     </section>;
   }
