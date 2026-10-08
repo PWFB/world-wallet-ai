@@ -59,7 +59,7 @@ function App() {
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [passwordMode, setPasswordMode] = useState(false);
+  const [passwordMode, setPasswordMode] = useState(true);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
@@ -471,68 +471,33 @@ function App() {
   }
 
   if (!accessToken && !showLogin) {
-    return (
-      <div className="landing-shell">
-        <header className="landing-nav">
-          <button className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
-            <span className="brand-mark">W</span>
-            <span><b>WORLD WALLET</b><em>AI</em></span>
-          </button>
-          <nav className="landing-links">
-            <a href="#features">Features</a>
-            <a href="#security">Security</a>
-            <a href="#ai">BALMZ AI</a>
-          </nav>
-          <button className="landing-login" onClick={() => setShowLogin(true)}>Sign in <span>→</span></button>
-        </header>
-
-        <main>
-          <section className="landing-hero">
-            <div className="landing-orbit landing-orbit-one" />
-            <div className="landing-orbit landing-orbit-two" />
-            <div className="landing-hero-copy">
-              <div className="landing-badge"><span /> INTELLIGENT DIGITAL WALLET</div>
-              <h1>Your wallet.<br /><em>Beyond borders.</em></h1>
-              <p>Manage your digital assets, available balance and wallet activity from one secure global workspace, enhanced by BALMZ AI.</p>
-              <div className="landing-cta">
-                <button className="landing-primary" onClick={() => setShowLogin(true)}>Enter World Wallet AI <span>→</span></button>
-                <a className="landing-secondary" href="#features">Explore features</a>
-              </div>
-              <div className="landing-trust"><span>✓</span> Real wallet data &nbsp;•&nbsp; Secure authentication &nbsp;•&nbsp; Mainnet ready</div>
-            </div>
-            <div className="landing-wallet-card">
-              <div className="landing-card-glow" />
-              <div className="landing-card-top"><span>WORLD WALLET AI</span><b>LIVE</b></div>
-              <div className="landing-card-chip">W</div>
-              <div className="landing-card-balance"><small>AVAILABLE BALANCE</small><strong>Securely connected</strong><span>USD • Digital Assets</span></div>
-              <div className="landing-card-line" />
-              <div className="landing-card-assets"><span><b>BALMZ</b><small>AI ecosystem</small></span><span><b>BTC</b><small>Bitcoin</small></span><span><b>ETH</b><small>Ethereum</small></span></div>
-            </div>
-          </section>
-
-          <section id="features" className="landing-section">
-            <div className="landing-section-heading"><span>01</span><div><p className="eyebrow">ONE GLOBAL WORKSPACE</p><h2>Everything your wallet needs.</h2></div></div>
-            <div className="landing-feature-grid">
-              <article><i>◈</i><h3>Available balance</h3><p>See the value available in your wallet from authenticated, live wallet data.</p></article>
-              <article><i>↗</i><h3>Move assets</h3><p>Send, receive and manage supported digital assets from one focused interface.</p></article>
-              <article><i>◎</i><h3>Portfolio intelligence</h3><p>Understand wallet activity and portfolio performance without fabricated numbers.</p></article>
-              <article id="ai"><i>✦</i><h3>BALMZ AI</h3><p>An intelligent layer designed to help you understand your digital wallet and assets.</p></article>
-            </div>
-          </section>
-
-          <section id="security" className="landing-security">
-            <div><p className="eyebrow">02 • SECURITY FIRST</p><h2>Your wallet access stays protected.</h2><p>World Wallet AI uses authenticated sessions and Neon Auth. Email OTP gives you passwordless access and account recovery without asking you to store a wallet password in the app.</p></div>
-            <div className="security-points"><div><b>01</b><span>Authenticated sessions</span></div><div><b>02</b><span>Email OTP access & recovery</span></div><div><b>03</b><span>Live wallet data only</span></div></div>
-          </section>
-        </main>
-
-        <footer className="landing-footer"><span>© 2026 WORLD WALLET AI</span><span>BALMZ AI • GLOBAL DIGITAL WALLET</span></footer>
-      </div>
-    );
+    return (<div className="ww-public-shell">
+      <header className="ww-public-nav"><button className="ww-public-brand" onClick={() => window.scrollTo({top:0,behavior:"smooth"})}><span className="ww-globe">◎</span><span><b>WORLD WALLET <em>AI</em></b><small>Your Crypto. Your Freedom. Powered by AI.</small></span></button><nav><a href="#features">Features</a><a href="#security">Security</a><a href="#support">Support</a></nav><button className="ww-nav-login" onClick={() => setShowLogin(true)}>Sign In <span>→</span></button></header>
+      <main><section className="ww-landing-hero"><div className="ww-hero-copy"><span className="ww-live-badge"><i/> SECURE • INTELLIGENT • GLOBAL</span><h1>The Smarter Way to<br/>Manage Your <em>Crypto</em></h1><p>Send, receive, swap, invest and understand your digital assets from one powerful wallet, enhanced by BALMZ AI.</p><div className="ww-hero-features"><div><b>◈</b><span><strong>Multi-Chain</strong><small>Support</small></span></div><div><b>◇</b><span><strong>Secure &amp;</strong><small>Private</small></span></div><div><b>✦</b><span><strong>AI-Powered</strong><small>Insights</small></span></div><div><b>↗</b><span><strong>Fast &amp; Global</strong><small>Transactions</small></span></div></div><div className="ww-market-strip"><div><b>BTC</b><span>Live market data</span></div><div><b>ETH</b><span>Live market data</span></div><div><b>USDT</b><span>Live market data</span></div></div><div className="ww-trust-line"><span>✓</span> Live wallet data • Neon Auth • Non-custodial architecture</div></div>
+      <div className="ww-login-preview"><div className="ww-login-card"><div className="ww-login-heading"><div className="ww-login-icon">◎</div><div><span>SECURE ACCESS</span><h2>Welcome Back</h2><p>Sign in to your World Wallet AI account</p></div></div><div className="ww-login-tabs"><b>Email &amp; Password</b><button onClick={() => {setShowLogin(true);setAuthMethod("google");setPasswordMode(false)}}>G&nbsp;&nbsp;Google</button></div><div className="ww-preview-field">✉ <span>Email address</span></div><div className="ww-preview-field">⌑ <span>Password</span><b>◉</b></div><div className="ww-preview-options"><span>☑ Remember me</span><button onClick={() => setShowLogin(true)}>Forgot password?</button></div><button className="ww-preview-submit" onClick={() => setShowLogin(true)}>Sign In <span>→</span></button><div className="ww-or"><i/> or <i/></div><button className="ww-google-preview" onClick={() => {setShowLogin(true);setAuthMethod("google");setPasswordMode(false)}}>G <span>Continue with Google</span></button><p className="ww-create">Don't have an account? <button onClick={() => setShowLogin(true)}>Create one</button></p></div><div className="ww-orbit ww-orbit-a"/><div className="ww-orbit ww-orbit-b"/></div></section>
+      <section id="features" className="ww-feature-section"><div className="ww-section-title"><span>01</span><div><small>ONE GLOBAL WORKSPACE</small><h2>Everything your wallet needs.</h2></div></div><div className="ww-feature-grid"><article><b>◈</b><h3>Multi-chain wallet</h3><p>One workspace for supported blockchain networks and assets.</p></article><article><b>◇</b><h3>Secure &amp; private</h3><p>Neon Auth protects account access while wallet signing stays non-custodial.</p></article><article><b>✦</b><h3>BALMZ AI</h3><p>Understand live portfolio data and wallet activity with your AI assistant.</p></article><article><b>↗</b><h3>Fast global actions</h3><p>Send, receive, swap and manage supported assets from one interface.</p></article></div></section>
+      <section id="security" className="ww-security-section"><div><small>02 • SECURITY FIRST</small><h2>Your wallet access stays protected.</h2><p>World Wallet AI uses Neon Auth for account sessions. The application does not invent balances or store private signing keys in the API.</p></div><div className="ww-security-points"><div><b>01</b><span>Neon Auth sessions</span></div><div><b>02</b><span>Email password + OTP</span></div><div><b>03</b><span>Live wallet data only</span></div></div></section></main>
+      <footer id="support" className="ww-public-footer"><span>© 2026 WORLD WALLET AI</span><span>BALMZ AI • GLOBAL DIGITAL WALLET</span></footer>
+    </div>);
   }
 
   if (!accessToken) {
-    return (
+    return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
+      <header className="ww-auth-top"><button onClick={() => {setShowLogin(false);setRecoveryMode(false);setLoginError("")}}><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></button><span>SECURE AUTHENTICATION • NEON AUTH</span></header>
+      <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
+      <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><button type="button" className="ww-back" onClick={() => {setShowLogin(false);setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← World Wallet AI</button><div className="ww-auth-card-head"><div className="ww-auth-card-icon">◎</div><div><small>{recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{recoveryMode?"Recover access":"Welcome Back"}</h2><p>{recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
+      {!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("")}}>Email &amp; Password</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button></div>}
+      {!recoveryMode&&authMethod==="google"?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button" type="button" onClick={handleGoogleSignIn} disabled={authBusy}>G&nbsp;&nbsp; Continue with Google</button><p className="ww-auth-note"><span>✓</span> Google authentication is handled by Neon Auth.</p></div>:
+      <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
+      {recoveryMode?(otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify code &amp; sign in <b>→</b></button></>:<button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send recovery code <b>→</b></button>):
+      passwordMode?<><label><span>Password</span><div className="ww-field"><i>⌑</i><input type="password" value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
+      otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify &amp; enter wallet <b>→</b></button><button className="ww-text-link" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send a new code</button></>:<><button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send secure code <b>→</b></button><button className="ww-text-link" type="button" onClick={() => setPasswordMode(true)}>Use email &amp; password</button></>}
+      {recoveryMode&&<button className="ww-text-link" type="button" onClick={() => {setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← Back to sign in</button>}
+      {loginError&&<div className="ww-auth-error"><b>!</b><span><strong>{recoveryMode?"Recovery failed":"Sign-in failed"}</strong><small>{loginError}</small></span></div>}<p className="ww-auth-note"><span>✓</span> Session verification is handled by Neon Auth and the World Wallet API.</p></div>}</form></section>
+    </div>);
+  }
+
+  return (
       <div className="login-shell">
         <div className="login-background login-background-one" />
         <div className="login-background login-background-two" />
