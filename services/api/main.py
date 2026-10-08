@@ -166,19 +166,6 @@ def init_db():
         ON CONFLICT(symbol,network) DO UPDATE SET
           name=EXCLUDED.name,
           status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
-        if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
-            conn.execute(
-                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
-                "WHERE symbol='USDT' AND network='ethereum'",
-                (USDT_ETH_CONTRACT,),
-            )
-        if USDT_BSC_CONTRACT and valid_evm_address(USDT_BSC_CONTRACT):
-            conn.execute(
-                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
-                "WHERE symbol='USDT' AND network='bnb'",
-                (USDT_BSC_CONTRACT,),
-            )
-
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
@@ -229,6 +216,18 @@ def init_db():
           PRIMARY KEY(wallet_id,source)
         );
         """)
+        if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
+                "WHERE symbol='USDT' AND network='ethereum'",
+                (USDT_ETH_CONTRACT,),
+            )
+        if USDT_BSC_CONTRACT and valid_evm_address(USDT_BSC_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
+                "WHERE symbol='USDT' AND network='bnb'",
+                (USDT_BSC_CONTRACT,),
+            )
         legacy_holds = conn.execute("""
           SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
           FROM assets a
