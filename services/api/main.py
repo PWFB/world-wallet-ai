@@ -1,6 +1,7 @@
 import os
 import hashlib
 from datetime import datetime, timezone
+from decimal import Decimal
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -54,17 +55,17 @@ class GoogleLoginRequest(BaseModel):
 
 class TransferRequest(BaseModel):
     asset: str = Field(min_length=2, max_length=12)
-    amount: float = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=36, decimal_places=18)
     recipient: str = Field(min_length=4, max_length=128)
-    network: str = Field(default="mainnet", min_length=3, max_length=32)
+    network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
 
 
 class WithdrawalRequest(BaseModel):
     asset: str = Field(min_length=2, max_length=12)
-    amount: float = Field(gt=0)
+    amount: Decimal = Field(gt=0, max_digits=36, decimal_places=18)
     destination: str = Field(min_length=4, max_length=128)
-    network: str = Field(default="mainnet", min_length=3, max_length=32)
+    network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
 
 
@@ -120,7 +121,7 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS assets(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
-          balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
+          balance NUMERIC(36,18) NOT NULL DEFAULT 0, reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
         );
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
@@ -147,6 +148,14 @@ def init_db():
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
+        ALTER TABLE assets ADD COLUMN IF NOT EXISTS reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0;
+        CREATE TABLE IF NOT EXISTS accounting_migrations(
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          symbol TEXT NOT NULL,
+          migrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY(wallet_id,symbol)
+        );
+        
         """)
         conn.commit()
 
@@ -491,17 +500,23 @@ def sync_bitcoin_transactions(user):
 
 def wallet_snapshot(user):
     with db() as conn:
-        assets = []
-        for symbol,name,balance,price in conn.execute("SELECT symbol,name,balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
-            assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":float(price or 0),"value_usd":float(balance)*float(price or 0),"change_24h":0})
-        txs = []
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
+        assets=[]
+        for symbol,name,balance,reserved_balance,price in conn.execute(
+            "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
+        ):
+            actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
+            assets.append({"symbol":symbol,"name":name,"balance":float(available),"actual_balance":float(actual),
+                "reserved_balance":float(reserved),"price_usd":float(p),"value_usd":float(available*p),
+                "actual_value_usd":float(actual*p),"change_24h":0})
+        txs=[]
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"time":row[10].isoformat()})
-    total = sum(x["value_usd"] for x in assets)
-    prices = {x["symbol"]: x["price_usd"] for x in assets}
-    total_received = sum(abs(x["amount"]) * prices.get(x["asset"], 0) for x in txs if x["type"] == "received")
-    total_sent = sum(abs(x["amount"]) * prices.get(x["asset"], 0) for x in txs if x["type"] in ("sent", "withdrawal") and x["amount"] < 0)
-    return assets,txs,{"available_balance_usd":total,"total_received_usd":total_received,"total_sent_usd":total_sent,"profit_usd":0,"change_24h":0}
+    prices={x["symbol"]:x["price_usd"] for x in assets}
+    return assets,txs,{"available_balance_usd":sum(x["value_usd"] for x in assets),"actual_balance_usd":sum(x["actual_value_usd"] for x in assets),
+        "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets),
+        "total_received_usd":sum(abs(x["amount"])*prices.get(x["asset"],0) for x in txs if x["type"]=="received"),
+        "total_sent_usd":sum(abs(x["amount"])*prices.get(x["asset"],0) for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0),"profit_usd":0,"change_24h":0}
+
 
 
 @app.on_event("startup")
@@ -841,46 +856,52 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
         "note": "This check confirms deployed bytecode only; it does not prove source-code verification or safety.",
     }
 
-def reserve_asset(user, symbol: str, amount: float):
-    with db() as conn:
-        row = conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE", (user["wallet_id"],symbol)).fetchone()
-        if not row:
-            conn.rollback()
-            return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
-        if amount > float(row[0]):
-            conn.rollback()
-            return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":amount}
-        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(amount,user["wallet_id"],symbol))
-        return conn
-
+def reserve_asset(conn,user,symbol: str,amount: Decimal):
+    row=conn.execute("SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
+    if not row: return False,{"status":"rejected","reason":"Unsupported asset","asset":symbol}
+    actual=Decimal(row[0] or 0); reserved=Decimal(row[1] or 0); available=actual-reserved
+    if amount>available: return False,{"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(max(available,Decimal("0"))),"requested":float(amount)}
+    conn.execute("UPDATE assets SET reserved_balance=reserved_balance+%s WHERE wallet_id=%s AND symbol=%s",(amount,user["wallet_id"],symbol))
+    return True,None
 
 @app.post("/api/v1/transfers")
-def transfer(request: TransferRequest, user: dict = Depends(current_user)):
-    symbol, network = validate_asset_network(request.asset, request.network)
-    if not valid_destination_for_network(request.recipient, network):
-        raise HTTPException(status_code=400, detail="Invalid recipient address for selected network")
+def transfer(request: TransferRequest,user: dict = Depends(current_user)):
+    symbol,network=validate_asset_network(request.asset,request.network)
+    if not valid_destination_for_network(request.recipient,network): raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
     with db() as conn:
-        row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
-        if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
-        if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
+        ok,rejection=reserve_asset(conn,user,symbol,request.amount)
+        if not ok: conn.rollback(); return rejection
         txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
-        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
         conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",(txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
         conn.commit()
-    return {"status":"pending","mode":"database","transfer":{"id":txid,"asset":symbol,"amount":request.amount,"recipient":request.recipient,"network":network}}
-
+    return {"status":"pending","mode":"database","accounting":"reserved","broadcast":False,"transfer":{"id":txid,"asset":symbol,"amount":float(request.amount),"recipient":request.recipient,"network":network}}
 
 @app.post("/api/v1/withdrawals")
-def withdrawal(request: WithdrawalRequest, user: dict = Depends(current_user)):
-    symbol, network = validate_asset_network(request.asset, request.network)
-    if not valid_destination_for_network(request.destination, network):
-        raise HTTPException(status_code=400, detail="Invalid destination address for selected network")
+def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
+    symbol,network=validate_asset_network(request.asset,request.network)
+    if not valid_destination_for_network(request.destination,network): raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
     with db() as conn:
-        row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
-        if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
-        if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
+        ok,rejection=reserve_asset(conn,user,symbol,request.amount)
+        if not ok: conn.rollback(); return rejection
         txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
-        conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
         conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",(txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
         conn.commit()
-    return {"status":"pending_review","mode":"database","withdrawal":{"id":txid,"asset":symbol,"amount":request.amount,"destination":request.destination,"network":request.network}}
+    return {"status":"pending_review","mode":"database","accounting":"reserved","broadcast":False,"withdrawal":{"id":txid,"asset":symbol,"amount":float(request.amount),"destination":request.destination,"network":network}}
+
+class TransactionCancelRequest(BaseModel):
+    transaction_id: str = Field(min_length=4,max_length=80)
+
+@app.post("/api/v1/transactions/cancel")
+def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(current_user)):
+    with db() as conn:
+        row=conn.execute("SELECT id,asset,amount,status,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(request.transaction_id,user["wallet_id"])).fetchone()
+        if not row: raise HTTPException(status_code=404,detail="Transaction not found")
+        txid,symbol,amount,status,tx_hash=row
+        if status not in {"pending","pending_review"} or tx_hash: raise HTTPException(status_code=409,detail="Only unbroadcast pending requests can be cancelled")
+        hold=-Decimal(amount)
+        asset=conn.execute("SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
+        if not asset or Decimal(asset[0] or 0)<hold: raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
+        conn.execute("UPDATE assets SET reserved_balance=reserved_balance-%s WHERE wallet_id=%s AND symbol=%s",(hold,user["wallet_id"],symbol))
+        conn.execute("UPDATE transactions SET status='cancelled' WHERE id=%s AND wallet_id=%s",(txid,user["wallet_id"]))
+        conn.commit()
+    return {"status":"cancelled","transaction_id":txid,"asset":symbol,"released":float(hold)}
