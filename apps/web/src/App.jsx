@@ -39,6 +39,7 @@ function App() {
   const [active, setActive] = useState("Dashboard");
   const [coinFilter, setCoinFilter] = useState("all");
   const [coinSearch, setCoinSearch] = useState("");
+  const [selectedCoin, setSelectedCoin] = useState(null);
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
@@ -598,7 +599,51 @@ function App() {
           <div className="top-actions"><button>⌕ <span>Search</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title={user?.email || "Wallet account"}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button></div>
         </header>
 
-        {active === "Dashboard" ? (
+        {selectedCoin ? (() => {
+          const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
+          const live = assets.find(a => a.symbol === selectedCoin);
+          const balance = live?.balance || 0;
+          const value = live?.value_usd || 0;
+          const price = live?.price_usd || 0;
+          const change = live?.change_24h;
+          const rows = activity.filter(item => item.asset === selectedCoin || item.symbol === selectedCoin);
+          return <section className="content coin-detail-page">
+            <div className="page-heading">
+              <div>
+                <button className="back-btn" onClick={() => setSelectedCoin(null)}>← Back to wallet</button>
+                <p className="eyebrow">ASSET DETAIL</p>
+                <h1>{coin?.name || selectedCoin}</h1>
+                <p className="muted">{selectedCoin} • {coin?.status || "Wallet asset"}</p>
+              </div>
+              <div className="page-actions">
+                <button className="secondary" onClick={() => { setActive("Receive"); setSelectedCoin(null); }}>Receive</button>
+                <button className="primary" onClick={() => { setActive("Send"); setSelectedCoin(null); }}>Send</button>
+              </div>
+            </div>
+            <div className="coin-detail-grid">
+              <article className="hero-card coin-detail-card">
+                <div className="card-top"><span>AVAILABLE BALANCE</span><span className={`asset-icon coin-icon coin-${selectedCoin.toLowerCase()}`}>{coin?.icon}</span></div>
+                <div className="hero-balance">{number(balance)} <small>{selectedCoin}</small></div>
+                <div className="balance-meta"><span>{money(value)} USD</span><b>{price ? `${money(price)} / coin` : "Live price unavailable"}</b></div>
+              </article>
+              <article className="panel coin-stats">
+                <div><small>24h change</small><b>{change == null ? "—" : `${Number(change).toFixed(2)}%`}</b></div>
+                <div><small>Wallet status</small><b>{live ? "Connected" : "Catalog only"}</b></div>
+                <div><small>Network</small><b>{coin?.status || "—"}</b></div>
+              </article>
+            </div>
+            <div className="coin-action-grid">
+              <button onClick={() => { setActive("Receive"); setSelectedCoin(null); }}>Receive</button>
+              <button onClick={() => { setActive("Send"); setSelectedCoin(null); }}>Send</button>
+              <button onClick={() => { setActive("Swap"); setSelectedCoin(null); }}>Swap</button>
+            </div>
+            <article className="panel">
+              <div className="panel-head"><div><h2>{selectedCoin} activity</h2><span>Authenticated wallet records only</span></div><button className="text-btn" onClick={() => { setActive("Transactions"); setSelectedCoin(null); }}>All transactions →</button></div>
+              {rows.length ? rows.map((item,i) => <div className="activity-row" key={item.id || i}><div><b>{item.type || item.direction || "Transaction"}</b><small>{item.status || "Recorded"}</small></div><strong>{item.amount || "—"} {selectedCoin}</strong></div>) : <div className="empty-state">No real {selectedCoin} transactions recorded yet.</div>}
+            </article>
+            <div className="coin-detail-note">Only authenticated wallet data is displayed. Catalog entries never create balances, prices, or transaction history.</div>
+          </section>;
+        })() :         
           <section className="content">
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
@@ -659,13 +704,13 @@ function App() {
                     const value = live ? live.value_usd : 0;
                     const price = live ? live.price_usd : 0;
                     const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : "Catalog only • live wallet not connected";
-                    return <div className="asset-row" key={c.symbol}>
+                    return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}{price ? ` • ${money(price)}/coin` : ""}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </div>;
-                  })}</div>
+                  })}</button>>
                 <div className="coin-catalog-note">Balances and prices are shown only when supplied by the authenticated wallet data source. Catalog entries never create a fake balance.</div>
               </article>
 
