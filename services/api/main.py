@@ -67,6 +67,33 @@ class WithdrawalRequest(BaseModel):
     note: str | None = Field(default=None, max_length=200)
 
 
+class RequestCreate(BaseModel):
+    kind: str = Field(min_length=2, max_length=32)
+    title: str = Field(min_length=2, max_length=120)
+    details: str = Field(default="", max_length=1000)
+
+
+class RequestStatusUpdate(BaseModel):
+    request_id: str = Field(min_length=4, max_length=80)
+    status: str = Field(min_length=2, max_length=32)
+
+
+class AddressBookCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    address: str = Field(min_length=4, max_length=128)
+    network: str = Field(min_length=2, max_length=32)
+    notes: str = Field(default="", max_length=200)
+
+
+class AddressBookDelete(BaseModel):
+    id: str = Field(min_length=4, max_length=80)
+
+
+class ContractVerifyRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    network: str = Field(min_length=2, max_length=16)
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
@@ -103,6 +130,18 @@ def init_db():
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
           status TEXT NOT NULL, destination TEXT, network TEXT, tx_hash TEXT, confirmations INTEGER NOT NULL DEFAULT 0,
           block_height INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS address_book(
+          id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          label TEXT NOT NULL, address TEXT NOT NULL, network TEXT NOT NULL,
+          notes TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(wallet_id,network,address)
+        );
+        CREATE TABLE IF NOT EXISTS wallet_requests(
+          id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          kind TEXT NOT NULL, title TEXT NOT NULL, details TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
@@ -543,6 +582,116 @@ def sync_transactions(user: dict = Depends(current_user)):
     assets,tx,summary = wallet_snapshot(user)
     return {"status":"synced","imported":imported,"transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
 
+
+
+
+@app.get("/api/v1/wallet/connect")
+def wallet_connect(user: dict = Depends(current_user)):
+    addresses = configured_addresses(user)
+    return {
+        "status": "connected" if addresses else "not_configured",
+        "mode": "read_only",
+        "addresses": addresses,
+        "networks": sorted({a["network"] for a in addresses}),
+        "message": None if addresses else "No production wallet address is configured yet",
+    }
+
+
+@app.get("/api/v1/request-center")
+def request_center(user: dict = Depends(current_user)):
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,kind,title,details,status,created_at,updated_at FROM wallet_requests WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",
+            (user["wallet_id"],),
+        ).fetchall()
+    return {"requests":[{"id":r[0],"kind":r[1],"title":r[2],"details":r[3],"status":r[4],"created_at":r[5].isoformat(),"updated_at":r[6].isoformat()} for r in rows]}
+
+
+@app.post("/api/v1/request-center")
+def create_request(request: RequestCreate, user: dict = Depends(current_user)):
+    kind = request.kind.strip().lower()
+    if kind not in {"support","withdrawal_review","transfer_review","account","security","other"}:
+        raise HTTPException(status_code=400, detail="Unsupported request type")
+    request_id = "req_" + sha(user["wallet_id"] + datetime.now(timezone.utc).isoformat())[:24]
+    with db() as conn:
+        conn.execute("INSERT INTO wallet_requests(id,wallet_id,kind,title,details,status) VALUES(%s,%s,%s,%s,%s,'open')",
+                     (request_id,user["wallet_id"],kind,request.title.strip(),request.details.strip()))
+        conn.commit()
+    return {"status":"created","request":{"id":request_id,"kind":kind,"title":request.title.strip(),"details":request.details.strip(),"status":"open"}}
+
+
+@app.post("/api/v1/request-center/status")
+def update_request_status(request: RequestStatusUpdate, user: dict = Depends(current_user)):
+    status = request.status.strip().lower()
+    if status not in {"open","in_review","resolved","closed"}:
+        raise HTTPException(status_code=400, detail="Unsupported request status")
+    with db() as conn:
+        row = conn.execute("SELECT id FROM wallet_requests WHERE id=%s AND wallet_id=%s FOR UPDATE", (request.request_id,user["wallet_id"])).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Request not found")
+        conn.execute("UPDATE wallet_requests SET status=%s,updated_at=NOW() WHERE id=%s AND wallet_id=%s", (status,request.request_id,user["wallet_id"]))
+        conn.commit()
+    return {"status":"updated","request_id":request.request_id,"request_status":status}
+
+
+@app.get("/api/v1/address-book")
+def address_book(user: dict = Depends(current_user)):
+    with db() as conn:
+        rows = conn.execute("SELECT id,label,address,network,notes,created_at FROM address_book WHERE wallet_id=%s ORDER BY label", (user["wallet_id"],)).fetchall()
+    return {"entries":[{"id":r[0],"label":r[1],"address":r[2],"network":r[3],"notes":r[4],"created_at":r[5].isoformat()} for r in rows]}
+
+
+@app.post("/api/v1/address-book")
+def add_address_book(request: AddressBookCreate, user: dict = Depends(current_user)):
+    network = request.network.strip().lower()
+    if network not in {"ethereum","bnb","bitcoin","mainnet"}:
+        raise HTTPException(status_code=400, detail="Unsupported address-book network")
+    if network in {"ethereum","bnb"} and not valid_evm_address(request.address.strip()):
+        raise HTTPException(status_code=400, detail="Invalid EVM address")
+    entry_id = "addr_" + sha(user["wallet_id"] + request.address.strip().lower() + network)[:24]
+    with db() as conn:
+        try:
+            conn.execute("INSERT INTO address_book(id,wallet_id,label,address,network,notes) VALUES(%s,%s,%s,%s,%s,%s)",
+                         (entry_id,user["wallet_id"],request.label.strip(),request.address.strip(),network,request.notes.strip()))
+        except psycopg.errors.UniqueViolation as exc:
+            conn.rollback()
+            raise HTTPException(status_code=409, detail="This address is already in your address book") from exc
+        conn.commit()
+    return {"status":"created","entry":{"id":entry_id,"label":request.label.strip(),"address":request.address.strip(),"network":network,"notes":request.notes.strip()}}
+
+
+@app.post("/api/v1/address-book/delete")
+def delete_address_book(request: AddressBookDelete, user: dict = Depends(current_user)):
+    with db() as conn:
+        result = conn.execute("DELETE FROM address_book WHERE id=%s AND wallet_id=%s", (request.id,user["wallet_id"]))
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Address-book entry not found")
+        conn.commit()
+    return {"status":"deleted","id":request.id}
+
+
+@app.post("/api/v1/contracts/verify")
+def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current_user)):
+    address = request.address.strip()
+    network = request.network.strip().lower()
+    if not valid_evm_address(address):
+        raise HTTPException(status_code=400, detail="Invalid EVM contract address")
+    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    if not rpc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
+    try:
+        code = rpc_call(rpc, "eth_getCode", [address, "latest"])
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Blockchain RPC unavailable") from exc
+    has_code = bool(code and code not in {"0x","0x0"})
+    return {
+        "status": "contract" if has_code else "no_contract_code",
+        "network": network,
+        "address": address,
+        "contract": has_code,
+        "source_verified": False,
+        "note": "This check confirms deployed bytecode only; it does not prove source-code verification or safety.",
+    }
 
 def reserve_asset(user, symbol: str, amount: float):
     with db() as conn:
