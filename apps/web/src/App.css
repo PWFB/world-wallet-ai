@@ -84,3 +84,8 @@
   .page-actions{width:100%}
   .page-actions button{flex:1}
 }
+
+
+.recovery-link{display:block;width:100%;text-align:center;margin-top:13px;color:#00bde8;background:none;font-size:9px}
+.recovery-link:hover,.recovery-back:hover{color:#7de9ff;text-decoration:underline}
+.recovery-back{display:block;width:100%;text-align:center;margin-top:10px}
