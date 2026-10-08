@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 import httpx
 import jwt
 from jwt import PyJWKClient
+from Crypto.Hash import keccak
 
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
@@ -237,8 +238,149 @@ def session(user):
     return {"access_token": SESSION_TOKEN, "token_type": "bearer", "user": user, "mode": "database"}
 
 
+BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+BECH32_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+
+def _keccak_hex(value: str) -> str:
+    digest = keccak.new(digest_bits=256)
+    digest.update(value.encode("ascii"))
+    return digest.hexdigest()
+
+
 def valid_evm_address(address: str) -> bool:
-    return len(address) == 42 and address.startswith("0x") and all(c in "0123456789abcdefABCDEF" for c in address[2:])
+    value = address.strip()
+    if len(value) != 42 or not value.startswith(("0x", "0X")):
+        return False
+    body = value[2:]
+    if any(c not in "0123456789abcdefABCDEF" for c in body):
+        return False
+    # All-lower/all-upper addresses are valid legacy EVM representations.
+    if body.islower() or body.isupper() or body.isdigit():
+        return True
+    lowered = body.lower()
+    checksum = _keccak_hex(lowered)
+    return all(
+        (not c.isalpha()) or (c.isupper() == (int(checksum[i], 16) >= 8))
+        for i, c in enumerate(body)
+    )
+
+
+def _base58_decode(value: str):
+    if not value or any(c not in BASE58_ALPHABET for c in value):
+        return None
+    number = 0
+    for c in value:
+        number = number * 58 + BASE58_ALPHABET.index(c)
+    raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    leading = len(value) - len(value.lstrip("1"))
+    return b"\\x00" * leading + raw
+
+
+def valid_bitcoin_base58(address: str) -> bool:
+    raw = _base58_decode(address.strip())
+    if not raw or len(raw) != 25:
+        return False
+    payload, checksum = raw[:-4], raw[-4:]
+    return hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4] == checksum and payload[0] in {0, 5}
+
+
+def _bech32_polymod(values):
+    generator = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+    chk = 1
+    for value in values:
+        top = chk >> 25
+        chk = ((chk & 0x1ffffff) << 5) ^ value
+        for i in range(5):
+            if (top >> i) & 1:
+                chk ^= generator[i]
+    return chk
+
+
+def _bech32_hrp_expand(hrp):
+    return [ord(x) >> 5 for x in hrp] + [0] + [ord(x) & 31 for x in hrp]
+
+
+def _bech32_decode(address: str):
+    if not address or address.lower() != address and address.upper() != address:
+        return None
+    value = address.lower()
+    pos = value.rfind("1")
+    if pos < 1 or pos + 7 > len(value) or len(value) > 90:
+        return None
+    hrp, data = value[:pos], value[pos + 1:]
+    try:
+        values = [BECH32_CHARSET.index(c) for c in data]
+    except ValueError:
+        return None
+    if _bech32_polymod(_bech32_hrp_expand(hrp) + values) != 1:
+        return None
+    return hrp, values[:-6]
+
+
+def _convertbits(data, from_bits, to_bits, pad=False):
+    acc = 0
+    bits = 0
+    ret = []
+    maxv = (1 << to_bits) - 1
+    for value in data:
+        if value < 0 or value >> from_bits:
+            return None
+        acc = (acc << from_bits) | value
+        bits += from_bits
+        while bits >= to_bits:
+            bits -= to_bits
+            ret.append((acc >> bits) & maxv)
+    if pad:
+        if bits:
+            ret.append((acc << (to_bits - bits)) & maxv)
+    elif bits >= from_bits or ((acc << (to_bits - bits)) & maxv):
+        return None
+    return ret
+
+
+def valid_bitcoin_segwit(address: str) -> bool:
+    decoded = _bech32_decode(address.strip())
+    if not decoded or decoded[0] != "bc" or not decoded[1]:
+        return False
+    witness_version = decoded[1][0]
+    if witness_version > 16:
+        return False
+    program = _convertbits(decoded[1][1:], 5, 8, False)
+    if program is None or not 2 <= len(program) <= 40:
+        return False
+    if witness_version == 0 and len(program) not in {20, 32}:
+        return False
+    return True
+
+
+def valid_bitcoin_address(address: str) -> bool:
+    value = address.strip()
+    return valid_bitcoin_base58(value) or valid_bitcoin_segwit(value)
+
+
+def valid_destination_for_network(address: str, network: str) -> bool:
+    value = address.strip()
+    if network in {"ethereum", "bnb"}:
+        return valid_evm_address(value)
+    if network == "bitcoin":
+        return valid_bitcoin_address(value)
+    return False
+
+
+def validate_asset_network(asset: str, network: str):
+    symbol = asset.upper().strip()
+    net = network.strip().lower()
+    allowed = {
+        "ETH": {"ethereum"},
+        "BNB": {"bnb"},
+        "USDT": {"ethereum", "bnb"},
+        "BTC": {"bitcoin"},
+        "BALMZ": {"ethereum"},
+    }
+    if symbol not in allowed or net not in allowed[symbol]:
+        raise HTTPException(status_code=400, detail=f"{symbol} is not supported on the {net} network")
+    return symbol, net
 
 
 def configured_addresses(user):
@@ -644,10 +786,10 @@ def address_book(user: dict = Depends(current_user)):
 @app.post("/api/v1/address-book")
 def add_address_book(request: AddressBookCreate, user: dict = Depends(current_user)):
     network = request.network.strip().lower()
-    if network not in {"ethereum","bnb","bitcoin","mainnet"}:
+    if network not in {"ethereum","bnb","bitcoin"}:
         raise HTTPException(status_code=400, detail="Unsupported address-book network")
-    if network in {"ethereum","bnb"} and not valid_evm_address(request.address.strip()):
-        raise HTTPException(status_code=400, detail="Invalid EVM address")
+    if not valid_destination_for_network(request.address, network):
+        raise HTTPException(status_code=400, detail="Invalid address for selected network")
     entry_id = "addr_" + sha(user["wallet_id"] + request.address.strip().lower() + network)[:24]
     with db() as conn:
         try:
@@ -708,12 +850,9 @@ def reserve_asset(user, symbol: str, amount: float):
 
 @app.post("/api/v1/transfers")
 def transfer(request: TransferRequest, user: dict = Depends(current_user)):
-    symbol=request.asset.upper().strip()
-    network=request.network.strip().lower()
-    if network not in {"mainnet", "ethereum", "bnb", "bitcoin"}:
-        raise HTTPException(status_code=400, detail="Unsupported network")
-    if symbol not in {"BALMZ", "BTC", "USDT", "ETH", "BNB"}:
-        raise HTTPException(status_code=400, detail="Unsupported asset")
+    symbol, network = validate_asset_network(request.asset, request.network)
+    if not valid_destination_for_network(request.recipient, network):
+        raise HTTPException(status_code=400, detail="Invalid recipient address for selected network")
     with db() as conn:
         row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
         if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
@@ -727,12 +866,9 @@ def transfer(request: TransferRequest, user: dict = Depends(current_user)):
 
 @app.post("/api/v1/withdrawals")
 def withdrawal(request: WithdrawalRequest, user: dict = Depends(current_user)):
-    symbol=request.asset.upper().strip()
-    network=request.network.strip().lower()
-    if network not in {"mainnet", "ethereum", "bnb", "bitcoin"}:
-        raise HTTPException(status_code=400, detail="Unsupported network")
-    if symbol not in {"BALMZ", "BTC", "USDT", "ETH", "BNB"}:
-        raise HTTPException(status_code=400, detail="Unsupported asset")
+    symbol, network = validate_asset_network(request.asset, request.network)
+    if not valid_destination_for_network(request.destination, network):
+        raise HTTPException(status_code=400, detail="Invalid destination address for selected network")
     with db() as conn:
         row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
         if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
