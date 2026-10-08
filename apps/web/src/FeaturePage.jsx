@@ -396,7 +396,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
         </div>
         <label>Label<input value={note} onChange={e => setNote(e.target.value)} placeholder="primary"/></label>
         <button className="primary feature-submit" disabled={walletBusy || !walletId || !destination.trim()} onClick={addAddress}>{walletBusy ? "Connecting…" : "Connect address →"}</button>
-        <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract, when deployed, identifies the token; the wallet address does not need a separate address for every ERC-20 token. citeturn0search0</div>
+        <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract, when deployed, identifies the token; the wallet address does not need a separate address for every ERC-20 token.</div>
         <div className="security-note">BALMZ is currently shown as contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, it can be registered and its on-chain metadata and balance can be read.</div>
       </article>
     </section>;
