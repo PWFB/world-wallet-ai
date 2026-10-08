@@ -155,6 +155,32 @@ def init_db():
           migrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,symbol)
         );
+        legacy_holds = conn.execute("""
+          SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
+          FROM assets a
+          LEFT JOIN transactions t
+            ON t.wallet_id=a.wallet_id AND t.asset=a.symbol
+           AND t.tx_hash IS NULL AND t.amount < 0
+           AND t.status IN ('pending','pending_review')
+          WHERE NOT EXISTS (
+            SELECT 1 FROM accounting_migrations m
+            WHERE m.wallet_id=a.wallet_id AND m.symbol=a.symbol
+          )
+          GROUP BY a.wallet_id,a.symbol
+        """).fetchall()
+        for wallet_id,symbol,legacy_reserved in legacy_holds:
+            hold=legacy_reserved or Decimal("0")
+            if hold > 0:
+                conn.execute(
+                    "UPDATE assets SET balance=balance+%s,reserved_balance=reserved_balance+%s "
+                    "WHERE wallet_id=%s AND symbol=%s",
+                    (hold,hold,wallet_id,symbol),
+                )
+            conn.execute(
+                "INSERT INTO accounting_migrations(wallet_id,symbol) VALUES(%s,%s) "
+                "ON CONFLICT DO NOTHING",
+                (wallet_id,symbol),
+            )
         
         """)
         conn.commit()
