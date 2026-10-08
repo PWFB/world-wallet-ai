@@ -176,19 +176,29 @@ function App() {
         setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
         setNetworkStatus(data.network_status || {});
         setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
-      try {
-        const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: { Authorization: "Bearer " + accessToken } });
-        const walletData = await walletResponse.json();
-        setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
-      } catch {
-        setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
-      }
         try {
           const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: authHeaders });
           const walletData = await walletResponse.json();
-          if (!cancelled) setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
+          if (!walletResponse.ok) throw new Error(walletData.detail || "Live wallet connection status unavailable.");
+          if (!cancelled) {
+            setLiveWallet({
+              status: walletData.status || "not_configured",
+              mode: walletData.mode || "read_only",
+              addresses: walletData.addresses || [],
+              networks: walletData.networks || [],
+              message: walletData.message || "",
+            });
+          }
         } catch {
-          if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
+          if (!cancelled) {
+            setLiveWallet({
+              status: "error",
+              mode: "read_only",
+              addresses: [],
+              networks: [],
+              message: "Live wallet connection status unavailable.",
+            });
+          }
         }
       } catch (error) {
         if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
