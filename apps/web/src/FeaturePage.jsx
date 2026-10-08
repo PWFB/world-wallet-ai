@@ -94,11 +94,17 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       <div className="feature-grid">
         <article className="panel receive-panel">
           <p className="feature-kicker">PRODUCTION DEPOSIT ADDRESSES</p>
-          {addresses.length ? addresses.map(item => <div className="receive-address" key={item.network}><div><b>{item.network.toUpperCase()}</b><small>{item.label}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button></div>) : <div className="live-chart-empty">{addressMessage || "No production wallet address configured."}</div>}
+          <div className="receive-selected">
+            <span>Receiving asset</span><strong>{asset}</strong><small>Choose the network below only when it matches the sender's network.</small>
+          </div>
+          {addresses.length ? addresses.filter(item => !networksForAsset(asset).length || networksForAsset(asset).some(n => n.value === item.network)).map(item => <div className="receive-address" key={item.network}>
+            <div><b>{item.network.toUpperCase()}</b><small>{item.label} • {asset}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button>
+          </div>) : <div className="live-chart-empty">{addressMessage || `No production ${asset} address configured for a compatible network.`}</div>
         </article>
         <article className="panel feature-summary">
-          <span className="feature-kicker">SUPPORTED ASSETS</span>
-          {assets.map(a=><div className="receive-asset" key={a.symbol}><span className="asset-icon">{a.icon}</span><div><b>{a.symbol}</b><small>{a.name}</small></div></div>)}
+          <span className="feature-kicker">RECEIVE SAFETY</span>
+          <div className="receive-asset"><span className="asset-icon">{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" ? "$" : "B"}</span><div><b>{asset}</b><small>{networksForAsset(asset).map(n => n.label).join(" / ") || "Network integration not configured"}</small></div></div>
+          <div className="security-note">✓ Only use an address on the selected asset's compatible network. Sending an asset on the wrong network can permanently lose funds.</div>
           <div className="security-note">✓ Addresses are read-only for receiving. No private key is stored by this API.</div>
         </article>
       </div>
