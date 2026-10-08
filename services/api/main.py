@@ -53,6 +53,16 @@ class GoogleLoginRequest(BaseModel):
     credential: str = Field(min_length=20, max_length=10000)
 
 
+class NeonAuthCredentials(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class NeonAuthOtpRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    otp: str = Field(min_length=4, max_length=12)
+
+
 class TransferRequest(BaseModel):
     idempotency_key: str = Field(min_length=8, max_length=128)
     asset: str = Field(min_length=2, max_length=12)
@@ -357,6 +367,88 @@ def current_user(authorization: str | None = Header(default=None)):
             raise HTTPException(status_code=401, detail="Wallet user not found")
         return user
     return neon_auth_user(token)
+
+
+
+
+def _neon_auth_origin():
+    return TRUSTED_ORIGINS[0] if TRUSTED_ORIGINS else "http://localhost:5173"
+
+
+def _neon_auth_json(response):
+    try:
+        value = response.json()
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _neon_auth_error(response):
+    payload = _neon_auth_json(response)
+    message = str(payload.get("message") or payload.get("error") or payload.get("code") or "Neon Auth request failed").strip()
+    if response.status_code in {400, 401}:
+        return "Invalid email, password, or sign-in code."
+    return message[:240]
+
+
+def _neon_auth_sign_in(path: str, body: dict):
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    base = NEON_AUTH_BASE_URL.rstrip("/")
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Origin": _neon_auth_origin(),
+        "User-Agent": "WorldWalletAI-AuthRelay/1.0",
+    }
+    try:
+        with httpx.Client(timeout=15, follow_redirects=False) as client:
+            response = client.post(base + path, json=body, headers=headers)
+            if not response.is_success:
+                raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=_neon_auth_error(response))
+            payload = _neon_auth_json(response)
+            token_response = client.get(base + "/token", headers={
+                "Accept": "application/json",
+                "Origin": _neon_auth_origin(),
+                "User-Agent": "WorldWalletAI-AuthRelay/1.0",
+            })
+            if not token_response.is_success:
+                raise HTTPException(status_code=502, detail="Neon Auth signed in, but the secure wallet token could not be created.")
+            token_payload = _neon_auth_json(token_response)
+            token = str(token_payload.get("token") or "").strip()
+            if not token:
+                raise HTTPException(status_code=502, detail="Neon Auth did not return a secure wallet token.")
+            auth_user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+            email = str(auth_user.get("email") or body.get("email") or "").strip().lower()
+            if not email:
+                raise HTTPException(status_code=502, detail="Neon Auth did not return a user identity.")
+            name = str(auth_user.get("name") or "World Wallet User").strip() or "World Wallet User"
+            user = provision_identity(email, name=name, google_subject=auth_user.get("id"))
+            return {"access_token": token, "token_type": "bearer", "user": user, "mode": "neon_auth_relay"}
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Unable to reach Neon Auth. Please try again.") from exc
+
+
+def _neon_auth_post(path: str, body: dict):
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    base = NEON_AUTH_BASE_URL.rstrip("/")
+    try:
+        response = httpx.post(base + path, json=body, headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Origin": _neon_auth_origin(),
+            "User-Agent": "WorldWalletAI-AuthRelay/1.0",
+        }, timeout=15, follow_redirects=False)
+        if not response.is_success:
+            raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=_neon_auth_error(response))
+        return _neon_auth_json(response)
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Unable to reach Neon Auth. Please try again.") from exc
 
 
 def session(user):
@@ -909,6 +1001,34 @@ def login(request: LoginRequest):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     user = provision_identity(IDENTITY_EMAIL, IDENTITY_PASSWORD)
     return session(user)
+
+
+
+
+@app.post("/api/v1/auth/neon/password")
+def neon_password_login(request: NeonAuthCredentials):
+    return _neon_auth_sign_in("/sign-in/email", {
+        "email": request.email.strip().lower(),
+        "password": request.password,
+        "rememberMe": True,
+    })
+
+
+@app.post("/api/v1/auth/neon/send-otp")
+def neon_send_otp(request: NeonAuthOtpRequest):
+    _neon_auth_post("/email-otp/send-verification-otp", {
+        "email": request.email.strip().lower(),
+        "type": "sign-in",
+    })
+    return {"ok": True}
+
+
+@app.post("/api/v1/auth/neon/otp")
+def neon_otp_login(request: NeonAuthOtpRequest):
+    return _neon_auth_sign_in("/sign-in/email-otp", {
+        "email": request.email.strip().lower(),
+        "otp": request.otp.strip(),
+    })
 
 
 @app.post("/api/v1/auth/google")
