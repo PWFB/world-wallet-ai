@@ -153,8 +153,27 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     return settleData;
   }
 
+  function isUserRejectedError(error) {
+    return Number(error?.code) === 4001 || /user rejected|user denied|rejected the request|denied the request/i.test(String(error?.message || ""));
+  }
+
+  async function cancelUnbroadcastTransaction(transactionId) {
+    if (!transactionId) return false;
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/transactions/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ transaction_id: transactionId }),
+      });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async function submit(endpoint) {
     setBusy(true); setMessage("");
+    let transactionId = "";
     try {
       const parsedAmount = Number(amount);
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) throw new Error("Enter an amount greater than zero.");
@@ -177,7 +196,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       const data = await r.json();
       if (!r.ok || data.status === "rejected") throw new Error(data.detail || data.reason || "Request failed");
 
-      const transactionId = data.transfer?.id || data.withdrawal?.id;
+      transactionId = data.transfer?.id || data.withdrawal?.id;
       if (isLiveEvm && transactionId) {
         const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim() });
         setMessage(settlement.status === "broadcast_pending" ? "Live transaction broadcast. Waiting for blockchain confirmation." : "Live transaction verified and wallet accounting reconciled.");
@@ -196,7 +215,18 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
           onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
         }
       }
-    } catch (e) { setMessage(e.message); } finally { setBusy(false); }
+    } catch (e) {
+      const rejected = isUserRejectedError(e);
+      if (rejected && transactionId) {
+        const cancelled = await cancelUnbroadcastTransaction(transactionId);
+        requestKeyRef.current = "";
+        setMessage(cancelled
+          ? "External wallet signing was cancelled. The pending reservation was released; no blockchain transaction was broadcast."
+          : "External wallet signing was cancelled. The request could not be auto-cancelled; verify the pending request before retrying.");
+      } else {
+        setMessage(e.message || "Transaction request failed.");
+      }
+    } finally { setBusy(false); }
   }
 
   if (active === "Send" || active === "Withdraw") {
