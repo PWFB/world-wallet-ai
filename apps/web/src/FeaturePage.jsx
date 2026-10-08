@@ -11,8 +11,8 @@ const networksForAsset = symbol => ({
   BALMZ: [{ value: "ethereum", label: "Ethereum" }],
 }[symbol] || []);
 
-export default function FeaturePage({ active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
-  const [asset, setAsset] = useState(assets[0]?.symbol || "BALMZ");
+export default function FeaturePage({ selectedAsset, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+  const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
@@ -27,6 +27,10 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [toolItems, setToolItems] = useState([]);
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    if (selectedAsset && selectedAsset !== asset) setAsset(selectedAsset);
+  }, [selectedAsset]);
 
   useEffect(() => {
     const options = networksForAsset(asset);
