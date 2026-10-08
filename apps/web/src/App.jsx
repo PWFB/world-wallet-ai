@@ -121,10 +121,17 @@ function App() {
       if (!accessToken) return;
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
+        let response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
           method: "POST",
           headers: authHeaders,
         });
+        if (response.status === 401) {
+          const freshToken = await getNeonAccessToken();
+          if (freshToken && freshToken !== accessToken && !cancelled) {
+            setAccessToken(freshToken);
+            return;
+          }
+        }
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `Wallet refresh returned ${response.status}`);
         if (cancelled) return;
@@ -178,7 +185,14 @@ function App() {
       if (!accessToken) return;
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
+        let response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
+        if (response.status === 401) {
+          const freshToken = await getNeonAccessToken();
+          if (freshToken && freshToken !== accessToken && !cancelled) {
+            setAccessToken(freshToken);
+            return;
+          }
+        }
         if (!response.ok) throw new Error("Transactions API unavailable");
         const data = await response.json();
         if (cancelled) return;
