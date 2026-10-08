@@ -185,12 +185,12 @@ function App() {
         ...asset,
         icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
       })));
-      setActivity((data.bitcoin_transactions || []).map(tx => ({
+      setActivity((data.transactions || []).map(tx => ({
         type: tx.type,
-        description: (tx.asset || "BTC") + " • Blockchain transaction",
-        amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || "BTC"),
+        description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
+        amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
         raw_amount: Number(tx.amount),
-        time: new Date().toISOString(),
+        time: tx.time,
         status: tx.status,
         tx_hash: tx.tx_hash,
         confirmations: Number(tx.confirmations || 0),
