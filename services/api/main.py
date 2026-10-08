@@ -168,7 +168,7 @@ def init_db():
             WHERE m.wallet_id=a.wallet_id AND m.symbol=a.symbol
           )
           GROUP BY a.wallet_id,a.symbol
-.fetchall()
+        """).fetchall()
         for wallet_id,symbol,legacy_reserved in legacy_holds:
             hold=legacy_reserved or Decimal("0")
             if hold > 0:
@@ -182,8 +182,6 @@ def init_db():
                 "ON CONFLICT DO NOTHING",
                 (wallet_id,symbol),
             )
-        
-        """)
         conn.commit()
 
 
