@@ -47,6 +47,7 @@ function App() {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
+  const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -146,6 +147,20 @@ function App() {
         setApiStatus("online");
         setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
         setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
+      try {
+        const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: { Authorization: "Bearer " + accessToken } });
+        const walletData = await walletResponse.json();
+        setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
+      } catch {
+        setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
+      }
+        try {
+          const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: authHeaders });
+          const walletData = await walletResponse.json();
+          if (!cancelled) setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
+        } catch {
+          if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
+        }
       } catch (error) {
         if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
       }
@@ -661,6 +676,27 @@ function App() {
               <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="neutral">Live wallet data</b><div className="mini-bars"><i/><i/><i/><i/><i/><i/><i/></div></article>
               <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="mini-line">╱╲╱╲╱╲╱</div></article>
               <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}%</b><div className="profit-line">╱╱╲╱╱╲╱</div></article>
+            </div>
+
+            <div className="live-wallet-panel panel">
+              <div className="live-wallet-main">
+                <div>
+                  <span className="feature-kicker">LIVE WALLET</span>
+                  <h2>{liveWallet.status === "connected" ? "Production wallet connected" : liveWallet.status === "checking" ? "Checking production wallet…" : "Production wallet not configured"}</h2>
+                  <p>{liveWallet.mode === "read_only" ? "Read-only blockchain connection • no private key or signing key is stored by the API." : "Wallet connection status"}</p>
+                </div>
+                <button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Syncing…" : "Refresh live wallet"}</button>
+              </div>
+              {liveWallet.addresses.length ? (
+                <div className="live-wallet-addresses">
+                  {liveWallet.addresses.map(item => <div className="live-wallet-address" key={item.network + ":" + item.address}>
+                    <b>{item.network === "bitcoin" ? "Bitcoin" : item.network === "bnb" ? "BNB Chain" : "Ethereum"}</b>
+                    <code>{item.address}</code>
+                  </div>)}
+                </div>
+              ) : (
+                <div className="live-wallet-empty">{liveWallet.message || "Configure the production wallet address and chain RPC settings on the backend to enable live balances."}</div>
+              )}
             </div>
 
             <div className="dashboard-grid">
