@@ -78,6 +78,31 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     return BigInt(whole + fraction.padEnd(decimals, "0"));
   }
 
+  async function broadcastExternalBitcoin({ transactionId, amount, destination }) {
+    if (!window.unisat) throw new Error("No compatible Bitcoin external wallet is available. Install or open a wallet that exposes the UniSat provider.");
+    const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
+    const config = await configResponse.json();
+    if (!configResponse.ok || !config.bitcoin?.wallet_address) throw new Error("Production Bitcoin signing is not configured.");
+    const accounts = await window.unisat.requestAccounts();
+    const signer = accounts?.[0];
+    if (!signer || signer.toLowerCase() !== config.bitcoin.wallet_address.toLowerCase()) {
+      throw new Error("Connect the configured production Bitcoin wallet address before signing this transaction.");
+    }
+    if (window.unisat.switchNetwork) await window.unisat.switchNetwork("livenet");
+    const satoshis = Number(decimalToUnits(amount, 8));
+    if (!Number.isSafeInteger(satoshis) || satoshis <= 0) throw new Error("Bitcoin amount is outside the external wallet's safe signing range.");
+    const txHash = await window.unisat.sendBitcoin(destination, satoshis);
+    if (!txHash) throw new Error("External Bitcoin wallet did not return a transaction hash.");
+    const settleResponse = await fetch(apiBaseUrl + "/api/v1/transactions/settle", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+      body: JSON.stringify({ transaction_id: transactionId, tx_hash: txHash }),
+    });
+    const settleData = await settleResponse.json();
+    if (!settleResponse.ok) throw new Error(settleData.detail || "Bitcoin broadcast verification failed.");
+    return settleData;
+  }
+
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination }) {
     if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
@@ -140,7 +165,9 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
       const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT"].includes(asset);
+      const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
+      if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
 
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
@@ -153,9 +180,10 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       const transactionId = data.transfer?.id || data.withdrawal?.id;
       if (isLiveEvm && transactionId) {
         const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim() });
-        setMessage(settlement.status === "broadcast_pending"
-          ? "Live transaction broadcast. Waiting for blockchain confirmation."
-          : "Live transaction verified and wallet accounting reconciled.");
+        setMessage(settlement.status === "broadcast_pending" ? "Live transaction broadcast. Waiting for blockchain confirmation." : "Live transaction verified and wallet accounting reconciled.");
+      } else if (isLiveBitcoin && transactionId) {
+        const settlement = await broadcastExternalBitcoin({ transactionId, amount: parsedAmount, destination: destination.trim() });
+        setMessage(settlement.status === "broadcast_pending" ? "Live Bitcoin transaction broadcast. Waiting for confirmation." : "Live Bitcoin transaction verified and wallet accounting reconciled.");
       } else {
         setMessage("Request accepted: " + data.status.replace("_"," "));
       }
@@ -193,7 +221,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
         <button className="primary feature-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || selectedAssetAvailable <= 0 || !destination || !assets.some(item => item.symbol === asset) || !networksForAsset(asset).length || !network} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
       </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Live EVM mode: your connected external wallet signs and broadcasts the transaction. World Wallet AI never receives or stores your private key.</div>
-          <div className="security-note">✓ Bitcoin and catalog-only assets remain request/verification mode until a compatible external signer is connected.</div></aside></div>
+          <div className="security-note">✓ Bitcoin live mode uses a connected external Bitcoin signer when available; no private key is stored by World Wallet AI.</div></aside></div>
     </section>;
   }
 
