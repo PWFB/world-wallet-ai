@@ -906,10 +906,16 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
         raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
     fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{request.note or ''}")
     with db() as conn:
+        asset_row=conn.execute(
+            "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
+            (user["wallet_id"],symbol),
+        ).fetchone()
+        if not asset_row:
+            raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
             "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
-            "WHERE i.wallet_id=%s AND i.idempotency_key=%s FOR UPDATE",
+            "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
         ).fetchone()
         if existing:
@@ -938,10 +944,16 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
         raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
     fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{request.note or ''}")
     with db() as conn:
+        asset_row=conn.execute(
+            "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
+            (user["wallet_id"],symbol),
+        ).fetchone()
+        if not asset_row:
+            raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
             "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
-            "WHERE i.wallet_id=%s AND i.idempotency_key=%s FOR UPDATE",
+            "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
         ).fetchone()
         if existing:
