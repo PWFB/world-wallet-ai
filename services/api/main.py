@@ -197,8 +197,7 @@ def init_db():
                     (hold,hold,wallet_id,symbol),
                 )
             conn.execute(
-                "INSERT INTO accounting_migrations(wallet_id,symbol) VALUES(%s,%s) "
-                "ON CONFLICT DO NOTHING",
+                "INSERT INTO accounting_migrations(wallet_id,symbol) VALUES(%s,%s) "                "ON CONFLICT DO NOTHING",
                 (wallet_id,symbol),
             )
         conn.commit()
@@ -267,8 +266,15 @@ def neon_auth_user(token: str):
     if not subject or not email:
         raise HTTPException(status_code=401, detail="Neon Auth token has no user identity")
     issuer = str(claims.get("iss") or "").strip()
-    if issuer and NEON_AUTH_BASE_URL and issuer.rstrip("/") != NEON_AUTH_BASE_URL.rstrip("/"):
-        raise HTTPException(status_code=401, detail="Invalid Neon Auth issuer")
+    if issuer and NEON_AUTH_BASE_URL:
+        configured_issuer = NEON_AUTH_BASE_URL.rstrip("/")
+        # Neon Auth JWTs may use the Auth service origin as `iss` while the
+        # configured client URL includes the branch database/auth path.
+        # Accept both representations, but never accept an unrelated issuer.
+        configured_origin = configured_issuer.split("/neondb/auth", 1)[0].rstrip("/")
+        allowed_issuers = {configured_issuer, configured_origin}
+        if issuer.rstrip("/") not in allowed_issuers:
+            raise HTTPException(status_code=401, detail="Invalid Neon Auth issuer")
 
     name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
     user = get_user(email)
@@ -397,8 +403,7 @@ def _convertbits(data, from_bits, to_bits, pad=False):
         acc = (acc << from_bits) | value
         bits += from_bits
         while bits >= to_bits:
-            bits -= to_bits
-            ret.append((acc >> bits) & maxv)
+            bits -= to_bits            ret.append((acc >> bits) & maxv)
     if pad:
         if bits:
             ret.append((acc << (to_bits - bits)) & maxv)
@@ -597,8 +602,7 @@ def sync_evm_native_transactions(user, url: str, network: str):
                         status = "confirmed"
                     else:
                         status = "pending"
-                    tx_id = "evm_" + tx_hash
-                    existing = conn.execute(
+                    tx_id = "evm_" + tx_hash                    existing = conn.execute(
                         "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
                         (user["wallet_id"], tx_hash),
                     ).fetchone()
@@ -797,8 +801,7 @@ def sync_bitcoin_transactions(user):
         conn.commit()
     return imported
 
-def wallet_snapshot(user):
-    with db() as conn:
+def wallet_snapshot(user):    with db() as conn:
         assets=[]
         for symbol,name,balance,reserved_balance,price in conn.execute(
             "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
@@ -997,8 +1000,7 @@ def sync_wallet(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/prices/refresh")
 def refresh_prices(user: dict = Depends(current_user)):
-    coin_ids = {
-        "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
+    coin_ids = {        "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
         "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
         "LTC":"litecoin","DOGE":"dogecoin",
     }
@@ -1197,8 +1199,7 @@ def request_center(user: dict = Depends(current_user)):
 def create_request(request: RequestCreate, user: dict = Depends(current_user)):
     kind = request.kind.strip().lower()
     if kind not in {"support","withdrawal_review","transfer_review","account","security","other"}:
-        raise HTTPException(status_code=400, detail="Unsupported request type")
-    request_id = "req_" + sha(user["wallet_id"] + datetime.now(timezone.utc).isoformat())[:24]
+        raise HTTPException(status_code=400, detail="Unsupported request type")    request_id = "req_" + sha(user["wallet_id"] + datetime.now(timezone.utc).isoformat())[:24]
     with db() as conn:
         conn.execute("INSERT INTO wallet_requests(id,wallet_id,kind,title,details,status) VALUES(%s,%s,%s,%s,%s,'open')",
                      (request_id,user["wallet_id"],kind,request.title.strip(),request.details.strip()))
@@ -1397,8 +1398,7 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal):
     response = httpx.get(f"https://blockstream.info/api/tx/{tx_hash}", timeout=15)
     if response.status_code == 404:
         return {"state": "not_found"}
-    response.raise_for_status()
-    tx = response.json()
+    response.raise_for_status()    tx = response.json()
     status = tx.get("status") or {}
     vins = tx.get("vin") or []
     if not any(_same_address((v.get("prevout") or {}).get("scriptpubkey_address"), BTC_ADDRESS) for v in vins):
