@@ -526,7 +526,13 @@ def sync_bitcoin_transactions(user):
             tx_id = existing[0] if existing else "btc_" + tx_hash
             description = "Bitcoin transaction " + tx_hash[:12] + "…"
             if existing:
-                conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s WHERE id=%s",(item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],tx_id))
+                existing_row = conn.execute("SELECT type,status FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
+                if existing_row and existing_row[0] in {"sent","withdrawal"}:
+                    conn.execute("UPDATE transactions SET tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
+                                 (tx_hash,item["confirmations"],item["block_height"],tx_id,user["wallet_id"]))
+                else:
+                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s WHERE id=%s",
+                                 (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],tx_id))
             else:
                 conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],BTC_ADDRESS,item["tx_hash"],item["confirmations"],item["block_height"]))
             imported.append(item)
@@ -977,6 +983,211 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
 
 class TransactionCancelRequest(BaseModel):
     transaction_id: str = Field(min_length=4,max_length=80)
+
+
+class TransactionSettleRequest(BaseModel):
+    transaction_id: str = Field(min_length=4,max_length=80)
+    tx_hash: str = Field(min_length=8,max_length=128)
+
+EVM_TX_HASH_RE = __import__("re").compile(r"^0x[0-9a-fA-F]{64}$")
+BTC_TX_HASH_RE = __import__("re").compile(r"^[0-9a-fA-F]{64}$")
+ERC20_TRANSFER_TOPIC = "0x" + _keccak_hex("Transfer(address,address,uint256)")
+
+
+def _hex_int(value):
+    if value is None:
+        return None
+    return int(value, 16) if isinstance(value, str) and value.startswith("0x") else int(value)
+
+
+def _same_address(left, right):
+    return bool(left and right and left.lower() == right.lower())
+
+
+def erc20_decimals(url: str, contract: str):
+    if not url or not valid_evm_address(contract):
+        return None
+    raw = rpc_call(url, "eth_call", [{"to": contract, "data": "0x313ce567"}, "latest"])
+    return _hex_int(raw) if raw is not None else None
+
+
+def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal):
+    response = httpx.get(f"https://blockstream.info/api/tx/{tx_hash}", timeout=15)
+    if response.status_code == 404:
+        return {"state": "not_found"}
+    response.raise_for_status()
+    tx = response.json()
+    status = tx.get("status") or {}
+    vins = tx.get("vin") or []
+    if not any(_same_address((v.get("prevout") or {}).get("scriptpubkey_address"), BTC_ADDRESS) for v in vins):
+        raise HTTPException(status_code=409, detail="Bitcoin transaction is not spending the configured wallet address")
+    paid = sum(int(v.get("value", 0)) for v in tx.get("vout", []) if _same_address(v.get("scriptpubkey_address"), destination))
+    expected = int((amount * Decimal("100000000")).to_integral_value())
+    if paid != expected:
+        raise HTTPException(status_code=409, detail="Bitcoin transaction amount or destination does not match the wallet request")
+    confirmed = bool(status.get("confirmed"))
+    block_height = status.get("block_height")
+    tip = int(httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10).text.strip())
+    confirmations = max(0, tip - int(block_height) + 1) if confirmed and block_height else 0
+    return {
+        "state": "confirmed" if confirmed else "pending",
+        "tx_hash": tx_hash,
+        "confirmations": confirmations,
+        "block_height": block_height,
+    }
+
+
+def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: str, amount: Decimal):
+    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    if not rpc or not EVM_WALLET_ADDRESS:
+        raise HTTPException(status_code=503, detail=f"{network.title()} settlement RPC or wallet is not configured")
+    try:
+        tx = rpc_call(rpc, "eth_getTransactionByHash", [tx_hash])
+        if not tx:
+            return {"state": "not_found"}
+        receipt = rpc_call(rpc, "eth_getTransactionReceipt", [tx_hash])
+        if not receipt:
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": None}
+        if str(receipt.get("status", "")).lower() != "0x1":
+            raise HTTPException(status_code=409, detail="Blockchain transaction failed and cannot settle the wallet request")
+        if not _same_address(tx.get("from"), EVM_WALLET_ADDRESS):
+            raise HTTPException(status_code=409, detail="Blockchain transaction sender does not match the configured wallet")
+        block_number = _hex_int(receipt.get("blockNumber"))
+        latest = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
+        confirmations = max(0, latest - block_number + 1) if block_number is not None and latest is not None else 0
+
+        if asset in {"ETH", "BNB"}:
+            if not _same_address(tx.get("to"), destination):
+                raise HTTPException(status_code=409, detail="Blockchain destination does not match the wallet request")
+            expected = int((amount * Decimal(10**18)).to_integral_value())
+            if _hex_int(tx.get("value") or "0x0") != expected:
+                raise HTTPException(status_code=409, detail="Blockchain amount does not match the wallet request")
+        else:
+            contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
+            if not contract:
+                raise HTTPException(status_code=503, detail="USDT contract is not configured for settlement verification")
+            if not _same_address(tx.get("to"), contract):
+                raise HTTPException(status_code=409, detail="Token contract does not match the configured USDT contract")
+            decimals = erc20_decimals(rpc, contract)
+            if decimals is None or decimals < 0 or decimals > 36:
+                raise HTTPException(status_code=503, detail="Unable to determine token decimals")
+            expected = int((amount * (Decimal(10) ** decimals)).to_integral_value())
+            found = False
+            for log in receipt.get("logs") or []:
+                topics = log.get("topics") or []
+                if len(topics) < 3 or str(topics[0]).lower() != ERC20_TRANSFER_TOPIC.lower():
+                    continue
+                if not _same_address("0x" + topics[1][-40:], EVM_WALLET_ADDRESS):
+                    continue
+                if not _same_address("0x" + topics[2][-40:], destination):
+                    continue
+                if _hex_int(log.get("data") or "0x0") != expected:
+                    continue
+                if not _same_address(log.get("address"), contract):
+                    continue
+                found = True
+                break
+            if not found:
+                raise HTTPException(status_code=409, detail="No matching ERC-20 transfer event was found in the confirmed transaction")
+
+        return {
+            "state": "confirmed",
+            "tx_hash": tx_hash,
+            "confirmations": confirmations,
+            "block_height": block_number,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Blockchain settlement verification unavailable") from exc
+
+
+def reconcile_settled_asset(conn, user, symbol, network):
+    # Chain synchronization is authoritative for actual balance. Re-read it after
+    # verification instead of subtracting the request amount a second time.
+    address = EVM_WALLET_ADDRESS if network in {"ethereum", "bnb"} else BTC_ADDRESS
+    value = None
+    try:
+        if symbol == "BTC" and address:
+            value = btc_balance(address)
+        elif symbol in {"ETH", "BNB"} and address:
+            value = evm_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, address)
+        elif symbol == "USDT" and address:
+            contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
+            value = erc20_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, contract, address)
+    except Exception:
+        value = None
+    if value is not None:
+        conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s", (value,user["wallet_id"],symbol))
+
+
+@app.post("/api/v1/transactions/settle")
+def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(current_user)):
+    tx_hash = request.tx_hash.strip()
+    with db() as conn:
+        row=conn.execute(
+            "SELECT id,asset,amount,status,destination,network,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            (request.transaction_id,user["wallet_id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404,detail="Transaction not found")
+        txid,symbol,amount,status,destination,network,existing_hash=row
+        if status in {"confirmed","settled"}:
+            return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
+        if status == "cancelled":
+            raise HTTPException(status_code=409,detail="Cancelled transaction cannot be settled")
+        if status not in {"pending","pending_review","broadcast_pending"}:
+            raise HTTPException(status_code=409,detail="Transaction is not eligible for settlement")
+        if existing_hash and existing_hash.lower() != tx_hash.lower():
+            raise HTTPException(status_code=409,detail="Transaction already has a different broadcast hash")
+        if network == "bitcoin":
+            if not BTC_TX_HASH_RE.fullmatch(tx_hash):
+                raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
+            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)))
+        elif network in {"ethereum","bnb"}:
+            if not EVM_TX_HASH_RE.fullmatch(tx_hash):
+                raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
+            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)))
+        else:
+            raise HTTPException(status_code=400,detail="Unsupported settlement network")
+
+        if verification["state"] == "not_found":
+            raise HTTPException(status_code=404,detail="Blockchain transaction was not found")
+        if verification["state"] == "pending":
+            conn.execute(
+                "UPDATE transactions SET tx_hash=%s,status='broadcast_pending',confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
+                (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
+            )
+            conn.commit()
+            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"broadcast":False}
+
+        asset=conn.execute(
+            "SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
+            (user["wallet_id"],symbol),
+        ).fetchone()
+        hold=abs(Decimal(amount))
+        if not asset or Decimal(asset[0] or 0) < hold:
+            raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
+        conn.execute(
+            "UPDATE assets SET reserved_balance=reserved_balance-%s WHERE wallet_id=%s AND symbol=%s",
+            (hold,user["wallet_id"],symbol),
+        )
+        conn.execute(
+            "UPDATE transactions SET status='confirmed',tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
+            (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
+        )
+        reconcile_settled_asset(conn,user,symbol,network)
+        conn.commit()
+        return {
+            "status":"confirmed",
+            "transaction_id":txid,
+            "tx_hash":tx_hash,
+            "confirmations":verification.get("confirmations",0),
+            "block_height":verification.get("block_height"),
+            "accounting":"reserved_released_and_chain_reconciled",
+            "broadcast":False,
+        }
+
 
 @app.post("/api/v1/transactions/cancel")
 def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(current_user)):
