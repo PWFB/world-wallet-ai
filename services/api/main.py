@@ -472,10 +472,11 @@ def btc_balance(address: str):
     response.raise_for_status()
     data = response.json()
     chain = data.get("chain_stats", {})
-    mempool = data.get("mempool_stats", {})
+    # Confirmed balance is the accounting source of truth. Pending mempool
+    # movement is surfaced through transaction status and must not bypass
+    # the wallet's reservation model.
     confirmed = int(chain.get("funded_txo_sum", 0)) - int(chain.get("spent_txo_sum", 0))
-    pending = int(mempool.get("funded_txo_sum", 0)) - int(mempool.get("spent_txo_sum", 0))
-    return (confirmed + pending) / 100_000_000
+    return confirmed / 100_000_000
 
 def erc20_balance(url: str, contract: str, address: str):
     if not contract or not valid_evm_address(contract):
