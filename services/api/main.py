@@ -866,20 +866,32 @@ def transactions(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/transactions/sync")
 def sync_transactions(user: dict = Depends(current_user)):
-    if not BTC_ADDRESS:
-        raise HTTPException(status_code=503, detail="No production Bitcoin wallet address is configured")
-    balance = None
-    try:
-        balance = btc_balance(BTC_ADDRESS)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Bitcoin blockchain balance service unavailable") from exc
-    if balance is not None:
-        with db() as conn:
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
-            conn.commit()
-    imported = sync_bitcoin_transactions(user)
+    imported = []
+    warnings = []
+    if BTC_ADDRESS:
+        try:
+            balance = btc_balance(BTC_ADDRESS)
+            if balance is not None:
+                with db() as conn:
+                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
+                    conn.commit()
+            imported.extend(sync_bitcoin_transactions(user))
+        except Exception:
+            warnings.append("Bitcoin transaction service unavailable")
+    for rpc_url, network, contract in (
+        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
+        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
+    ):
+        if rpc_url and contract:
+            token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+            imported.extend(token_imported)
+            if warning:
+                warnings.append(warning)
+    if not imported and not BTC_ADDRESS and not (ETH_RPC_URL and USDT_ETH_CONTRACT) and not (BSC_RPC_URL and USDT_BSC_CONTRACT):
+        raise HTTPException(status_code=503, detail="No live transaction source is configured")
     assets,tx,summary = wallet_snapshot(user)
-    return {"status":"synced","imported":imported,"transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
+    return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
+            "transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
 
 
 
