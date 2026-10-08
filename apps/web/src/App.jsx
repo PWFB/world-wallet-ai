@@ -26,6 +26,7 @@ function App() {
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [authMethod, setAuthMethod] = useState("email");
   const [authBusy, setAuthBusy] = useState(false);
@@ -234,6 +235,67 @@ function App() {
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
+  if (!accessToken && !showLogin) {
+    return (
+      <div className="landing-shell">
+        <header className="landing-nav">
+          <button className="landing-brand" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
+            <span className="brand-mark">W</span>
+            <span><b>WORLD WALLET</b><em>AI</em></span>
+          </button>
+          <nav className="landing-links">
+            <a href="#features">Features</a>
+            <a href="#security">Security</a>
+            <a href="#ai">BALMZ AI</a>
+          </nav>
+          <button className="landing-login" onClick={() => setShowLogin(true)}>Sign in <span>→</span></button>
+        </header>
+
+        <main>
+          <section className="landing-hero">
+            <div className="landing-orbit landing-orbit-one" />
+            <div className="landing-orbit landing-orbit-two" />
+            <div className="landing-hero-copy">
+              <div className="landing-badge"><span /> INTELLIGENT DIGITAL WALLET</div>
+              <h1>Your wallet.<br /><em>Beyond borders.</em></h1>
+              <p>Manage your digital assets, available balance and wallet activity from one secure global workspace, enhanced by BALMZ AI.</p>
+              <div className="landing-cta">
+                <button className="landing-primary" onClick={() => setShowLogin(true)}>Enter World Wallet AI <span>→</span></button>
+                <a className="landing-secondary" href="#features">Explore features</a>
+              </div>
+              <div className="landing-trust"><span>✓</span> Real wallet data &nbsp;•&nbsp; Secure authentication &nbsp;•&nbsp; Mainnet ready</div>
+            </div>
+            <div className="landing-wallet-card">
+              <div className="landing-card-glow" />
+              <div className="landing-card-top"><span>WORLD WALLET AI</span><b>LIVE</b></div>
+              <div className="landing-card-chip">W</div>
+              <div className="landing-card-balance"><small>AVAILABLE BALANCE</small><strong>Securely connected</strong><span>USD • Digital Assets</span></div>
+              <div className="landing-card-line" />
+              <div className="landing-card-assets"><span><b>BALMZ</b><small>AI ecosystem</small></span><span><b>BTC</b><small>Bitcoin</small></span><span><b>ETH</b><small>Ethereum</small></span></div>
+            </div>
+          </section>
+
+          <section id="features" className="landing-section">
+            <div className="landing-section-heading"><span>01</span><div><p className="eyebrow">ONE GLOBAL WORKSPACE</p><h2>Everything your wallet needs.</h2></div></div>
+            <div className="landing-feature-grid">
+              <article><i>◈</i><h3>Available balance</h3><p>See the value available in your wallet from authenticated, live wallet data.</p></article>
+              <article><i>↗</i><h3>Move assets</h3><p>Send, receive and manage supported digital assets from one focused interface.</p></article>
+              <article><i>◎</i><h3>Portfolio intelligence</h3><p>Understand wallet activity and portfolio performance without fabricated numbers.</p></article>
+              <article id="ai"><i>✦</i><h3>BALMZ AI</h3><p>An intelligent layer designed to help you understand your digital wallet and assets.</p></article>
+            </div>
+          </section>
+
+          <section id="security" className="landing-security">
+            <div><p className="eyebrow">02 • SECURITY FIRST</p><h2>Your wallet access stays protected.</h2><p>World Wallet AI uses authenticated sessions and Neon Auth. Email OTP gives you passwordless access and account recovery without asking you to store a wallet password in the app.</p></div>
+            <div className="security-points"><div><b>01</b><span>Authenticated sessions</span></div><div><b>02</b><span>Email OTP access & recovery</span></div><div><b>03</b><span>Live wallet data only</span></div></div>
+          </section>
+        </main>
+
+        <footer className="landing-footer"><span>© 2026 WORLD WALLET AI</span><span>BALMZ AI • GLOBAL DIGITAL WALLET</span></footer>
+      </div>
+    );
+  }
+
   if (!accessToken) {
     return (
       <div className="login-shell">
@@ -260,6 +322,7 @@ function App() {
           </div>
 
           <form className="login-card" onSubmit={event => event.preventDefault()}>
+            <button type="button" className="login-home" onClick={() => { setShowLogin(false); setRecoveryMode(false); setOtpRequested(false); setOtpCode(""); setLoginError(""); }}>← World Wallet AI</button>
             <div className="login-card-header">
               <div className="login-card-icon">W</div>
               <div><p className="eyebrow">{recoveryMode ? "ACCOUNT RECOVERY" : "SECURE ACCESS"}</p><h2>{recoveryMode ? "Recover wallet access" : "Welcome back"}</h2></div>
