@@ -412,7 +412,8 @@ def sync_wallet(user: dict = Depends(current_user)):
     assets, _, summary = wallet_snapshot(user)
     imported_transactions = sync_bitcoin_transactions(user)
     assets, _, summary = wallet_snapshot(user)
-    return {"status":"synced","wallet":summary,"assets":assets,"updates":updates,"bitcoin_transactions":imported_transactions}
+    assets, all_transactions, summary = wallet_snapshot(user)
+    return {"status":"synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"bitcoin_transactions":imported_transactions,"transactions":all_transactions}
 
 
 @app.post("/api/v1/prices/refresh")
