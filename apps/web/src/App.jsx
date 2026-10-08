@@ -30,6 +30,7 @@ function App() {
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [passwordMode, setPasswordMode] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
@@ -182,6 +183,37 @@ function App() {
       setUser(data.user || null);
     } catch (error) {
       setLoginError(error.message || "Unable to sign in");
+    }
+  }
+
+  async function handlePasswordSignIn() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your email address.");
+      if (!loginPassword) throw new Error("Enter your password.");
+
+      const result = await authClient.signIn.email({
+        email,
+        password: loginPassword,
+      });
+
+      if (result?.error) {
+        throw new Error(authErrorMessage(result.error, "Invalid email or password."));
+      }
+
+      const token = await getNeonAccessToken();
+      if (!token) throw new Error("Password sign-in succeeded, but the wallet session token is not available yet.");
+
+      setUser(result?.data?.user || null);
+      setAccessToken(token);
+      setLoginPassword("");
+      setPasswordMode(false);
+    } catch (error) {
+      setLoginError(error.message || "Unable to sign in with password");
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -400,8 +432,20 @@ function App() {
                   <span>Email address</span>
                   <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
                 </label>
-                {!otpRequested ? (
-                  <button className="login-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>{recoveryMode ? "Send recovery code" : "Send secure code"} <span>→</span></button>
+                {!otpRequested && passwordMode && !recoveryMode ? (
+                  <>
+                    <label className="login-field">
+                      <span>Enter password</span>
+                      <div className="login-input-wrap"><span>⌘</span><input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required /></div>
+                    </label>
+                    <button className="login-submit" type="button" onClick={handlePasswordSignIn} disabled={authBusy}>Sign in with password <span>→</span></button>
+                    <button className="forgot" type="button" onClick={() => { setPasswordMode(false); setLoginPassword(""); setLoginError(""); }}>Use email OTP instead</button>
+                  </>
+                ) : !otpRequested ? (
+                  <>
+                    <button className="login-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>{recoveryMode ? "Send recovery code" : "Send secure code"} <span>→</span></button>
+                    {!recoveryMode && <button className="forgot" type="button" onClick={() => { setPasswordMode(true); setLoginError(""); }}>Enter password instead</button>}
+                  </>
                 ) : (
                   <>
                     <label className="login-field">
