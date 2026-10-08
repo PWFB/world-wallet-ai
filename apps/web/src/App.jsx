@@ -9,6 +9,21 @@ const TOKEN_KEY = "world_wallet_access_token";
 const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: 0, actual_balance_usd: 0, reserved_balance_usd: 0, total_received_usd: 0, total_sent_usd: 0, profit_usd: 0, change_24h: 0 };
 const fallbackActivity = [];
+const walletCoinCatalog = [
+  { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
+  { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
+  { symbol: "ETH", name: "Ethereum", icon: "Ξ", status: "Ethereum" },
+  { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum / BNB Chain" },
+  { symbol: "BNB", name: "BNB", icon: "◆", status: "BNB Chain" },
+  { symbol: "USDC", name: "USD Coin", icon: "$", status: "Supported asset catalog" },
+  { symbol: "SOL", name: "Solana", icon: "S", status: "Supported asset catalog" },
+  { symbol: "XRP", name: "XRP", icon: "X", status: "Supported asset catalog" },
+  { symbol: "ADA", name: "Cardano", icon: "A", status: "Supported asset catalog" },
+  { symbol: "LTC", name: "Litecoin", icon: "Ł", status: "Supported asset catalog" },
+  { symbol: "DOGE", name: "Dogecoin", icon: "Ð", status: "Supported asset catalog" },
+];
+
+
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -622,8 +637,19 @@ function App() {
               </article>
 
               <article className="panel assets-panel">
-                <div className="panel-head"><div><h2>Your assets</h2><span>{assets.length} assets • {money(wallet.available_balance_usd)} total</span></div><button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button></div>
-                <div className="asset-list">{assets.map(a => <div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{money(a.value_usd)}</small></div><b className={Number(a.change_24h) >= 0 ? "positive" : "negative"}>{Number(a.change_24h) >= 0 ? "+" : ""}{Number(a.change_24h || 0).toFixed(2)}%</b></div>)}</div>
+                <div className="panel-head"><div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalog.length} supported assets • {money(wallet.available_balance_usd)} available</span></div><button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button></div>
+                <div className="asset-list">{walletCoinCatalog.map(c => {
+                  const live = assets.find(a => a.symbol === c.symbol);
+                  const balance = live ? live.balance : 0;
+                  const value = live ? live.value_usd : 0;
+                  const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : "Catalog only • live wallet not connected";
+                  return <div className="asset-row" key={c.symbol}>
+                    <span className="asset-icon">{c.icon}</span>
+                    <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
+                    <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}</small></div>
+                    <small className="asset-network">{c.status}</small>
+                  </div>;
+                })}</div>
               </article>
 
               <article className="panel activity-panel">
