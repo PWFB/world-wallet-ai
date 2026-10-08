@@ -308,8 +308,8 @@ def wallet_snapshot(user):
         for symbol,name,balance,price in conn.execute("SELECT symbol,name,balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol", (user["wallet_id"],)):
             assets.append({"symbol":symbol,"name":name,"balance":float(balance),"price_usd":float(price or 0),"value_usd":float(balance)*float(price or 0),"change_24h":0})
         txs = []
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
-            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"time":row[9].isoformat()})
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100", (user["wallet_id"],)):
+            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"time":row[10].isoformat()})
     total = sum(x["value_usd"] for x in assets)
     prices = {x["symbol"]: x["price_usd"] for x in assets}
     total_received = sum(abs(x["amount"]) * prices.get(x["asset"], 0) for x in txs if x["type"] == "received")
@@ -442,6 +442,24 @@ def refresh_prices(user: dict = Depends(current_user)):
     assets, _, summary = wallet_snapshot(user)
     return {"assets":assets,"wallet":summary,"source":"coingecko+world_wallet_balmz_eth_price_rule","balmz_price_usd":market_prices["BALMZ"]}
 
+@app.post("/api/v1/wallet/refresh")
+def refresh_wallet(user: dict = Depends(current_user)):
+    sync_result = sync_wallet(user)
+    try:
+        price_result = refresh_prices(user)
+    except HTTPException:
+        price_result = {"assets": sync_result["assets"], "wallet": sync_result["wallet"], "source": "wallet_sync_prices_unavailable"}
+    assets_now, transactions_now, summary_now = wallet_snapshot(user)
+    return {
+        "status": "refreshed",
+        "wallet": {**summary_now, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
+        "assets": assets_now,
+        "transactions": transactions_now,
+        "updates": sync_result.get("updates", []),
+        "bitcoin_transactions": sync_result.get("bitcoin_transactions", []),
+        "price_source": price_result.get("source"),
+    }
+
 @app.get("/api/v1/assets")
 def assets(user: dict = Depends(current_user)):
     a,_,_ = wallet_snapshot(user)
@@ -492,27 +510,37 @@ def reserve_asset(user, symbol: str, amount: float):
 
 @app.post("/api/v1/transfers")
 def transfer(request: TransferRequest, user: dict = Depends(current_user)):
-    symbol=request.asset.upper()
+    symbol=request.asset.upper().strip()
+    network=request.network.strip().lower()
+    if network not in {"mainnet", "ethereum", "bnb", "bitcoin"}:
+        raise HTTPException(status_code=400, detail="Unsupported network")
+    if symbol not in {"BALMZ", "BTC", "USDT", "ETH", "BNB"}:
+        raise HTTPException(status_code=400, detail="Unsupported asset")
     with db() as conn:
         row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
         if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
         if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
         txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
         conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",(txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,request.network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",(txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
         conn.commit()
-    return {"status":"pending","mode":"database","transfer":{"id":txid,"asset":symbol,"amount":request.amount,"recipient":request.recipient,"network":request.network}}
+    return {"status":"pending","mode":"database","transfer":{"id":txid,"asset":symbol,"amount":request.amount,"recipient":request.recipient,"network":network}}
 
 
 @app.post("/api/v1/withdrawals")
 def withdrawal(request: WithdrawalRequest, user: dict = Depends(current_user)):
-    symbol=request.asset.upper()
+    symbol=request.asset.upper().strip()
+    network=request.network.strip().lower()
+    if network not in {"mainnet", "ethereum", "bnb", "bitcoin"}:
+        raise HTTPException(status_code=400, detail="Unsupported network")
+    if symbol not in {"BALMZ", "BTC", "USDT", "ETH", "BNB"}:
+        raise HTTPException(status_code=400, detail="Unsupported asset")
     with db() as conn:
         row=conn.execute("SELECT balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
         if not row: return {"status":"rejected","reason":"Unsupported asset","asset":symbol}
         if request.amount > float(row[0]): return {"status":"rejected","reason":"Insufficient available asset balance","asset":symbol,"available":float(row[0]),"requested":request.amount}
         txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
         conn.execute("UPDATE assets SET balance=balance-%s WHERE wallet_id=%s AND symbol=%s",(request.amount,user["wallet_id"],symbol))
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",(txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,request.network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",(txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
         conn.commit()
     return {"status":"pending_review","mode":"database","withdrawal":{"id":txid,"asset":symbol,"amount":request.amount,"destination":request.destination,"network":request.network}}
