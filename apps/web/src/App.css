@@ -239,3 +239,60 @@
 @media(max-width:480px){.ww-public-nav{height:64px}.ww-public-brand small{display:none}.ww-hero-copy h1{font-size:38px;letter-spacing:-2px}.ww-hero-copy>p{font-size:11px}.ww-hero-features{gap:12px}.ww-market-strip{display:grid;grid-template-columns:1fr}.ww-market-strip div{border-right:0;border-bottom:1px solid #17314d}.ww-login-card,.ww-auth-card{padding:22px;border-radius:14px}.ww-feature-grid{grid-template-columns:1fr}.ww-auth-copy h1{font-size:34px}.ww-auth-top>span{display:none}}
 
 .ww-password-field{position:relative}.ww-password-field input{padding-right:42px}.ww-password-toggle{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:32px;height:32px;border:0;border-radius:7px;background:transparent;color:#71849d;font-size:16px;display:grid;place-items:center;cursor:pointer;padding:0}.ww-password-toggle:hover,.ww-password-toggle:focus-visible{color:#ff7a18;background:rgba(255,107,0,.08);outline:none}.ww-password-toggle:focus-visible{box-shadow:0 0 0 2px rgba(255,107,0,.25)}
+
+
+/* Production wallet workspace redesign: wide desktop + mobile */
+.stat-source{margin-top:22px;padding-top:10px;border-top:1px solid #182b44;color:#536983;font-size:8px;line-height:1.45}
+.balance-grid{grid-template-columns:minmax(380px,1.8fr) repeat(3,minmax(150px,1fr));gap:14px}
+.hero-card{min-height:178px;padding:23px;border-radius:14px}
+.stat-card{min-height:178px;border-radius:14px;padding:20px}
+.dashboard-grid{grid-template-columns:minmax(0,1.35fr) minmax(320px,.85fr);gap:14px}
+.dashboard-grid .assets-panel{grid-column:1}
+.dashboard-grid .activity-panel{grid-column:2}
+.chart-panel,.ai-panel{min-height:360px}
+.assets-panel,.activity-panel{min-height:0}
+.live-wallet-panel{border-radius:14px;background:linear-gradient(135deg,#0b192d,#081322);box-shadow:0 18px 50px rgba(0,0,0,.18)}
+.live-wallet-main h2{font-family:Orbitron;font-size:16px}
+.asset-list{max-height:520px;overflow:auto;padding-right:4px}
+.asset-row-button{min-height:62px;border-radius:8px;padding:10px 8px}
+.asset-row-button:hover{background:#0d1d32}
+.activity-list{max-height:520px;overflow:auto;padding-right:4px}
+.activity-row{min-height:60px}
+.quick-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.quick-grid button{min-height:70px;transition:transform .16s,border-color .16s,background .16s}
+.quick-grid button:hover{transform:translateY(-1px);border-color:#285074;background:#0e1c31}
+.content{max-width:1680px;padding:30px clamp(20px,3vw,46px) 52px}
+.page-heading{margin-bottom:24px}
+@media(min-width:1500px){
+  .sidebar{width:270px}
+  .main{margin-left:270px;width:calc(100% - 270px)}
+  .balance-grid{grid-template-columns:minmax(440px,1.9fr) repeat(3,minmax(180px,1fr))}
+  .dashboard-grid{grid-template-columns:minmax(0,1.45fr) minmax(360px,.75fr)}
+}
+@media(max-width:1100px){
+  .balance-grid{grid-template-columns:1fr 1fr}
+  .balance-grid .hero-card{grid-column:span 2}
+  .dashboard-grid{grid-template-columns:1fr}
+  .dashboard-grid .assets-panel,.dashboard-grid .activity-panel{grid-column:auto}
+}
+@media(max-width:760px){
+  .content{padding:20px 13px 34px}
+  .balance-grid{grid-template-columns:1fr 1fr;gap:10px}
+  .balance-grid .hero-card{grid-column:span 2}
+  .hero-card{min-height:170px}
+  .stat-card{min-height:132px;padding:15px}
+  .stat-source{margin-top:14px}
+  .dashboard-grid{gap:10px}
+  .asset-list,.activity-list{max-height:none}
+  .live-wallet-panel{padding:15px}
+  .quick-grid{grid-template-columns:1fr 1fr;gap:8px}
+}
+@media(max-width:480px){
+  .balance-grid{grid-template-columns:1fr}
+  .balance-grid .hero-card{grid-column:auto}
+  .stat-card{min-height:118px}
+  .hero-balance{font-size:25px}
+  .card-actions{gap:5px}
+  .card-actions button{font-size:9px}
+  .quick-grid{grid-template-columns:1fr}
+}
