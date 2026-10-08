@@ -165,6 +165,13 @@ def init_db():
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,idempotency_key)
         );
+        CREATE TABLE IF NOT EXISTS chain_sync_cursors(
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          source TEXT NOT NULL,
+          last_block INTEGER NOT NULL DEFAULT 0,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY(wallet_id,source)
+        );
         """)
         legacy_holds = conn.execute("""
           SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
@@ -511,6 +518,22 @@ def evm_transfer_logs(url: str, contract: str, wallet_address: str, from_block: 
     return logs
 
 
+def _sync_cursor(conn, wallet_id: str, source: str):
+    row = conn.execute(
+        "SELECT last_block FROM chain_sync_cursors WHERE wallet_id=%s AND source=%s",
+        (wallet_id, source),
+    ).fetchone()
+    return int(row[0]) if row else None
+
+
+def _set_sync_cursor(conn, wallet_id: str, source: str, block_number: int):
+    conn.execute(
+        "INSERT INTO chain_sync_cursors(wallet_id,source,last_block) VALUES(%s,%s,%s) "
+        "ON CONFLICT(wallet_id,source) DO UPDATE SET last_block=EXCLUDED.last_block,updated_at=NOW()",
+        (wallet_id, source, int(block_number)),
+    )
+
+
 def sync_evm_native_transactions(user, url: str, network: str):
     if not url or not EVM_WALLET_ADDRESS:
         return [], None
@@ -519,10 +542,13 @@ def sync_evm_native_transactions(user, url: str, network: str):
         if latest is None:
             return [], "latest block unavailable"
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
-        start = max(0, latest - lookback + 1)
+        source = network + ":native"
         wallet_lower = EVM_WALLET_ADDRESS.lower()
         imported = []
         with db() as conn:
+            cursor = _sync_cursor(conn, user["wallet_id"], source)
+            reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
+            start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
             for block_number in range(start, latest + 1):
                 block = rpc_call(url, "eth_getBlockByNumber", [hex(block_number), True])
                 if not block:
@@ -556,6 +582,7 @@ def sync_evm_native_transactions(user, url: str, network: str):
                                       recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number))
                     imported.append({"tx_hash":tx_hash,"asset":"ETH" if network=="ethereum" else "BNB","network":network,
                                      "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,"block_height":block_number})
+            _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
         return imported, None
     except Exception:
@@ -568,7 +595,12 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
-        start = max(0, latest - int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")))
+        lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")), 100000))
+        source = network + ":" + symbol.lower()
+        with db() as cursor_conn:
+            cursor = _sync_cursor(cursor_conn, user["wallet_id"], source)
+        reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
+        start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
         logs = evm_transfer_logs(url, contract, EVM_WALLET_ADDRESS, start, latest)
     except Exception:
         return [], f"{network} {symbol} transaction service unavailable"
@@ -609,6 +641,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
             imported.append({"tx_hash": tx_hash, "asset": symbol, "network": network, "type": direction,
                              "amount": signed_amount, "status": status, "confirmations": confirmations,
                              "block_height": block_number})
+        _set_sync_cursor(conn, user["wallet_id"], source, latest)
         conn.commit()
     return imported, None
 
