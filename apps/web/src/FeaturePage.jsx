@@ -11,6 +11,155 @@ const networksForAsset = symbol => ({
   BALMZ: [{ value: "ethereum", label: "Ethereum" }],
 }[symbol] || []);
 
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+  const [wallets, setWallets] = useState([]);
+  const [walletName, setWalletName] = useState("");
+  const [walletId, setWalletId] = useState("");
+  const [walletAddresses, setWalletAddresses] = useState([]);
+  const [network, setNetwork] = useState("ethereum");
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("primary");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  const loadAddresses = async id => {
+    if (!id) return;
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
+      const data = await response.json();
+      setWalletAddresses(response.ok ? (data.addresses || []) : []);
+    } catch { setWalletAddresses([]); }
+  };
+
+  const loadWallets = async () => {
+    setBusy(true);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: { Authorization: "Bearer " + accessToken } });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load wallets.");
+      setWallets(data.wallets || []);
+      const activeId = data.active_wallet_id || data.wallets?.find(w => w.active)?.id || "";
+      setWalletId(activeId);
+      if (activeId) await loadAddresses(activeId);
+    } catch (error) {
+      setMessage(error.message || "Unable to load wallets.");
+    } finally { setBusy(false); }
+  };
+
+  useEffect(() => { loadWallets(); }, [accessToken]);
+
+  const refreshActiveWallet = async () => {
+    const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: { Authorization: "Bearer " + accessToken } });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
+    onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
+    onTransactionsUpdated?.(data.transactions || []);
+  };
+
+  const createWallet = async () => {
+    const name = walletName.trim();
+    if (!name) return setMessage("Enter a wallet name.");
+    setBusy(true); setMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ name }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to create wallet.");
+      setWalletName("");
+      await loadWallets();
+      await refreshActiveWallet();
+      setMessage("Wallet created. Add its public blockchain addresses to connect live data.");
+    } catch (error) { setMessage(error.message || "Unable to create wallet."); }
+    finally { setBusy(false); }
+  };
+
+  const switchWallet = async id => {
+    if (!id) return;
+    setBusy(true); setMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ wallet_id: id }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to switch wallet.");
+      setWalletId(id);
+      await loadAddresses(id);
+      await refreshActiveWallet();
+      await loadWallets();
+      setMessage("Wallet switched. Live balances now belong to the selected wallet.");
+    } catch (error) { setMessage(error.message || "Unable to switch wallet."); }
+    finally { setBusy(false); }
+  };
+
+  const addAddress = async () => {
+    const value = address.trim();
+    if (!value) return setMessage("Enter a public wallet address.");
+    if (!walletId) return setMessage("Select a wallet first.");
+    setBusy(true); setMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + walletId + "/addresses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ network, address: value, label: label.trim() || "primary" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
+      setAddress("");
+      await loadAddresses(walletId);
+      await refreshActiveWallet();
+      setMessage("Address connected. Compatible wallet coins will use this network automatically.");
+    } catch (error) { setMessage(error.message || "Unable to connect address."); }
+    finally { setBusy(false); }
+  };
+
+  const selectedWallet = wallets.find(w => w.id === walletId);
+
+  return <section className="content feature-content">
+    <div className="page-heading">
+      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
+      <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
+    </div>
+    {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
+    <div className="feature-grid">
+      <article className="panel action-panel">
+        <p className="feature-kicker">CREATE WALLET PROFILE</p>
+        <h2>New wallet</h2>
+        <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
+        <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
+        <button className="primary feature-submit" disabled={busy || !walletName.trim()} onClick={createWallet}>{busy ? "Creating…" : "Create wallet →"}</button>
+        <div className="security-note">For a non-custodial wallet, create or import the signing account in a compatible wallet app and connect only its public address here.</div>
+      </article>
+      <article className="panel action-panel">
+        <p className="feature-kicker">ACTIVE WALLET</p>
+        <h2>{selectedWallet?.name || "No wallet selected"}</h2>
+        <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
+          {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
+        </select>
+        <div className="tool-list">
+          {walletAddresses.length ? walletAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <div className="live-chart-empty">No public network addresses connected to this wallet.</div>}
+        </div>
+      </article>
+    </div>
+    <article className="panel action-panel">
+      <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
+      <h2>Attach a blockchain address</h2>
+      <div className="feature-grid">
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
+      </div>
+      <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
+      <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
+      <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
+      <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
+    </article>
+  </section>;
+}
+
 export default function FeaturePage({ selectedAsset, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
@@ -237,170 +386,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
   }
 
 
-  if (active === "Wallets") {
-    const [wallets, setWallets] = useState([]);
-    const [walletName, setWalletName] = useState("");
-    const [walletId, setWalletId] = useState("");
-    const [walletAddresses, setWalletAddresses] = useState([]);
-    const [walletBusy, setWalletBusy] = useState(false);
-    const [walletMessage, setWalletMessage] = useState("");
-
-    const loadWallets = async () => {
-      setWalletBusy(true);
-      setWalletMessage("");
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: { Authorization: "Bearer " + accessToken } });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Unable to load wallets.");
-        setWallets(data.wallets || []);
-        const activeId = data.active_wallet_id || data.wallets?.find(w => w.active)?.id || "";
-        setWalletId(activeId);
-        if (activeId) {
-          const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + activeId + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
-          const addressData = await addressResponse.json();
-          setWalletAddresses(addressResponse.ok ? (addressData.addresses || []) : []);
-        }
-      } catch (error) {
-        setWalletMessage(error.message || "Unable to load wallets.");
-      } finally {
-        setWalletBusy(false);
-      }
-    };
-
-    useEffect(() => { loadWallets(); }, [accessToken]);
-
-    const refreshActiveWallet = async () => {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: { Authorization: "Bearer " + accessToken } });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
-      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
-      onTransactionsUpdated?.(data.transactions || []);
-    };
-
-    const createWallet = async () => {
-      const name = walletName.trim();
-      if (!name) { setWalletMessage("Enter a wallet name."); return; }
-      setWalletBusy(true);
-      setWalletMessage("");
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-          body: JSON.stringify({ name }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Unable to create wallet.");
-        setWalletName("");
-        setWalletMessage("Wallet profile created. Add its public blockchain addresses below.");
-        await loadWallets();
-        await refreshActiveWallet();
-      } catch (error) {
-        setWalletMessage(error.message || "Unable to create wallet.");
-      } finally {
-        setWalletBusy(false);
-      }
-    };
-
-    const switchWallet = async id => {
-      setWalletBusy(true);
-      setWalletMessage("");
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets/active", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-          body: JSON.stringify({ wallet_id: id }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Unable to switch wallet.");
-        setWalletId(id);
-        await refreshActiveWallet();
-        await loadWallets();
-        setWalletMessage("Wallet switched. Live balances now belong to the selected wallet.");
-      } catch (error) {
-        setWalletMessage(error.message || "Unable to switch wallet.");
-      } finally {
-        setWalletBusy(false);
-      }
-    };
-
-    const loadAddresses = async id => {
-      if (!id) return;
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
-        const data = await response.json();
-        setWalletAddresses(response.ok ? (data.addresses || []) : []);
-      } catch { setWalletAddresses([]); }
-    };
-
-    const addAddress = async () => {
-      const networkValue = network;
-      const addressValue = destination.trim();
-      if (!addressValue) { setWalletMessage("Enter a public wallet address."); return; }
-      if (!walletId) { setWalletMessage("Select a wallet first."); return; }
-      setWalletBusy(true);
-      setWalletMessage("");
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + walletId + "/addresses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-          body: JSON.stringify({ network: networkValue, address: addressValue, label: note.trim() || "primary" }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
-        setDestination("");
-        setNote("");
-        await loadAddresses(walletId);
-        await refreshActiveWallet();
-        setWalletMessage("Address connected. Compatible wallet coins will use this network automatically.");
-      } catch (error) {
-        setWalletMessage(error.message || "Unable to connect address.");
-      } finally {
-        setWalletBusy(false);
-      }
-    };
-
-    const selectedWallet = wallets.find(w => w.id === walletId);
-
-    return <section className="content feature-content">
-      <div className="page-heading">
-        <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
-        <button className="secondary" onClick={loadWallets} disabled={walletBusy}>{walletBusy ? "Working…" : "↻ Refresh"}</button>
-      </div>
-      {walletMessage && <div className={/unable|invalid|failed|enter|select/i.test(walletMessage) ? "feature-error" : "feature-success"}>{walletMessage}</div>}
-      <div className="feature-grid">
-        <article className="panel action-panel">
-          <p className="feature-kicker">CREATE WALLET PROFILE</p>
-          <h2>New wallet</h2>
-          <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
-          <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
-          <button className="primary feature-submit" disabled={walletBusy || !walletName.trim()} onClick={createWallet}>{walletBusy ? "Creating…" : "Create wallet →"}</button>
-          <div className="security-note">For a non-custodial wallet, create/import the signing account in a compatible wallet app and connect only its public address here.</div>
-        </article>
-        <article className="panel action-panel">
-          <p className="feature-kicker">ACTIVE WALLET</p>
-          <h2>{selectedWallet?.name || "No wallet selected"}</h2>
-          <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={walletBusy || !wallets.length}>
-            {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
-          </select>
-          <div className="tool-list">
-            {walletAddresses.length ? walletAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <div className="live-chart-empty">No public network addresses connected to this wallet.</div>}
-          </div>
-        </article>
-      </div>
-      <article className="panel action-panel">
-        <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
-        <h2>Attach a blockchain address</h2>
-        <div className="feature-grid">
-          <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-          <label>Public address<input value={destination} onChange={e => setDestination(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
-        </div>
-        <label>Label<input value={note} onChange={e => setNote(e.target.value)} placeholder="primary"/></label>
-        <button className="primary feature-submit" disabled={walletBusy || !walletId || !destination.trim()} onClick={addAddress}>{walletBusy ? "Connecting…" : "Connect address →"}</button>
-        <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract, when deployed, identifies the token; the wallet address does not need a separate address for every ERC-20 token.</div>
-        <div className="security-note">BALMZ is currently shown as contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, it can be registered and its on-chain metadata and balance can be read.</div>
-      </article>
-    </section>;
-  }
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
