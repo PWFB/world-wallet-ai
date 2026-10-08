@@ -277,9 +277,11 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT") {
-      if (!networkConfig.usdt_contract || !networkConfig.usdt_decimals) throw new Error("USDT external signing is not configured for this network.");
-      const decimals = Number(networkConfig.usdt_decimals);
+    } else if (asset === "USDT" || asset === "BALMZ") {
+      const contract = asset === "BALMZ" ? networkConfig.balmz_contract : networkConfig.usdt_contract;
+      const configuredDecimals = asset === "BALMZ" ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
+      if (!contract || configuredDecimals == null) throw new Error(asset + " external signing is not configured for this network.");
+      const decimals = Number(configuredDecimals);
       const units = decimalToUnits(amount, decimals);
       const cleanDestination = destination.replace(/^0x/, "").toLowerCase();
       if (!/^[0-9a-f]{40}$/.test(cleanDestination)) throw new Error("Invalid EVM destination address.");
