@@ -39,51 +39,50 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
   const [performance, setPerformance] = useState({ points: [] });
-  const [authReady, setAuthReady] = useState(false);
+  const sessionState = authClient.useSession();
+  const authReady = !sessionState.isPending;
+  const neonSessionUser = sessionState.data?.user || null;
 
   useEffect(() => {
     let cancelled = false;
-    const googleReturn = sessionStorage.getItem("world_wallet_google_return") === "1";
-    const hasAuthCallbackParams = /[?&](code|state|error)=/.test(window.location.search) || new URLSearchParams(window.location.search).get("auth_callback") === "google";
 
-    async function restoreNeonSession() {
-      const attempts = googleReturn || hasAuthCallbackParams ? 8 : 3;
-      for (let attempt = 0; attempt < attempts && !cancelled; attempt += 1) {
+    async function restoreSessionFromNeon() {
+      if (sessionState.isPending) return;
+
+      if (neonSessionUser) {
         try {
-          const result = await authClient.getSession();
-          const session = result?.data;
-          const sessionUser = result?.data?.user || session?.user || session?.session?.user;
-          if (sessionUser) {
-            const token = await getNeonAccessToken();
-            if (token) {
-              sessionStorage.removeItem("world_wallet_google_return");
-              setUser(sessionUser);
-              setAccessToken(token);
-              setActive("Dashboard");
-              setShowLogin(false);
-              setAuthReady(true);
-              if (window.location.search) {
-                window.history.replaceState({}, document.title, window.location.pathname);
-              }
-              return;
+          const token = await getNeonAccessToken();
+          if (!cancelled && token) {
+            sessionStorage.removeItem("world_wallet_google_return");
+            setUser(neonSessionUser);
+            setAccessToken(token);
+            setActive("Dashboard");
+            setShowLogin(false);
+            if (window.location.search) {
+              window.history.replaceState({}, document.title, window.location.pathname);
             }
+            return;
           }
         } catch {
-          // Retry because the OAuth callback/session cookie can settle asynchronously.
+          // Token retrieval can briefly lag behind the managed auth session.
         }
-        await new Promise(resolve => setTimeout(resolve, 350));
       }
 
       if (!cancelled) {
+        setAccessToken("");
+        setUser(null);
         sessionStorage.removeItem("world_wallet_google_return");
-        setAuthReady(true);
-        if (googleReturn || hasAuthCallbackParams) setShowLogin(true);
+        if (new URLSearchParams(window.location.search).get("auth_callback") === "google") {
+          setShowLogin(true);
+          setLoginError("Google authentication completed, but the wallet session token is not available yet. Please try Google again.");
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
       }
     }
 
-    restoreNeonSession();
+    restoreSessionFromNeon();
     return () => { cancelled = true; };
-  }, []);
+  }, [sessionState.isPending, neonSessionUser]);
 
   useEffect(() => {
     let cancelled = false;
