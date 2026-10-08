@@ -188,3 +188,16 @@
 .network-safety{display:flex;gap:8px;align-items:center;padding:9px 11px;margin-top:-5px;border:1px solid #1b314b;border-radius:7px;background:#081321;font-size:8px}
 .network-safety b{color:#00d4ff}
 .network-safety span{color:#667c98;line-height:1.4}
+
+
+.amount-field{margin:0}
+.amount-label-row{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px}
+.amount-label-row span{font-size:10px;color:#91a4bd}
+.amount-max{border:1px solid #1d3d58;background:#081321;color:#00d4ff;border-radius:6px;padding:4px 8px;font-size:8px;font-weight:800;letter-spacing:.6px;cursor:pointer}
+.amount-max:hover:not(:disabled){border-color:#00d4ff;color:#fff}
+.amount-max:disabled{opacity:.45;cursor:not-allowed}
+.amount-field input[aria-invalid="true"]{border-color:#e55b6f}
+.amount-availability{display:flex;justify-content:space-between;gap:10px;min-height:15px;margin-top:5px;font-size:8px;color:#607792;line-height:1.4}
+.amount-availability b{color:#e55b6f;font-weight:700}
+.amount-error{color:#e55b6f}
+@media(max-width:760px){.amount-availability{flex-direction:column;gap:2px}}
