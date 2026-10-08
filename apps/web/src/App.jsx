@@ -44,7 +44,7 @@ function App() {
   useEffect(() => {
     let cancelled = false;
     const googleReturn = sessionStorage.getItem("world_wallet_google_return") === "1";
-    const hasAuthCallbackParams = /[?&](code|state|error)=/.test(window.location.search);
+    const hasAuthCallbackParams = /[?&](code|state|error)=/.test(window.location.search) || new URLSearchParams(window.location.search).get("auth_callback") === "google";
 
     async function restoreNeonSession() {
       const attempts = googleReturn || hasAuthCallbackParams ? 8 : 3;
@@ -52,12 +52,15 @@ function App() {
         try {
           const result = await authClient.getSession();
           const session = result?.data;
-          if (session?.user) {
+          const sessionUser = session?.user || session?.session?.user;
+          if (sessionUser) {
             const token = await getNeonAccessToken();
             if (token) {
               sessionStorage.removeItem("world_wallet_google_return");
-              setUser(session.user);
+              setUser(sessionUser);
               setAccessToken(token);
+              setActive("Dashboard");
+              setShowLogin(false);
               setAuthReady(true);
               if (window.location.search) {
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -226,7 +229,7 @@ function App() {
       sessionStorage.setItem("world_wallet_google_return", "1");
       const result = await authClient.signIn.social({
         provider: "google",
-        callbackURL: window.location.origin,
+        callbackURL: `${window.location.origin}/?auth_callback=google`,
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, "Google Sign-In failed."));
     } catch (error) {
