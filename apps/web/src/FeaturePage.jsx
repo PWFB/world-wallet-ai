@@ -119,7 +119,8 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     if (chainId.toLowerCase() !== networkConfig.chain_id.toLowerCase()) {
       try {
         await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
-      } catch {
+      } catch (error) {
+        if (Number(error?.code) === 4001) throw error;
         throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum" : "BNB Chain") + " mainnet.");
       }
     }
