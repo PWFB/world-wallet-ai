@@ -101,33 +101,35 @@ function App() {
       if (!accessToken) return;
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
-        const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
-        if (!response.ok) throw new Error(`Wallet API returned ${response.status}`);
-        let data = await response.json();
-
-        // Refresh supported market prices before rendering balances.
-        try {
-          const priceResponse = await fetch(`${API_BASE_URL}/api/v1/prices/refresh`, {
-            method: "POST",
-            headers: authHeaders,
-          });
-          if (priceResponse.ok) {
-            const priced = await priceResponse.json();
-            data = { ...data, wallet: { ...data.wallet, ...(priced.wallet || {}) }, assets: priced.assets || data.assets };
-          }
-        } catch {
-          // Keep authenticated wallet data if the public price service is temporarily unavailable.
-        }
+        const response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
+          method: "POST",
+          headers: authHeaders,
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || `Wallet refresh returned ${response.status}`);
         if (cancelled) return;
-        setUser(data.user || null);
+        setUser(data.user || neonSessionUser || null);
         setWallet(data.wallet || fallbackWallet);
         setAssets((data.assets || fallbackAssets).map(asset => ({
           ...asset,
           icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
+        setActivity((data.transactions || []).map(tx => ({
+          type: tx.type,
+          description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
+          amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
+          raw_amount: Number(tx.amount),
+          time: tx.time,
+          status: tx.status,
+          tx_hash: tx.tx_hash,
+          confirmations: Number(tx.confirmations || 0),
+          block_height: tx.block_height,
+        })));
         setApiStatus("online");
-      } catch {
-        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); }
+        setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
+        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
+      } catch (error) {
+        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
       }
     }
 
@@ -175,7 +177,7 @@ function App() {
     setSyncBusy(true);
     setSyncMessage("");
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/sync", {
+      const response = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", {
         method: "POST",
         headers: { Authorization: "Bearer " + accessToken },
       });
@@ -199,7 +201,8 @@ function App() {
       })));
       setApiStatus("online");
       setLastSyncedAt(new Date());
-      setSyncMessage("Wallet data synchronized.");
+      setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
+      setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
     } catch (error) {
       setSyncMessage(error.message || "Wallet sync failed.");
       setApiStatus("error");
