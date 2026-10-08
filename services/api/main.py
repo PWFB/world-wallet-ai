@@ -139,10 +139,32 @@ def init_db():
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE wallets ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Wallet';
+        CREATE TABLE IF NOT EXISTS token_registry(
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          name TEXT NOT NULL,
+          network TEXT NOT NULL,
+          contract_address TEXT,
+          decimals INTEGER,
+          coingecko_id TEXT,
+          status TEXT NOT NULL DEFAULT 'active',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(symbol,network)
+        );
+
         CREATE TABLE IF NOT EXISTS assets(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
           balance NUMERIC(36,18) NOT NULL DEFAULT 0, reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
         );
+        INSERT INTO token_registry(id,symbol,name,network,contract_address,decimals,coingecko_id,status) VALUES
+          ('native-btc','BTC','Bitcoin','bitcoin',NULL,8,'bitcoin','active'),
+          ('native-eth','ETH','Ethereum','ethereum',NULL,18,'ethereum','active'),
+          ('native-bnb','BNB','BNB','bnb',NULL,18,'binancecoin','active'),
+          ('token-balmz','BALMZ','BALMZ Token','ethereum',NULL,NULL,NULL,'pending_contract')
+        ON CONFLICT(symbol,network) DO UPDATE SET
+          name=EXCLUDED.name,
+          status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
+
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
@@ -1205,6 +1227,17 @@ def wallet_signing_config(user: dict = Depends(current_user)):
         },
     }
 
+
+@app.get("/api/v1/tokens")
+def list_token_registry(user: dict = Depends(current_user)):
+    networks = {a["network"] for a in configured_addresses(user)}
+    with db() as conn:
+        rows=conn.execute("SELECT symbol,name,network,contract_address,decimals,coingecko_id,status FROM token_registry ORDER BY symbol,network").fetchall()
+    tokens=[]
+    for r in rows:
+        supported = r[2] in networks
+        tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"wallet_network_connected":supported})
+    return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
 def list_wallets(user: dict = Depends(current_user)):
