@@ -760,10 +760,27 @@ def wallet_addresses(user: dict = Depends(current_user)):
 
 
 @app.post("/api/v1/wallet/sync")
-def _network_sync_status(warnings, updates):
+def _chain_heights():
+    heights = {}
+    try:
+        if BTC_ADDRESS:
+            heights["bitcoin"] = int(httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=8).text.strip())
+    except Exception:
+        heights["bitcoin"] = None
+    for network, url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL)):
+        if url:
+            try:
+                heights[network] = _hex_int(rpc_call(url, "eth_blockNumber", []))
+            except Exception:
+                heights[network] = None
+    return heights
+
+
+def _network_sync_status(warnings, updates, transaction_sync_at=None):
     now = datetime.now(timezone.utc).isoformat()
     warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb")}
     updated_networks = {str(item.get("network")) for item in updates}
+    chain_heights = _chain_heights()
     configured = {
         "bitcoin": bool(BTC_ADDRESS),
         "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
@@ -778,6 +795,8 @@ def _network_sync_status(warnings, updates):
                 "warning" if configured[network] and warning else "not_configured"
             ),
             "last_balance_sync_at": now if network in updated_networks else None,
+            "last_transaction_sync_at": transaction_sync_at if configured[network] and not warning else None,
+            "chain_height": chain_heights.get(network),
             "warning": warning,
         }
     return result
@@ -851,9 +870,9 @@ def sync_wallet(user: dict = Depends(current_user)):
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    network_status = _network_sync_status(warnings, updates)
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (BTC_ADDRESS or ETH_RPC_URL or BSC_RPC_URL) else None
+    network_status = _network_sync_status(warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (imported_transactions or evm_transactions) else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
 
