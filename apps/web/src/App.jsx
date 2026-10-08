@@ -13,6 +13,13 @@ const fallbackActivity = [];
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+function authErrorMessage(error, fallback) {
+  if (!error) return fallback;
+  const message = error.message || error.error_description || error.code || fallback;
+  const code = error.code && error.code !== message ? ` [${error.code}]` : "";
+  return `${message}${code}`;
+}
+
 function App() {
   const [active, setActive] = useState("Dashboard");
   const [showBalance, setShowBalance] = useState(true);
@@ -157,7 +164,7 @@ function App() {
         email,
         type: "sign-in",
       });
-      if (result?.error) throw new Error(result.error.message || "Unable to send the sign-in code.");
+      if (result?.error) throw new Error(authErrorMessage(result.error, "Unable to send the sign-in code."));
       setOtpRequested(true);
     } catch (error) {
       setLoginError(error.message || "Unable to send the sign-in code");
@@ -175,7 +182,7 @@ function App() {
         email,
         otp: otpCode.trim(),
       });
-      if (result?.error) throw new Error(result.error.message || "Invalid or expired code.");
+      if (result?.error) throw new Error(authErrorMessage(result.error, "Invalid or expired code."));
       const token = await getNeonAccessToken();
       if (!token) throw new Error("Neon Auth signed in, but the wallet session token could not be obtained.");
       setUser(result?.data?.user || null);
@@ -197,7 +204,7 @@ function App() {
         provider: "google",
         callbackURL: window.location.origin,
       });
-      if (result?.error) throw new Error(result.error.message || "Google Sign-In failed.");
+      if (result?.error) throw new Error(authErrorMessage(result.error, "Google Sign-In failed."));
     } catch (error) {
       setLoginError(error.message || "Google Sign-In unavailable");
       setAuthBusy(false);
