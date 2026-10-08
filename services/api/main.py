@@ -313,9 +313,10 @@ def _bech32_decode(address: str):
         values = [BECH32_CHARSET.index(c) for c in data]
     except ValueError:
         return None
-    if _bech32_polymod(_bech32_hrp_expand(hrp) + values) != 1:
+    checksum = _bech32_polymod(_bech32_hrp_expand(hrp) + values)
+    if checksum not in {1, 0x2bc830a3}:
         return None
-    return hrp, values[:-6]
+    return hrp, values[:-6], checksum
 
 
 def _convertbits(data, from_bits, to_bits, pad=False):
@@ -344,6 +345,11 @@ def valid_bitcoin_segwit(address: str) -> bool:
     if not decoded or decoded[0] != "bc" or not decoded[1]:
         return False
     witness_version = decoded[1][0]
+    encoding_constant = decoded[2]
+    if witness_version == 0 and encoding_constant != 1:
+        return False
+    if witness_version > 0 and encoding_constant != 0x2bc830a3:
+        return False
     if witness_version > 16:
         return False
     program = _convertbits(decoded[1][1:], 5, 8, False)
