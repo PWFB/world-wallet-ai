@@ -70,6 +70,14 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     setMessage("");
   }
 
+  function decimalToUnits(value, decimals) {
+    const raw = String(value).trim();
+    if (!/^\\d+(\\.\\d+)?$/.test(raw)) throw new Error("Invalid amount.");
+    const [whole, fraction = ""] = raw.split(".");
+    if (fraction.length > decimals) throw new Error("Amount has too many decimal places for this asset.");
+    return BigInt(whole + fraction.padEnd(decimals, "0"));
+  }
+
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination }) {
     if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
@@ -93,11 +101,11 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
 
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
-      tx.value = "0x" + BigInt(Math.round(Number(amount) * 1e18)).toString(16);
+      tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
     } else if (asset === "USDT") {
       if (!networkConfig.usdt_contract || !networkConfig.usdt_decimals) throw new Error("USDT external signing is not configured for this network.");
       const decimals = Number(networkConfig.usdt_decimals);
-      const units = BigInt(Math.round(Number(amount) * (10 ** decimals)));
+      const units = decimalToUnits(amount, decimals);
       const cleanDestination = destination.replace(/^0x/, "").toLowerCase();
       if (!/^[0-9a-f]{40}$/.test(cleanDestination)) throw new Error("Invalid EVM destination address.");
       tx.to = networkConfig.usdt_contract;
