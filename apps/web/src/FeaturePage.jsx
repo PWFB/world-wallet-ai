@@ -80,10 +80,11 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
         <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol} value={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
         <label>Amount<input type="number" min="0" step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00"/></label>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}>{networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)} disabled={!networksForAsset(asset).length}>{networksForAsset(asset).length ? networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}</select></label>
+        <div className="network-safety"><b>{asset}</b><span>{networksForAsset(asset).length ? `Compatible: ${networksForAsset(asset).map(n => n.label).join(" / ")}` : "This asset is catalog-only and cannot be sent on-chain yet."}</span></div>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
-        <button className="primary feature-submit" disabled={busy || !amount || !destination || !assets.some(item => item.symbol === asset)} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
+        <button className="primary feature-submit" disabled={busy || !amount || !destination || !assets.some(item => item.symbol === asset) || !networksForAsset(asset).length || !network} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
       </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Secure request workflow: this action records a wallet request; no blockchain transaction is broadcast by this API.</div></aside></div>
     </section>;
   }
