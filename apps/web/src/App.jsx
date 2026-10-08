@@ -195,7 +195,33 @@ function App() {
       }
     }
 
+    async function syncLiveTransactions() {
+      if (!accessToken || cancelled) return;
+      try {
+        const syncResponse = await fetch(API_BASE_URL + "/api/v1/transactions/sync", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        if (!syncResponse.ok) return;
+        const syncData = await syncResponse.json();
+        if (cancelled) return;
+        setActivity((syncData.transactions || []).map(tx => ({
+          id: tx.id, type: tx.type,
+          description: tx.asset + " • " + tx.description,
+          amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + tx.asset,
+          raw_amount: Number(tx.amount), time: tx.time, status: tx.status, tx_hash: tx.tx_hash,
+          confirmations: Number(tx.confirmations || 0), block_height: tx.block_height, network: tx.network,
+          block_hash: tx.block_hash, log_index: tx.log_index,
+        })));
+      } catch {
+        // Keep the last known real transaction state when a refresh is temporarily unavailable.
+      }
+    }
+
     loadTransactions();
+    syncLiveTransactions();
+    const liveTransactionTimer = window.setInterval(syncLiveTransactions, 60000);
+
     async function loadPerformance() {
       try {
         const response = await fetch(API_BASE_URL + "/api/v1/portfolio/performance", { headers: authHeaders });
@@ -205,7 +231,7 @@ function App() {
       } catch { if (!cancelled) setPerformance({ points: [] }); }
     }
     loadPerformance();
-    return () => { cancelled = true; window.clearInterval(walletRefreshTimer); };
+    return () => { cancelled = true; window.clearInterval(walletRefreshTimer); window.clearInterval(liveTransactionTimer); };
   }, [accessToken]);
 
   async function syncWallet() {
