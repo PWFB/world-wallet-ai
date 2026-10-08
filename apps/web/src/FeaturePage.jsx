@@ -3,11 +3,19 @@ import { useEffect, useState } from "react";
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+const networksForAsset = symbol => ({
+  BTC: [{ value: "bitcoin", label: "Bitcoin" }],
+  ETH: [{ value: "ethereum", label: "Ethereum" }],
+  BNB: [{ value: "bnb", label: "BNB Chain" }],
+  USDT: [{ value: "ethereum", label: "Ethereum" }, { value: "bnb", label: "BNB Chain" }],
+  BALMZ: [{ value: "ethereum", label: "Ethereum" }],
+}[symbol] || []);
+
 export default function FeaturePage({ active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
-  const [network, setNetwork] = useState("mainnet");
+  const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -18,6 +26,11 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [copiedAddress, setCopiedAddress] = useState("");
   const [toolItems, setToolItems] = useState([]);
   const [toolBusy, setToolBusy] = useState(false);
+
+  useEffect(() => {
+    const options = networksForAsset(asset);
+    if (options.length && !options.some(item => item.value === network)) setNetwork(options[0].value);
+  }, [asset]);
 
   useEffect(() => {
     if (active !== "Receive") return;
@@ -60,7 +73,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
         <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol} value={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
         <label>Amount<input type="number" min="0" step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00"/></label>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="mainnet">Mainnet</option><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}>{networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
         <button className="primary feature-submit" disabled={busy || !amount || !destination || !assets.some(item => item.symbol === asset)} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
@@ -136,7 +149,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
     const addBook=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/address-book",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({label:note,address:destination,network,notes:""})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to save address.");setDestination("");setNote("");setMessage("Address saved.");await loadBook();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     const removeBook=async id=>{setToolBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/address-book/delete",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({id})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to remove address.");setMessage("Address removed.");await loadBook();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Address Book</h1><p className="muted">Save trusted destination addresses for this wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <div className="feature-grid"><article className="panel action-panel"><h2>Add address</h2><label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="mainnet">Mainnet</option></select></label><label>Address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label><label>Label<input value={note} onChange={e=>setNote(e.target.value)} placeholder="My exchange"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()||!note.trim()} onClick={addBook}>{toolBusy?"Saving…":"Save address →"}</button></article>
+      <div className="feature-grid"><article className="panel action-panel"><h2>Add address</h2><label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label><label>Address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label><label>Label<input value={note} onChange={e=>setNote(e.target.value)} placeholder="My exchange"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()||!note.trim()} onClick={addBook}>{toolBusy?"Saving…":"Save address →"}</button></article>
       <article className="panel tool-panel"><div className="panel-head"><div><h2>Saved addresses</h2><span>Private to this wallet</span></div><button className="secondary" onClick={loadBook}>↻ Refresh</button></div>{toolItems.length?toolItems.map(a=><div className="tool-row" key={a.id}><div><b>{a.label}</b><small>{a.network}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>removeBook(a.id)}>Remove</button></div>):<div className="live-chart-empty">No saved addresses loaded.</div>}</article></div></section>;
   }
 
