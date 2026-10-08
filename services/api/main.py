@@ -490,6 +490,79 @@ def erc20_balance(url: str, contract: str, address: str):
 
 
 
+def evm_block_number(url: str):
+    raw = rpc_call(url, "eth_blockNumber", [])
+    return int(raw, 16) if raw else None
+
+
+def evm_transfer_logs(url: str, contract: str, wallet_address: str, from_block: int, to_block: int):
+    if not url or not contract or not valid_evm_address(contract) or not valid_evm_address(wallet_address):
+        return []
+    transfer_topic = "0x" + _keccak_hex("Transfer(address,address,uint256)")
+    wallet_topic = "0x" + wallet_address[2:].lower().rjust(64, "0")
+    logs = []
+    for topic_index in (1, 2):
+        logs.extend(rpc_call(url, "eth_getLogs", [{
+            "fromBlock": hex(from_block),
+            "toBlock": hex(to_block),
+            "address": contract,
+            "topics": [transfer_topic, wallet_topic if topic_index == 1 else None, wallet_topic if topic_index == 2 else None],
+        }]) or [])
+    return logs
+
+
+def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6):
+    if not url or not contract or not EVM_WALLET_ADDRESS:
+        return [], None
+    try:
+        latest = evm_block_number(url)
+        if latest is None:
+            return [], "latest block unavailable"
+        start = max(0, latest - int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")))
+        logs = evm_transfer_logs(url, contract, EVM_WALLET_ADDRESS, start, latest)
+    except Exception:
+        return [], f"{network} {symbol} transaction service unavailable"
+    imported = []
+    wallet_lower = EVM_WALLET_ADDRESS.lower()
+    with db() as conn:
+        for log in logs:
+            topics = log.get("topics") or []
+            if len(topics) < 3:
+                continue
+            sender = "0x" + topics[1][-40:]
+            recipient = "0x" + topics[2][-40:]
+            raw_value = int(log.get("data") or "0x0", 16)
+            amount = raw_value / (10 ** decimals)
+            if amount <= 0:
+                continue
+            direction = "received" if recipient.lower() == wallet_lower else "sent"
+            signed_amount = amount if direction == "received" else -amount
+            tx_hash = log.get("transactionHash")
+            block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
+            if not tx_hash:
+                continue
+            tx_id = "evm_" + tx_hash
+            confirmations = max(0, latest - block_number + 1) if block_number is not None else 0
+            status = "confirmed" if confirmations > 0 else "pending"
+            description = f"{symbol} {direction} on {network}"
+            existing = conn.execute("SELECT id,type FROM transactions WHERE wallet_id=%s AND tx_hash=%s", (user["wallet_id"], tx_hash)).fetchone()
+            if existing:
+                conn.execute("UPDATE transactions SET confirmations=%s,block_height=%s,status=%s WHERE id=%s AND wallet_id=%s",
+                             (confirmations, block_number, status, existing[0], user["wallet_id"]))
+            else:
+                conn.execute(
+                    "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height) "
+                    "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (tx_id, user["wallet_id"], direction, symbol, description, signed_amount, status,
+                     recipient if direction == "sent" else sender, network, tx_hash, confirmations, block_number),
+                )
+            imported.append({"tx_hash": tx_hash, "asset": symbol, "network": network, "type": direction,
+                             "amount": signed_amount, "status": status, "confirmations": confirmations,
+                             "block_height": block_number})
+        conn.commit()
+    return imported, None
+
+
 def bitcoin_address_transactions(address: str):
     if not address:
         return []
@@ -668,12 +741,25 @@ def sync_wallet(user: dict = Depends(current_user)):
             conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (total_usdt,user["wallet_id"]))
         conn.commit()
     imported_transactions = sync_bitcoin_transactions(user)
+    evm_transactions = []
+    evm_warnings = []
+    if EVM_WALLET_ADDRESS:
+        for rpc_url, network, contract in (
+            (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
+            (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
+        ):
+            if rpc_url and contract:
+                imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+                evm_transactions.extend(imported)
+                if warning:
+                    evm_warnings.append(warning)
+    warnings.extend(evm_warnings)
     assets, all_transactions, summary = wallet_snapshot(user)
     if BTC_ADDRESS and not imported_transactions:
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"transactions":all_transactions}
+    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions}
 
 
 @app.post("/api/v1/prices/refresh")
