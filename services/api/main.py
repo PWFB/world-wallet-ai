@@ -160,6 +160,8 @@ def init_db():
           ('native-btc','BTC','Bitcoin','bitcoin',NULL,8,'bitcoin','active'),
           ('native-eth','ETH','Ethereum','ethereum',NULL,18,'ethereum','active'),
           ('native-bnb','BNB','BNB','bnb',NULL,18,'binancecoin','active'),
+          ('token-usdt-eth','USDT','Tether USD','ethereum',NULL,6,'tether','catalog_only'),
+          ('token-usdt-bnb','USDT','Tether USD','bnb',NULL,6,'tether','catalog_only'),
           ('token-balmz','BALMZ','BALMZ Token','ethereum',NULL,NULL,NULL,'pending_contract')
         ON CONFLICT(symbol,network) DO UPDATE SET
           name=EXCLUDED.name,
