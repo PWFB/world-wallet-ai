@@ -214,6 +214,12 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
         if (refresh.ok) {
           onTransactionsUpdated(refreshed.transactions || []);
           onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
+        } else {
+          const transactionResponse = await fetch(apiBaseUrl + "/api/v1/transactions", { headers: { Authorization:"Bearer "+accessToken } });
+          if (transactionResponse.ok) {
+            const transactionData = await transactionResponse.json();
+            onTransactionsUpdated(transactionData.transactions || []);
+          }
         }
       }
     } catch (e) {
