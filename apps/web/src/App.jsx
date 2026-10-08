@@ -26,6 +26,8 @@ function App() {
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
   const [apiStatus, setApiStatus] = useState("loading");
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [syncMessage, setSyncMessage] = useState("");
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -166,6 +168,43 @@ function App() {
     loadPerformance();
     return () => { cancelled = true; };
   }, [accessToken]);
+
+  async function syncWallet() {
+    if (!accessToken || syncBusy) return;
+    setSyncBusy(true);
+    setSyncMessage("");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/wallet/sync", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + accessToken },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Wallet sync failed.");
+      setWallet(data.wallet || fallbackWallet);
+      setAssets((data.assets || fallbackAssets).map(asset => ({
+        ...asset,
+        icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+      })));
+      setActivity((data.bitcoin_transactions || []).map(tx => ({
+        type: tx.type,
+        description: (tx.asset || "BTC") + " • Blockchain transaction",
+        amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || "BTC"),
+        raw_amount: Number(tx.amount),
+        time: new Date().toISOString(),
+        status: tx.status,
+        tx_hash: tx.tx_hash,
+        confirmations: Number(tx.confirmations || 0),
+        block_height: tx.block_height,
+      })));
+      setApiStatus("online");
+      setSyncMessage("Wallet data synchronized.");
+    } catch (error) {
+      setSyncMessage(error.message || "Wallet sync failed.");
+      setApiStatus("error");
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -527,7 +566,7 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="secure"><span>✓</span><div><b>{user ? "Authenticated wallet" : "Wallet session"}</b><small>{user?.email || "Demo authentication"}</small></div></div>
-          <button className="profile" onClick={handleLogout}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "wallet_demo_001"}</small></div><span>↪</span></button>
+          <button className="profile" onClick={handleLogout}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "Authenticated wallet"}</small></div><span>↪</span></button>
         </div>
       </aside>
 
@@ -541,7 +580,7 @@ function App() {
           <section className="content">
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
-              <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
+              <div className="page-actions"><button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Syncing…" : "↻ Sync wallet"}</button><button className="primary" onClick={() => setActive("Send")}>+ Send funds</button></div>
             </div>
 
             <div className="balance-grid">
@@ -571,18 +610,18 @@ function App() {
 
               <article className="panel ai-panel">
                 <div className="ai-title"><div className="ai-orb">✦</div><div><h2>BALMZ AI</h2><span>Your intelligent wallet assistant</span></div><b>LIVE</b></div>
-                <div className="ai-message">Your portfolio is up <strong>{Number(wallet.change_24h || 0).toFixed(2)}%</strong> today. BALMZ has the strongest momentum. Would you like a quick risk and opportunity scan?</div>
+                <div className="ai-message">{assets.length === 0 ? "No wallet assets are available yet. Sync a configured production wallet to let BALMZ AI analyze live data." : Number(wallet.available_balance_usd || 0) > 0 ? <>Your current available balance is <strong>{money(wallet.available_balance_usd)}</strong>. BALMZ AI can analyze the live asset mix and recent activity.</> : "Your wallet is authenticated, but no funded asset balance is currently recorded."}</div>
                 <div className="ai-actions"><button>Run portfolio scan</button><button>Ask BALMZ AI</button></div>
                 <div className="ai-input">Ask anything about your wallet... <span>↗</span></div>
               </article>
 
               <article className="panel assets-panel">
-                <div className="panel-head"><div><h2>Your assets</h2><span>{assets.length} assets • {money(wallet.available_balance_usd)} total</span></div><button className="text-btn">View portfolio →</button></div>
+                <div className="panel-head"><div><h2>Your assets</h2><span>{assets.length} assets • {money(wallet.available_balance_usd)} total</span></div><button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button></div>
                 <div className="asset-list">{assets.map(a => <div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{money(a.value_usd)}</small></div><b className={Number(a.change_24h) >= 0 ? "positive" : "negative"}>{Number(a.change_24h) >= 0 ? "+" : ""}{Number(a.change_24h || 0).toFixed(2)}%</b></div>)}</div>
               </article>
 
               <article className="panel activity-panel">
-                <div className="panel-head"><div><h2>Recent activity</h2><span>Latest wallet events</span></div><button className="text-btn">View all →</button></div>
+                <div className="panel-head"><div><h2>Recent activity</h2><span>Latest wallet events</span></div><button className="text-btn" onClick={() => setActive("Transactions")}>View all →</button></div>
                 <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
               </article>
             </div>
@@ -594,7 +633,7 @@ function App() {
               <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
             </div>
 
-            <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}</div>
+            <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}</div>
                     </section>
         ) : (
           <FeaturePage active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
