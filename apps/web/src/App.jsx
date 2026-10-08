@@ -28,6 +28,7 @@ function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [user, setUser] = useState(null);
   const [accessToken, setAccessToken] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -197,6 +198,7 @@ function App() {
         block_height: tx.block_height,
       })));
       setApiStatus("online");
+      setLastSyncedAt(new Date());
       setSyncMessage("Wallet data synchronized.");
     } catch (error) {
       setSyncMessage(error.message || "Wallet sync failed.");
@@ -633,7 +635,7 @@ function App() {
               <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
             </div>
 
-            <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}</div>
+            <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
                     </section>
         ) : (
           <FeaturePage active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
