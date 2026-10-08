@@ -39,22 +39,45 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
   const [performance, setPerformance] = useState({ points: [] });
+  const [authReady, setAuthReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    const googleReturn = sessionStorage.getItem("world_wallet_google_return") === "1";
+    const hasAuthCallbackParams = /[?&](code|state|error)=/.test(window.location.search);
+
     async function restoreNeonSession() {
-      try {
-        const result = await authClient.getSession();
-        const session = result?.data;
-        if (!session?.user || cancelled) return;
-        const token = await getNeonAccessToken();
-        if (!token || cancelled) return;
-        setUser(session.user);
-        setAccessToken(token);
-      } catch {
-        // No Neon Auth session; remain signed out.
+      const attempts = googleReturn || hasAuthCallbackParams ? 8 : 3;
+      for (let attempt = 0; attempt < attempts && !cancelled; attempt += 1) {
+        try {
+          const result = await authClient.getSession();
+          const session = result?.data;
+          if (session?.user) {
+            const token = await getNeonAccessToken();
+            if (token) {
+              sessionStorage.removeItem("world_wallet_google_return");
+              setUser(session.user);
+              setAccessToken(token);
+              setAuthReady(true);
+              if (window.location.search) {
+                window.history.replaceState({}, document.title, window.location.pathname);
+              }
+              return;
+            }
+          }
+        } catch {
+          // Retry because the OAuth callback/session cookie can settle asynchronously.
+        }
+        await new Promise(resolve => setTimeout(resolve, 350));
+      }
+
+      if (!cancelled) {
+        sessionStorage.removeItem("world_wallet_google_return");
+        setAuthReady(true);
+        if (googleReturn || hasAuthCallbackParams) setShowLogin(true);
       }
     }
+
     restoreNeonSession();
     return () => { cancelled = true; };
   }, []);
@@ -200,12 +223,14 @@ function App() {
     setLoginError("");
     setAuthBusy(true);
     try {
+      sessionStorage.setItem("world_wallet_google_return", "1");
       const result = await authClient.signIn.social({
         provider: "google",
         callbackURL: window.location.origin,
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, "Google Sign-In failed."));
     } catch (error) {
+      sessionStorage.removeItem("world_wallet_google_return");
       setLoginError(error.message || "Google Sign-In unavailable");
       setAuthBusy(false);
     }
@@ -241,6 +266,19 @@ function App() {
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
     Support: ["Support Center", "Help & Docs"],
   }), []);
+
+  if (!authReady && !accessToken) {
+    return (
+      <div className="login-shell">
+        <section className="login-layout" style={{ minHeight: "100vh", alignItems: "center", justifyContent: "center" }}>
+          <div className="login-card" style={{ maxWidth: 460, width: "100%" }}>
+            <div className="login-card-header"><div className="login-card-icon">W</div><div><p className="eyebrow">SECURE ACCESS</p><h2>Restoring wallet session</h2></div></div>
+            <p className="login-subtitle">Finishing secure authentication. Please wait while World Wallet AI restores your signed-in session.</p>
+          </div>
+        </section>
+      </div>
+    );
+  }
 
   if (!accessToken && !showLogin) {
     return (
