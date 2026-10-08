@@ -760,6 +760,30 @@ def wallet_addresses(user: dict = Depends(current_user)):
 
 
 @app.post("/api/v1/wallet/sync")
+def _network_sync_status(warnings, updates):
+    now = datetime.now(timezone.utc).isoformat()
+    warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb")}
+    updated_networks = {str(item.get("network")) for item in updates}
+    configured = {
+        "bitcoin": bool(BTC_ADDRESS),
+        "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
+        "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
+    }
+    result = {}
+    for network in ("bitcoin", "ethereum", "bnb"):
+        warning = warning_text[network]
+        result[network] = {
+            "configured": configured[network],
+            "status": "healthy" if network in updated_networks and not warning else (
+                "warning" if configured[network] and warning else "not_configured"
+            ),
+            "last_balance_sync_at": now if network in updated_networks else None,
+            "warning": warning,
+        }
+    return result
+
+
+@app.post("/api/v1/wallet/sync")
 def sync_wallet(user: dict = Depends(current_user)):
     evm_addresses = [a for a in configured_addresses(user) if a["network"] in ("ethereum", "bnb")]
     address = evm_addresses[0]["address"] if evm_addresses else None
@@ -827,7 +851,10 @@ def sync_wallet(user: dict = Depends(current_user)):
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions}
+    network_status = _network_sync_status(warnings, updates)
+    last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (imported_transactions or evm_transactions) else None
+    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
 
 @app.post("/api/v1/prices/refresh")
@@ -888,6 +915,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
 
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
     warnings = [x for x in (sync_error, price_error) if x]
+    network_status = sync_result.get("network_status") or _network_sync_status(warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
         "wallet": {**summary_now, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
@@ -897,6 +925,9 @@ def refresh_wallet(user: dict = Depends(current_user)):
         "bitcoin_transactions": bitcoin_transactions,
         "price_source": price_result.get("source"),
         "warnings": warnings,
+        "network_status": network_status,
+        "last_balance_sync_at": sync_result.get("last_balance_sync_at"),
+        "last_transaction_sync_at": sync_result.get("last_transaction_sync_at"),
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
         "duration_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
     }
