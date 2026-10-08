@@ -1125,9 +1125,20 @@ def reconcile_settled_asset(conn, user, symbol, network):
 def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(current_user)):
     tx_hash = request.tx_hash.strip()
     with db() as conn:
+        initial=conn.execute(
+            "SELECT id,asset FROM transactions WHERE id=%s AND wallet_id=%s",
+            (request.transaction_id,user["wallet_id"]),
+        ).fetchone()
+        if not initial:
+            raise HTTPException(status_code=404,detail="Transaction not found")
+        txid,symbol=initial
+        asset=conn.execute(
+            "SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
+            (user["wallet_id"],symbol),
+        ).fetchone()
         row=conn.execute(
             "SELECT id,asset,amount,status,destination,network,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
-            (request.transaction_id,user["wallet_id"]),
+            (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
@@ -1161,10 +1172,6 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             conn.commit()
             return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"broadcast":False}
 
-        asset=conn.execute(
-            "SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
-            (user["wallet_id"],symbol),
-        ).fetchone()
         hold=abs(Decimal(amount))
         if not asset or Decimal(asset[0] or 0) < hold:
             raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
@@ -1192,12 +1199,15 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
 @app.post("/api/v1/transactions/cancel")
 def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(current_user)):
     with db() as conn:
-        row=conn.execute("SELECT id,asset,amount,status,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(request.transaction_id,user["wallet_id"])).fetchone()
+        initial=conn.execute("SELECT id,asset FROM transactions WHERE id=%s AND wallet_id=%s",(request.transaction_id,user["wallet_id"])).fetchone()
+        if not initial: raise HTTPException(status_code=404,detail="Transaction not found")
+        txid,symbol=initial
+        asset=conn.execute("SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
+        row=conn.execute("SELECT id,asset,amount,status,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(txid,user["wallet_id"])).fetchone()
         if not row: raise HTTPException(status_code=404,detail="Transaction not found")
         txid,symbol,amount,status,tx_hash=row
         if status not in {"pending","pending_review"} or tx_hash: raise HTTPException(status_code=409,detail="Only unbroadcast pending requests can be cancelled")
         hold=-Decimal(amount)
-        asset=conn.execute("SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
         if not asset or Decimal(asset[0] or 0)<hold: raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
         conn.execute("UPDATE assets SET reserved_balance=reserved_balance-%s WHERE wallet_id=%s AND symbol=%s",(hold,user["wallet_id"],symbol))
         conn.execute("UPDATE transactions SET status='cancelled' WHERE id=%s AND wallet_id=%s",(txid,user["wallet_id"]))
