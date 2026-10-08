@@ -167,6 +167,7 @@ function App() {
     }
 
     loadWallet();
+    const walletRefreshTimer = window.setInterval(loadWallet, 60000);
 
     async function loadTransactions() {
       if (!accessToken) return;
@@ -202,7 +203,7 @@ function App() {
       } catch { if (!cancelled) setPerformance({ points: [] }); }
     }
     loadPerformance();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; window.clearInterval(walletRefreshTimer); };
   }, [accessToken]);
 
   async function syncWallet() {
