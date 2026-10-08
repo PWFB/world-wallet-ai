@@ -50,6 +50,26 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+  const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
+  const selectedAssetAvailable = Math.max(0, Number(
+    selectedWalletAsset?.available_balance ??
+    selectedWalletAsset?.available ??
+    selectedWalletAsset?.balance ??
+    0
+  ));
+  const parsedAmountForGuard = Number(amount);
+  const amountExceedsAvailable = Number.isFinite(parsedAmountForGuard) && parsedAmountForGuard > selectedAssetAvailable;
+  const amountInvalid = amount !== "" && (!Number.isFinite(parsedAmountForGuard) || parsedAmountForGuard <= 0);
+
+  function useMaxAvailable() {
+    if (!selectedWalletAsset || selectedAssetAvailable <= 0) {
+      setMessage("No available balance is currently available for this asset.");
+      return;
+    }
+    setAmount(String(selectedAssetAvailable));
+    setMessage("");
+  }
+
   async function submit(endpoint) {
     setBusy(true); setMessage("");
     try {
@@ -58,7 +78,15 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       if (!destination.trim()) throw new Error("Enter a destination address.");
       const selectedAsset = assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
-      if (parsedAmount > Number(selectedAsset.balance || 0)) throw new Error("Amount exceeds the selected asset's available balance.");
+      const availableBalance = Math.max(0, Number(
+        selectedAsset.available_balance ??
+        selectedAsset.available ??
+        selectedAsset.balance ??
+        0
+      ));
+      if (parsedAmount > availableBalance) throw new Error(
+        `Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`
+      );
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
       const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
@@ -77,14 +105,21 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>{active}</h1><p className="muted">{send ? "Send assets to an external wallet." : "Request a secure withdrawal."}</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel">
         <div className="feature-icon">{send ? "↗" : "⇥"}</div><h2>{send ? "Send funds" : "Direct withdrawal"}</h2>
-        <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol} value={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
-        <label>Amount<input type="number" min="0" step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00"/></label>
+        <label>Asset<select value={asset} onChange={e=>{setAsset(e.target.value);setAmount("");setMessage("");}}>{assets.map(a=>{const available=Math.max(0,Number(a.available_balance ?? a.available ?? a.balance ?? 0));return <option key={a.symbol} value={a.symbol}>{a.symbol} • {number(available)} available</option>;})}</select></label>
+        <div className="amount-field">
+          <div className="amount-label-row"><span>Amount</span><button type="button" className="amount-max" onClick={useMaxAvailable} disabled={selectedAssetAvailable <= 0 || busy}>MAX</button></div>
+          <input type="number" min="0" max={selectedAssetAvailable > 0 ? selectedAssetAvailable : undefined} step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" aria-invalid={amountExceedsAvailable || amountInvalid}/>
+          <div className={amountExceedsAvailable || amountInvalid ? "amount-availability amount-error" : "amount-availability"}>
+            <span>Available: {number(selectedAssetAvailable)} {asset}</span>
+            {amountExceedsAvailable ? <b>Amount exceeds available balance.</b> : amountInvalid ? <b>Enter a valid amount greater than zero.</b> : null}
+          </div>
+        </div>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
         <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)} disabled={!networksForAsset(asset).length}>{networksForAsset(asset).length ? networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}</select></label>
         <div className="network-safety"><b>{asset}</b><span>{networksForAsset(asset).length ? `Compatible: ${networksForAsset(asset).map(n => n.label).join(" / ")}` : "This asset is catalog-only and cannot be sent on-chain yet."}</span></div>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
-        <button className="primary feature-submit" disabled={busy || !amount || !destination || !assets.some(item => item.symbol === asset) || !networksForAsset(asset).length || !network} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
+        <button className="primary feature-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || selectedAssetAvailable <= 0 || !destination || !assets.some(item => item.symbol === asset) || !networksForAsset(asset).length || !network} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
       </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Secure request workflow: this action records a wallet request; no blockchain transaction is broadcast by this API.</div></aside></div>
     </section>;
   }
