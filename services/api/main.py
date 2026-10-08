@@ -155,6 +155,7 @@ def init_db():
           migrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,symbol)
         );
+        """)
         legacy_holds = conn.execute("""
           SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
           FROM assets a
@@ -167,7 +168,7 @@ def init_db():
             WHERE m.wallet_id=a.wallet_id AND m.symbol=a.symbol
           )
           GROUP BY a.wallet_id,a.symbol
-        """).fetchall()
+.fetchall()
         for wallet_id,symbol,legacy_reserved in legacy_holds:
             hold=legacy_reserved or Decimal("0")
             if hold > 0:
