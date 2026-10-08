@@ -56,69 +56,109 @@ function App() {
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [networkStatus, setNetworkStatus] = useState({});
   const [user, setUser] = useState(null);
-  const [accessToken, setAccessToken] = useState("");
+  const [accessToken, setAccessToken] = useState(() => {
+    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
+  });
+  const [authRestoring, setAuthRestoring] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [passwordMode, setPasswordMode] = useState(true);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
-  const [showLogin, setShowLogin] = useState(false);
+  const [showLogin, setShowLogin] = useState(() => {
+    try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
+  });
   const [loginError, setLoginError] = useState("");
   const [authMethod, setAuthMethod] = useState("email");
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
   const [performance, setPerformance] = useState({ points: [] });
   const sessionState = authClient.useSession();
-  const authReady = !sessionState.isPending;
   const neonSessionUser = sessionState.data?.user || null;
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId = null;
 
     async function restoreSessionFromNeon() {
-      if (sessionState.isPending) return;
+      let persistedToken = "";
+      let googleReturn = false;
+      try {
+        persistedToken = localStorage.getItem(TOKEN_KEY) || "";
+        googleReturn =
+          new URLSearchParams(window.location.search).get("auth_callback") === "google" ||
+          sessionStorage.getItem("world_wallet_google_return") === "1";
+      } catch {
+        // Storage can be unavailable in restricted browser modes.
+      }
+
+      if (persistedToken) {
+        if (!accessToken && !cancelled) setAccessToken(persistedToken);
+        if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      if (!googleReturn) {
+        if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      if (!cancelled) setAuthRestoring(true);
+
+      if (sessionState.isPending) {
+        timeoutId = window.setTimeout(() => {
+          if (!cancelled) {
+            setAuthRestoring(false);
+            setLoginError("Google session could not be restored. Please sign in again.");
+            setShowLogin(true);
+            try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
+          }
+        }, 6000);
+        return;
+      }
 
       if (neonSessionUser) {
-        // The Better Auth session cookie can become visible before the short-lived
-        // Neon JWT endpoint is ready. Retry the token exchange instead of sending
-        // the user back to the landing page.
-        for (let attempt = 0; attempt < 10 && !cancelled; attempt += 1) {
+        for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
           try {
             const token = await getNeonAccessToken();
             if (token) {
-              sessionStorage.removeItem("world_wallet_google_return");
+              try { localStorage.setItem(TOKEN_KEY, token); } catch {}
+              try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
               setUser(neonSessionUser);
               setAccessToken(token);
               setActive("Dashboard");
               setShowLogin(false);
+              setAuthRestoring(false);
               if (window.location.search) {
                 window.history.replaceState({}, document.title, window.location.pathname);
               }
               return;
             }
           } catch {
-            // Keep retrying while Neon Auth finishes the JWT exchange.
+            // Keep retrying briefly while Neon Auth finishes the JWT exchange.
           }
           await new Promise(resolve => setTimeout(resolve, 500));
         }
       }
 
       if (!cancelled) {
-        setAccessToken("");
-        setUser(null);
-        sessionStorage.removeItem("world_wallet_google_return");
-        if (new URLSearchParams(window.location.search).get("auth_callback") === "google") {
-          setShowLogin(true);
-          setLoginError("Google authentication completed, but the wallet session token is not available yet. Please try Google again.");
+        setAuthRestoring(false);
+        setShowLogin(true);
+        setLoginError("Google session could not be restored. Please sign in again.");
+        try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
+        if (window.location.search) {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
       }
     }
 
     restoreSessionFromNeon();
-    return () => { cancelled = true; };
-  }, [sessionState.isPending, neonSessionUser]);
+    return () => {
+      cancelled = true;
+      if (timeoutId) window.clearTimeout(timeoutId);
+    };
+  }, [sessionState.isPending, neonSessionUser, accessToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -145,9 +185,18 @@ function App() {
         if (response.status === 401) {
           const freshToken = await getNeonAccessToken();
           if (freshToken && freshToken !== accessToken && !cancelled) {
+            try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
             setAccessToken(freshToken);
             return;
           }
+          if (!cancelled) {
+            try { localStorage.removeItem(TOKEN_KEY); } catch {}
+            setAccessToken("");
+            setUser(null);
+            setShowLogin(true);
+            setLoginError("Your wallet session expired. Please sign in again.");
+          }
+          return;
         }
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `Wallet refresh returned ${response.status}`);
@@ -457,7 +506,7 @@ function App() {
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
-  if (!authReady && !accessToken) {
+  if (authRestoring && !accessToken) {
     return (
       <div className="login-shell">
         <section className="login-layout" style={{ minHeight: "100vh", alignItems: "center", justifyContent: "center" }}>
