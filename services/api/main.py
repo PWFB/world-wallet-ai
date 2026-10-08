@@ -1126,6 +1126,29 @@ def sync_transactions(user: dict = Depends(current_user)):
 
 
 
+@app.get("/api/v1/wallet/signing-config")
+def wallet_signing_config(user: dict = Depends(current_user)):
+    # External-wallet signing only: the API never receives or stores a private key.
+    return {
+        "mode": "external_signer",
+        "networks": {
+            "ethereum": {
+                "chain_id": "0x1",
+                "wallet_address": EVM_WALLET_ADDRESS if ETH_RPC_URL else None,
+                "usdt_contract": USDT_ETH_CONTRACT or None,
+                "usdt_decimals": erc20_decimals(ETH_RPC_URL, USDT_ETH_CONTRACT) if ETH_RPC_URL and USDT_ETH_CONTRACT else None,
+            },
+            "bnb": {
+                "chain_id": "0x38",
+                "wallet_address": EVM_WALLET_ADDRESS if BSC_RPC_URL else None,
+                "usdt_contract": USDT_BSC_CONTRACT or None,
+                "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
+            },
+        },
+        "broadcast_policy": "user_signed_only",
+    }
+
+
 @app.get("/api/v1/wallet/connect")
 def wallet_connect(user: dict = Depends(current_user)):
     addresses = configured_addresses(user)
