@@ -37,6 +37,8 @@ function authErrorMessage(error, fallback) {
 
 function App() {
   const [active, setActive] = useState("Dashboard");
+  const [coinFilter, setCoinFilter] = useState("all");
+  const [coinSearch, setCoinSearch] = useState("");
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
@@ -637,19 +639,34 @@ function App() {
               </article>
 
               <article className="panel assets-panel">
-                <div className="panel-head"><div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalog.length} supported assets • {money(wallet.available_balance_usd)} available</span></div><button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button></div>
-                <div className="asset-list">{walletCoinCatalog.map(c => {
-                  const live = assets.find(a => a.symbol === c.symbol);
-                  const balance = live ? live.balance : 0;
-                  const value = live ? live.value_usd : 0;
-                  const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : "Catalog only • live wallet not connected";
-                  return <div className="asset-row" key={c.symbol}>
-                    <span className="asset-icon">{c.icon}</span>
-                    <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                    <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}</small></div>
-                    <small className="asset-network">{c.status}</small>
-                  </div>;
-                })}</div>
+                <div className="panel-head">
+                  <div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalog.length} assets in catalog • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
+                  <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
+                </div>
+                <div className="coin-toolbar">
+                  <input value={coinSearch} onChange={e => setCoinSearch(e.target.value)} placeholder="Search coin or token…" aria-label="Search coins and tokens" />
+                  <div className="coin-tabs">
+                    <button className={coinFilter === "all" ? "active" : ""} onClick={() => setCoinFilter("all")}>All</button>
+                    <button className={coinFilter === "held" ? "active" : ""} onClick={() => setCoinFilter("held")}>Held</button>
+                  </div>
+                </div>
+                <div className="asset-list">{walletCoinCatalog
+                  .filter(c => !coinSearch.trim() || `${c.symbol} ${c.name}`.toLowerCase().includes(coinSearch.trim().toLowerCase()))
+                  .filter(c => coinFilter === "all" || Number((assets.find(a => a.symbol === c.symbol) || {}).balance || 0) !== 0)
+                  .map(c => {
+                    const live = assets.find(a => a.symbol === c.symbol);
+                    const balance = live ? live.balance : 0;
+                    const value = live ? live.value_usd : 0;
+                    const price = live ? live.price_usd : 0;
+                    const liveStatus = live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : "Catalog only • live wallet not connected";
+                    return <div className="asset-row" key={c.symbol}>
+                      <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
+                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
+                      <div className="asset-balance"><b>{number(balance)}</b><small>{money(value)}{price ? ` • ${money(price)}/coin` : ""}</small></div>
+                      <small className="asset-network">{c.status}</small>
+                    </div>;
+                  })}</div>
+                <div className="coin-catalog-note">Balances and prices are shown only when supplied by the authenticated wallet data source. Catalog entries never create a fake balance.</div>
               </article>
 
               <article className="panel activity-panel">
