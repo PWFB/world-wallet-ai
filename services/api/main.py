@@ -98,6 +98,20 @@ class ContractVerifyRequest(BaseModel):
     network: str = Field(min_length=2, max_length=16)
 
 
+class WalletCreateRequest(BaseModel):
+    name: str = Field(default="New Wallet", min_length=1, max_length=80)
+
+
+class WalletAddressRequest(BaseModel):
+    network: str = Field(min_length=2, max_length=32)
+    address: str = Field(min_length=4, max_length=128)
+    label: str = Field(default="primary", min_length=1, max_length=80)
+
+
+class WalletActivateRequest(BaseModel):
+    wallet_id: str = Field(min_length=4, max_length=80)
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
@@ -115,12 +129,16 @@ def init_db():
         conn.execute("""
         CREATE TABLE IF NOT EXISTS users(
           id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
-          password_sha256 TEXT, google_subject TEXT UNIQUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          password_sha256 TEXT, google_subject TEXT UNIQUE, active_wallet_id TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS active_wallet_id TEXT;
         CREATE TABLE IF NOT EXISTS wallets(
           id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
-          currency TEXT NOT NULL DEFAULT 'USD', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          name TEXT NOT NULL DEFAULT 'Wallet', currency TEXT NOT NULL DEFAULT 'USD',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Wallet';
         CREATE TABLE IF NOT EXISTS assets(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
           balance NUMERIC(36,18) NOT NULL DEFAULT 0, reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0, price_usd NUMERIC(36,18) NOT NULL DEFAULT 0, PRIMARY KEY(wallet_id,symbol)
@@ -206,10 +224,12 @@ def init_db():
 
 def get_user(email: str):
     with db() as conn:
-        row = conn.execute("SELECT id,email,name FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
+        row = conn.execute("SELECT id,email,name,active_wallet_id FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
         if not row:
             return None
-        wallet = conn.execute("SELECT id FROM wallets WHERE owner_id=%s", (row[0],)).fetchone()
+        wallet = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (row[3],row[0])).fetchone() if row[3] else None
+        if not wallet:
+            wallet = conn.execute("SELECT id FROM wallets WHERE owner_id=%s ORDER BY created_at ASC LIMIT 1", (row[0],)).fetchone()
         return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": wallet[0] if wallet else None}
 
 
@@ -224,7 +244,8 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
-            conn.execute("INSERT INTO wallets(id,owner_id) VALUES(%s,%s)", (wallet_id,user_id))
+            conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)", (wallet_id,user_id,"Production Wallet"))
+            conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id,user_id))
         for symbol,asset_name in [
             ("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
             ("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")
@@ -461,19 +482,16 @@ def validate_asset_network(asset: str, network: str):
 
 
 def configured_addresses(user):
-    addresses = []
-    if EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
-        with db() as conn:
-            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network", (user["wallet_id"],)).fetchall()
-            if not rows:
-                for network in ("ethereum", "bnb"):
-                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
-                conn.commit()
-                rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network", (user["wallet_id"],)).fetchall()
-            addresses.extend({"network":r[0],"address":r[1],"label":r[2]} for r in rows)
-    if BTC_ADDRESS:
-        addresses.append({"network":"bitcoin","address":BTC_ADDRESS,"label":"primary"})
-    return addresses
+    with db() as conn:
+        rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
+        if not rows and EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
+            for network in ("ethereum", "bnb"):
+                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
+            if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS):
+                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], "bitcoin", BTC_ADDRESS))
+            conn.commit()
+            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
+    return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
 
 
 def rpc_call(url: str, method: str, params: list):
@@ -551,8 +569,9 @@ def _set_sync_cursor(conn, wallet_id: str, source: str, block_number: int):
     )
 
 
-def sync_evm_native_transactions(user, url: str, network: str):
-    if not url or not EVM_WALLET_ADDRESS:
+def sync_evm_native_transactions(user, url: str, network: str, wallet_address=None):
+    wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
+    if not url or not wallet_address:
         return [], None
     try:
         latest = evm_block_number(url)
@@ -560,7 +579,7 @@ def sync_evm_native_transactions(user, url: str, network: str):
             return [], "latest block unavailable"
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
         source = network + ":native"
-        wallet_lower = EVM_WALLET_ADDRESS.lower()
+        wallet_lower = wallet_address.lower()
         imported = []
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
         required_confirmations = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
@@ -644,8 +663,9 @@ def sync_evm_native_transactions(user, url: str, network: str):
     except Exception:
         return [], f"{network} native transaction service unavailable"
 
-def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6):
-    if not url or not contract or not EVM_WALLET_ADDRESS:
+def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6, wallet_address=None):
+    wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
+    if not url or not contract or not wallet_address:
         return [], None
     try:
         latest = evm_block_number(url)
@@ -657,7 +677,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
             cursor = _sync_cursor(cursor_conn, user["wallet_id"], source)
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
         start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
-        logs = evm_transfer_logs(url, contract, EVM_WALLET_ADDRESS, start, latest)
+        logs = evm_transfer_logs(url, contract, wallet_address, start, latest)
     except Exception:
         return [], f"{network} {symbol} transaction service unavailable"
     imported = []
@@ -771,11 +791,12 @@ def bitcoin_address_transactions(address: str):
         results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
     return results
 
-def sync_bitcoin_transactions(user):
-    if not BTC_ADDRESS:
+def sync_bitcoin_transactions(user, address=None):
+    address = address or next((a["address"] for a in configured_addresses(user) if a["network"]=="bitcoin"), None)
+    if not address:
         return []
     try:
-        chain_txs = bitcoin_address_transactions(BTC_ADDRESS)
+        chain_txs = bitcoin_address_transactions(address)
     except Exception:
         return []
     imported = []
@@ -929,16 +950,18 @@ def _network_sync_status(warnings, updates, transaction_sync_at=None):
 def sync_wallet(user: dict = Depends(current_user)):
     evm_addresses = [a for a in configured_addresses(user) if a["network"] in ("ethereum", "bnb")]
     address = evm_addresses[0]["address"] if evm_addresses else None
-    if not BTC_ADDRESS and not address:
+    btc_addresses = [a for a in configured_addresses(user) if a["network"]=="bitcoin"]
+    btc_address = btc_addresses[0]["address"] if btc_addresses else None
+    if not btc_address and not address:
         raise HTTPException(status_code=503, detail="No production wallet address is configured")
     updates = []
     warnings = []
     eth_usdt = None
     bsc_usdt = None
     with db() as conn:
-        if BTC_ADDRESS:
+        if btc_address:
             try:
-                btc = btc_balance(BTC_ADDRESS)
+                btc = btc_balance(btc_address)
                 if btc is not None:
                     conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (btc,user["wallet_id"]))
                     updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
@@ -969,31 +992,31 @@ def sync_wallet(user: dict = Depends(current_user)):
             total_usdt = sum(usdt_balances)
             conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (total_usdt,user["wallet_id"]))
         conn.commit()
-    imported_transactions = sync_bitcoin_transactions(user)
+    imported_transactions = sync_bitcoin_transactions(user, btc_address)
     evm_transactions = []
     evm_warnings = []
-    if EVM_WALLET_ADDRESS:
+    if address:
         for rpc_url, network, contract in (
             (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
             (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
         ):
             if rpc_url:
-                native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network)
+                native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, address)
                 evm_transactions.extend(native_imported)
                 if native_warning:
                     evm_warnings.append(native_warning)
                 if contract:
-                    imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT")
+                    imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT", wallet_address=address)
                     evm_transactions.extend(imported)
                     if warning:
                         evm_warnings.append(warning)
     warnings.extend(evm_warnings)
     assets, all_transactions, summary = wallet_snapshot(user)
-    if BTC_ADDRESS and not imported_transactions:
+    if btc_address and not imported_transactions:
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (BTC_ADDRESS or ETH_RPC_URL or BSC_RPC_URL) else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or address) else None
     network_status = _network_sync_status(warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
@@ -1173,6 +1196,60 @@ def wallet_signing_config(user: dict = Depends(current_user)):
             "signer": "unisat" if BTC_ADDRESS else None,
         },
     }
+
+
+@app.get("/api/v1/wallets")
+def list_wallets(user: dict = Depends(current_user)):
+    with db() as conn:
+        rows=conn.execute("SELECT id,name,created_at FROM wallets WHERE owner_id=%s ORDER BY created_at ASC",(user["id"],)).fetchall()
+    return {"wallets":[{"id":r[0],"name":r[1],"created_at":r[2].isoformat() if r[2] else None,"active":r[0]==user.get("wallet_id")} for r in rows],"active_wallet_id":user.get("wallet_id")}
+
+
+@app.post("/api/v1/wallets")
+def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user)):
+    wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
+    with db() as conn:
+        conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
+            conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
+        conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
+        conn.commit()
+    user["wallet_id"]=wallet_id
+    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
+
+
+@app.post("/api/v1/wallets/active")
+def activate_wallet(request: WalletActivateRequest,user: dict = Depends(current_user)):
+    with db() as conn:
+        row=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
+        if not row: raise HTTPException(status_code=404, detail="Wallet not found")
+        conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(row[0],user["id"]))
+        conn.commit()
+    user["wallet_id"]=row[0]
+    return {"wallet":{"id":row[0],"name":row[1],"active":True}}
+
+
+@app.get("/api/v1/wallets/{wallet_id}/addresses")
+def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
+    with db() as conn:
+        owner=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
+        if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
+        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",(wallet_id,)).fetchall()
+    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None} for r in rows]}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses")
+def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
+    network=request.network.strip().lower(); address=request.address.strip()
+    if network in {"ethereum","bnb"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
+    if network not in {"ethereum","bnb","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    with db() as conn:
+        owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
+        if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
+        conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,%s) ON CONFLICT DO UPDATE SET address=EXCLUDED.address,label=EXCLUDED.label",(wallet_id,network,address,request.label.strip()))
+        conn.commit()
+    return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip()}}
 
 
 @app.get("/api/v1/wallet/connect")
