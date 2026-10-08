@@ -1146,6 +1146,10 @@ def wallet_signing_config(user: dict = Depends(current_user)):
             },
         },
         "broadcast_policy": "user_signed_only",
+        "bitcoin": {
+            "wallet_address": BTC_ADDRESS or None,
+            "signer": "unisat" if BTC_ADDRESS else None,
+        },
     }
 
 
