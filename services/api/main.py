@@ -631,6 +631,8 @@ def sync_wallet(user: dict = Depends(current_user)):
         raise HTTPException(status_code=503, detail="No production wallet address is configured")
     updates = []
     warnings = []
+    eth_usdt = None
+    bsc_usdt = None
     with db() as conn:
         if BTC_ADDRESS:
             try:
@@ -645,10 +647,9 @@ def sync_wallet(user: dict = Depends(current_user)):
                 eth = evm_balance(ETH_RPC_URL, address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
                 updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-                usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
-                if usdt is not None:
-                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-                    updates.append({"network":"ethereum","asset":"USDT","balance":usdt})
+                eth_usdt = erc20_balance(ETH_RPC_URL, USDT_ETH_CONTRACT, address)
+                if eth_usdt is not None:
+                    updates.append({"network":"ethereum","asset":"USDT","balance":eth_usdt})
             except Exception:
                 warnings.append("Ethereum balance service unavailable")
         if BSC_RPC_URL and address:
@@ -656,12 +657,15 @@ def sync_wallet(user: dict = Depends(current_user)):
                 bnb = evm_balance(BSC_RPC_URL, address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
                 updates.append({"network":"bnb","asset":"BNB","balance":bnb})
-                usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
-                if usdt is not None:
-                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (usdt,user["wallet_id"]))
-                    updates.append({"network":"bnb","asset":"USDT","balance":usdt})
+                bsc_usdt = erc20_balance(BSC_RPC_URL, USDT_BSC_CONTRACT, address)
+                if bsc_usdt is not None:
+                    updates.append({"network":"bnb","asset":"USDT","balance":bsc_usdt})
             except Exception:
                 warnings.append("BNB Chain balance service unavailable")
+        usdt_balances = [x for x in (eth_usdt, bsc_usdt) if x is not None]
+        if usdt_balances:
+            total_usdt = sum(usdt_balances)
+            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='USDT'", (total_usdt,user["wallet_id"]))
         conn.commit()
     imported_transactions = sync_bitcoin_transactions(user)
     assets, all_transactions, summary = wallet_snapshot(user)
@@ -709,6 +713,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         sync_result = sync_wallet(user)
         updates = sync_result.get("updates", [])
         bitcoin_transactions = sync_result.get("bitcoin_transactions", [])
+        sync_error = " • ".join(sync_result.get("warnings", [])) or None
     except HTTPException as exc:
         sync_result = {}
         bitcoin_transactions = []
