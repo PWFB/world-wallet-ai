@@ -201,3 +201,15 @@
 .amount-availability b{color:#e55b6f;font-weight:700}
 .amount-error{color:#e55b6f}
 @media(max-width:760px){.amount-availability{flex-direction:column;gap:2px}}
+
+
+.live-wallet-panel{margin:0 0 14px;padding:18px 20px;border:1px solid #173652;background:#071525}
+.live-wallet-main{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.live-wallet-main h2{margin:5px 0 4px;font-size:15px;color:#e6eef8}
+.live-wallet-main p{margin:0;color:#607792;font-size:9px;line-height:1.5}
+.live-wallet-addresses{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-top:14px}
+.live-wallet-address{display:grid;gap:5px;padding:10px 11px;border:1px solid #17304a;border-radius:8px;background:#091321;min-width:0}
+.live-wallet-address b{font-size:9px;color:#00d4ff}
+.live-wallet-address code{font-size:8px;color:#8da1bb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.live-wallet-empty{margin-top:13px;padding:10px 12px;border:1px dashed #28415c;border-radius:8px;color:#657a94;font-size:9px;line-height:1.5}
+@media(max-width:760px){.live-wallet-main{align-items:flex-start;flex-direction:column}.live-wallet-main .secondary{width:100%}.live-wallet-addresses{grid-template-columns:1fr}.live-wallet-address code{white-space:normal;word-break:break-all}}
