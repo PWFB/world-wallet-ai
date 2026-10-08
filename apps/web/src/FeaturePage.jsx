@@ -180,7 +180,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       }
     }
 
-    async function syncBitcoin() {
+    async function syncTransactions() {
       setSyncBusy(true);
       setSyncMessage("");
       try {
@@ -189,12 +189,12 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
           headers: { Authorization: "Bearer " + accessToken },
         });
         const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Bitcoin transaction sync failed.");
+        if (!response.ok) throw new Error(data.detail || "live transaction sync failed.");
         onTransactionsUpdated?.(data.transactions || []);
         onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
-        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : (data.imported?.length ? `Synced ${data.imported.length} Bitcoin transaction(s).` : "No new Bitcoin transactions found."));
+        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : (data.imported?.length ? `Synced ${data.imported.length} live transaction(s).` : "No new live wallet transactions found."));
       } catch (error) {
-        setSyncMessage(error.message || "Bitcoin transaction sync failed.");
+        setSyncMessage(error.message || "live transaction sync failed.");
       } finally {
         setSyncBusy(false);
       }
@@ -203,7 +203,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     return <section className="content feature-content">
       <div className="page-heading">
         <div><p className="eyebrow">WALLET HISTORY</p><h1>Transactions</h1><p className="muted">Track wallet activity with blockchain transaction details when available.</p></div>
-        <div className="page-actions"><button className="secondary" onClick={syncBitcoin} disabled={syncBusy}>{syncBusy ? "Syncing Bitcoin…" : "↻ Sync Bitcoin"}</button><button className="primary" onClick={()=>setActive("Send")}>+ Send funds</button></div>
+        <div className="page-actions"><button className="secondary" onClick={syncTransactions} disabled={syncBusy}>{syncBusy ? "Syncing live wallet…" : "↻ Sync live wallet"}</button><button className="primary" onClick={()=>setActive("Send")}>+ Send funds</button></div>
       </div>
       {syncMessage && <div className={syncMessage.includes("failed") ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       <article className="panel transaction-panel">
