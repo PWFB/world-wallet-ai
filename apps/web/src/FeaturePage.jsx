@@ -15,6 +15,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [addressMessage, setAddressMessage] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [copiedAddress, setCopiedAddress] = useState("");
 
   async function submit(endpoint) {
     setBusy(true); setMessage("");
@@ -38,11 +39,11 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
         <label>Asset<select value={asset} onChange={e=>setAsset(e.target.value)}>{assets.map(a=><option key={a.symbol}>{a.symbol} • {number(a.balance)} available</option>)}</select></label>
         <label>Amount<input type="number" min="0" step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00"/></label>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="mainnet">Mainnet</option><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option></select></label>
+        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="mainnet">Mainnet</option><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
         <button className="primary feature-submit" disabled={busy || !amount || !destination} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
-      </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Demo workflow: no blockchain transaction is broadcast.</div></aside></div>
+      </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Secure request workflow: this action records a wallet request; no blockchain transaction is broadcast by this API.</div></aside></div>
     </section>;
   }
 
@@ -65,7 +66,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
       <div className="feature-grid">
         <article className="panel receive-panel">
           <p className="feature-kicker">PRODUCTION DEPOSIT ADDRESSES</p>
-          {addresses.length ? addresses.map(item => <div className="receive-address" key={item.network}><div><b>{item.network.toUpperCase()}</b><small>{item.label}</small></div><code>{item.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(item.address)}>Copy</button></div>) : <div className="live-chart-empty">{addressMessage || "No production wallet address configured."}</div>}
+          {addresses.length ? addresses.map(item => <div className="receive-address" key={item.network}><div><b>{item.network.toUpperCase()}</b><small>{item.label}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button></div>) : <div className="live-chart-empty">{addressMessage || "No production wallet address configured."}</div>}
         </article>
         <article className="panel feature-summary">
           <span className="feature-kicker">SUPPORTED ASSETS</span>
@@ -104,6 +105,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
       </div>
       {syncMessage && <div className={syncMessage.includes("failed") ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       <article className="panel transaction-panel">
+        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{activity.length} transaction{activity.length===1?"":"s"}</small></div>
         {activity.length ? activity.map((a,i) => <div className="transaction-row transaction-chain-row" key={a.tx_hash || i}>
           <span className="activity-icon">{a.type[0].toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
