@@ -102,6 +102,38 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   }
 
   if (active === "Transactions") {
+    async function settleTransaction(transaction) {
+      const txHash = window.prompt("Enter the real blockchain transaction hash for this request:");
+      if (!txHash) return;
+      setSyncBusy(true);
+      setSyncMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/transactions/settle", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ transaction_id: transaction.id, tx_hash: txHash.trim() }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Settlement verification failed.");
+        const refreshed = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        const refreshedData = await refreshed.json();
+        if (refreshed.ok) {
+          onTransactionsUpdated?.(refreshedData.transactions || []);
+          onWalletUpdated?.({ wallet: refreshedData.wallet, assets: refreshedData.assets || [] });
+        }
+        setSyncMessage(data.status === "broadcast_pending"
+          ? "Broadcast recorded. Waiting for blockchain confirmation."
+          : "Blockchain settlement verified and wallet accounting reconciled.");
+      } catch (error) {
+        setSyncMessage(error.message || "Settlement verification failed.");
+      } finally {
+        setSyncBusy(false);
+      }
+    }
+
     async function syncBitcoin() {
       setSyncBusy(true);
       setSyncMessage("");
@@ -130,11 +162,17 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
       {syncMessage && <div className={syncMessage.includes("failed") ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       <article className="panel transaction-panel">
         <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{activity.length} transaction{activity.length===1?"":"s"}</small></div>
-        {activity.length ? activity.map((a,i) => <div className="transaction-row transaction-chain-row" key={a.tx_hash || i}>
+        {activity.length ? activity.map((a,i) => <div className="transaction-row transaction-chain-row" key={a.tx_hash || a.id || i}>
           <span className="activity-icon">{a.type[0].toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
-          <div className="transaction-meta"><span className={a.status === "confirmed" ? "positive" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>{a.block_height ? <small>Block {a.block_height}</small> : null}{a.tx_hash ? <a href={`https://blockstream.info/tx/${a.tx_hash}`} target="_blank" rel="noreferrer">View on Blockstream ↗</a> : null}<small>{a.time}</small></div>
+          <div className="transaction-meta">
+            <span className={a.status === "confirmed" ? "positive" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>
+            {a.block_height ? <small>Block {a.block_height}</small> : null}
+            {a.tx_hash && a.network === "bitcoin" ? <a href={`https://blockstream.info/tx/${a.tx_hash}`} target="_blank" rel="noreferrer">View on Blockstream ↗</a> : null}
+            {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={()=>settleTransaction(a)} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
+            <small>{a.time}</small>
+          </div>
         </div>) : <div className="live-chart-empty">No real wallet transactions recorded yet.</div>}
       </article>
     </section>;
