@@ -30,6 +30,7 @@ BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
+BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
 
 TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 if not TRUSTED_ORIGINS:
@@ -237,6 +238,12 @@ def init_db():
                 "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
                 "WHERE symbol='USDT' AND network='bnb'",
                 (USDT_BSC_CONTRACT,),
+            )
+        if BALMZ_ETH_CONTRACT and valid_evm_address(BALMZ_ETH_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,18),status='active' "
+                "WHERE symbol='BALMZ' AND network='ethereum'",
+                (BALMZ_ETH_CONTRACT,),
             )
         legacy_holds = conn.execute("""
           SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
@@ -1390,6 +1397,8 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "wallet_address": ethereum_address if ETH_RPC_URL else None,
                 "usdt_contract": USDT_ETH_CONTRACT or None,
                 "usdt_decimals": erc20_decimals(ETH_RPC_URL, USDT_ETH_CONTRACT) if ETH_RPC_URL and USDT_ETH_CONTRACT else None,
+                "balmz_contract": BALMZ_ETH_CONTRACT or None,
+                "balmz_decimals": erc20_decimals(ETH_RPC_URL, BALMZ_ETH_CONTRACT) if ETH_RPC_URL and BALMZ_ETH_CONTRACT else None,
             },
             "bnb": {
                 "chain_id": "0x38",
@@ -1745,9 +1754,14 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if _hex_int(tx.get("value") or "0x0") != expected:
                 raise HTTPException(status_code=409, detail="Blockchain amount does not match the wallet request")
         else:
-            contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
+            if asset == "BALMZ":
+                contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
+                label = "BALMZ"
+            else:
+                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
+                label = "USDT"
             if not contract:
-                raise HTTPException(status_code=503, detail="USDT contract is not configured for settlement verification")
+                raise HTTPException(status_code=503, detail=label + " contract is not configured for settlement verification")
             if not _same_address(tx.get("to"), contract):
                 raise HTTPException(status_code=409, detail="Token contract does not match the configured USDT contract")
             decimals = erc20_decimals(rpc, contract)
@@ -1794,9 +1808,15 @@ def reconcile_settled_asset(conn, user, symbol, network):
             value = btc_balance(address)
         elif symbol in {"ETH", "BNB"} and address:
             value = evm_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, address)
-        elif symbol == "USDT" and address:
-            contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
-            value = erc20_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, contract, address)
+        elif symbol in {"USDT", "BALMZ"} and address:
+            if symbol == "BALMZ":
+                contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
+                rpc = ETH_RPC_URL if network == "ethereum" else ""
+            else:
+                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
+                rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL
+            if contract and rpc:
+                value = erc20_balance(rpc, contract, address)
     except Exception:
         value = None
     if value is not None:
