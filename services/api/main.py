@@ -444,20 +444,60 @@ def refresh_prices(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/wallet/refresh")
 def refresh_wallet(user: dict = Depends(current_user)):
-    sync_result = sync_wallet(user)
+    started_at = datetime.now(timezone.utc)
+    updates = []
+    sync_error = None
+    price_error = None
+
+    try:
+        sync_result = sync_wallet(user)
+        updates = sync_result.get("updates", [])
+        bitcoin_transactions = sync_result.get("bitcoin_transactions", [])
+    except HTTPException as exc:
+        sync_result = {}
+        bitcoin_transactions = []
+        sync_error = str(exc.detail)
+    except Exception:
+        sync_result = {}
+        bitcoin_transactions = []
+        sync_error = "Wallet chain synchronization failed"
+
     try:
         price_result = refresh_prices(user)
-    except HTTPException:
-        price_result = {"assets": sync_result["assets"], "wallet": sync_result["wallet"], "source": "wallet_sync_prices_unavailable"}
+    except HTTPException as exc:
+        price_result = {}
+        price_error = str(exc.detail)
+    except Exception:
+        price_result = {}
+        price_error = "Live market price refresh failed"
+
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
+    warnings = [x for x in (sync_error, price_error) if x]
     return {
-        "status": "refreshed",
+        "status": "refreshed_with_warnings" if warnings else "refreshed",
         "wallet": {**summary_now, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
         "assets": assets_now,
         "transactions": transactions_now,
-        "updates": sync_result.get("updates", []),
-        "bitcoin_transactions": sync_result.get("bitcoin_transactions", []),
+        "updates": updates,
+        "bitcoin_transactions": bitcoin_transactions,
         "price_source": price_result.get("source"),
+        "warnings": warnings,
+        "refreshed_at": datetime.now(timezone.utc).isoformat(),
+        "duration_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
+    }
+
+@app.get("/api/v1/system/status")
+def system_status(user: dict = Depends(current_user)):
+    return {
+        "status": "ok",
+        "database": bool(DATABASE_URL),
+        "neon_auth": bool(NEON_JWKS_CLIENT),
+        "bitcoin": bool(BTC_ADDRESS),
+        "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
+        "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
+        "live_prices": True,
+        "read_only_chain_sync": True,
+        "transaction_broadcast": False,
     }
 
 @app.get("/api/v1/assets")
