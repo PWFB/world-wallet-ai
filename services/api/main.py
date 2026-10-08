@@ -54,6 +54,7 @@ class GoogleLoginRequest(BaseModel):
 
 
 class TransferRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
     asset: str = Field(min_length=2, max_length=12)
     amount: Decimal = Field(gt=0, max_digits=36, decimal_places=18)
     recipient: str = Field(min_length=4, max_length=128)
@@ -62,6 +63,7 @@ class TransferRequest(BaseModel):
 
 
 class WithdrawalRequest(BaseModel):
+    idempotency_key: str = Field(min_length=8, max_length=128)
     asset: str = Field(min_length=2, max_length=12)
     amount: Decimal = Field(gt=0, max_digits=36, decimal_places=18)
     destination: str = Field(min_length=4, max_length=128)
@@ -154,6 +156,14 @@ def init_db():
           symbol TEXT NOT NULL,
           migrated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,symbol)
+        );
+        CREATE TABLE IF NOT EXISTS transaction_idempotency(
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          idempotency_key TEXT NOT NULL,
+          request_hash TEXT NOT NULL,
+          transaction_id TEXT NOT NULL REFERENCES transactions(id),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY(wallet_id,idempotency_key)
         );
         """)
         legacy_holds = conn.execute("""
@@ -892,26 +902,66 @@ def reserve_asset(conn,user,symbol: str,amount: Decimal):
 @app.post("/api/v1/transfers")
 def transfer(request: TransferRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
-    if not valid_destination_for_network(request.recipient,network): raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
+    if not valid_destination_for_network(request.recipient,network):
+        raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
+    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{request.note or ''}")
     with db() as conn:
+        existing=conn.execute(
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
+            "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
+            "WHERE i.wallet_id=%s AND i.idempotency_key=%s FOR UPDATE",
+            (user["wallet_id"],request.idempotency_key.strip()),
+        ).fetchone()
+        if existing:
+            if existing[0] != fingerprint:
+                raise HTTPException(status_code=409,detail="Idempotency key was already used for a different transfer")
+            return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
+                    "replayed":True,"transfer":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
+                    "recipient":existing[4],"network":existing[5]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
-        if not ok: conn.rollback(); return rejection
-        txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",(txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
+        if not ok:
+            conn.rollback()
+            return rejection
+        txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
+        conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
+                     (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
-    return {"status":"pending","mode":"database","accounting":"reserved","broadcast":False,"transfer":{"id":txid,"asset":symbol,"amount":float(request.amount),"recipient":request.recipient,"network":network}}
+    return {"status":"pending","mode":"database","accounting":"reserved","broadcast":False,
+            "transfer":{"id":txid,"asset":symbol,"amount":float(request.amount),"recipient":request.recipient,"network":network}}
 
 @app.post("/api/v1/withdrawals")
 def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
-    if not valid_destination_for_network(request.destination,network): raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
+    if not valid_destination_for_network(request.destination,network):
+        raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
+    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{request.note or ''}")
     with db() as conn:
+        existing=conn.execute(
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
+            "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
+            "WHERE i.wallet_id=%s AND i.idempotency_key=%s FOR UPDATE",
+            (user["wallet_id"],request.idempotency_key.strip()),
+        ).fetchone()
+        if existing:
+            if existing[0] != fingerprint:
+                raise HTTPException(status_code=409,detail="Idempotency key was already used for a different withdrawal")
+            return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
+                    "replayed":True,"withdrawal":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
+                    "destination":existing[4],"network":existing[5]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
-        if not ok: conn.rollback(); return rejection
-        txid="tx_"+sha(user["wallet_id"]+datetime.now(timezone.utc).isoformat())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",(txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
+        if not ok:
+            conn.rollback()
+            return rejection
+        txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
+        conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
+                     (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
-    return {"status":"pending_review","mode":"database","accounting":"reserved","broadcast":False,"withdrawal":{"id":txid,"asset":symbol,"amount":float(request.amount),"destination":request.destination,"network":network}}
+    return {"status":"pending_review","mode":"database","accounting":"reserved","broadcast":False,
+            "withdrawal":{"id":txid,"asset":symbol,"amount":float(request.amount),"destination":request.destination,"network":network}}
 
 class TransactionCancelRequest(BaseModel):
     transaction_id: str = Field(min_length=4,max_length=80)
