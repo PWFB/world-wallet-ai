@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -26,6 +26,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   const [copiedAddress, setCopiedAddress] = useState("");
   const [toolItems, setToolItems] = useState([]);
   const [toolBusy, setToolBusy] = useState(false);
+  const requestKeyRef = useRef("");
 
   useEffect(() => {
     const options = networksForAsset(asset);
@@ -54,13 +55,15 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
       const selectedAsset = assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
       if (parsedAmount > Number(selectedAsset.balance || 0)) throw new Error("Amount exceeds the selected asset's available balance.");
-      const body = { asset, amount: parsedAmount, network, note: note || null };
+      const requestKey = requestKeyRef.current || crypto.randomUUID();
+      requestKeyRef.current = requestKey;
+      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
       body[endpoint.includes("transfers") ? "recipient" : "destination"] = destination;
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
       if (!r.ok || data.status === "rejected") throw new Error(data.detail || data.reason || "Request failed");
       setMessage("Request accepted: " + data.status.replace("_"," "));
-      setAmount(""); setDestination(""); setNote("");
+      setAmount(""); setDestination(""); setNote(""); requestKeyRef.current = "";
     } catch (e) { setMessage(e.message); } finally { setBusy(false); }
   }
 
