@@ -166,6 +166,18 @@ def init_db():
         ON CONFLICT(symbol,network) DO UPDATE SET
           name=EXCLUDED.name,
           status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
+        if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
+                "WHERE symbol='USDT' AND network='ethereum'",
+                (USDT_ETH_CONTRACT,),
+            )
+        if USDT_BSC_CONTRACT and valid_evm_address(USDT_BSC_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
+                "WHERE symbol='USDT' AND network='bnb'",
+                (USDT_BSC_CONTRACT,),
+            )
 
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
@@ -712,7 +724,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     except Exception:
         return [], f"{network} {symbol} transaction service unavailable"
     imported = []
-    wallet_lower = EVM_WALLET_ADDRESS.lower()
+    wallet_lower = wallet_address.lower()
     block_hashes = {}
     try:
         with db() as conn:
@@ -726,7 +738,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                 amount = raw_value / (10 ** decimals)
                 if amount <= 0:
                     continue
-                direction = "received" if recipient.lower() == wallet_lower else "sent"
+                direction = "received" if recipient.lower() == wallet_address.lower() else "sent"
                 signed_amount = amount if direction == "received" else -amount
                 tx_hash = log.get("transactionHash")
                 block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
@@ -1200,8 +1212,17 @@ def sync_transactions(user: dict = Depends(current_user)):
             imported.extend(native_imported)
             if native_warning:
                 warnings.append(native_warning)
-            if contract:
-                token_imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT", wallet_address=wallet_network_address(user, network))
+            with db() as conn:
+                token_rows = conn.execute(
+                    "SELECT symbol,contract_address,decimals FROM token_registry "
+                    "WHERE network=%s AND contract_address IS NOT NULL AND decimals IS NOT NULL AND status='active'",
+                    (network,),
+                ).fetchall()
+            for symbol, token_contract, token_decimals in token_rows:
+                token_imported, warning = sync_evm_token_transactions(
+                    user, rpc_url, network, token_contract, symbol,
+                    decimals=int(token_decimals), wallet_address=wallet_network_address(user, network)
+                )
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
