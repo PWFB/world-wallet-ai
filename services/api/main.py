@@ -405,7 +405,22 @@ def _neon_auth_sign_in(path: str, body: dict):
         with httpx.Client(timeout=15, follow_redirects=False) as client:
             response = client.post(base + path, json=body, headers=headers)
             if not response.is_success:
-                raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=_neon_auth_error(response))
+                # Migrate the original single World Wallet identity into Neon Auth once.
+                if (path == "/sign-in/email" and IDENTITY_EMAIL and IDENTITY_PASSWORD
+                        and str(body.get("email", "")).strip().lower() == IDENTITY_EMAIL.strip().lower()
+                        and str(body.get("password", "")) == IDENTITY_PASSWORD
+                        and response.status_code in {400, 401}):
+                    signup = client.post(base + "/sign-up/email", json={
+                        "name": "World Wallet User",
+                        "email": IDENTITY_EMAIL.strip().lower(),
+                        "password": IDENTITY_PASSWORD,
+                    }, headers=headers)
+                    if signup.is_success:
+                        response = signup
+                    else:
+                        raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=_neon_auth_error(response))
+                else:
+                    raise HTTPException(status_code=response.status_code if response.status_code < 500 else 502, detail=_neon_auth_error(response))
             payload = _neon_auth_json(response)
             token_response = client.get(base + "/token", headers={
                 "Accept": "application/json",
