@@ -14,7 +14,7 @@ export async function getNeonAccessToken() {
   // Better Auth session cookie so OAuth callbacks do not depend on the
   // React session cache already containing the JWT.
   try {
-    const response = await fetch(`${authUrl.replace(/\\/$/, "")}/token`, {
+    const response = await fetch(`${authUrl.replace(/\/$/, "")}/token`, {
       method: "GET",
       credentials: "include",
       headers: {
