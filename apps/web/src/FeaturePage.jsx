@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -48,18 +48,25 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
   }
 
   if (active === "Receive") {
-    const loadAddresses = async () => {
-      try {
-        const r = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } });
-        const data = await r.json();
-        setAddresses(data.addresses || []);
-        setAddressMessage(data.message || "");
-      } catch {
-        setAddresses([]);
-        setAddressMessage("Unable to load wallet addresses.");
+    useEffect(() => {
+      let cancelled = false;
+      async function loadAddresses() {
+        try {
+          const r = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } });
+          const data = await r.json();
+          if (cancelled) return;
+          setAddresses(data.addresses || []);
+          setAddressMessage(data.message || "");
+        } catch {
+          if (!cancelled) {
+            setAddresses([]);
+            setAddressMessage("Unable to load wallet addresses.");
+          }
+        }
       }
-    };
-    if (!addresses.length && !addressMessage) loadAddresses();
+      loadAddresses();
+      return () => { cancelled = true; };
+    }, [apiBaseUrl, accessToken]);
 
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Use a configured production blockchain address to receive assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
@@ -90,7 +97,7 @@ export default function FeaturePage({ active, wallet, assets, activity, accessTo
         if (!response.ok) throw new Error(data.detail || "Bitcoin transaction sync failed.");
         onTransactionsUpdated?.(data.transactions || []);
         onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
-        setSyncMessage(data.imported?.length ? `Synced ${data.imported.length} Bitcoin transaction(s).` : "No new Bitcoin transactions found.");
+        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : (data.imported?.length ? `Synced ${data.imported.length} Bitcoin transaction(s).` : "No new Bitcoin transactions found."));
       } catch (error) {
         setSyncMessage(error.message || "Bitcoin transaction sync failed.");
       } finally {
