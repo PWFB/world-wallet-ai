@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import "./App.css";
 import FeaturePage from "./FeaturePage.jsx";
+import { authClient, getNeonAccessToken } from "./auth-client.js";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
@@ -19,14 +20,35 @@ function App() {
   const [assets, setAssets] = useState(fallbackAssets);
   const [apiStatus, setApiStatus] = useState("loading");
   const [user, setUser] = useState(null);
-  const [accessToken, setAccessToken] = useState(() => localStorage.getItem(TOKEN_KEY) || "");
-  const [loginEmail, setLoginEmail] = useState("pwfbmicrofinancemfb@gmail.com");
+  const [accessToken, setAccessToken] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  const [otpCode, setOtpCode] = useState("");
+  const [otpRequested, setOtpRequested] = useState(false);
   const [loginError, setLoginError] = useState("");
-  const [authMethod, setAuthMethod] = useState("password");
+  const [authMethod, setAuthMethod] = useState("email");
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
   const [performance, setPerformance] = useState({ points: [] });
+
+  useEffect(() => {
+    let cancelled = false;
+    async function restoreNeonSession() {
+      try {
+        const result = await authClient.getSession();
+        const session = result?.data;
+        if (!session?.user || cancelled) return;
+        const token = await getNeonAccessToken();
+        if (!token || cancelled) return;
+        setUser(session.user);
+        setAccessToken(token);
+      } catch {
+        // No Neon Auth session; remain signed out.
+      }
+    }
+    restoreNeonSession();
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,64 +145,57 @@ function App() {
     }
   }
 
+  async function requestEmailOtp() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your email address.");
+      const result = await authClient.emailOtp.sendVerificationOtp({
+        email,
+        type: "sign-in",
+      });
+      if (result?.error) throw new Error(result.error.message || "Unable to send the sign-in code.");
+      setOtpRequested(true);
+    } catch (error) {
+      setLoginError(error.message || "Unable to send the sign-in code");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyEmailOtp() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      const result = await authClient.signIn.emailOtp({
+        email,
+        otp: otpCode.trim(),
+      });
+      if (result?.error) throw new Error(result.error.message || "Invalid or expired code.");
+      const token = await getNeonAccessToken();
+      if (!token) throw new Error("Neon Auth signed in, but the wallet session token could not be obtained.");
+      setUser(result?.data?.user || null);
+      setAccessToken(token);
+      setOtpCode("");
+      setOtpRequested(false);
+    } catch (error) {
+      setLoginError(error.message || "Unable to verify the sign-in code");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
   async function handleGoogleSignIn() {
     setLoginError("");
     setAuthBusy(true);
     try {
-      const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
-      if (!clientId) throw new Error("Google Sign-In is not configured yet. Add VITE_GOOGLE_CLIENT_ID in Render.");
-
-      if (!window.google?.accounts?.id) {
-        await new Promise((resolve, reject) => {
-          const existing = document.querySelector('script[src="https://accounts.google.com/gsi/client"]');
-          if (existing) {
-            existing.addEventListener("load", resolve, { once: true });
-            existing.addEventListener("error", () => reject(new Error("Unable to load Google Sign-In.")), { once: true });
-            return;
-          }
-          const script = document.createElement("script");
-          script.src = "https://accounts.google.com/gsi/client";
-          script.async = true;
-          script.defer = true;
-          script.onload = resolve;
-          script.onerror = () => reject(new Error("Unable to load Google Sign-In."));
-          document.head.appendChild(script);
-        });
-      }
-
-      if (!window.google?.accounts?.id) throw new Error("Google Sign-In could not be initialized.");
-
-      await new Promise((resolve, reject) => {
-        window.google.accounts.id.initialize({
-          client_id: clientId,
-          callback: async response => {
-            try {
-              const apiResponse = await fetch(API_BASE_URL + "/api/v1/auth/google", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ credential: response.credential }),
-              });
-              const data = await apiResponse.json();
-              if (!apiResponse.ok) throw new Error(data.detail || "Google Sign-In failed");
-              localStorage.setItem(TOKEN_KEY, data.access_token);
-              setAccessToken(data.access_token);
-              setUser(data.user || null);
-              resolve();
-            } catch (error) {
-              reject(error);
-            } finally {
-              setAuthBusy(false);
-            }
-          },
-          auto_select: false,
-          cancel_on_tap_outside: true,
-        });
-        window.google.accounts.id.prompt(notification => {
-          if (notification.isNotDisplayed() || notification.isSkippedMoment()) {
-            reject(new Error("Google Sign-In was not displayed. Check the authorized JavaScript origin in Google Cloud."));
-          }
-        });
+      const result = await authClient.signIn.social({
+        provider: "google",
+        callbackURL: window.location.origin,
       });
+      if (result?.error) throw new Error(result.error.message || "Google Sign-In failed.");
     } catch (error) {
       setLoginError(error.message || "Google Sign-In unavailable");
       setAuthBusy(false);
@@ -200,7 +215,12 @@ function App() {
     }
   }
 
-  function handleLogout() {
+  async function handleLogout() {
+    try {
+      await authClient.signOut();
+    } catch {
+      // Clear the local application session even if the remote sign-out request fails.
+    }
     localStorage.removeItem(TOKEN_KEY);
     setAccessToken("");
     setUser(null);
@@ -238,38 +258,45 @@ function App() {
             <div className="login-network"><span /> World Wallet AI • Mainnet ready</div>
           </div>
 
-          <form className="login-card" onSubmit={handleLogin}>
+          <form className="login-card" onSubmit={event => event.preventDefault()}>
             <div className="login-card-header">
               <div className="login-card-icon">W</div>
               <div><p className="eyebrow">SECURE ACCESS</p><h2>Welcome back</h2></div>
             </div>
-            <p className="login-subtitle">Choose a secure sign-in method for your World Wallet AI account.</p>
+            <p className="login-subtitle">Passwordless access powered by World Wallet AI + Neon Auth.</p>
 
             <div className="auth-methods" role="tablist" aria-label="Sign-in methods">
-              <button type="button" className={authMethod === "password" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("password"); setLoginError(""); }}><span>⌑</span><b>Password</b></button>
+              <button type="button" className={authMethod === "email" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("email"); setLoginError(""); }}><span>✉</span><b>Email code</b></button>
               <button type="button" className={authMethod === "google" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("google"); setLoginError(""); }}><span>G</span><b>Google</b></button>
               <button type="button" className={authMethod === "biometric" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("biometric"); setLoginError(""); }}><span>◉</span><b>Face / Finger</b></button>
-              <button type="button" className={authMethod === "authenticator" ? "auth-method active" : "auth-method"} onClick={() => { setAuthMethod("authenticator"); setLoginError(""); }}><span>⌗</span><b>Authenticator</b></button>
             </div>
 
-            {authMethod === "password" && (
+            {authMethod === "email" && (
               <div className="auth-method-form">
                 <label className="login-field">
                   <span>Email address</span>
                   <div className="login-input-wrap"><span>✉</span><input type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} placeholder="you@example.com" autoComplete="email" required /></div>
                 </label>
-                <label className="login-field">
-                  <span>Password</span>
-                  <div className="login-input-wrap"><span>⌑</span><input type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required /></div>
-                </label>
-                <div className="login-options"><label className="remember"><input type="checkbox" /> <span>Remember me</span></label><button type="button" className="forgot">Forgot password?</button></div>
-                <button className="login-submit" type="submit">Sign in with password <span>→</span></button>
+                {!otpRequested ? (
+                  <button className="login-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send secure code <span>→</span></button>
+                ) : (
+                  <>
+                    <label className="login-field">
+                      <span>6-digit code</span>
+                      <div className="login-input-wrap"><span>⌗</span><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e => setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required /></div>
+                    </label>
+                    <button className="login-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy || otpCode.length !== 6}>Verify & enter wallet <span>→</span></button>
+                    <button className="forgot" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send a new code</button>
+                  </>
+                )}
+                <p className="login-security"><span>✓</span> We never ask you to store a wallet password in this app.</p>
               </div>
             )}
 
             {authMethod === "google" && (
               <div className="auth-method-form">
                 <button className="login-submit google-submit" type="button" onClick={handleGoogleSignIn} disabled={authBusy}>Continue with Google <span>G</span></button>
+                <p className="login-security"><span>✓</span> Google authentication is handled by Neon Auth.</p>
               </div>
             )}
 
@@ -279,19 +306,12 @@ function App() {
               </div>
             )}
 
-            {authMethod === "authenticator" && (
-              <div className="auth-method-form">
-                <label className="login-field"><span>6-digit authenticator code</span><div className="login-input-wrap"><span>⌗</span><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" placeholder="000000" onChange={e => setLoginPassword(e.target.value)} /></div></label>
-                <button className="login-submit" type="submit">Verify authenticator <span>→</span></button>
-              </div>
-            )}
-
             {loginError && (
               <div className="login-error"><span>!</span><div><b>Sign-in failed</b><small>{loginError}</small></div></div>
             )}
 
             <div className="login-divider"><span>WORLD WALLET AI</span></div>
-            <p className="login-security"><span>✓</span> Your session is protected by authenticated API access.</p>
+            <p className="login-security"><span>✓</span> Session verification is handled by Neon Auth and the World Wallet API.</p>
           </form>
         </section>
       </div>
