@@ -264,6 +264,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage(symbol + " transfer submitted on Sepolia. Waiting for confirmation…");
       const receipt = await tx.wait(1);
       if (!receipt || receipt.status !== 1) throw new Error("The token transfer did not confirm successfully.");
+      setNativeBalance(formatEther(await provider.getBalance(unlocked.address)));
       setMessage(symbol + " transfer confirmed on Ethereum Sepolia.");
       setTokenAmount("");
     } catch (error) {
