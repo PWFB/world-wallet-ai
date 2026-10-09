@@ -42,6 +42,7 @@ function App() {
   const [coinFilter, setCoinFilter] = useState("all");
   const [coinSearch, setCoinSearch] = useState("");
   const [selectedCoin, setSelectedCoin] = useState(null);
+  const [focusedTransaction, setFocusedTransaction] = useState(null);
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
@@ -249,7 +250,11 @@ function App() {
           icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
         setActivity((data.transactions || []).map(tx => ({
+          id: tx.id,
           type: tx.type,
+          asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "",
+          from_address: tx.from_address || tx.from || null, to_address: tx.to_address || tx.to || null,
+          network: tx.network, token_contract_address: tx.token_contract_address || tx.contract_address || null,
           description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
           amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
           raw_amount: Number(tx.amount),
@@ -304,7 +309,11 @@ function App() {
         const data = await response.json();
         if (cancelled) return;
         setActivity((data.transactions || []).map(tx => ({
+          id: tx.id,
           type: tx.type,
+          asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "",
+          from_address: tx.from_address || tx.from || null, to_address: tx.to_address || tx.to || null,
+          network: tx.network, token_contract_address: tx.token_contract_address || tx.contract_address || null,
           description: `${tx.asset} • ${tx.description}`,
           amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${tx.asset}`,
           raw_amount: Number(tx.amount),
@@ -330,7 +339,9 @@ function App() {
         const syncData = await syncResponse.json();
         if (cancelled) return;
         setActivity((syncData.transactions || []).map(tx => ({
-          id: tx.id, type: tx.type,
+          id: tx.id, type: tx.type, asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "",
+          from_address: tx.from_address || tx.from || null, to_address: tx.to_address || tx.to || null,
+          token_contract_address: tx.token_contract_address || tx.contract_address || null,
           description: tx.asset + " • " + tx.description,
           amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + tx.asset,
           raw_amount: Number(tx.amount), time: tx.time, status: tx.status, tx_hash: tx.tx_hash,
@@ -664,7 +675,7 @@ function App() {
             </div>
             <article className="panel">
               <div className="panel-head"><div><h2>{selectedCoin} activity</h2><span>Authenticated wallet records only</span></div><button className="text-btn" onClick={() => { setActive("Transactions"); setSelectedCoin(null); }}>All transactions →</button></div>
-              {rows.length ? rows.map((item,i) => <div className="activity-row" key={item.id || i}><div><b>{item.type || item.direction || "Transaction"}</b><small>{item.status || "Recorded"}</small></div><strong>{item.amount || "—"} {selectedCoin}</strong></div>) : <div className="empty-state">No real {selectedCoin} transactions recorded yet.</div>}
+              {rows.length ? rows.map((item,i) => <button type="button" className="activity-row coin-history-clickable" key={item.id || item.tx_hash || i} onClick={() => { setFocusedTransaction(item); setSelectedCoin(null); setActive("Transactions"); }}><div><b>{item.type || item.direction || "Transaction"}</b><small>{item.status || "Recorded"} · View details ↗</small></div><strong>{item.amount || "—"} {selectedCoin}</strong></button>) : <div className="empty-state">No real {selectedCoin} transactions recorded yet.</div>}
             </article>
             <div className="coin-detail-note">Only authenticated wallet data is displayed. Catalog entries never create balances, prices, or transaction history.</div>
           </section>;
@@ -794,7 +805,7 @@ function App() {
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
                     </section>
         ) : (
-          <FeaturePage selectedAsset={selectedCoin} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage selectedAsset={selectedCoin} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             description: `${tx.asset} • ${tx.description}`,
