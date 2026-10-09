@@ -557,7 +557,7 @@ function App() {
       if (provider === "google") sessionStorage.setItem("world_wallet_google_return", "1");
       const result = await authClient.signIn.social({
         provider,
-        callbackURL: window.location.origin + "/?auth_callback=" + provider,
+        callbackURL: (["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.origin : "https://world-wallet-ai-frontend.onrender.com") + "/?auth_callback=" + provider,
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, providerName + " Sign-In failed."));
     } catch (error) {
