@@ -1330,7 +1330,7 @@ def system_status(user: dict = Depends(current_user)):
         "bitcoin": bool(BTC_ADDRESS),
         "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
         "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
-        "sepolia": bool((EVM_WALLET_ADDRESS or SEPOLIA_RPC_URL) and SEPOLIA_RPC_URL),
+        "sepolia": bool(EVM_WALLET_ADDRESS and SEPOLIA_RPC_URL),
         "live_prices": True,
         "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
