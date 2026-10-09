@@ -496,3 +496,30 @@
   .ww-auth-top-compact>span{font-size:6px}
   .ww-auth-switch button{font-size:8px}
 }
+
+/* Desktop login split: marketing content left, standalone login card right */
+@media (min-width: 761px){
+  .ww-auth-shell{display:flex;flex-direction:column;align-items:stretch}
+  .ww-auth-top-compact{width:min(1320px,100%);flex:0 0 auto}
+  .ww-auth-layout{
+    width:min(1320px,100%);max-width:1320px;flex:1 0 auto;
+    margin:0 auto;display:grid!important;
+    grid-template-columns:minmax(0,1fr) minmax(370px,440px)!important;
+    grid-template-areas:"copy login";
+    align-items:center;column-gap:clamp(40px,7vw,120px);
+    row-gap:0;padding:28px 2px 54px;min-height:calc(100svh - 100px);
+  }
+  .ww-auth-layout>.ww-auth-copy{
+    grid-area:copy!important;display:block!important;
+    width:100%;max-width:700px;min-width:0;justify-self:start;
+  }
+  .ww-auth-layout>.ww-auth-card{
+    grid-area:login!important;display:block!important;
+    width:100%;max-width:440px;min-width:0;justify-self:end;
+    margin:0;align-self:center;
+  }
+}
+@media (max-width:760px){
+  .ww-auth-layout{grid-template-areas:none!important}
+  .ww-auth-layout>.ww-auth-card{grid-area:auto!important}
+}
