@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import WalletVault from "./WalletVault.jsx";
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -125,6 +126,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel">
         <p className="feature-kicker">CREATE WALLET PROFILE</p>
