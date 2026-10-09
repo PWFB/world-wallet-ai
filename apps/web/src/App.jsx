@@ -150,7 +150,7 @@ function App() {
             setLoginError((socialReturn === "github" ? "GitHub" : "Google") + " session could not be restored. Please sign in again.");
             setShowLogin(true);
             try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
-            try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
+        try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
           }
         }, 6000);
         return;
@@ -163,7 +163,7 @@ function App() {
             if (token) {
               try { localStorage.setItem(TOKEN_KEY, token); } catch {}
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
-            try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
+              try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
               setUser(neonSessionUser);
               setAccessToken(token);
               setActive("Dashboard");
