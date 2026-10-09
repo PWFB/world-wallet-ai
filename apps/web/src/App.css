@@ -314,3 +314,41 @@
   .wallet-detail-grid { grid-template-columns: minmax(0, 1fr); }
   .wallet-vault .feature-grid { grid-template-columns: minmax(0, 1fr); }
 }
+
+
+/* Dashboard-only mobile shortcut bar and expandable More sheet */
+.dashboard-bottom-nav{display:none}
+.dashboard-more-backdrop{position:fixed;inset:0;z-index:1000;background:rgba(2,7,18,.72);backdrop-filter:blur(8px);display:flex;align-items:flex-end;justify-content:center;padding:16px 16px 92px}
+.dashboard-more-sheet{width:min(560px,100%);max-height:min(70vh,620px);overflow:auto;border:1px solid #24415f;border-radius:20px;background:linear-gradient(155deg,#10223b,#071224);box-shadow:0 25px 80px rgba(0,0,0,.55);padding:18px}
+.dashboard-more-heading{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px}
+.dashboard-more-heading small{font-size:9px;letter-spacing:1.5px;color:#00d4ff}
+.dashboard-more-heading h2{font:600 19px Orbitron;margin:5px 0 0;color:#f4f8ff}
+.dashboard-more-heading>button{width:34px;height:34px;border:1px solid #29415e;border-radius:10px;background:#0b1729;color:#c8d6e8;font-size:22px}
+.dashboard-more-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.dashboard-more-grid>button{display:flex;align-items:center;gap:10px;min-width:0;text-align:left;padding:12px 10px;border:1px solid #1d3451;border-radius:12px;background:#0a1729;color:#e5eefb}
+.dashboard-more-grid>button>span{flex:0 0 32px;height:32px;display:grid;place-items:center;border-radius:10px;background:#102b42;color:#00d4ff;font-size:17px}
+.dashboard-more-grid>button>div{min-width:0;flex:1}
+.dashboard-more-grid>button b,.dashboard-more-grid>button small{display:block;overflow-wrap:anywhere}
+.dashboard-more-grid>button b{font-size:10px}
+.dashboard-more-grid>button small{font-size:8px;color:#7186a2;margin-top:4px;line-height:1.4}
+.dashboard-more-grid>button i{font-style:normal;color:#00d4ff}
+.dashboard-more-grid>button:hover{border-color:#00bde8;background:#0d2035}
+@media(max-width:760px){
+  .app-shell.dashboard-shortcuts-active{padding-bottom:74px}
+  .dashboard-bottom-nav{position:fixed;z-index:900;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;padding:7px 4px max(7px,env(safe-area-inset-bottom));border-top:1px solid #203652;background:rgba(5,12,25,.97);backdrop-filter:blur(16px);box-shadow:0 -8px 28px rgba(0,0,0,.3)}
+  .dashboard-tab{display:flex;min-width:0;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:3px 1px;border:0;border-radius:9px;background:transparent;color:#7186a2}
+  .dashboard-tab-icon{display:grid;place-items:center;min-height:24px;font-size:22px;line-height:1;color:inherit}
+  .dashboard-tab small{display:block;max-width:100%;font-size:8px;line-height:1.2;white-space:nowrap;letter-spacing:-.15px}
+  .dashboard-tab.active,.dashboard-tab.selected{color:#00d4ff}
+  .dashboard-tab.active .dashboard-tab-icon{color:#00d4ff}
+  .dashboard-tab.active:after{content:"";width:18px;height:2px;border-radius:3px;background:#00d4ff;position:absolute;bottom:calc(5px + env(safe-area-inset-bottom))}
+  .dashboard-more-backdrop{padding:12px 12px calc(82px + env(safe-area-inset-bottom))}
+}
+@media(min-width:761px){
+  .dashboard-more-backdrop{align-items:center;padding:24px}
+}
+@media(max-width:380px){
+  .dashboard-tab small{font-size:7px}
+  .dashboard-tab-icon{font-size:20px}
+  .dashboard-more-grid{grid-template-columns:1fr}
+}
