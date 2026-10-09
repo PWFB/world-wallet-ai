@@ -1671,6 +1671,228 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
         "note": "This check confirms deployed bytecode only; it does not prove source-code verification or safety.",
     }
 
+def _abi_text_value(raw):
+    if not isinstance(raw, str) or not raw.startswith("0x"):
+        return None
+    try:
+        data = bytes.fromhex(raw[2:])
+        if len(data) == 32:
+            return data.rstrip(b"\\x00").decode("utf-8", errors="replace") or None
+        if len(data) >= 64:
+            offset = int.from_bytes(data[:32], "big")
+            if offset + 32 <= len(data):
+                length = int.from_bytes(data[offset:offset + 32], "big")
+                start = offset + 32
+                if length <= len(data) - start:
+                    return data[start:start + length].decode("utf-8", errors="replace") or None
+    except (ValueError, UnicodeDecodeError):
+        return None
+    return None
+
+
+def _inspect_evm_address(address, network, rpc):
+    if not valid_evm_address(address):
+        raise HTTPException(status_code=400, detail="Invalid EVM address")
+    try:
+        raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
+        block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
+        balance = int(raw_balance or "0x0", 16) / 10**18
+        native_symbol = "ETH" if network in {"ethereum", "sepolia"} else "BNB"
+        result = {
+            "network": network, "address": address, "native_symbol": native_symbol,
+            "on_chain_balance": balance, "available_balance": balance,
+            "balance_basis": "latest on-chain native balance; fees and protocol locks may apply",
+            "block_number": block_number, "tokens": [],
+        }
+        if network in {"ethereum", "bnb"}:
+            with db() as conn:
+                tokens = conn.execute(
+                    "SELECT symbol,name,contract_address,decimals FROM token_registry "
+                    "WHERE network=%s AND status='active' AND contract_address IS NOT NULL AND decimals IS NOT NULL "
+                    "ORDER BY symbol",
+                    (network,),
+                ).fetchall()
+            for symbol, name, contract, decimals in tokens:
+                try:
+                    token_balance = erc20_balance(rpc, contract, address, int(decimals))
+                    result["tokens"].append({
+                        "symbol": symbol, "name": name, "contract_address": contract,
+                        "decimals": int(decimals), "on_chain_balance": token_balance,
+                        "available_balance": token_balance,
+                    })
+                except Exception:
+                    result["tokens"].append({
+                        "symbol": symbol, "name": name, "contract_address": contract,
+                        "decimals": int(decimals), "on_chain_balance": None,
+                        "available_balance": None, "status": "unavailable",
+                    })
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} balance lookup failed") from exc
+
+
+@app.post("/api/v1/tools/address-balance")
+def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(current_user)):
+    network = request.network.strip().lower()
+    address = request.address.strip()
+    compare_address = request.compare_address.strip() if request.compare_address else None
+    if network == "bitcoin":
+        if not valid_bitcoin_address(address):
+            raise HTTPException(status_code=400, detail="Invalid Bitcoin address")
+        try:
+            balance = btc_balance(address)
+            response = {
+                "network": network, "address": address, "native_symbol": "BTC",
+                "on_chain_balance": balance, "available_balance": balance,
+                "balance_basis": "confirmed UTXO balance; spending fees and wallet locks may apply",
+                "block_number": None, "tokens": [],
+            }
+            if compare_address:
+                if not valid_bitcoin_address(compare_address):
+                    raise HTTPException(status_code=400, detail="Invalid comparison Bitcoin address")
+                other_balance = btc_balance(compare_address)
+                response["comparison"] = {
+                    "network": network, "address": compare_address, "native_symbol": "BTC",
+                    "on_chain_balance": other_balance, "available_balance": other_balance,
+                    "balance_basis": "confirmed UTXO balance; spending fees and wallet locks may apply",
+                    "block_number": None, "tokens": [],
+                }
+            return response
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Bitcoin balance lookup failed") from exc
+    rpc = {"ethereum": ETH_RPC_URL, "bnb": BSC_RPC_URL, "sepolia": SEPOLIA_RPC_URL}.get(network)
+    if network not in {"ethereum", "bnb", "sepolia"}:
+        raise HTTPException(status_code=400, detail="Unsupported network")
+    if not rpc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
+    result = _inspect_evm_address(address, network, rpc)
+    if compare_address:
+        result["comparison"] = _inspect_evm_address(compare_address, network, rpc)
+    if network == "sepolia":
+        result["testnet"] = True
+        result["usd_reference"] = None
+        try:
+            price_response = httpx.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": "ethereum", "vs_currencies": "usd"},
+                timeout=6,
+            )
+            price_response.raise_for_status()
+            price = float(price_response.json()["ethereum"]["usd"])
+            result["usd_reference"] = round(result["on_chain_balance"] * price, 2)
+        except Exception:
+            pass
+        result["valuation_note"] = "Sepolia ETH is testnet-only and has no redeemable real-world value. Any USD figure is an ETH mainnet price reference, not the value of test funds."
+        if result.get("comparison"):
+            result["comparison"]["testnet"] = True
+    return result
+
+
+@app.get("/api/v1/wallet/proof-of-reserves")
+def wallet_proof_of_reserves(user: dict = Depends(current_user)):
+    addresses = configured_addresses(user)
+    if not addresses:
+        raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
+    reserves = []
+    warnings = []
+    for item in addresses:
+        network = item["network"]
+        address = item["address"]
+        try:
+            if network == "bitcoin":
+                balance = btc_balance(address)
+                reserves.append({
+                    "network": network, "address": address, "asset": "BTC",
+                    "balance": balance, "block_number": None, "source": "Blockstream confirmed UTXO data",
+                })
+                continue
+            rpc = {"ethereum": ETH_RPC_URL, "bnb": BSC_RPC_URL, "sepolia": SEPOLIA_RPC_URL}.get(network)
+            if not rpc:
+                warnings.append(f"{network}: RPC is not configured")
+                continue
+            raw = rpc_call(rpc, "eth_getBalance", [address, "latest"])
+            height = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
+            reserves.append({
+                "network": network, "address": address,
+                "asset": "BNB" if network == "bnb" else "ETH",
+                "balance": int(raw or "0x0", 16) / 10**18,
+                "block_number": height, "source": "configured JSON-RPC latest state",
+            })
+            if network in {"ethereum", "bnb"}:
+                with db() as conn:
+                    tokens = conn.execute(
+                        "SELECT symbol,contract_address,decimals FROM token_registry "
+                        "WHERE network=%s AND status='active' AND contract_address IS NOT NULL AND decimals IS NOT NULL",
+                        (network,),
+                    ).fetchall()
+                for symbol, contract, decimals in tokens:
+                    try:
+                        value = erc20_balance(rpc, contract, address, int(decimals))
+                        reserves.append({
+                            "network": network, "address": address, "asset": symbol,
+                            "balance": value, "contract_address": contract,
+                            "block_number": height, "source": "configured ERC-20 contract balanceOf",
+                        })
+                    except Exception:
+                        warnings.append(f"{network} {symbol}: token balance unavailable")
+        except Exception:
+            warnings.append(f"{network}: on-chain lookup failed")
+    return {
+        "status": "partial" if warnings else "snapshot",
+        "scope": "Connected public addresses for this authenticated wallet only",
+        "as_of": datetime.now(timezone.utc).isoformat(),
+        "reserves": reserves,
+        "warnings": warnings,
+        "audited": False,
+        "liabilities_included": False,
+        "note": "This is an on-chain asset snapshot, not an audited proof of reserves or a solvency attestation. It does not include platform-wide customer liabilities, off-chain assets, or ownership proof.",
+    }
+
+
+@app.post("/api/v1/contracts/inspect")
+def inspect_contract(request: ContractInspectRequest, user: dict = Depends(current_user)):
+    address = request.address.strip()
+    network = request.network.strip().lower()
+    if not valid_evm_address(address):
+        raise HTTPException(status_code=400, detail="Invalid EVM contract address")
+    rpc = {"ethereum": ETH_RPC_URL, "bnb": BSC_RPC_URL, "sepolia": SEPOLIA_RPC_URL}.get(network)
+    if not rpc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
+    try:
+        code = rpc_call(rpc, "eth_getCode", [address, "latest"])
+        has_code = bool(code and code not in {"0x", "0x0"})
+        if not has_code:
+            return {
+                "network": network, "address": address, "is_contract": False,
+                "name": None, "symbol": None, "decimals": None,
+                "source_verified": False, "note": "No deployed contract bytecode was found at this address.",
+            }
+        metadata = {}
+        for key, selector in (("name", "0x06fdde03"), ("symbol", "0x95d89b41"), ("decimals", "0x313ce567")):
+            try:
+                raw = rpc_call(rpc, "eth_call", [{"to": address, "data": selector}, "latest"])
+                if key == "decimals":
+                    metadata[key] = _hex_int(raw) if raw is not None else None
+                else:
+                    metadata[key] = _abi_text_value(raw)
+            except Exception:
+                metadata[key] = None
+        return {
+            "network": network, "address": address, "is_contract": True,
+            "name": metadata.get("name"), "symbol": metadata.get("symbol"),
+            "decimals": metadata.get("decimals"), "source_verified": False,
+            "note": "Contract address inspected. This does not convert it into a wallet address, prove ownership, verify source code, or certify safety.",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Contract inspection unavailable from blockchain RPC") from exc
+
+
 def reserve_asset(conn,user,symbol: str,amount: Decimal):
     row=conn.execute("SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
     if not row: return False,{"status":"rejected","reason":"Unsupported asset","asset":symbol}
