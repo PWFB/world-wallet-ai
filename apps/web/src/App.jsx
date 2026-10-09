@@ -591,7 +591,7 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
+    <div className={"app-shell" + (active === "Dashboard" && !selectedCoin ? " dashboard-shortcuts-active" : "")}>
       <aside className="sidebar">
         <div className="brand">
           <div className="brand-mark">W</div>
