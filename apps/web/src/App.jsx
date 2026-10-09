@@ -11,6 +11,7 @@ const fallbackWallet = { available_balance_usd: 0, actual_balance_usd: 0, reserv
 const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
+  { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum", icon: "Ξ", status: "Ethereum" },
   { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum / BNB Chain" },
@@ -206,7 +207,7 @@ function App() {
         setWallet(data.wallet || fallbackWallet);
         setAssets((data.assets || fallbackAssets).map(asset => ({
           ...asset,
-          icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+          icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
         setActivity((data.transactions || []).map(tx => ({
           type: tx.type,
@@ -332,7 +333,7 @@ function App() {
       setWallet(data.wallet || fallbackWallet);
       setAssets((data.assets || fallbackAssets).map(asset => ({
         ...asset,
-        icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+        icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
       })));
       setActivity((data.transactions || []).map(tx => ({
         type: tx.type,
@@ -726,7 +727,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price > 0 ? `Price: ${money(price)}/coin • Value: ${money(value)}` : c.symbol === "BALMZ" ? "Price: Not listed • Value: $0.00" : "Price: Unavailable • Value: unavailable"}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price > 0 ? `Price: ${money(price)}/coin • Value: ${money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Value: $0.00" : "Price: Unavailable • Value: unavailable"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
@@ -750,7 +751,7 @@ function App() {
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
                     </section>
         ) : (
-          <FeaturePage selectedAsset={selectedCoin} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol === "BALMZ" ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage selectedAsset={selectedCoin} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             description: `${tx.asset} • ${tx.description}`,
