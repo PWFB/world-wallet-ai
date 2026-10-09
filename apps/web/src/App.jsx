@@ -657,7 +657,7 @@ function App() {
               {liveWallet.addresses.length ? (
                 <div className="live-wallet-addresses">
                   {liveWallet.addresses.map(item => <div className="live-wallet-address" key={item.network + ":" + item.address}>
-                    <b>{item.network === "bitcoin" ? "Bitcoin" : item.network === "bnb" ? "BNB Chain" : "Ethereum"}</b>
+                    <b>{item.network === "bitcoin" ? "Bitcoin" : item.network === "bnb" ? "BNB Chain" : item.network === "sepolia" ? "Ethereum Sepolia (testnet)" : "Ethereum"}</b>
                     <code>{item.address}</code>
                   </div>)}
                 </div>
@@ -665,9 +665,9 @@ function App() {
                 <div className="live-wallet-empty">{liveWallet.message || "Configure the production wallet address and chain RPC settings on the backend to enable live balances."}</div>
               )}
               <div className="network-sync-grid">
-                {["bitcoin", "ethereum", "bnb"].map(network => {
+                {["bitcoin", "ethereum", "bnb", "sepolia"].map(network => {
                   const item = networkStatus[network] || {};
-                  const label = network === "bitcoin" ? "Bitcoin" : network === "ethereum" ? "Ethereum" : "BNB Chain";
+                  const label = network === "bitcoin" ? "Bitcoin" : network === "ethereum" ? "Ethereum" : network === "bnb" ? "BNB Chain" : "Ethereum Sepolia (testnet)";
                   return <div className="network-sync-card" key={network}>
                     <div><b>{label}</b><span className={"sync-dot " + (item.status || "not_configured")} /> <small>{item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : item.configured ? "CHECKING" : "NOT CONFIGURED"}</small></div>
                     <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : "No successful balance sync recorded."}</span>
@@ -726,7 +726,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price ? `Live price ${money(price)}/coin • ${money(value)} available value` : "Live price unavailable"}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price > 0 ? `Price: ${money(price)}/coin • Value: ${money(value)}` : c.symbol === "BALMZ" ? "Price: Not listed • Value: $0.00" : "Price: Unavailable • Value: unavailable"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
