@@ -622,6 +622,20 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       if (!value.trim()) { setMessage("Enter or inspect an address first."); return; }
       setToolBusy(true); setMessage("");
       try {
+        const existingResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", {
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        const existingData = await existingResponse.json();
+        if (!existingResponse.ok) throw new Error(existingData.detail || "Unable to inspect the selected wallet.");
+        const existingAddress = (existingData.addresses || []).find(item => item.network === network);
+        if (existingAddress && existingAddress.address.toLowerCase() === value.trim().toLowerCase()) {
+          setMessage("This address is already attached to the selected wallet.");
+          return;
+        }
+        if (existingAddress && !window.confirm("This wallet already has a " + network + " address. Replacing it will change which address is tracked for this network. Continue?")) {
+          setMessage("Address attachment cancelled; existing wallet address was kept.");
+          return;
+        }
         const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", {
           method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
           body: JSON.stringify({ network, address: value.trim(), label }),
@@ -634,6 +648,8 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     };
     const renderAddress = (item,label) => <article className="panel action-panel" key={label}>
       <span className="feature-kicker">{label}</span><h2>{item.address}</h2>
+      <div className="security-note">Input / tracked address: <code>{item.address}</code></div>
+      <div className="feature-kicker">LIVE ON-CHAIN / AVAILABLE BALANCE</div>
       <div className="hero-balance">{number(item.on_chain_balance)} <small>{item.native_symbol}</small></div>
       <div className="security-note">Network: {item.network} · block {item.block_number == null ? "confirmed explorer data" : Number(item.block_number).toLocaleString()}</div>
       <div className="security-note">{item.balance_basis}</div>
