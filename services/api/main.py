@@ -1024,16 +1024,58 @@ def sync_bitcoin_transactions(user, address=None):
             tx_id = existing[0] if existing else "btc_" + tx_hash
             description = "Bitcoin transaction " + tx_hash[:12] + "…"
             if existing:
-                existing_row = conn.execute("SELECT type,status FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
-                if existing_row and existing_row[0] in {"sent","withdrawal"}:
-                    conn.execute("UPDATE transactions SET tx_hash=%s,confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
-                                 (tx_hash,item["confirmations"],item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                existing_row = conn.execute("SELECT type,status,block_hash,description FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
+                old_type, old_status, old_block_hash, old_description = existing_row if existing_row else ("", "", None, "")
+                status = item["status"]
+                confirmations = item["confirmations"]
+                if old_status == "reorged" or (old_status in {"confirmed","settled"} and status == "pending") or (old_block_hash and item.get("block_hash") and old_block_hash.lower() != item["block_hash"].lower()):
+                    status = "reorged"
+                    confirmations = 0
+                elif old_status == "settled":
+                    status = "settled"
+                elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
+                    status = "broadcast_pending"
+                if old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}:
+                    conn.execute("UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
+                                 (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                elif old_type == "sent":
+                    conn.execute("UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
+                                 (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
                 else:
-                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s",
-                                 (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],item.get("block_hash"),tx_id))
+                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
+                                 (item["type"],description,item["amount"],status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                item = {**item,"status":status,"confirmations":confirmations}
             else:
                 conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],address,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
             imported.append(item)
+        # Detect recent confirmed Bitcoin blocks that disappear from the explorer's
+        # address history after a reorg, including transactions no longer listed.
+        try:
+            tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
+            tip_response.raise_for_status()
+            tip_height = int(tip_response.text.strip())
+            lookback = max(1, min(int(os.getenv("WORLD_WALLET_BTC_REORG_LOOKBACK_BLOCKS", "144")), 1000))
+            saved = conn.execute(
+                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network='bitcoin' "
+                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','settled','broadcast_pending')",
+                (user["wallet_id"], max(0, tip_height - lookback + 1), tip_height),
+            ).fetchall()
+            canonical = {}
+            for row_id, height, old_hash in saved:
+                if height is None or not old_hash:
+                    continue
+                height = int(height)
+                if height not in canonical:
+                    try:
+                        response = httpx.get(f"https://blockstream.info/api/block-height/{height}", timeout=10)
+                        response.raise_for_status()
+                        canonical[height] = response.text.strip()
+                    except Exception:
+                        canonical[height] = None
+                if canonical[height] and old_hash.lower() != canonical[height].lower():
+                    conn.execute("UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",(row_id,user["wallet_id"]))
+        except Exception:
+            pass
         conn.commit()
     return imported
 
