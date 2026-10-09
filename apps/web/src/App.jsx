@@ -759,7 +759,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin • Wallet value: ${live ? money(value) : "—"}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live ? money(value) : "—"}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
