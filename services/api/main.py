@@ -124,6 +124,17 @@ class ContractVerifyRequest(BaseModel):
     network: str = Field(min_length=2, max_length=16)
 
 
+class AddressInspectRequest(BaseModel):
+    address: str = Field(min_length=4, max_length=128)
+    network: str = Field(min_length=2, max_length=16)
+    compare_address: str | None = Field(default=None, min_length=4, max_length=128)
+
+
+class ContractInspectRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    network: str = Field(min_length=2, max_length=16)
+
+
 class WalletCreateRequest(BaseModel):
     name: str = Field(default="New Wallet", min_length=1, max_length=80)
 
@@ -1767,6 +1778,27 @@ def _same_address(left, right):
     return bool(left and right and left.lower() == right.lower())
 
 
+def exact_base_units(amount: Decimal, decimals: int) -> int:
+    """Convert a value to integer chain units without silently rounding."""
+    if not amount.is_finite() or amount < 0 or not isinstance(decimals, int) or decimals < 0 or decimals > 36:
+        raise HTTPException(status_code=409, detail="Invalid settlement amount or asset precision")
+    scaled = amount * (Decimal(10) ** decimals)
+    if scaled != scaled.to_integral_value():
+        raise HTTPException(status_code=409, detail="Settlement amount exceeds the asset's supported decimal precision")
+    return int(scaled)
+
+
+def required_confirmations(env_name: str) -> int:
+    raw = os.getenv(env_name, "3")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=503, detail=f"Invalid confirmation configuration: {env_name}") from exc
+    if value < 1 or value > 100:
+        raise HTTPException(status_code=503, detail=f"Confirmation configuration out of range: {env_name}")
+    return value
+
+
 def erc20_decimals(url: str, contract: str):
     if not url or not valid_evm_address(contract):
         return None
@@ -1785,15 +1817,18 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, w
     if not any(_same_address((v.get("prevout") or {}).get("scriptpubkey_address"), wallet_address) for v in vins):
         raise HTTPException(status_code=409, detail="Bitcoin transaction is not spending the configured wallet address")
     paid = sum(int(v.get("value", 0)) for v in tx.get("vout", []) if _same_address(v.get("scriptpubkey_address"), destination))
-    expected = int((amount * Decimal("100000000")).to_integral_value())
+    expected = exact_base_units(amount, 8)
     if paid != expected:
         raise HTTPException(status_code=409, detail="Bitcoin transaction amount or destination does not match the wallet request")
     confirmed = bool(status.get("confirmed"))
     block_height = status.get("block_height")
-    tip = int(httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10).text.strip())
+    tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
+    tip_response.raise_for_status()
+    tip = int(tip_response.text.strip())
     confirmations = max(0, tip - int(block_height) + 1) if confirmed and block_height else 0
+    threshold = required_confirmations("WORLD_WALLET_BTC_CONFIRMATIONS")
     return {
-        "state": "confirmed" if confirmed else "pending",
+        "state": "confirmed" if confirmations >= threshold else "pending",
         "tx_hash": tx_hash,
         "confirmations": confirmations,
         "block_height": block_height,
@@ -1811,18 +1846,28 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
         receipt = rpc_call(rpc, "eth_getTransactionReceipt", [tx_hash])
         if not receipt:
             return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": None}
-        if str(receipt.get("status", "")).lower() != "0x1":
+        receipt_status = str(receipt.get("status") or "").lower()
+        if receipt_status == "0x0":
             raise HTTPException(status_code=409, detail="Blockchain transaction failed and cannot settle the wallet request")
+        if receipt_status != "0x1":
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": None}
         if not _same_address(tx.get("from"), wallet_address):
             raise HTTPException(status_code=409, detail="Blockchain transaction sender does not match the configured wallet")
         block_number = _hex_int(receipt.get("blockNumber"))
         latest = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
-        confirmations = max(0, latest - block_number + 1) if block_number is not None and latest is not None else 0
+        if block_number is None or latest is None:
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": block_number}
+        canonical_block = rpc_call(rpc, "eth_getBlockByNumber", [hex(block_number), False])
+        receipt_block_hash = str(receipt.get("blockHash") or "").lower()
+        canonical_block_hash = str((canonical_block or {}).get("hash") or "").lower()
+        if not receipt_block_hash or not canonical_block_hash or receipt_block_hash != canonical_block_hash:
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": block_number}
+        confirmations = max(0, latest - block_number + 1)
 
         if asset in {"ETH", "BNB"}:
             if not _same_address(tx.get("to"), destination):
                 raise HTTPException(status_code=409, detail="Blockchain destination does not match the wallet request")
-            expected = int((amount * Decimal(10**18)).to_integral_value())
+            expected = exact_base_units(amount, 18)
             if _hex_int(tx.get("value") or "0x0") != expected:
                 raise HTTPException(status_code=409, detail="Blockchain amount does not match the wallet request")
         else:
@@ -1839,7 +1884,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             decimals = erc20_decimals(rpc, contract)
             if decimals is None or decimals < 0 or decimals > 36:
                 raise HTTPException(status_code=503, detail="Unable to determine token decimals")
-            expected = int((amount * (Decimal(10) ** decimals)).to_integral_value())
+            expected = exact_base_units(amount, decimals)
             found = False
             for log in receipt.get("logs") or []:
                 topics = log.get("topics") or []
@@ -1858,8 +1903,9 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if not found:
                 raise HTTPException(status_code=409, detail="No matching ERC-20 transfer event was found in the confirmed transaction")
 
+        threshold = required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS")
         return {
-            "state": "confirmed",
+            "state": "confirmed" if confirmations >= threshold else "pending",
             "tx_hash": tx_hash,
             "confirmations": confirmations,
             "block_height": block_number,
@@ -1954,7 +2000,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (hold,user["wallet_id"],symbol),
         )
         conn.execute(
-            "UPDATE transactions SET status='confirmed',tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
+            "UPDATE transactions SET status='settled',tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
             (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
         )
         reconcile_settled_asset(conn,user,symbol,network)
