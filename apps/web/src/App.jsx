@@ -50,8 +50,17 @@ function App() {
   const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
     const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
     const liveRecord = records.find(t => t.wallet_network_connected);
-    return { ...coin, registry: liveRecord || records[0] || null, connected: Boolean(liveRecord) };
-  }), [tokenRegistry]);
+    const quote = marketPrices[coin.symbol] || {};
+    return {
+      ...coin,
+      registry: liveRecord || records[0] || null,
+      connected: Boolean(liveRecord),
+      price_usd: quote.usd == null ? null : Number(quote.usd),
+      price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
+      price_listed: quote.listed === true,
+      price_source: quote.usd == null ? null : "CoinGecko",
+    };
+  }), [tokenRegistry, marketPrices]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -609,7 +618,7 @@ function App() {
           const live = assets.find(a => a.symbol === selectedCoin);
           const balance = live?.balance || 0;
           const value = live?.value_usd || 0;
-          const price = live?.price_usd || 0;
+          const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
           const change = live?.change_24h;
           const rows = activity.filter(item => item.asset === selectedCoin || item.symbol === selectedCoin);
           return <section className="content coin-detail-page">
@@ -744,7 +753,7 @@ function App() {
                     const live = assets.find(a => a.symbol === c.symbol);
                     const balance = live ? live.balance : 0;
                     const value = live ? live.value_usd : 0;
-                    const price = Number(live?.price_usd || marketPrices[c.symbol]?.usd || 0);
+                    const price = Number(live?.price_usd || c.price_usd || marketPrices[c.symbol]?.usd || 0);
                     const hasMarketPrice = price > 0;
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
