@@ -732,7 +732,7 @@ function App() {
                   <h2>{liveWallet.status === "connected" ? "Production wallet connected" : liveWallet.status === "checking" ? "Checking production wallet…" : "Production wallet not configured"}</h2>
                   <p>{liveWallet.mode === "read_only" ? "Read-only blockchain connection • no private key or signing key is stored by the API." : "Wallet connection status"}</p>
                 </div>
-                <button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Refreshing…" : "Refresh live wallet"}</button>
+                
               </div>
               {liveWallet.addresses.length ? (
                 <div className="live-wallet-addresses">
