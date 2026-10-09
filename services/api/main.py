@@ -1783,6 +1783,7 @@ def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(
             )
             price_response.raise_for_status()
             price = float(price_response.json()["ethereum"]["usd"])
+            result["mainnet_eth_usd_price"] = price
             result["usd_reference"] = round(result["on_chain_balance"] * price, 2)
         except Exception:
             pass
@@ -1802,6 +1803,9 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     for item in addresses:
         network = item["network"]
         address = item["address"]
+        if network == "sepolia":
+            warnings.append("Sepolia testnet is excluded from production reserve snapshots")
+            continue
         try:
             if network == "bitcoin":
                 balance = btc_balance(address)
