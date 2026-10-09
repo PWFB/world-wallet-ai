@@ -149,11 +149,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
       <h2>Attach a blockchain address</h2>
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
         <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
+      <div className="security-note">Sepolia is a test network. You can save its public 0x address without entering a private key; live testnet balances require a configured Sepolia RPC endpoint.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
     </article>
