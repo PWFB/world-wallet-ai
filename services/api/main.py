@@ -73,6 +73,11 @@ class NeonAuthCredentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=1, max_length=128)
 
+class NeonAuthRegistration(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
 
 class NeonAuthOtpRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
@@ -1158,6 +1163,30 @@ def neon_password_login(request: NeonAuthCredentials):
         "password": request.password,
         "rememberMe": True,
     })
+
+@app.post("/api/v1/auth/neon/register")
+def neon_register(request: NeonAuthRegistration):
+    name = request.name.strip()
+    email = request.email.strip().lower()
+    if not name:
+        raise HTTPException(status_code=400, detail="Enter your name")
+    # Use the same cookie-preserving Neon sign-up/token exchange as sign-in.
+    # This returns the application's verified session token, not Better Auth's
+    # internal session token or a provider secret.
+    signed_in = _neon_auth_sign_in("/sign-up/email", {
+        "name": name,
+        "email": email,
+        "password": request.password,
+    })
+    user = signed_in.get("user")
+    if isinstance(user, dict):
+        with db() as conn:
+            conn.execute("UPDATE users SET name=%s WHERE lower(email)=lower(%s)", (name, email))
+            conn.commit()
+        refreshed = get_user(email)
+        if refreshed:
+            signed_in["user"] = refreshed
+    return signed_in
 
 
 @app.post("/api/v1/auth/neon/send-otp")
