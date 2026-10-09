@@ -544,7 +544,7 @@ function App() {
 
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
-    Tools: ["Wallet Connect", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
+    Tools: ["Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
     Support: ["Support Center", "Help & Docs"],
   }), []);
