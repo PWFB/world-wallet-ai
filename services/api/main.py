@@ -534,7 +534,7 @@ def _base58_decode(value: str):
         number = number * 58 + BASE58_ALPHABET.index(c)
     raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
     leading = len(value) - len(value.lstrip("1"))
-    return b"\\x00" * leading + raw
+    return b"\x00" * leading + raw
 
 
 def valid_bitcoin_base58(address: str) -> bool:
@@ -1677,7 +1677,7 @@ def _abi_text_value(raw):
     try:
         data = bytes.fromhex(raw[2:])
         if len(data) == 32:
-            return data.rstrip(b"\\x00").decode("utf-8", errors="replace") or None
+            return data.rstrip(b"\x00").decode("utf-8", errors="replace") or None
         if len(data) >= 64:
             offset = int.from_bytes(data[:32], "big")
             if offset + 32 <= len(data):
