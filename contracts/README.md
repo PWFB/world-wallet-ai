@@ -24,15 +24,35 @@ After deployment, record the network, contract address, deployer address, deploy
 
 Never put a private key in this repository.
 
+## Sepolia test deployment
+
+Use the Sepolia testnet first. Add these values to a local `.env` file (never commit it):
+
+    DEPLOYER_PRIVATE_KEY=0x...
+    SEPOLIA_RPC_URL=https://your-sepolia-rpc-provider
+
+Then run:
+
+    npm install
+    npm run compile
+    npm run deploy:sepolia
+
+The script prints the Sepolia contract address and the environment variable name `WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT`. Sepolia ETH is testnet-only and has no mainnet monetary value. Use a faucet to obtain test ETH for deployment gas.
+
 ## Production configuration
 
-Set this API environment variable to the deployed contract address:
+For Ethereum mainnet, configure:
 
     WORLD_WALLET_BALMZ_ETH_CONTRACT=0x...
 
-The API will then register the contract, read the wallet balance with balanceOf, read decimals, sync BALMZ Transfer events, allow live EVM signing for BALMZ, and verify the exact BALMZ Transfer event before settling a send.
+For the testnet, configure separately:
 
-Until the address is configured, BALMZ remains explicitly pending_contract and the UI must show no fabricated balance.
+    WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT=0x...
+    WORLD_WALLET_SEPOLIA_RPC_URL=https://your-sepolia-rpc-provider
+
+The wallet displays the same EVM public address on Ethereum and Sepolia; this does not create a new key or move funds between networks. Never send mainnet assets to a testnet address expecting them to appear on mainnet.
+
+BALMZ market price remains unavailable / unlisted until a genuine, independently verifiable market source exists. The app must not fabricate a balance or price.
 
 ## Supply policy
 
