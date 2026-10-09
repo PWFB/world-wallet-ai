@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -23,6 +23,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [unlocked, setUnlocked] = useState(null);
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
+  const [verifyAddressInput, setVerifyAddressInput] = useState("");
+  const [verifyMessageInput, setVerifyMessageInput] = useState("");
+  const [verifySignatureInput, setVerifySignatureInput] = useState("");
+  const [verifyResult, setVerifyResult] = useState(null);
   const [nativeBalance, setNativeBalance] = useState("");
   const [recipient, setRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
@@ -167,6 +171,38 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage(error.message || "Signing failed.");
     } finally {
       setBusy(false);
+    }
+  }
+
+  function verifySignedMessage() {
+    setVerifyResult(null);
+    const addressToCheck = verifyAddressInput.trim();
+    const messageToCheck = verifyMessageInput;
+    const signatureToCheck = verifySignatureInput.trim();
+    if (!isAddress(addressToCheck)) {
+      setVerifyResult({ ok: false, text: "Enter a valid EVM wallet address." });
+      return;
+    }
+    if (!messageToCheck) {
+      setVerifyResult({ ok: false, text: "Enter the exact original message that was signed." });
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{130}$/.test(signatureToCheck)) {
+      setVerifyResult({ ok: false, text: "Enter a 65-byte EVM message signature (0x followed by 130 hexadecimal characters)." });
+      return;
+    }
+    try {
+      const recovered = verifyMessage(messageToCheck, signatureToCheck);
+      const matches = recovered.toLowerCase() === addressToCheck.toLowerCase();
+      setVerifyResult({
+        ok: matches,
+        text: matches
+          ? "Signature valid: the recovered signer matches the supplied address."
+          : "Signature does not match this address. Check the exact message, signature, and network wallet address.",
+        recovered,
+      });
+    } catch {
+      setVerifyResult({ ok: false, text: "Signature could not be decoded as a standard EVM personal-message signature." });
     }
   }
 
@@ -354,6 +390,15 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => setSignMessage(event.target.value)} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
+        <div className="wallet-message-signing">
+          <h3>Verify a signed message</h3>
+          <p className="muted">Recover the signer from an EVM personal-message signature. This verifies a message signature only; it does not authorize or verify a blockchain transaction.</p>
+          <label>Expected wallet address<input value={verifyAddressInput} onChange={event => setVerifyAddressInput(event.target.value)} placeholder="0x…" autoComplete="off" /></label>
+          <label>Exact signed message<textarea rows="3" value={verifyMessageInput} onChange={event => setVerifyMessageInput(event.target.value)} placeholder="Paste the exact original message" /></label>
+          <label>Signature<input value={verifySignatureInput} onChange={event => setVerifySignatureInput(event.target.value)} placeholder="0x…" autoComplete="off" /></label>
+          <button className="secondary" onClick={verifySignedMessage}>Verify message signature</button>
+          {verifyResult && <div className={verifyResult.ok ? "feature-success" : "feature-error"}>{verifyResult.text}{verifyResult.recovered && <div><small>Recovered signer: <code>{verifyResult.recovered}</code></small></div>}</div>}
+        </div>
         {selected?.network === "sepolia" && <div className="wallet-message-signing">
           <h3>Send Sepolia test ETH</h3>
           <label>Recipient address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
