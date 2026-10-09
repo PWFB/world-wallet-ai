@@ -27,6 +27,7 @@ NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else No
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+SEPOLIA_RPC_URL = os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL", os.getenv("SEPOLIA_RPC_URL", "")).strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
@@ -105,6 +106,17 @@ class AddressBookDelete(BaseModel):
 
 
 class ContractVerifyRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    network: str = Field(min_length=2, max_length=16)
+
+
+class AddressInspectRequest(BaseModel):
+    address: str = Field(min_length=4, max_length=128)
+    network: str = Field(min_length=2, max_length=16)
+    compare_address: str | None = Field(default=None, min_length=4, max_length=128)
+
+
+class ContractInspectRequest(BaseModel):
     address: str = Field(min_length=42, max_length=42)
     network: str = Field(min_length=2, max_length=16)
 
@@ -1540,9 +1552,9 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
 def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
     network=request.network.strip().lower(); address=request.address.strip()
-    if network in {"ethereum","bnb"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network not in {"ethereum","bnb","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network not in {"ethereum","bnb","sepolia","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
@@ -1642,7 +1654,7 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
     network = request.network.strip().lower()
     if not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM contract address")
-    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
