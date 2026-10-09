@@ -24,7 +24,7 @@ class SettlementHelperTests(unittest.TestCase):
             main.exact_base_units(Decimal("NaN"), 18)
 
     def test_abi_text_decoder_reads_dynamic_token_metadata(self):
-        payload = (32).to_bytes(32, "big") + (4).to_bytes(32, "big") + b"TEST" + (b"\\x00" * 28)
+        payload = (32).to_bytes(32, "big") + (4).to_bytes(32, "big") + b"TEST" + (b"\x00" * 28)
         self.assertEqual(main._abi_text_value("0x" + payload.hex()), "TEST")
 
     def test_sepolia_is_excluded_from_production_reserve_snapshot(self):
