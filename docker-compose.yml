@@ -5,6 +5,14 @@ services:
     build: ./services/api
     ports:
       - "8000:8000"
+    environment:
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      COINGECKO_API_BASE_URL: ${COINGECKO_API_BASE_URL:-https://api.coingecko.com/api/v3}
+      WORLD_WALLET_EVM_ADDRESS: ${WORLD_WALLET_EVM_ADDRESS:-}
+      WORLD_WALLET_SEPOLIA_RPC_URL: ${WORLD_WALLET_SEPOLIA_RPC_URL:-}
+      WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT: ${WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT:-}
+      NEON_AUTH_BASE_URL: ${NEON_AUTH_BASE_URL:-}
+      NEON_AUTH_JWKS_URL: ${NEON_AUTH_JWKS_URL:-}
 
   web:
     build: ./apps/web
