@@ -27,6 +27,7 @@ NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else No
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+SEPOLIA_RPC_URL = os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL", os.getenv("SEPOLIA_RPC_URL", "")).strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
@@ -640,11 +641,15 @@ def validate_asset_network(asset: str, network: str):
 def configured_addresses(user):
     with db() as conn:
         rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
-        if not rows and EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
-            for network in ("ethereum", "bnb"):
-                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
-            if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS):
-                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], "bitcoin", BTC_ADDRESS))
+        if EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
+            # EVM accounts use the same public address on Ethereum mainnet and Sepolia.
+            # Keep the testnet address visible without replacing any user-saved address.
+            if not rows:
+                for network in ("ethereum", "bnb"):
+                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
+                if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS):
+                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], "bitcoin", BTC_ADDRESS))
+            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,'sepolia',%s,'Sepolia testnet') ON CONFLICT DO NOTHING", (user["wallet_id"], EVM_WALLET_ADDRESS))
             conn.commit()
             rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
     return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
@@ -1102,7 +1107,7 @@ def _chain_heights():
             heights["bitcoin"] = int(httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=8).text.strip())
     except Exception:
         heights["bitcoin"] = None
-    for network, url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL)):
+    for network, url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL), ("sepolia", SEPOLIA_RPC_URL)):
         if url:
             try:
                 heights[network] = _hex_int(rpc_call(url, "eth_blockNumber", []))
@@ -1113,26 +1118,28 @@ def _chain_heights():
 
 def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
     now = datetime.now(timezone.utc).isoformat()
-    warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb")}
+    warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb", "sepolia")}
     updated_networks = {str(item.get("network")) for item in updates}
     chain_heights = _chain_heights()
     configured = {
         "bitcoin": bool(wallet_network_address(user, "bitcoin")),
         "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
         "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
+        "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
     }
     result = {}
-    for network in ("bitcoin", "ethereum", "bnb"):
+    for network in ("bitcoin", "ethereum", "bnb", "sepolia"):
         warning = warning_text[network]
+        sepolia_healthy = network == "sepolia" and configured[network] and chain_heights.get(network) is not None
         result[network] = {
             "configured": configured[network],
-            "status": "healthy" if network in updated_networks and not warning else (
-                "warning" if configured[network] and warning else "not_configured"
+            "status": "healthy" if (network in updated_networks or sepolia_healthy) and not warning else (
+                "warning" if configured[network] and (warning or (network == "sepolia" and chain_heights.get(network) is None)) else "not_configured"
             ),
             "last_balance_sync_at": now if network in updated_networks else None,
             "last_transaction_sync_at": transaction_sync_at if network in updated_networks and not warning else None,
             "chain_height": chain_heights.get(network),
-            "warning": warning,
+            "warning": warning or ("Sepolia RPC unavailable" if network == "sepolia" and configured[network] and chain_heights.get(network) is None else None),
         }
     return result
 
