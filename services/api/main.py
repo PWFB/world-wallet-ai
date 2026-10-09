@@ -356,9 +356,9 @@ def neon_auth_user(token: str):
         # hard-code an algorithm: use the algorithm advertised by the
         # verified JWKS key, which keeps this compatible with Neon key
         # rotation while still binding the token to the expected public key.
-        signing_key = NEON_JWKS_CLIENT.get_signing_key_from_jwt(token)
         header = jwt.get_unverified_header(token)
         algorithm = str(header.get("alg") or "").strip()
+        signing_key = NEON_JWKS_CLIENT.get_signing_key_from_jwt(token)
         key_algorithm = str(getattr(signing_key, "algorithm_name", "") or "").strip()
         allowed_algorithms = {"EdDSA", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512"}
         if algorithm not in allowed_algorithms:
@@ -376,6 +376,14 @@ def neon_auth_user(token: str):
             options={"verify_aud": False},
         )
     except Exception as exc:
+        # Never log the bearer token, claims, or raw exception text. The
+        # exception class tells us which verification stage is rejecting it.
+        import logging
+        logging.getLogger("uvicorn.error").warning(
+            "Neon Auth JWT verification rejected: error_type=%s alg=%s",
+            type(exc).__name__,
+            algorithm if "algorithm" in locals() else "unavailable",
+        )
         raise HTTPException(status_code=401, detail="Invalid Neon Auth session") from exc
 
     subject = str(claims.get("sub") or "").strip()
