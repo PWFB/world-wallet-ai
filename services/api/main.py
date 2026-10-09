@@ -1761,7 +1761,14 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
     network = request.network.strip().lower()
     if not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM contract address")
-    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    rpc_by_network = {
+        "ethereum": ETH_RPC_URL,
+        "bnb": BSC_RPC_URL,
+        "sepolia": SEPOLIA_RPC_URL,
+    }
+    if network not in rpc_by_network:
+        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, or sepolia.")
+    rpc = rpc_by_network[network]
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
