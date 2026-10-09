@@ -226,12 +226,12 @@ function App() {
             setAccessToken(freshToken);
             return;
           }
+          // A single wallet API 401 must not forcibly redirect a user who still
+          // has a Neon Auth session. Keep the dashboard visible and surface the
+          // API authentication failure so it can be diagnosed without a login loop.
           if (!cancelled) {
-            try { localStorage.removeItem(TOKEN_KEY); } catch {}
-            setAccessToken("");
-            setUser(null);
-            setShowLogin(true);
-            setLoginError("Your wallet session expired. Please sign in again.");
+            setApiStatus("error");
+            setSyncMessage("Wallet API rejected the current session token. Your sign-in was kept; please retry after the session token is refreshed.");
           }
           return;
         }
