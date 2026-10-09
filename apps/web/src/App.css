@@ -523,3 +523,47 @@
   .ww-auth-layout{grid-template-areas:none!important}
   .ww-auth-layout>.ww-auth-card{grid-area:auto!important}
 }
+
+
+/* Final layout correction: the earlier generic auth-shell section rule capped the
+   landing section at 420px, so the desktop two-column layout could never spread out. */
+@media (min-width: 761px) {
+  .ww-auth-shell > section.ww-auth-layout {
+    width: min(1320px, 100%) !important;
+    max-width: 1320px !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    grid-template-columns: minmax(0, 1fr) minmax(370px, 440px) !important;
+    grid-template-areas: "copy login" !important;
+    column-gap: clamp(40px, 7vw, 120px) !important;
+  }
+  .ww-auth-shell > section.ww-auth-layout > .ww-auth-copy {
+    display: block !important;
+    grid-area: copy !important;
+    min-width: 0 !important;
+  }
+  .ww-auth-shell > section.ww-auth-layout > .ww-auth-card {
+    display: block !important;
+    grid-area: login !important;
+    width: 100% !important;
+    max-width: 440px !important;
+    justify-self: end !important;
+  }
+}
+@media (max-width: 760px) {
+  .ww-auth-shell > section.ww-auth-layout {
+    width: min(460px, 100%) !important;
+    max-width: 460px !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-areas: none !important;
+  }
+  .ww-auth-shell > section.ww-auth-layout > .ww-auth-copy {
+    display: none !important;
+  }
+  .ww-auth-shell > section.ww-auth-layout > .ww-auth-card {
+    grid-area: auto !important;
+    width: 100% !important;
+    max-width: 460px !important;
+    justify-self: center !important;
+  }
+}
