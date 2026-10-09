@@ -40,7 +40,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["reserves"], [])
         self.assertFalse(result["audited"])
         self.assertFalse(result["liabilities_included"])
-        self.assertTrue(any("excluded from production" in warning for warning in result["warnings"]))
+        self.assertIn("sepolia", result["excluded_networks"])
+        self.assertEqual(result["warnings"], [])
 
     def test_sepolia_address_balance_uses_chain_rpc(self):
         address = "0x" + "1" * 40
