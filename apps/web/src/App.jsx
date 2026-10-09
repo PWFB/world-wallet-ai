@@ -44,6 +44,8 @@ function App() {
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
+  const [marketPrices, setMarketPrices] = useState({});
+  const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
   const [tokenRegistry, setTokenRegistry] = useState([]);
   const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
     const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
@@ -78,6 +80,26 @@ function App() {
   const [performance, setPerformance] = useState({ points: [] });
   const sessionState = authClient.useSession();
   const neonSessionUser = sessionState.data?.user || null;
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadMarketPrices() {
+      try {
+        const response = await fetch(API_BASE_URL + "/api/v1/prices/market");
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Market prices unavailable");
+        if (!cancelled) {
+          setMarketPrices(data.prices || {});
+          setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+        }
+      } catch {
+        // Keep the last successful quote set if the market service is temporarily unavailable.
+      }
+    }
+    loadMarketPrices();
+    const timer = window.setInterval(loadMarketPrices, 60000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -722,17 +744,18 @@ function App() {
                     const live = assets.find(a => a.symbol === c.symbol);
                     const balance = live ? live.balance : 0;
                     const value = live ? live.value_usd : 0;
-                    const price = live ? live.price_usd : 0;
+                    const price = Number(live?.price_usd || marketPrices[c.symbol]?.usd || 0);
+                    const hasMarketPrice = price > 0;
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{price > 0 ? `Price: ${money(price)}/coin • Value: ${money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Value: $0.00" : "Price: Unavailable • Value: unavailable"}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin • Wallet value: ${live ? money(value) : "—"}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
                 </div>
-                <div className="coin-catalog-note">Balances and prices are shown only when supplied by the authenticated wallet data source. Catalog entries never create a fake balance.</div>
+                <div className="coin-catalog-note">Market prices are refreshed from CoinGecko{marketPricesUpdatedAt ? ` • Updated ${marketPricesUpdatedAt.toLocaleTimeString()}` : ""}. Wallet values require a real connected balance. BALMZ stays unpriced until a verified market quote exists.</div>
               </article>
 
               <article className="panel activity-panel">
