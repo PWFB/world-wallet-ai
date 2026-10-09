@@ -78,7 +78,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         body: JSON.stringify({ network, address: signer.address, label: "generated" }),
       });
       const addressData = await addressResponse.json();
-      if (!addressResponse.ok) throw new Error(addressData.detail || "Wallet profile created, but the public address could not be connected.");
+      const addressConnected = addressResponse.ok;
 
       const entry = {
         walletId,
@@ -104,7 +104,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       });
       setPassword("");
       onWalletCreated?.();
-      setMessage("Wallet created. The private key and recovery phrase are shown only in this session; save them securely before leaving this page.");
+      setMessage(addressConnected
+        ? "Wallet created and public address connected. The private key and recovery phrase are shown only in this session; save them securely before leaving this page."
+        : "Wallet and encrypted local copy created, but address linking failed: " + (addressData.detail || "try connecting the public address again."));
     } catch (error) {
       setMessage(error.message || "Wallet generation failed.");
     } finally {
@@ -274,7 +276,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         </div>}
       </div>}
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
-      <div className="security-note">This currently signs messages locally. On-chain transaction signing remains subject to the existing external-wallet flow and configured network/contract support.</div>
+      <div className="security-note">Local signing supports message signatures and direct Sepolia test ETH transfers. Mainnet, BNB Chain, and ERC-20 transaction signing continue to use the existing external-wallet flow and configured contract support.</div>
     </article>
   </section>;
 }
