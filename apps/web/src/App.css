@@ -334,7 +334,7 @@
 .dashboard-more-grid>button i{font-style:normal;color:#00d4ff}
 .dashboard-more-grid>button:hover{border-color:#00bde8;background:#0d2035}
 @media(max-width:760px){
-  .app-shell{padding-bottom:74px}
+  .app-shell.dashboard-shortcuts-active{padding-bottom:74px}
   .dashboard-bottom-nav{position:fixed;z-index:900;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;padding:7px 4px max(7px,env(safe-area-inset-bottom));border-top:1px solid #203652;background:rgba(5,12,25,.97);backdrop-filter:blur(16px);box-shadow:0 -8px 28px rgba(0,0,0,.3)}
   .dashboard-tab{display:flex;min-width:0;flex-direction:column;align-items:center;justify-content:center;gap:4px;padding:3px 1px;border:0;border-radius:9px;background:transparent;color:#7186a2}
   .dashboard-tab-icon{display:grid;place-items:center;min-height:24px;font-size:22px;line-height:1;color:inherit}
