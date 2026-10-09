@@ -18,7 +18,12 @@ async function main() {
   console.log("BALMZ contract:", address);
   console.log("Total supply:", hre.ethers.formatUnits(supply, 18), "BALMZ");
   console.log("Deployer balance:", hre.ethers.formatUnits(balance, 18), "BALMZ");
-  console.log("Set WORLD_WALLET_BALMZ_ETH_CONTRACT to:", address);
+  const network = await hre.ethers.provider.getNetwork();
+  const contractEnv = network.chainId === 11155111n
+    ? "WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT"
+    : "WORLD_WALLET_BALMZ_ETH_CONTRACT";
+  console.log("Network:", network.name, "chainId:", network.chainId.toString());
+  console.log("Set " + contractEnv + " to:", address);
 }
 
 main().catch((error) => {
