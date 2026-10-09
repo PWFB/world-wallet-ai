@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Wallet } from "ethers";
+import { JsonRpcProvider, Wallet, parseEther } from "ethers";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = "https://rpc.sepolia.dev";
@@ -23,6 +23,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [unlocked, setUnlocked] = useState(null);
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
+  const [recipient, setRecipient] = useState("");
+  const [sendAmount, setSendAmount] = useState("");
+  const [txHash, setTxHash] = useState("");
   const [contracts, setContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -116,6 +119,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setBusy(true);
     setMessage("");
     setSignature("");
+    setTxHash("");
     try {
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
@@ -141,6 +145,47 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage("Message signed locally. This is an off-chain signature, not a blockchain transaction.");
     } catch (error) {
       setMessage(error.message || "Signing failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendSepoliaEth() {
+    if (!unlocked || selected?.network !== "sepolia") {
+      setMessage("Unlock a wallet connected to Ethereum Sepolia first.");
+      return;
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(recipient.trim())) {
+      setMessage("Enter a valid 0x recipient address.");
+      return;
+    }
+    let value;
+    try { value = parseEther(sendAmount); } catch {
+      setMessage("Enter a valid positive ETH amount.");
+      return;
+    }
+    if (value <= 0n) {
+      setMessage("Enter an amount greater than zero.");
+      return;
+    }
+    if (!window.confirm("Send " + sendAmount + " Sepolia ETH from " + unlocked.address + " to " + recipient.trim() + "? This signs and broadcasts a testnet transaction.")) return;
+    setBusy(true);
+    setMessage("");
+    setTxHash("");
+    try {
+      const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
+      const networkInfo = await provider.getNetwork();
+      if (networkInfo.chainId !== 11155111n) throw new Error("The configured RPC did not identify itself as Ethereum Sepolia.");
+      const signer = unlocked.connect(provider);
+      const tx = await signer.sendTransaction({ to: recipient.trim(), value });
+      setTxHash(tx.hash);
+      setMessage("Sepolia transaction submitted. Waiting for confirmation…");
+      const receipt = await tx.wait(1);
+      if (!receipt || receipt.status !== 1) throw new Error("The transaction did not confirm successfully.");
+      setMessage("Sepolia transaction confirmed. This testnet transaction is not a production wallet ledger entry.");
+      setSendAmount("");
+    } catch (error) {
+      setMessage(error?.shortMessage || error?.message || "Sepolia transaction failed.");
     } finally {
       setBusy(false);
     }
@@ -219,6 +264,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => setSignMessage(event.target.value)} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
+        {selected?.network === "sepolia" && <div className="wallet-message-signing">
+          <h3>Send Sepolia test ETH</h3>
+          <label>Recipient address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
+          <label>Amount (Sepolia ETH)<input inputMode="decimal" value={sendAmount} onChange={event => setSendAmount(event.target.value)} placeholder="0.001" /></label>
+          <button className="primary feature-submit" disabled={busy || !recipient.trim() || !sendAmount.trim()} onClick={sendSepoliaEth}>{busy ? "Signing / waiting…" : "Sign and send Sepolia ETH →"}</button>
+          {txHash && <div className="security-note">Transaction: <a href={"https://sepolia.etherscan.io/tx/" + txHash} target="_blank" rel="noreferrer">{txHash} ↗</a></div>}
+          <div className="security-note">Testnet only. Requires Sepolia ETH for gas. The private key signs in this browser and is never uploaded; this direct transfer is not recorded in the app's internal transaction ledger.</div>
+        </div>}
       </div>}
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
       <div className="security-note">This currently signs messages locally. On-chain transaction signing remains subject to the existing external-wallet flow and configured network/contract support.</div>
