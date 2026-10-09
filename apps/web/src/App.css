@@ -414,3 +414,85 @@
 .refresh-menu button.selected{color:#00d4ff}
 .refresh-menu-label{padding:10px 11px 5px;color:#5f7592;font-size:9px;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #1a2b45;margin-top:5px}
 @media(max-width:760px){.page-actions{align-items:stretch}.refresh-dropdown{flex:1}.refresh-menu-trigger{width:100%}.refresh-menu{left:0;right:auto;min-width:min(240px,calc(100vw - 40px))}.page-actions>.primary{flex:1}}
+
+
+/* Public launch layout: desktop landing + real wallet sign-in; mobile-first wallet access */
+.ww-auth-shell{
+  position:relative;isolation:isolate;overflow:hidden;min-height:100svh;
+  padding:24px clamp(18px,4vw,64px) 42px;
+  background:
+    radial-gradient(ellipse at 14% 28%,rgba(0,212,255,.12),transparent 36%),
+    radial-gradient(ellipse at 85% 72%,rgba(212,175,55,.09),transparent 32%),
+    #050a17;
+}
+.ww-auth-glow{pointer-events:none;position:absolute;border-radius:50%;filter:blur(2px);z-index:-1}
+.ww-auth-glow-a{width:560px;height:560px;left:-330px;top:-260px;border:1px solid rgba(0,212,255,.16);box-shadow:0 0 120px rgba(0,212,255,.05)}
+.ww-auth-glow-b{width:620px;height:620px;right:-380px;bottom:-390px;border:1px solid rgba(212,175,55,.14);box-shadow:0 0 130px rgba(212,175,55,.05)}
+.ww-auth-top-compact{width:min(1240px,100%);margin:0 auto;padding:0 2px 20px;min-height:54px}
+.ww-auth-brand{font-size:14px;letter-spacing:.8px}
+.ww-auth-brand .ww-globe{width:40px;height:40px;flex-basis:40px;font-size:25px;box-shadow:0 0 28px rgba(212,175,55,.08)}
+.ww-auth-top-compact>span{font-size:9px;letter-spacing:1.8px}
+.ww-auth-layout{
+  width:min(1240px,100%);max-width:1240px;min-height:calc(100svh - 120px);
+  margin:0 auto;padding:34px 2px 52px;
+  display:grid;grid-template-columns:minmax(0,1.1fr) minmax(360px,.78fr);
+  gap:clamp(36px,7vw,110px);align-items:center;
+}
+.ww-auth-layout .ww-auth-copy{display:block!important;min-width:0;max-width:650px;position:relative}
+.ww-auth-copy>.ww-live-badge{display:inline-flex;align-items:center;gap:8px;padding:9px 12px;border:1px solid rgba(0,212,255,.24);border-radius:99px;background:rgba(0,212,255,.055);color:#8ccfe0;font-size:9px;letter-spacing:1.4px}
+.ww-auth-copy>.ww-live-badge i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 12px rgba(34,197,94,.65)}
+.ww-auth-copy h1{font-family:Orbitron,sans-serif;font-size:clamp(42px,5.2vw,72px);line-height:1.09;letter-spacing:-2.5px;margin:25px 0 20px;color:#f4f8ff}
+.ww-auth-copy h1 em{font-style:normal;color:#00d4ff;text-shadow:0 0 30px rgba(0,212,255,.12)}
+.ww-auth-copy>p{max-width:570px;color:#94a8c2;font-size:15px;line-height:1.85;margin:0}
+.ww-auth-points{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:36px;max-width:680px}
+.ww-auth-points>div{display:block;min-width:0;padding:15px 13px;border:1px solid #1a304b;border-radius:12px;background:linear-gradient(145deg,rgba(14,31,52,.88),rgba(7,16,30,.82))}
+.ww-auth-points>div>b{display:grid;place-items:center;width:32px;height:32px;margin-bottom:13px;border:1px solid rgba(0,212,255,.3);border-radius:10px;color:#00d4ff;background:rgba(0,212,255,.06);font-size:16px}
+.ww-auth-points strong{font-size:10px;color:#e6eef9;line-height:1.5}
+.ww-auth-points small{font-size:9px;line-height:1.6;color:#778da8}
+.ww-auth-status{font-size:9px;letter-spacing:.25px;margin-top:25px}
+.ww-auth-status i{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 10px rgba(34,197,94,.45)}
+.ww-auth-card{justify-self:end;width:100%;max-width:440px;padding:clamp(22px,2.8vw,34px);border-color:#263f5e;background:linear-gradient(155deg,rgba(13,28,49,.98),rgba(6,15,29,.99));box-shadow:0 30px 100px rgba(0,0,0,.45),0 0 0 1px rgba(255,255,255,.012) inset}
+.ww-auth-card-head h2{font-size:clamp(19px,2vw,24px)}
+.ww-auth-card-head p{font-size:11px;line-height:1.6}
+.ww-auth-switch{grid-template-columns:1.2fr .8fr .7fr;gap:2px}
+.ww-auth-switch button{padding:11px 5px;font-size:9px;white-space:nowrap}
+.ww-auth-form label>span{font-size:10px}
+.ww-field{height:48px}
+.ww-field input{font-size:12px}
+.ww-auth-submit{height:48px;font-size:11px}
+.ww-auth-note{font-size:9px;line-height:1.6}
+.ww-register-prompt{font-size:11px}
+@media(max-width:1000px){
+  .ww-auth-layout{grid-template-columns:minmax(0,1fr) minmax(320px,.9fr);gap:28px}
+  .ww-auth-copy h1{font-size:clamp(38px,5vw,54px)}
+  .ww-auth-points{grid-template-columns:1fr;gap:8px;margin-top:25px}
+  .ww-auth-points>div{display:flex;align-items:center;gap:11px;padding:10px 12px}
+  .ww-auth-points>div>b{flex:0 0 30px;width:30px;height:30px;margin:0}
+}
+@media(max-width:760px){
+  /* On phones, show the working wallet authentication UI first—not the desktop marketing panel. */
+  .ww-auth-shell{min-height:100svh;padding:18px 14px max(22px,env(safe-area-inset-bottom))}
+  .ww-auth-top-compact{width:min(460px,100%);margin-bottom:10px;padding-bottom:8px;min-height:42px}
+  .ww-auth-brand{font-size:12px;gap:8px}
+  .ww-auth-brand .ww-globe{width:34px;height:34px;flex-basis:34px;font-size:21px}
+  .ww-auth-top-compact>span{font-size:7px;letter-spacing:1px}
+  .ww-auth-layout{width:min(460px,100%);min-height:auto;padding:8px 0 24px;display:grid;grid-template-columns:minmax(0,1fr);gap:0}
+  .ww-auth-layout .ww-auth-copy{display:none!important}
+  .ww-auth-card{grid-column:1;width:100%;max-width:460px;justify-self:center;padding:24px 20px;border-radius:16px}
+  .ww-auth-card-head h2{font-size:21px}
+  .ww-auth-card-head p{font-size:11px}
+  .ww-auth-switch{grid-template-columns:1fr 1fr 1fr;margin:20px 0 14px}
+  .ww-auth-switch button{font-size:9px;padding:11px 3px}
+  .ww-field{height:49px}
+  .ww-field input{font-size:16px} /* avoids mobile browser auto-zoom on focus */
+  .ww-auth-submit{min-height:48px}
+  .ww-auth-note{font-size:9px}
+  .ww-register-prompt{font-size:11px;margin-top:16px}
+}
+@media(max-width:380px){
+  .ww-auth-shell{padding-left:10px;padding-right:10px}
+  .ww-auth-card{padding:21px 15px}
+  .ww-auth-brand{font-size:10px;letter-spacing:0}
+  .ww-auth-top-compact>span{font-size:6px}
+  .ww-auth-switch button{font-size:8px}
+}
