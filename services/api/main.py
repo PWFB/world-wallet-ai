@@ -1242,6 +1242,44 @@ def sync_wallet(user: dict = Depends(current_user)):
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
 
+@app.get("/api/v1/prices/market")
+def market_prices():
+    """Public market quotes for the wallet's supported coin catalog."""
+    coin_ids = {
+        "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
+        "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
+        "LTC":"litecoin","DOGE":"dogecoin",
+    }
+    try:
+        response = httpx.get(
+            "https://api.coingecko.com/api/v3/simple/price",
+            params={
+                "ids": ",".join(coin_ids.values()),
+                "vs_currencies": "usd",
+                "include_24hr_change": "true",
+            },
+            timeout=8,
+        )
+        response.raise_for_status()
+        raw = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
+
+    prices = {}
+    for symbol, coin_id in coin_ids.items():
+        quote = raw.get(coin_id, {})
+        usd = quote.get("usd")
+        prices[symbol] = {
+            "usd": float(usd) if usd is not None else None,
+            "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
+            "listed": usd is not None,
+        }
+    # BALMZ has no verified market quote yet. Never invent a price.
+    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False}
+    prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
+    return {"source": "CoinGecko", "updated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
+
+
 @app.post("/api/v1/prices/refresh")
 def refresh_prices(user: dict = Depends(current_user)):
     coin_ids = {
@@ -1488,9 +1526,9 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
 def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
     network=request.network.strip().lower(); address=request.address.strip()
-    if network in {"ethereum","bnb"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network not in {"ethereum","bnb","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network not in {"ethereum","bnb","sepolia","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
