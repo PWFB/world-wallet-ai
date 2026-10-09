@@ -322,10 +322,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <div><small>Public key</small><code>{shown.publicKey}</code></div>
       </div>
       {generated && <div className="wallet-secret-warning">
-        <strong>Secret recovery material — save it before leaving.</strong>
-        <small>Anyone with the private key or recovery phrase can control this wallet. World Wallet AI never receives these values. Do not share them in chat, screenshots, or support requests.</small>
-        <label>Private key (shown once)<textarea readOnly rows="2" value={generated.privateKey} /></label>
-        {generated.mnemonic && <label>Recovery phrase (shown once)<textarea readOnly rows="2" value={generated.mnemonic} /></label>}
+        {generated.secretsHidden ? <>
+          <strong>Recovery material hidden from this page.</strong>
+          <small>The private key and recovery phrase were cleared from the page state. The encrypted local wallet remains saved, but this page cannot show the recovery phrase again. Save your recovery material securely before hiding it.</small>
+        </> : <>
+          <strong>Secret recovery material — save it before leaving.</strong>
+          <small>Anyone with the private key or recovery phrase can control this wallet. World Wallet AI never receives these values. Do not share them in chat, screenshots, or support requests.</small>
+          <label>Private key (shown once)<textarea readOnly rows="2" value={generated.privateKey} /></label>
+          {generated.mnemonic && <label>Recovery phrase (shown once)<textarea readOnly rows="2" value={generated.mnemonic} /></label>}
+          <button className="secondary" onClick={() => setGenerated(current => current ? { ...current, privateKey: "", mnemonic: "", secretsHidden: true } : current)}>Hide and clear recovery material</button>
+        </>}
       </div>}
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
       <div className="security-note">BALMZ Ethereum contract: <code>{balmzContract || "Not configured / not deployed"}</code></div>
@@ -333,7 +339,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <div className="security-note">A wallet address is not a token contract address. Do not substitute one for the other.</div>
       <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.address)}>Copy wallet address</button>
       <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.publicKey)}>Copy public key</button>
-      {generated && <button className="secondary" onClick={() => navigator.clipboard?.writeText(generated.privateKey)}>Copy private key</button>}
+      {generated && !generated.secretsHidden && <button className="secondary" onClick={() => navigator.clipboard?.writeText(generated.privateKey)}>Copy private key</button>}
     </article>}
 
     <article className="panel action-panel">
