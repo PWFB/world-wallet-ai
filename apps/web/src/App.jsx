@@ -808,6 +808,12 @@ function App() {
           <FeaturePage selectedAsset={selectedCoin} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
+            asset: tx.asset || tx.symbol || "",
+            symbol: tx.asset || tx.symbol || "",
+            from_address: tx.from_address || tx.from || null,
+            to_address: tx.to_address || tx.to || null,
+            network: tx.network,
+            token_contract_address: tx.token_contract_address || tx.contract_address || null,
             description: `${tx.asset} • ${tx.description}`,
             amount: `${Number(tx.amount) >= 0 ? "+" : ""}${Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 })} ${tx.asset}`,
             raw_amount: Number(tx.amount),
