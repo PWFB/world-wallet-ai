@@ -117,7 +117,6 @@ function App() {
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId = null;
 
     async function restoreSessionFromNeon() {
       let persistedToken = "";
@@ -148,18 +147,10 @@ function App() {
 
       if (!cancelled) setAuthRestoring(true);
 
-      if (sessionState.isPending) {
-        timeoutId = window.setTimeout(() => {
-          if (!cancelled) {
-            setAuthRestoring(false);
-            setLoginError((socialReturn === "github" ? "GitHub" : "Google") + " session could not be restored. Please sign in again.");
-            setShowLogin(true);
-            try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
-        try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
-          }
-        }, 6000);
-        return;
-      }
+      // Neon Auth may need several seconds to restore its cross-origin session.
+      // Wait for useSession() to settle instead of timing out and forcing the user
+      // back to login while the dashboard is already mounting.
+      if (sessionState.isPending) return;
 
       if (neonSessionUser) {
         for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
@@ -201,7 +192,6 @@ function App() {
     restoreSessionFromNeon();
     return () => {
       cancelled = true;
-      if (timeoutId) window.clearTimeout(timeoutId);
     };
   }, [sessionState.isPending, neonSessionUser, accessToken]);
 
