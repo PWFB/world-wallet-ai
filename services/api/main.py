@@ -824,9 +824,18 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                         status = "pending"
                     tx_id = "evm_" + tx_hash
                     existing = conn.execute(
-                        "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
+                        "SELECT id,status,type,description,block_hash FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
                         (user["wallet_id"], tx_hash),
                     ).fetchone()
+                    if existing:
+                        old_id, old_status, old_type, old_description, old_block_hash = existing
+                        if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
+                            status = "reorged"
+                            confirmations = 0
+                        elif old_status == "settled":
+                            status = "settled"
+                        elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
+                            status = "broadcast_pending"
                     values=(confirmations, block_number, block_hash, status, existing[0] if existing else tx_id, user["wallet_id"])
                     if existing:
                         conn.execute(
@@ -924,12 +933,20 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                     status = "confirmed" if confirmations >= required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS") else "pending"
                 description = f"{symbol} {direction} on {network}"
                 existing = conn.execute(
-                    "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
+                    "SELECT id,status,type,description,block_hash FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
                     "AND COALESCE(log_index,-1)=COALESCE(%s,-1)",
                     (user["wallet_id"],tx_hash,network,symbol,log_index),
                 ).fetchone()
                 tx_id = existing[0] if existing else "evm_" + tx_hash + "_" + str(log_index if log_index is not None else 0)
                 if existing:
+                    old_id, old_status, old_type, old_description, old_block_hash = existing
+                    if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
+                        status = "reorged"
+                        confirmations = 0
+                    elif old_status == "settled":
+                        status = "settled"
+                    elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
+                        status = "broadcast_pending"
                     conn.execute(
                         "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
                         (confirmations,block_number,block_hash,log_index,status,tx_id,user["wallet_id"]),
