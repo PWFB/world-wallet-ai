@@ -31,6 +31,8 @@ Use the Sepolia testnet first. Add these values to a local `.env` file (never co
     DEPLOYER_PRIVATE_KEY=0x...
     SEPOLIA_RPC_URL=https://your-sepolia-rpc-provider
 
+For quick testnet checks, the config has a public fallback at `https://rpc.sepolia.dev`; public endpoints may be rate-limited, so use a dedicated RPC provider for reliable deployment. CoinGecko supplies market-price data only; it is not an RPC provider. The wallet uses CoinGecko for listed coin prices and the Sepolia RPC endpoint for blockchain reads.
+
 Then run:
 
     npm install
@@ -49,6 +51,8 @@ For the testnet, configure separately:
 
     WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT=0x...
     WORLD_WALLET_SEPOLIA_RPC_URL=https://your-sepolia-rpc-provider
+
+If unset, the API uses `https://rpc.sepolia.dev` as a public testnet fallback. Set a dedicated provider URL in Render for production reliability.
 
 The API tracks the Sepolia token under the separate `BALMZ-SEP` display symbol so testnet balances are never added to the Ethereum-mainnet BALMZ balance. Its price is intentionally shown as unlisted / unavailable.
 
