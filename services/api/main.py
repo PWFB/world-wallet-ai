@@ -898,7 +898,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                         confirmations = 0
                     elif old_status == "settled":
                         status = "settled"
-                    elif old_status in {"pending","pending_review","broadcast_pending"} and (existing[3] == "withdrawal" or existing[4] in {"Transfer request","Withdrawal request"}):
+                    elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (existing[3] == "withdrawal" or existing[4] in {"Transfer request","Withdrawal request"}):
                         status = "broadcast_pending"
                     conn.execute(
                         "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
@@ -1002,7 +1002,7 @@ def sync_bitcoin_transactions(user, address=None):
                     confirmations = 0
                 elif old_status == "settled":
                     status = "settled"
-                elif old_status in {"pending","pending_review","broadcast_pending"} and (existing[3] == "withdrawal" or existing[4] in {"Transfer request","Withdrawal request"}):
+                elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (existing[3] == "withdrawal" or existing[4] in {"Transfer request","Withdrawal request"}):
                     status = "broadcast_pending"
                 if existing[3] == "withdrawal" or existing[4] in {"Transfer request","Withdrawal request"}:
                     conn.execute(
