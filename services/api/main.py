@@ -1876,11 +1876,12 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
         raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
     reserves = []
     warnings = []
+    excluded_networks = []
     for item in addresses:
         network = item["network"]
         address = item["address"]
         if network == "sepolia":
-            warnings.append("Sepolia testnet is excluded from production reserve snapshots")
+            excluded_networks.append("sepolia")
             continue
         try:
             if network == "bitcoin":
@@ -1923,7 +1924,7 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
         "status": "partial" if warnings else "snapshot",
         "scope": "Connected public addresses for this authenticated wallet only",
         "as_of": datetime.now(timezone.utc).isoformat(),
-        "reserves": reserves, "warnings": warnings,
+        "reserves": reserves, "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
         "audited": False, "liabilities_included": False,
         "note": "This is an on-chain asset snapshot, not an audited proof of reserves or solvency attestation. It excludes platform-wide customer liabilities, off-chain assets, and ownership proof.",
     }
