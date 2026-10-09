@@ -74,6 +74,8 @@ function App() {
     try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
   });
   const [authRestoring, setAuthRestoring] = useState(false);
+  const [refreshInterval, setRefreshInterval] = useState("off");
+  const [showRefreshMenu, setShowRefreshMenu] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [registerName, setRegisterName] = useState("");
   const [registerMode, setRegisterMode] = useState(false);
@@ -284,7 +286,9 @@ function App() {
     }
 
     loadWallet();
-    const walletRefreshTimer = window.setInterval(loadWallet, 60000);
+    const walletRefreshTimer = refreshInterval === "off"
+      ? null
+      : window.setInterval(loadWallet, Number(refreshInterval));
 
     async function loadTransactions() {
       if (!accessToken) return;
@@ -348,7 +352,9 @@ function App() {
 
     loadTransactions();
     syncLiveTransactions();
-    const liveTransactionTimer = window.setInterval(syncLiveTransactions, 60000);
+    const liveTransactionTimer = refreshInterval === "off"
+      ? null
+      : window.setInterval(syncLiveTransactions, Number(refreshInterval));
 
     async function loadPerformance() {
       try {
@@ -359,8 +365,12 @@ function App() {
       } catch { if (!cancelled) setPerformance({ points: [] }); }
     }
     loadPerformance();
-    return () => { cancelled = true; window.clearInterval(walletRefreshTimer); window.clearInterval(liveTransactionTimer); };
-  }, [accessToken]);
+    return () => {
+      cancelled = true;
+      if (walletRefreshTimer) window.clearInterval(walletRefreshTimer);
+      if (liveTransactionTimer) window.clearInterval(liveTransactionTimer);
+    };
+  }, [accessToken, refreshInterval]);
 
   async function syncWallet() {
     if (!accessToken || syncBusy) return;
@@ -589,19 +599,6 @@ function App() {
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
-  if (authRestoring && !accessToken) {
-    return (
-      <div className="login-shell">
-        <section className="login-layout" style={{ minHeight: "100vh", alignItems: "center", justifyContent: "center" }}>
-          <div className="login-card" style={{ maxWidth: 460, width: "100%" }}>
-            <div className="login-card-header"><div className="login-card-icon">W</div><div><p className="eyebrow">SECURE ACCESS</p><h2>Restoring wallet session</h2></div></div>
-            <p className="login-subtitle">Finishing secure authentication. Please wait while World Wallet AI restores your signed-in session.</p>
-          </div>
-        </section>
-      </div>
-    );
-  }
-
   if (!accessToken) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
       <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></div><span>SECURE SIGN IN</span></header>
@@ -700,7 +697,19 @@ function App() {
           <section className="content">
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
-              <div className="page-actions"><button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Syncing…" : "↻ Sync wallet"}</button><button className="primary" onClick={() => setActive("Send")}>+ Send funds</button></div>
+              <div className="page-actions">
+                <div className="refresh-dropdown">
+                  <button className="secondary refresh-menu-trigger" type="button" onClick={() => setShowRefreshMenu(value => !value)} aria-haspopup="menu" aria-expanded={showRefreshMenu} disabled={syncBusy}>
+                    {syncBusy ? "Refreshing…" : "↻ Refresh"} <span aria-hidden="true">▾</span>
+                  </button>
+                  {showRefreshMenu && <div className="refresh-menu" role="menu" aria-label="Dashboard refresh options">
+                    <button type="button" role="menuitem" onClick={() => { setShowRefreshMenu(false); syncWallet(); }}>Refresh wallet now</button>
+                    <div className="refresh-menu-label">Automatic refresh</div>
+                    {[["off", "Off"], ["60000", "Every 1 minute"], ["300000", "Every 5 minutes"]].map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={refreshInterval === value} className={refreshInterval === value ? "selected" : ""} key={value} onClick={() => { setRefreshInterval(value); setShowRefreshMenu(false); }}>{refreshInterval === value ? "✓ " : ""}{label}</button>)}
+                  </div>}
+                </div>
+                <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
+              </div>
             </div>
 
             <div className="balance-grid">
@@ -723,7 +732,7 @@ function App() {
                   <h2>{liveWallet.status === "connected" ? "Production wallet connected" : liveWallet.status === "checking" ? "Checking production wallet…" : "Production wallet not configured"}</h2>
                   <p>{liveWallet.mode === "read_only" ? "Read-only blockchain connection • no private key or signing key is stored by the API." : "Wallet connection status"}</p>
                 </div>
-                <button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Syncing…" : "Refresh live wallet"}</button>
+                <button className="secondary" onClick={syncWallet} disabled={syncBusy}>{syncBusy ? "Refreshing…" : "Refresh live wallet"}</button>
               </div>
               {liveWallet.addresses.length ? (
                 <div className="live-wallet-addresses">
