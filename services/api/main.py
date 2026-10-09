@@ -351,6 +351,8 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
 def neon_auth_user(token: str):
     if not NEON_JWKS_CLIENT:
         raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    stage = "read_jwt_header"
+    algorithm = "unavailable"
     try:
         # Neon Auth is the issuer of the JWT used by the wallet API. Do not
         # hard-code an algorithm: use the algorithm advertised by the
@@ -358,9 +360,11 @@ def neon_auth_user(token: str):
         # rotation while still binding the token to the expected public key.
         header = jwt.get_unverified_header(token)
         algorithm = str(header.get("alg") or "").strip()
+        stage = "select_jwks_key"
         signing_key = NEON_JWKS_CLIENT.get_signing_key_from_jwt(token)
         key_algorithm = str(getattr(signing_key, "algorithm_name", "") or "").strip()
         allowed_algorithms = {"EdDSA", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512"}
+        stage = "validate_signing_algorithm"
         if algorithm not in allowed_algorithms:
             raise ValueError("Unsupported Neon Auth signing algorithm")
         # Some JWKS providers omit the optional "alg" field on public keys.
@@ -369,6 +373,7 @@ def neon_auth_user(token: str):
         # algorithm. If the JWK does declare an algorithm, require an exact match.
         if key_algorithm and algorithm != key_algorithm:
             raise ValueError("JWT signing algorithm does not match the Neon JWKS key")
+        stage = "verify_jwt_signature_and_claims"
         claims = jwt.decode(
             token,
             signing_key.key,
@@ -380,7 +385,8 @@ def neon_auth_user(token: str):
         # exception class tells us which verification stage is rejecting it.
         import logging
         logging.getLogger("uvicorn.error").warning(
-            "Neon Auth JWT verification rejected: error_type=%s alg=%s",
+            "Neon Auth JWT verification rejected: stage=%s error_type=%s alg=%s",
+            stage if "stage" in locals() else "unknown",
             type(exc).__name__,
             algorithm if "algorithm" in locals() else "unavailable",
         )
