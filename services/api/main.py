@@ -1809,6 +1809,36 @@ def _inspect_evm_address(address, network, rpc):
         raise HTTPException(status_code=503, detail=f"{network.title()} balance lookup failed") from exc
 
 
+@app.get("/api/v1/api-request/key-balance")
+def api_request_key_balance(user: dict = Depends(current_user)):
+    """Return CoinGecko API-key usage without ever exposing the configured secret."""
+    if not COINGECKO_API_KEY:
+        raise HTTPException(status_code=503, detail="CoinGecko API key is not configured on the server")
+    try:
+        response = httpx.get(
+            COINGECKO_API_BASE_URL + "/key",
+            headers=coingecko_headers(),
+            timeout=8,
+        )
+        if response.status_code in {401, 403}:
+            raise HTTPException(status_code=502, detail="The configured CoinGecko API key was rejected or cannot access key usage")
+        response.raise_for_status()
+        payload = response.json()
+        return {
+            "provider": "CoinGecko",
+            "plan": payload.get("plan"),
+            "rate_limit_request_per_minute": payload.get("rate_limit_request_per_minute"),
+            "monthly_call_credit": payload.get("api_key_monthly_call_credit", payload.get("monthly_call_credit")),
+            "current_total_monthly_calls": payload.get("current_total_monthly_calls"),
+            "current_remaining_monthly_calls": payload.get("current_remaining_monthly_calls"),
+            "checked_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="CoinGecko API-key usage is temporarily unavailable") from exc
+
+
 @app.post("/api/v1/tools/address-balance")
 def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(current_user)):
     network = request.network.strip().lower()
