@@ -360,10 +360,15 @@ def neon_auth_user(token: str):
         header = jwt.get_unverified_header(token)
         algorithm = str(header.get("alg") or "").strip()
         key_algorithm = str(getattr(signing_key, "algorithm_name", "") or "").strip()
-        if not algorithm or not key_algorithm or algorithm != key_algorithm:
-            raise ValueError("JWT signing algorithm does not match the Neon JWKS key")
-        if algorithm not in {"EdDSA", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512"}:
+        allowed_algorithms = {"EdDSA", "ES256", "ES384", "ES512", "RS256", "RS384", "RS512"}
+        if algorithm not in allowed_algorithms:
             raise ValueError("Unsupported Neon Auth signing algorithm")
+        # Some JWKS providers omit the optional "alg" field on public keys.
+        # In that case PyJWKClient can still select the matching key by kid;
+        # PyJWT verifies the signature using the explicit allow-listed header
+        # algorithm. If the JWK does declare an algorithm, require an exact match.
+        if key_algorithm and algorithm != key_algorithm:
+            raise ValueError("JWT signing algorithm does not match the Neon JWKS key")
         claims = jwt.decode(
             token,
             signing_key.key,
