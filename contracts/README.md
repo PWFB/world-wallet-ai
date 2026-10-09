@@ -50,6 +50,8 @@ For the testnet, configure separately:
     WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT=0x...
     WORLD_WALLET_SEPOLIA_RPC_URL=https://your-sepolia-rpc-provider
 
+The API tracks the Sepolia token under the separate `BALMZ-SEP` display symbol so testnet balances are never added to the Ethereum-mainnet BALMZ balance. Its price is intentionally shown as unlisted / unavailable.
+
 The wallet displays the same EVM public address on Ethereum and Sepolia; this does not create a new key or move funds between networks. Never send mainnet assets to a testnet address expecting them to appear on mainnet.
 
 BALMZ market price remains unavailable / unlisted until a genuine, independently verifiable market source exists. The app must not fabricate a balance or price.
