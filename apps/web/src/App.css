@@ -402,3 +402,15 @@
 .ww-auth-top-compact .ww-auth-brand b{font-size:clamp(10px,3.4vw,14px);letter-spacing:.25px}
 .ww-auth-top-compact .ww-auth-brand .ww-globe{width:32px;height:32px;flex-basis:32px;font-size:20px}
 .ww-auth-top-compact>span{white-space:nowrap}
+
+
+/* Dashboard refresh dropdown */
+.refresh-dropdown{position:relative;display:inline-flex;flex:0 0 auto}
+.refresh-menu-trigger{display:inline-flex;align-items:center;justify-content:center;gap:10px;min-height:38px;white-space:nowrap}
+.refresh-menu-trigger span{color:#00d4ff;font-size:12px}
+.refresh-menu{position:absolute;top:calc(100% + 8px);right:0;z-index:30;min-width:220px;padding:7px;border:1px solid #243b5b;border-radius:10px;background:#0a1427;box-shadow:0 16px 42px rgba(0,0,0,.45)}
+.refresh-menu button{display:block;width:100%;padding:10px 11px;border-radius:7px;background:transparent;color:#aabbd1;text-align:left;font-size:11px;white-space:nowrap}
+.refresh-menu button:hover,.refresh-menu button.selected{background:#102b43;color:#fff}
+.refresh-menu button.selected{color:#00d4ff}
+.refresh-menu-label{padding:10px 11px 5px;color:#5f7592;font-size:9px;text-transform:uppercase;letter-spacing:1px;border-top:1px solid #1a2b45;margin-top:5px}
+@media(max-width:760px){.page-actions{align-items:stretch}.refresh-dropdown{flex:1}.refresh-menu-trigger{width:100%}.refresh-menu{left:0;right:auto;min-width:min(240px,calc(100vw - 40px))}.page-actions>.primary{flex:1}}
