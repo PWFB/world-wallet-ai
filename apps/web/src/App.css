@@ -392,3 +392,13 @@
 .ww-auth-card-head h2{font-size:clamp(18px,5vw,23px);line-height:1.25}
 .ww-auth-card-head p{font-size:11px;line-height:1.5}
 @media(max-width:480px){.ww-auth-shell{padding:18px 12px}.ww-auth-top-compact{margin-bottom:14px}.ww-auth-card{padding:20px 16px}.ww-auth-top-compact>span{font-size:7px}}
+
+/* Remove promotional copy from the entry screen; keep only the brand and auth form */
+.ww-auth-layout{width:min(420px,100%);margin:0 auto;display:grid;grid-template-columns:minmax(0,1fr);gap:0;align-items:center}
+.ww-auth-layout .ww-auth-copy{display:none!important}
+.ww-auth-card{grid-column:1/-1;min-width:0}
+.ww-auth-shell .ww-auth-top-compact{flex-shrink:0}
+.ww-auth-top-compact .ww-auth-brand{max-width:100%;overflow:hidden}
+.ww-auth-top-compact .ww-auth-brand b{font-size:clamp(10px,3.4vw,14px);letter-spacing:.25px}
+.ww-auth-top-compact .ww-auth-brand .ww-globe{width:32px;height:32px;flex-basis:32px;font-size:20px}
+.ww-auth-top-compact>span{white-space:nowrap}
