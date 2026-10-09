@@ -745,7 +745,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
         wallet_lower = wallet_address.lower()
         imported = []
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
-        required_confirmations = required_confirmations_value = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
+        required_confirmations = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
         with db() as conn:
             cursor = _sync_cursor(conn, user["wallet_id"], source)
             start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
@@ -777,7 +777,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                     confirmations = max(0, latest - block_number + 1)
                     if receipt_status == "0x0":
                         status = "failed"
-                    elif receipt is None:
+                    elif receipt is None or receipt_status != "0x1":
                         status = "pending"
                     elif confirmations >= required_confirmations:
                         status = "confirmed"
@@ -785,14 +785,17 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                         status = "pending"
                     tx_id = "evm_" + tx_hash
                     existing = conn.execute(
-                        "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
+                        "SELECT id,block_hash,status FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
                         (user["wallet_id"], tx_hash),
                     ).fetchone()
-                    values=(confirmations, block_number, block_hash, status, existing[0] if existing else tx_id, user["wallet_id"])
                     if existing:
+                        old_block_hash, old_status = existing[1], existing[2]
+                        if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
+                            status = "reorged"
+                            confirmations = 0
                         conn.execute(
                             "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                            values,
+                            (confirmations, block_number, block_hash, status, existing[0], user["wallet_id"]),
                         )
                     else:
                         conn.execute(
@@ -873,18 +876,22 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                 receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
                 if receipt_status == "0x0":
                     status = "failed"
-                elif receipt is None:
+                elif receipt is None or receipt_status != "0x1":
                     status = "pending"
                 else:
-                    status = "confirmed" if confirmations >= max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100)) else "pending"
+                    status = "confirmed" if confirmations >= required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS") else "pending"
                 description = f"{symbol} {direction} on {network}"
                 existing = conn.execute(
-                    "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
+                    "SELECT id,block_hash,status FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
                     "AND COALESCE(log_index,-1)=COALESCE(%s,-1)",
                     (user["wallet_id"],tx_hash,network,symbol,log_index),
                 ).fetchone()
                 tx_id = existing[0] if existing else "evm_" + tx_hash + "_" + str(log_index if log_index is not None else 0)
                 if existing:
+                    old_block_hash, old_status = existing[1], existing[2]
+                    if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
+                        status = "reorged"
+                        confirmations = 0
                     conn.execute(
                         "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
                         (confirmations,block_number,block_hash,log_index,status,tx_id,user["wallet_id"]),
@@ -951,7 +958,8 @@ def bitcoin_address_transactions(address: str):
         confirmed = bool(status.get("confirmed"))
         block_height = status.get("block_height")
         confirmations = max(0, tip_height - int(block_height) + 1) if confirmed and block_height else 0
-        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
+        threshold = required_confirmations("WORLD_WALLET_BTC_CONFIRMATIONS")
+        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmations >= threshold else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
     return results
 
 def sync_bitcoin_transactions(user, address=None):
@@ -968,20 +976,23 @@ def sync_bitcoin_transactions(user, address=None):
             tx_hash = item["tx_hash"]
             if not tx_hash:
                 continue
-            existing = conn.execute("SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",(user["wallet_id"],tx_hash)).fetchone()
+            existing = conn.execute("SELECT id,block_hash,status FROM transactions WHERE wallet_id=%s AND tx_hash=%s",(user["wallet_id"],tx_hash)).fetchone()
             tx_id = existing[0] if existing else "btc_" + tx_hash
             description = "Bitcoin transaction " + tx_hash[:12] + "…"
+            status = item["status"]
+            confirmations = item["confirmations"]
             if existing:
-                existing_row = conn.execute("SELECT type,status FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
-                if existing_row and existing_row[0] in {"sent","withdrawal"}:
-                    conn.execute("UPDATE transactions SET tx_hash=%s,confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
-                                 (tx_hash,item["confirmations"],item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
-                else:
-                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s",
-                                 (item["type"],description,item["amount"],item["status"],item["confirmations"],item["block_height"],item.get("block_hash"),tx_id))
+                old_block_hash, old_status = existing[1], existing[2]
+                if old_status == "reorged" or (old_status in {"confirmed","settled"} and status == "pending") or (old_block_hash and item.get("block_hash") and old_block_hash.lower() != item["block_hash"].lower()):
+                    status = "reorged"
+                    confirmations = 0
+                conn.execute(
+                    "UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
+                    (item["type"],description,item["amount"],status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]),
+                )
             else:
                 conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],address,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
-            imported.append(item)
+            imported.append({**item,"status":status,"confirmations":confirmations})
         conn.commit()
     return imported
 
