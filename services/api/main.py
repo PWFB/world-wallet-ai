@@ -1787,7 +1787,14 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             raise HTTPException(status_code=409, detail="Blockchain transaction sender does not match the configured wallet")
         block_number = _hex_int(receipt.get("blockNumber"))
         latest = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
-        confirmations = max(0, latest - block_number + 1) if block_number is not None and latest is not None else 0
+        if block_number is None or latest is None:
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": block_number}
+        canonical_block = rpc_call(rpc, "eth_getBlockByNumber", [hex(block_number), False])
+        receipt_block_hash = str(receipt.get("blockHash") or "").lower()
+        canonical_block_hash = str((canonical_block or {}).get("hash") or "").lower()
+        if not receipt_block_hash or not canonical_block_hash or receipt_block_hash != canonical_block_hash:
+            return {"state": "pending", "tx_hash": tx_hash, "confirmations": 0, "block_height": block_number}
+        confirmations = max(0, latest - block_number + 1)
 
         if asset in {"ETH", "BNB"}:
             if not _same_address(tx.get("to"), destination):
