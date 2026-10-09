@@ -38,6 +38,7 @@ function authErrorMessage(error, fallback) {
 
 function App() {
   const [active, setActive] = useState("Dashboard");
+  const [showDashboardMore, setShowDashboardMore] = useState(false);
   const [coinFilter, setCoinFilter] = useState("all");
   const [coinSearch, setCoinSearch] = useState("");
   const [selectedCoin, setSelectedCoin] = useState(null);
@@ -805,6 +806,55 @@ function App() {
             confirmations: Number(tx.confirmations || 0),
             block_height: tx.block_height,
           }))) } />
+        )}
+
+        {active === "Dashboard" && !selectedCoin && (
+          <>
+            {showDashboardMore && (
+              <div className="dashboard-more-backdrop" onClick={() => setShowDashboardMore(false)}>
+                <section className="dashboard-more-sheet" aria-label="More wallet shortcuts" onClick={event => event.stopPropagation()}>
+                  <div className="dashboard-more-heading"><div><small>WALLET SHORTCUTS</small><h2>More</h2></div><button type="button" aria-label="Close more shortcuts" onClick={() => setShowDashboardMore(false)}>×</button></div>
+                  <div className="dashboard-more-grid">
+                    {[
+                      ["Wallets", "◈", "Manage wallets"],
+                      ["Portfolio", "▥", "Assets and holdings"],
+                      ["Transactions", "↔", "Transaction history"],
+                      ["Proof of Reserves", "✓", "Reserve snapshot"],
+                      ["Wallet Connect", "⌘", "Connected addresses"],
+                      ["Address Converter", "⇄", "Compare addresses"],
+                      ["Sepolia Converter", "◇", "Sepolia testnet"],
+                      ["Contract Converter", "⌁", "Inspect contract"],
+                      ["Support Center", "?", "Help and support"],
+                    ].map(([page, icon, description]) => (
+                      <button type="button" key={page} onClick={() => { setActive(page); setShowDashboardMore(false); }}>
+                        <span>{icon}</span><div><b>{page}</b><small>{description}</small></div><i>›</i>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            )}
+            <nav className="dashboard-bottom-nav" aria-label="Dashboard shortcuts">
+              <button type="button" className="dashboard-tab active" aria-current="page" onClick={() => { setActive("Dashboard"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">⌂</span><small>Home</small>
+              </button>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Receive"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">↓</span><small>Deposit</small>
+              </button>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Withdraw"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">↑</span><small>Withdrawal</small>
+              </button>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Swap"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">⇄</span><small>Convert</small>
+              </button>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Wallets"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">◎</span><small>Profile</small>
+              </button>
+              <button type="button" className={"dashboard-tab" + (showDashboardMore ? " selected" : "")} aria-expanded={showDashboardMore} onClick={() => setShowDashboardMore(value => !value)}>
+                <span className="dashboard-tab-icon">•••</span><small>More</small>
+              </button>
+            </nav>
+          </>
         )}
       </main>
     </div>
