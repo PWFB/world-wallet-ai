@@ -73,6 +73,11 @@ class NeonAuthCredentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=1, max_length=128)
 
+class NeonAuthRegistration(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=8, max_length=128)
+
 
 class NeonAuthOtpRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
@@ -1158,6 +1163,26 @@ def neon_password_login(request: NeonAuthCredentials):
         "password": request.password,
         "rememberMe": True,
     })
+
+@app.post("/api/v1/auth/neon/register")
+def neon_register(request: NeonAuthRegistration):
+    email = request.email.strip().lower()
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Enter your name")
+    result = _neon_auth_post("/sign-up/email", {
+        "name": name,
+        "email": email,
+        "password": request.password,
+    })
+    token = result.get("token") or result.get("access_token")
+    auth_user = result.get("user") if isinstance(result.get("user"), dict) else None
+    if token:
+        user = provision_identity(email, name=name)
+        return {"access_token": token, "token_type": "bearer", "user": user, "mode": "neon_auth"}
+    return {"ok": True, "verification_required": True, "user": auth_user, "message": "Registration submitted. Check your email for verification instructions."}
+
+
 
 
 @app.post("/api/v1/auth/neon/send-otp")
