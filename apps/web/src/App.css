@@ -352,3 +352,24 @@
   .dashboard-tab-icon{font-size:20px}
   .dashboard-more-grid{grid-template-columns:1fr}
 }
+
+
+/* Clickable transaction history and transaction detail view */
+.coin-history-clickable{width:100%;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.coin-history-clickable:hover,.transaction-row-clickable:hover{background:rgba(0,212,255,.055);outline:1px solid rgba(0,212,255,.25)}
+.transaction-row-clickable{font:inherit;cursor:pointer}
+.transaction-row-clickable:focus-visible,.coin-history-clickable:focus-visible{outline:2px solid #00d4ff;outline-offset:2px}
+.transaction-detail-card{padding:clamp(16px,3vw,28px)}
+.transaction-detail-amount{display:flex;flex-direction:column;gap:8px;padding-bottom:20px;border-bottom:1px solid rgba(120,150,185,.18)}
+.transaction-detail-amount small,.transaction-detail-grid small{font-size:10px;letter-spacing:.8px;text-transform:uppercase;color:#8295af}
+.transaction-detail-amount strong{font-size:clamp(22px,5vw,34px);overflow-wrap:anywhere}
+.transaction-detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px;padding-top:22px}
+.transaction-detail-grid>div{display:flex;flex-direction:column;gap:7px;min-width:0}
+.transaction-detail-grid b,.transaction-detail-grid span,.transaction-detail-grid code{font-size:12px;overflow-wrap:anywhere;word-break:break-word}
+.transaction-detail-wide{grid-column:1/-1}
+.explorer-button{display:inline-flex;align-items:center;justify-content:center;text-decoration:none}
+.token-explorer-row{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:18px;padding:14px;border:1px solid rgba(0,212,255,.25);border-radius:12px;background:rgba(0,212,255,.045)}
+.token-explorer-row>div{display:flex;flex-direction:column;gap:5px}
+.token-explorer-row b{font-size:12px}.token-explorer-row small{font-size:10px;color:#8fa3bd;line-height:1.5}
+.token-explorer-row a{white-space:nowrap;color:#00d4ff;font-size:11px;text-decoration:none}
+@media(max-width:560px){.transaction-detail-grid{grid-template-columns:1fr}.transaction-detail-wide{grid-column:auto}.token-explorer-row{align-items:flex-start;flex-direction:column}.transaction-row-clickable{align-items:flex-start}.transaction-row-clickable .transaction-meta{max-width:42%}}

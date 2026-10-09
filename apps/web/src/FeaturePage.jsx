@@ -5,6 +5,36 @@ import ContractTools from "./ContractTools.jsx";
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+function transactionExplorerUrl(transaction) {
+  const hash = String(transaction?.tx_hash || transaction?.transaction_hash || "").trim();
+  if (!hash) return "";
+  const network = String(transaction?.network || "").toLowerCase();
+  const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
+  if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
+  if (network === "sepolia" || asset === "BALMZ-SEP") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
+  if (network === "ethereum" || ["ETH","USDT","USDC","BALMZ"].includes(asset)) return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
+  if (asset === "SOL") return `https://solscan.io/tx/${encodeURIComponent(hash)}`;
+  if (asset === "XRP") return `https://xrpscan.com/tx/${encodeURIComponent(hash)}`;
+  if (asset === "ADA") return `https://cardanoscan.io/transaction/${encodeURIComponent(hash)}`;
+  if (asset === "LTC") return `https://blockchair.com/litecoin/transaction/${encodeURIComponent(hash)}`;
+  if (asset === "DOGE") return `https://blockchair.com/dogecoin/transaction/${encodeURIComponent(hash)}`;
+  return "";
+}
+
+function tokenExplorerUrl(transaction) {
+  const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  const network = String(transaction?.network || "").toLowerCase();
+  const contract = String(transaction?.token_contract_address || transaction?.contract_address || "").trim();
+  if (contract && /^0x[a-fA-F0-9]{40}$/.test(contract)) {
+    return network === "sepolia" || asset === "BALMZ-SEP" ? `https://sepolia.etherscan.io/token/${contract}`
+      : network === "bnb" ? `https://bscscan.com/token/${contract}` : `https://etherscan.io/token/${contract}`;
+  }
+  if (asset === "BALMZ-SEP") return "https://sepolia.etherscan.io/";
+  if (asset === "BALMZ") return "https://etherscan.io/tokens";
+  return "";
+}
+
 const networksForAsset = symbol => ({
   BTC: [{ value: "bitcoin", label: "Bitcoin" }],
   ETH: [{ value: "ethereum", label: "Ethereum" }],
@@ -164,7 +194,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
-export default function FeaturePage({ selectedAsset, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+export default function FeaturePage({ selectedAsset, focusedTransaction, setFocusedTransaction, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -634,6 +664,35 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     </section>;
   }
 
+  if (active === "Transactions" && focusedTransaction) {
+    const transaction = focusedTransaction;
+    const explorerUrl = transactionExplorerUrl(transaction);
+    const tokenUrl = tokenExplorerUrl(transaction);
+    const symbol = transaction.asset || transaction.symbol || String(transaction.description || "").split(" • ")[0] || "Unknown asset";
+    const network = String(transaction.network || "").toLowerCase();
+    const explorerName = network === "bitcoin" || symbol === "BTC" ? "Blockstream" : network === "bnb" || symbol === "BNB" ? "BscScan" : network === "sepolia" || symbol === "BALMZ-SEP" ? "Sepolia Etherscan" : "Explorer";
+    const balmzFallback = symbol === "BALMZ-SEP" || network === "sepolia" ? "https://sepolia.etherscan.io/" : network === "bnb" ? "https://bscscan.com/" : "https://etherscan.io/tokens";
+    return <section className="content feature-content transaction-detail-view">
+      <div className="page-heading"><div><button className="back-btn" onClick={() => setFocusedTransaction?.(null)}>← Back to transaction history</button><p className="eyebrow">TRANSACTION DETAILS</p><h1>{transaction.type || "Transfer"}</h1><p className="muted">{symbol} · {transaction.status || "Recorded"}</p></div>
+        <div className="page-actions">{explorerUrl && <a className="primary explorer-button" href={explorerUrl} target="_blank" rel="noopener noreferrer">View on {explorerName} ↗</a>}</div>
+      </div>
+      <article className="panel transaction-detail-card">
+        <div className="transaction-detail-amount"><small>AMOUNT</small><strong>{transaction.amount || "—"}</strong></div>
+        <div className="transaction-detail-grid">
+          <div><small>Asset</small><b>{symbol}</b></div><div><small>Status</small><b className={transaction.status === "confirmed" || transaction.status === "settled" ? "positive" : transaction.status === "failed" || transaction.status === "reorged" ? "negative" : "neutral"}>{transaction.status || "Recorded"}</b></div>
+          <div><small>Network</small><b>{transaction.network || "Not supplied by transaction record"}</b></div><div><small>Time</small><b>{transaction.time || "—"}</b></div>
+          <div><small>Confirmations</small><b>{transaction.confirmations == null ? "—" : Number(transaction.confirmations).toLocaleString()}</b></div><div><small>Block height</small><b>{transaction.block_height == null ? "—" : Number(transaction.block_height).toLocaleString()}</b></div>
+          <div className="transaction-detail-wide"><small>Transaction hash</small>{transaction.tx_hash ? <code>{transaction.tx_hash}</code> : <span>Not available — this record may not have been broadcast to a blockchain.</span>}</div>
+          <div className="transaction-detail-wide"><small>From address</small>{transaction.from_address || transaction.from ? <code>{transaction.from_address || transaction.from}</code> : <span>Not supplied</span>}</div>
+          <div className="transaction-detail-wide"><small>To address</small>{transaction.to_address || transaction.to ? <code>{transaction.to_address || transaction.to}</code> : <span>Not supplied</span>}</div>
+          {transaction.description && <div className="transaction-detail-wide"><small>Description</small><span>{transaction.description}</span></div>}
+        </div>
+        {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. A missing transaction hash cannot be searched as a confirmed transfer.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
+        {String(symbol).toUpperCase().startsWith("BALMZ") && <div className="token-explorer-row"><div><b>BALMZ token explorer</b><small>{transaction.token_contract_address || transaction.contract_address ? "Open the recorded token contract on its network explorer." : "No token contract address was included in this record; open the network explorer to search for the verified BALMZ token."}</small></div><a href={tokenUrl || balmzFallback} target="_blank" rel="noopener noreferrer">Open token explorer ↗</a></div>}
+      </article>
+    </section>;
+  }
+
   if (active === "Transactions") {
     async function settleTransaction(transaction) {
       const txHash = window.prompt("Enter the real blockchain transaction hash for this request:");
@@ -695,17 +754,17 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       {syncMessage && <div className={syncMessage.includes("failed") ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       <article className="panel transaction-panel">
         <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{activity.length} transaction{activity.length===1?"":"s"}</small></div>
-        {activity.length ? activity.map((a,i) => <div className="transaction-row transaction-chain-row" key={a.tx_hash || a.id || i}>
+        {activity.length ? activity.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
           <span className="activity-icon">{a.type[0].toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
             <span className={a.status === "confirmed" ? "positive" : a.status === "failed" || a.status === "reorged" ? "negative" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>
             {a.block_height ? <small>Block {a.block_height}</small> : null}
-            {a.tx_hash && a.network === "bitcoin" ? <a href={`https://blockstream.info/tx/${a.tx_hash}`} target="_blank" rel="noreferrer">View on Blockstream ↗</a> : null}
+            {transactionExplorerUrl(a) ? <a href={transactionExplorerUrl(a)} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>View on explorer ↗</a> : null}
             {a.status === "reorged" ? <small className="negative">Chain reorganization detected — waiting for a replacement confirmation.</small> : null}
             {a.status === "failed" ? <small className="negative">On-chain execution failed. This record is not a confirmed transfer.</small> : null}
-            {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={()=>settleTransaction(a)} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
+            {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={event => { event.stopPropagation(); settleTransaction(a); }} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
         </div>) : <div className="live-chart-empty">No real wallet transactions recorded yet.</div>}
