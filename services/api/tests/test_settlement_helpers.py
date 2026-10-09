@@ -23,6 +23,19 @@ class SettlementHelperTests(unittest.TestCase):
         with self.assertRaises(main.HTTPException):
             main.exact_base_units(Decimal("NaN"), 18)
 
+    def test_abi_text_decoder_reads_dynamic_token_metadata(self):
+        payload = (32).to_bytes(32, "big") + (4).to_bytes(32, "big") + b"TEST" + (b"\\x00" * 28)
+        self.assertEqual(main._abi_text_value("0x" + payload.hex()), "TEST")
+
+    def test_sepolia_is_excluded_from_production_reserve_snapshot(self):
+        address = "0x" + "1" * 40
+        with patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": address, "label": "testnet"}]):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+        self.assertEqual(result["reserves"], [])
+        self.assertFalse(result["audited"])
+        self.assertFalse(result["liabilities_included"])
+        self.assertTrue(any("excluded from production" in warning for warning in result["warnings"]))
+
     def test_confirmation_threshold_is_bounded(self):
         with patch.dict(os.environ, {"WORLD_WALLET_BTC_CONFIRMATIONS": "0"}):
             with self.assertRaises(main.HTTPException) as caught:
