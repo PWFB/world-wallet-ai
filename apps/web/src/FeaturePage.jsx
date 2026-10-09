@@ -491,6 +491,77 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     </section>;
   }
 
+  if (active === "API Request") {
+    const requestApiBalance = async () => {
+      const evmAddress = destination.trim();
+      if (!/^0x[a-fA-F0-9]{40}$/.test(evmAddress)) {
+        setMessage("Enter a valid EVM address (0x followed by 40 hexadecimal characters).");
+        setChainResult(null);
+        return;
+      }
+      setToolBusy(true);
+      setMessage("");
+      setChainResult(null);
+      const networksToCheck = [
+        { network: "ethereum", label: "Ethereum", symbol: "ETH" },
+        { network: "bnb", label: "BNB Chain", symbol: "BNB" },
+        { network: "sepolia", label: "Sepolia testnet", symbol: "ETH" },
+      ];
+      try {
+        const results = await Promise.all(networksToCheck.map(async item => {
+          try {
+            const response = await fetch(apiBaseUrl + "/api/v1/tools/address-balance", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+              body: JSON.stringify({ address: evmAddress, network: item.network }),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.detail || item.label + " balance lookup failed.");
+            return { ...item, ok: true, data };
+          } catch (error) {
+            return { ...item, ok: false, error: error.message || "Balance lookup unavailable." };
+          }
+        }));
+        setChainResult({ apiBalanceResults: results, apiAddress: evmAddress, apiBalanceCheckedAt: new Date().toISOString() });
+        const successes = results.filter(item => item.ok).length;
+        setMessage(successes === results.length
+          ? "API balance check completed for Ethereum, BNB Chain, and Sepolia."
+          : successes
+            ? "Balance results loaded where RPC access is available. Unavailable networks are marked below."
+            : "No network balance was returned. Check the API/RPC configuration and try again.");
+      } finally {
+        setToolBusy(false);
+      }
+    };
+    const apiBalanceResults = chainResult?.apiBalanceResults || [];
+    return <section className="content feature-content">
+      <div className="page-heading">
+        <div><p className="eyebrow">DEVELOPER TOOLS</p><h1>API Request</h1><p className="muted">Request live EVM token and available-balance data using only a public EVM address.</p></div>
+        <button className="secondary" onClick={() => setActive("API Keys")}>API Keys →</button>
+      </div>
+      <div className="security-note">Enter only a public 0x address. No private key, seed phrase, API secret, network selection, or transaction signing is needed. The API checks Ethereum, BNB Chain, and Sepolia independently; unavailable RPC networks are reported rather than guessed.</div>
+      <article className="panel action-panel">
+        <p className="feature-kicker">ADDRESS-ONLY BALANCE REQUEST</p>
+        <h2>Check API Balance</h2>
+        <label>EVM public address<input value={destination} onChange={e => setDestination(e.target.value)} placeholder="0x…" autoComplete="off" spellCheck={false}/></label>
+        {message && <div className={/no network|invalid|failed|unavailable|enter a valid/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
+        <button className="primary feature-submit" disabled={toolBusy || !destination.trim()} onClick={requestApiBalance}>{toolBusy ? "Checking live balances…" : "Check API Balance →"}</button>
+      </article>
+      {apiBalanceResults.length > 0 && <article className="panel action-panel">
+        <div className="panel-head"><div><p className="feature-kicker">API BALANCE</p><h2>Available balance results</h2><span>Address: <code>{chainResult.apiAddress}</code></span></div><small>{new Date(chainResult.apiBalanceCheckedAt).toLocaleString()}</small></div>
+        {apiBalanceResults.map(result => <div className="api-balance-network" key={result.network}>
+          <div className="panel-head"><div><b>{result.label}</b><small>{result.ok ? (result.data.block_number == null ? "Live API result" : "Block " + Number(result.data.block_number).toLocaleString()) : "Balance unavailable"}</small></div><strong className={result.ok ? "positive" : "negative"}>{result.ok ? number(result.data.available_balance ?? result.data.on_chain_balance) + " " + result.symbol : "Unavailable"}</strong></div>
+          {result.ok ? <>
+            <div className="tool-row"><div><b>Native available balance</b><small>{result.data.balance_basis}</small></div><strong>{number(result.data.available_balance ?? result.data.on_chain_balance)} {result.data.native_symbol || result.symbol}</strong></div>
+            {result.data.tokens?.length ? result.data.tokens.map(token => <div className="tool-row" key={token.contract_address}><div><b>{token.symbol}</b><small>{token.name} · token balance</small></div><code>{token.contract_address}</code><strong>{token.available_balance == null ? "Unavailable" : number(token.available_balance) + " " + token.symbol}</strong></div>) : <div className="security-note">No configured ERC-20 token balances were returned for this network.</div>}
+            {result.network === "sepolia" && <div className="security-note">Sepolia is a testnet. Test ETH and test tokens have no redeemable real-world value.</div>}
+          </> : <div className="feature-error">{result.error}</div>}
+        </div>)}
+        <div className="security-note">These are read-only on-chain balances returned by the API, not an API-provider billing credit balance. Available balance is based on the current chain response; fees, locks, and protocol-specific restrictions may still apply.</div>
+      </article>}
+    </section>;
+  }
+
   if (active === "Address Converter") {
     const inspectAddress = async () => {
       if (!destination.trim()) { setMessage("Enter the input address."); return; }
