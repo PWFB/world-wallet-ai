@@ -75,6 +75,9 @@ function App() {
   });
   const [authRestoring, setAuthRestoring] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
+  const [registerName, setRegisterName] = useState("");
+  const [registerMode, setRegisterMode] = useState(false);
+  const [authMessage, setAuthMessage] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [passwordMode, setPasswordMode] = useState(true);
   const [showPassword, setShowPassword] = useState(false);
@@ -436,6 +439,41 @@ function App() {
     return "";
   }
 
+  async function handleRegister() {
+    setLoginError("");
+    setAuthMessage("");
+    setAuthBusy(true);
+    try {
+      const name = registerName.trim();
+      const email = loginEmail.trim().toLowerCase();
+      if (!name) throw new Error("Enter your name.");
+      if (!email) throw new Error("Enter your email address.");
+      if (loginPassword.length < 8) throw new Error("Use a password with at least 8 characters.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, email, password: loginPassword }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Unable to create your account.");
+      setLoginPassword("");
+      if (data.access_token) {
+        localStorage.setItem(TOKEN_KEY, data.access_token);
+        setUser(data.user || null);
+        setAccessToken(data.access_token);
+        setRegisterMode(false);
+      } else {
+        setRegisterMode(false);
+        setPasswordMode(true);
+        setAuthMessage(data.message || "Registration submitted. Follow any email verification instructions, then sign in.");
+      }
+    } catch (error) {
+      setLoginError(error.message || "Unable to create your account.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
   async function handlePasswordSignIn() {
     setLoginError("");
     setAuthBusy(true);
@@ -574,30 +612,19 @@ function App() {
     );
   }
 
-  if (!accessToken && !showLogin) {
-    return (<div className="ww-public-shell">
-      <header className="ww-public-nav"><button className="ww-public-brand" onClick={() => window.scrollTo({top:0,behavior:"smooth"})}><span className="ww-globe">◎</span><span><b>WORLD WALLET <em>AI</em></b><small>Your Crypto. Your Freedom. Powered by AI.</small></span></button><nav><a href="#features">Features</a><a href="#security">Security</a><a href="#support">Support</a></nav><button className="ww-nav-login" onClick={() => setShowLogin(true)}>Sign In <span>→</span></button></header>
-      <main><section className="ww-landing-hero"><div className="ww-hero-copy"><span className="ww-live-badge"><i/> SECURE • INTELLIGENT • GLOBAL</span><h1>The Smarter Way to<br/>Manage Your <em>Crypto</em></h1><p>Send, receive, swap, invest and understand your digital assets from one powerful wallet, enhanced by BALMZ AI.</p><div className="ww-hero-features"><div><b>◈</b><span><strong>Multi-Chain</strong><small>Support</small></span></div><div><b>◇</b><span><strong>Secure &amp;</strong><small>Private</small></span></div><div><b>✦</b><span><strong>AI-Powered</strong><small>Insights</small></span></div><div><b>↗</b><span><strong>Fast &amp; Global</strong><small>Transactions</small></span></div></div><div className="ww-market-strip"><div><b>BTC</b><span>Live market data</span></div><div><b>ETH</b><span>Live market data</span></div><div><b>USDT</b><span>Live market data</span></div></div><div className="ww-trust-line"><span>✓</span> Live wallet data • Neon Auth • Non-custodial architecture</div></div>
-      <div className="ww-login-preview"><div className="ww-login-card"><div className="ww-login-heading"><div className="ww-login-icon">◎</div><div><span>SECURE ACCESS</span><h2>Welcome Back</h2><p>Sign in to your World Wallet AI account</p></div></div><div className="ww-login-tabs"><b>Email &amp; Password</b><button onClick={() => {setShowLogin(true);setAuthMethod("google");setPasswordMode(false)}}>G&nbsp;&nbsp;Google</button></div><div className="ww-preview-field">✉ <span>Email address</span></div><div className="ww-preview-field">⌑ <span>Password</span><b>◉</b></div><div className="ww-preview-options"><span>☑ Remember me</span><button onClick={() => setShowLogin(true)}>Forgot password?</button></div><button className="ww-preview-submit" onClick={() => setShowLogin(true)}>Sign In <span>→</span></button><div className="ww-or"><i/> or <i/></div><button className="ww-google-preview" onClick={() => {setShowLogin(true);setAuthMethod("google");setPasswordMode(false)}}>G <span>Continue with Google</span></button><p className="ww-create">Don't have an account? <button onClick={() => setShowLogin(true)}>Create one</button></p></div><div className="ww-orbit ww-orbit-a"/><div className="ww-orbit ww-orbit-b"/></div></section>
-      <section id="features" className="ww-feature-section"><div className="ww-section-title"><span>01</span><div><small>ONE GLOBAL WORKSPACE</small><h2>Everything your wallet needs.</h2></div></div><div className="ww-feature-grid"><article><b>◈</b><h3>Multi-chain wallet</h3><p>One workspace for supported blockchain networks and assets.</p></article><article><b>◇</b><h3>Secure &amp; private</h3><p>Neon Auth protects account access while wallet signing stays non-custodial.</p></article><article><b>✦</b><h3>BALMZ AI</h3><p>Understand live portfolio data and wallet activity with your AI assistant.</p></article><article><b>↗</b><h3>Fast global actions</h3><p>Send, receive, swap and manage supported assets from one interface.</p></article></div></section>
-      <section id="security" className="ww-security-section"><div><small>02 • SECURITY FIRST</small><h2>Your wallet access stays protected.</h2><p>World Wallet AI uses Neon Auth for account sessions. The application does not invent balances or store private signing keys in the API.</p></div><div className="ww-security-points"><div><b>01</b><span>Neon Auth sessions</span></div><div><b>02</b><span>Email password + OTP</span></div><div><b>03</b><span>Live wallet data only</span></div></div></section></main>
-      <footer id="support" className="ww-public-footer"><span>© 2026 WORLD WALLET AI</span><span>BALMZ AI • GLOBAL DIGITAL WALLET</span></footer>
-    </div>);
-  }
-
   if (!accessToken) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
-      <header className="ww-auth-top"><button onClick={() => {setShowLogin(false);setRecoveryMode(false);setLoginError("")}}><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></button><span>SECURE AUTHENTICATION • NEON AUTH</span></header>
+      <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></div><span>SECURE SIGN IN</span></header>
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
-      <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><button type="button" className="ww-back" onClick={() => {setShowLogin(false);setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← World Wallet AI</button><div className="ww-auth-card-head"><div className="ww-auth-card-icon">◎</div><div><small>{recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{recoveryMode?"Recover access":"Welcome Back"}</h2><p>{recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
-      {!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("")}}>Email &amp; Password</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button></div>}
-      {!recoveryMode&&(authMethod==="google"||authMethod==="github")?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button" type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":authMethod==="github"?"Continue with GitHub":"G  Continue with Google"}</button><p className="ww-auth-note"><span>✓</span> {authMethod==="github"?"GitHub authentication is handled by Neon Auth. Enable the GitHub provider in Neon Auth first.":"Google authentication is handled by Neon Auth."}</p></div>:
+      <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon">◎</div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
+      {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("")}}>Email &amp; Password</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button></div>}
+      {registerMode?<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>:!recoveryMode&&(authMethod==="google"||authMethod==="github")?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button" type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":authMethod==="github"?"Continue with GitHub":"G  Continue with Google"}</button><p className="ww-auth-note"><span>✓</span> {authMethod==="github"?"GitHub authentication is handled by Neon Auth. Enable the GitHub provider in Neon Auth first.":"Google authentication is handled by Neon Auth."}</p></div>:
       <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
       {recoveryMode?(otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify code &amp; sign in <b>→</b></button></>:<button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send recovery code <b>→</b></button>):
       passwordMode?<><label><span>Password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/><button type="button" className="ww-password-toggle" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? "◉" : "◌"}</button></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
       otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify &amp; enter wallet <b>→</b></button><button className="ww-text-link" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send a new code</button></>:<><button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send secure code <b>→</b></button><button className="ww-text-link" type="button" onClick={() => setPasswordMode(true)}>Use email &amp; password</button></>}
       {recoveryMode&&<button className="ww-text-link" type="button" onClick={() => {setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← Back to sign in</button>}
-      {loginError&&<div className="ww-auth-error"><b>!</b><span><strong>{recoveryMode?"Recovery failed":"Sign-in failed"}</strong><small>{loginError}</small></span></div>}<p className="ww-auth-note"><span>✓</span> Session verification is handled by Neon Auth and the World Wallet API.</p></div>}</form></section>
+      {authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>{registerMode?"Registration failed":recoveryMode?"Recovery failed":"Sign-in failed"}</strong><small>{loginError}</small></span></div>}<p className="ww-auth-note"><span>✓</span> Session verification is handled by Neon Auth and the World Wallet API.</p></div>}{!recoveryMode&&!registerMode&&<p className="ww-register-prompt">Don't have an account? <button type="button" onClick={()=>{setRegisterMode(true);setPasswordMode(true);setAuthMethod("email");setLoginError("");setAuthMessage("")}}>Register</button></p>}{!recoveryMode&&registerMode&&<p className="ww-register-prompt">Keep your password private and never share your recovery credentials.</p>}</form></section>
     </div>);
   }
 
