@@ -176,6 +176,8 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
   const [toolItems, setToolItems] = useState([]);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
+  const [walletProfiles, setWalletProfiles] = useState([]);
+  const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
 
@@ -603,6 +605,33 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
       } catch (error) { setMessage(error.message || "Address lookup failed."); }
       finally { setToolBusy(false); }
     };
+    const loadWalletProfiles = async () => {
+      setToolBusy(true); setMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: { Authorization: "Bearer " + accessToken } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to load wallet profiles.");
+        setWalletProfiles(data.wallets || []);
+        setTargetWalletId(data.active_wallet_id || data.wallets?.[0]?.id || "");
+        setMessage("Wallet profiles loaded. Choose where to attach the public address.");
+      } catch (error) { setMessage(error.message || "Unable to load wallet profiles."); }
+      finally { setToolBusy(false); }
+    };
+    const attachAddress = async (value, label) => {
+      if (!targetWalletId) { setMessage("Load wallet profiles and select a target wallet first."); return; }
+      if (!value.trim()) { setMessage("Enter or inspect an address first."); return; }
+      setToolBusy(true); setMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ network, address: value.trim(), label }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to attach address.");
+        setMessage("Public address attached to the selected wallet profile. This does not transfer funds or grant signing access.");
+      } catch (error) { setMessage(error.message || "Unable to attach address."); }
+      finally { setToolBusy(false); }
+    };
     const renderAddress = (item,label) => <article className="panel action-panel" key={label}>
       <span className="feature-kicker">{label}</span><h2>{item.address}</h2>
       <div className="hero-balance">{number(item.on_chain_balance)} <small>{item.native_symbol}</small></div>
@@ -617,6 +646,11 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
         <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="sepolia">Sepolia testnet</option></select></label>
         <label>Input address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder={network==="bitcoin"?"bc1…":"0x…"}/></label>
         <label>Compare with another address (optional)<input value={note} onChange={e=>setNote(e.target.value)} placeholder={network==="bitcoin"?"Second BTC address":"Second 0x address"}/></label>
+        <div className="feature-grid">
+          <label>Attach input address to wallet<select value={targetWalletId} onChange={e=>setTargetWalletId(e.target.value)}><option value="">Select wallet profile</option>{walletProfiles.map(item=><option key={item.id} value={item.id}>{item.name}{item.active?" • Active":""}</option>)}</select></label>
+          <div className="page-actions"><button className="secondary" disabled={toolBusy} onClick={loadWalletProfiles}>Load wallet profiles</button><button className="secondary" disabled={toolBusy||!targetWalletId||!destination.trim()} onClick={()=>attachAddress(destination,"address converter")}>Attach input address</button></div>
+        </div>
+        {note.trim() && <button className="secondary" disabled={toolBusy||!targetWalletId} onClick={()=>attachAddress(note,"comparison address")}>Attach comparison address too</button>}
         {message && <div className={/failed|unable|invalid|enter|unsupported/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
         <button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={inspectAddress}>{toolBusy?"Reading blockchain…":"Convert / compare addresses →"}</button>
       </article>
@@ -625,12 +659,13 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
   }
 
   if (active === "Contract Converter") {
+    const contractNetwork = ["ethereum", "bnb", "sepolia"].includes(network) ? network : "ethereum";
     const inspectContract = async () => {
       setToolBusy(true); setMessage(""); setChainResult(null);
       try {
         const response = await fetch(apiBaseUrl + "/api/v1/contracts/inspect", {
           method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-          body: JSON.stringify({ address: destination.trim(), network }),
+          body: JSON.stringify({ address: destination.trim(), network: contractNetwork }),
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Contract inspection failed.");
@@ -642,7 +677,7 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">SMART CONTRACT TOOLS</p><h1>Contract Converter</h1><p className="muted">Inspect a contract address and resolve on-chain token metadata where supported.</p></div><button className="secondary" onClick={()=>setActive("Verify Contract")}>Verify bytecode →</button></div>
       <article className="panel action-panel">
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Sepolia testnet</option></select></label>
+        <label>Network<select value={contractNetwork} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Sepolia testnet</option></select></label>
         <label>Contract address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>
         {message && <div className={/failed|unable|invalid|no deployed/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
         <button className="primary feature-submit" disabled={toolBusy||destination.trim().length!==42} onClick={inspectContract}>{toolBusy?"Inspecting contract…":"Resolve contract →"}</button>
