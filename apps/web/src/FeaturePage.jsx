@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import WalletVault from "./WalletVault.jsx";
+import ContractTools from "./ContractTools.jsx";
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -390,6 +391,8 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     } finally { setBusy(false); }
   }
 
+
+  if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
   if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
 
