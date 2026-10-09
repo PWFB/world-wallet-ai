@@ -210,6 +210,9 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   const [toolItems, setToolItems] = useState([]);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
+  const [apiKeyBalance, setApiKeyBalance] = useState(null);
+  const [apiKeyBalanceBusy, setApiKeyBalanceBusy] = useState(false);
+  const [apiKeyBalanceMessage, setApiKeyBalanceMessage] = useState("");
   const [walletProfiles, setWalletProfiles] = useState([]);
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
@@ -492,6 +495,25 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   }
 
   if (active === "API Request") {
+    const checkApiKeyBalance = async () => {
+      setApiKeyBalanceBusy(true);
+      setApiKeyBalanceMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/api-request/key-balance", {
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to check API key balance.");
+        setApiKeyBalance(data);
+        setApiKeyBalanceMessage("API key usage refreshed from the provider.");
+      } catch (error) {
+        setApiKeyBalance(null);
+        setApiKeyBalanceMessage(error.message || "Unable to check API key balance.");
+      } finally {
+        setApiKeyBalanceBusy(false);
+      }
+    };
+
     const requestApiBalance = async () => {
       const evmAddress = destination.trim();
       if (!/^0x[a-fA-F0-9]{40}$/.test(evmAddress)) {
@@ -540,6 +562,19 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
         <button className="secondary" onClick={() => setActive("API Keys")}>API Keys →</button>
       </div>
       <div className="security-note">Enter only a public 0x address. No private key, seed phrase, API secret, network selection, or transaction signing is needed. The API checks Ethereum, BNB Chain, and Sepolia independently; unavailable RPC networks are reported rather than guessed.</div>
+      <article className="panel action-panel">
+        <div className="panel-head"><div><p className="feature-kicker">API KEY BALANCE</p><h2>Provider API balance</h2><span>Check the server-configured CoinGecko key without exposing the secret in the browser.</span></div><button className="secondary" disabled={apiKeyBalanceBusy} onClick={checkApiKeyBalance}>{apiKeyBalanceBusy ? "Checking…" : "↻ Check API Balance"}</button></div>
+        {apiKeyBalanceMessage && <div className={apiKeyBalance ? "feature-success" : "feature-error"}>{apiKeyBalanceMessage}</div>}
+        {apiKeyBalance ? <div className="feature-grid">
+          <div className="stat-card"><span>Monthly credits remaining</span><strong>{apiKeyBalance.current_remaining_monthly_calls == null ? "Unavailable" : Number(apiKeyBalance.current_remaining_monthly_calls).toLocaleString()}</strong></div>
+          <div className="stat-card"><span>Monthly credits used</span><strong>{apiKeyBalance.current_total_monthly_calls == null ? "Unavailable" : Number(apiKeyBalance.current_total_monthly_calls).toLocaleString()}</strong></div>
+          <div className="stat-card"><span>Monthly credit allowance</span><strong>{apiKeyBalance.monthly_call_credit == null ? "Unavailable" : Number(apiKeyBalance.monthly_call_credit).toLocaleString()}</strong></div>
+          <div className="stat-card"><span>Rate limit</span><strong>{apiKeyBalance.rate_limit_request_per_minute == null ? "Unavailable" : Number(apiKeyBalance.rate_limit_request_per_minute).toLocaleString() + " req/min"}</strong></div>
+          <div className="tool-row"><div><b>API plan</b><small>Provider-reported plan</small></div><strong>{apiKeyBalance.plan || "Not reported"}</strong></div>
+        </div> : <div className="live-chart-empty">Tap “Check API Balance” to retrieve current API-key usage. This requires a valid CoinGecko API key configured on the backend.</div>}
+        <div className="security-note">This is API-provider usage/remaining call credits, not a cryptocurrency wallet balance. The secret key stays on the server.</div>
+      </article>
+
       <article className="panel action-panel">
         <p className="feature-kicker">ADDRESS-ONLY BALANCE REQUEST</p>
         <h2>Check API Balance</h2>
