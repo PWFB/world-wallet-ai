@@ -34,7 +34,7 @@ class SettlementHelperTests(unittest.TestCase):
         wallet = "0x" + "1" * 40
         destination = "0x" + "2" * 40
         tx = {"from": wallet, "to": destination, "value": hex(10**18)}
-        receipt = {"status": "0x1", "blockNumber": "0x64", "logs": []}
+        receipt = {"status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc", "logs": []}
 
         def fake_rpc(_url, method, _params):
             if method == "eth_getTransactionByHash":
@@ -43,6 +43,8 @@ class SettlementHelperTests(unittest.TestCase):
                 return receipt
             if method == "eth_blockNumber":
                 return "0x65"
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0xabc"}
             raise AssertionError("Unexpected RPC method: " + method)
 
         with patch.object(main, "ETH_RPC_URL", "https://rpc.example"), patch.object(main, "rpc_call", side_effect=fake_rpc), patch.dict(os.environ, {"WORLD_WALLET_EVM_CONFIRMATIONS": "3"}):
@@ -50,6 +52,30 @@ class SettlementHelperTests(unittest.TestCase):
 
         self.assertEqual(result["state"], "pending")
         self.assertEqual(result["confirmations"], 2)
+
+    def test_evm_settlement_waits_when_receipt_block_was_reorged(self):
+        tx_hash = "0x" + "b" * 64
+        wallet = "0x" + "1" * 40
+        destination = "0x" + "2" * 40
+        tx = {"from": wallet, "to": destination, "value": hex(10**18)}
+        receipt = {"status": "0x1", "blockNumber": "0x64", "blockHash": "0xold", "logs": []}
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return tx
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_blockNumber":
+                return "0x70"
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0xnew"}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "ETH_RPC_URL", "https://rpc.example"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.verify_evm_settlement(tx_hash, "ETH", "ethereum", destination, Decimal("1"), wallet)
+
+        self.assertEqual(result["state"], "pending")
+        self.assertEqual(result["confirmations"], 0)
 
 
 if __name__ == "__main__":
