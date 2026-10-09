@@ -21,6 +21,8 @@ SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
+COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
 NEON_AUTH_JWKS_URL = os.getenv("NEON_AUTH_JWKS_URL", "").strip()
 NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else None
@@ -37,6 +39,16 @@ BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").st
 TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 if not TRUSTED_ORIGINS:
     TRUSTED_ORIGINS = ["https://world-wallet-ai-frontend.onrender.com", "http://localhost:5173", "http://localhost:4173"]
+
+
+def coingecko_headers():
+    """Keep the CoinGecko credential server-side; support Demo and Pro API hosts."""
+    if not COINGECKO_API_KEY:
+        return {}
+    if "pro-api.coingecko.com" in COINGECKO_API_BASE_URL:
+        return {"x-cg-pro-api-key": COINGECKO_API_KEY}
+    return {"x-cg-demo-api-key": COINGECKO_API_KEY}
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -1252,12 +1264,13 @@ def market_prices():
     }
     try:
         response = httpx.get(
-            "https://api.coingecko.com/api/v3/simple/price",
+            f"{COINGECKO_API_BASE_URL}/simple/price",
             params={
                 "ids": ",".join(coin_ids.values()),
                 "vs_currencies": "usd",
                 "include_24hr_change": "true",
             },
+            headers=coingecko_headers(),
             timeout=8,
         )
         response.raise_for_status()
@@ -1289,8 +1302,9 @@ def refresh_prices(user: dict = Depends(current_user)):
     }
     try:
         response = httpx.get(
-            "https://api.coingecko.com/api/v3/simple/price",
+            f"{COINGECKO_API_BASE_URL}/simple/price",
             params={"ids":",".join(coin_ids.values()),"vs_currencies":"usd"},
+            headers=coingecko_headers(),
             timeout=8,
         )
         response.raise_for_status()
