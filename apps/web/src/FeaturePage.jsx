@@ -178,6 +178,10 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
   const [syncMessage, setSyncMessage] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
   const [toolItems, setToolItems] = useState([]);
+  const [chainResult, setChainResult] = useState(null);
+  const [proofData, setProofData] = useState(null);
+  const [walletProfiles, setWalletProfiles] = useState([]);
+  const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
 
@@ -391,6 +395,191 @@ export default function FeaturePage({ selectedAsset, active, wallet, assets, act
     } finally { setBusy(false); }
   }
 
+
+  if (active === "Proof of Reserves") {
+    const loadProof = async () => {
+      setToolBusy(true); setMessage(""); setProofData(null);
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallet/proof-of-reserves", { headers: { Authorization: "Bearer " + accessToken } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to read on-chain reserves.");
+        setProofData(data);
+        setMessage(data.warnings?.length ? "Snapshot loaded with warnings; review unavailable networks." : "On-chain snapshot refreshed.");
+      } catch (error) { setMessage(error.message || "Reserve snapshot unavailable."); }
+      finally { setToolBusy(false); }
+    };
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">TRANSPARENCY</p><h1>Proof of Reserves</h1><p className="muted">Read-only balances from public blockchain addresses connected to your wallet.</p></div><button className="secondary" onClick={loadProof} disabled={toolBusy}>{toolBusy ? "Checking chains…" : "↻ Refresh snapshot"}</button></div>
+      {message && <div className={/unavailable|failed|unable|not configured/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
+      <article className="panel action-panel">
+        <div className="tool-status"><span className="status-dot"></span><b>{proofData ? (proofData.status === "partial" ? "Partial on-chain snapshot" : "On-chain snapshot") : "Not yet checked"}</b></div>
+        <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
+        {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
+        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        {proofData?.warnings?.map((warning,index)=><div className="security-note" key={index}>Warning: {warning}</div>)}
+        <div className="security-note">Important: this is not an audited proof of reserves. It shows on-chain assets at connected addresses only; it does not verify ownership, platform-wide customer liabilities, off-chain assets, or solvency. Sepolia test funds are excluded.</div>
+        {proofData && <button className="secondary" onClick={()=>navigator.clipboard?.writeText(JSON.stringify(proofData,null,2))}>Copy snapshot data</button>}
+      </article>
+    </section>;
+  }
+
+  if (active === "Sepolia Converter") {
+    const inspectSepolia = async () => {
+      if (!destination.trim()) { setMessage("Enter a public Sepolia address first."); return; }
+      setToolBusy(true); setMessage(""); setChainResult(null);
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/tools/address-balance", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ address: destination.trim(), network: "sepolia" }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Sepolia lookup failed.");
+        setChainResult(data);
+        setMessage("Sepolia balance loaded from the test network.");
+      } catch (error) { setMessage(error.message || "Sepolia lookup failed."); }
+      finally { setToolBusy(false); }
+    };
+    const testAmount = Number(amount);
+    const hypotheticalUsd = chainResult?.mainnet_eth_usd_price != null && Number.isFinite(testAmount) && testAmount >= 0 ? testAmount * Number(chainResult.mainnet_eth_usd_price) : null;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">TESTNET TOOLS</p><h1>Sepolia Converter</h1><p className="muted">Inspect Sepolia ETH and calculate a hypothetical mainnet-price reference.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Attach address →</button></div>
+      <div className="security-note">Sepolia ETH is testnet-only. It cannot be converted into real ETH or cash by changing an address. Any USD figure is only a reference based on the ETH mainnet market price.</div>
+      <article className="panel action-panel">
+        <label>Sepolia public address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>
+        {message && <div className={/failed|unable|invalid|enter|check/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
+        <button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={inspectSepolia}>{toolBusy?"Reading Sepolia…":"Read Sepolia balance →"}</button>
+        {chainResult && <div className="feature-summary">
+          <span className="feature-kicker">LIVE TESTNET BALANCE</span>
+          <div className="hero-balance">{number(chainResult.on_chain_balance)} <small>Sepolia ETH</small></div>
+          <div className="security-note">Block {chainResult.block_number == null ? "unavailable" : Number(chainResult.block_number).toLocaleString()} · {chainResult.address}</div>
+          {chainResult.mainnet_eth_usd_price != null && <div className="security-note">Mainnet ETH reference price: {money(chainResult.mainnet_eth_usd_price)} per ETH. This does not give testnet ETH real-world value.</div>}
+          <label>Amount of Sepolia ETH to compare<input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.5"/></label>
+          <div className="hero-balance">{hypotheticalUsd == null ? "—" : money(hypotheticalUsd)} <small>hypothetical USD reference</small></div>
+          <div className="security-note">No bridge, swap, or real-coin redemption is performed by this tool.</div>
+        </div>}
+      </article>
+    </section>;
+  }
+
+  if (active === "Address Converter") {
+    const inspectAddress = async () => {
+      if (!destination.trim()) { setMessage("Enter the input address."); return; }
+      setToolBusy(true); setMessage(""); setChainResult(null);
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/tools/address-balance", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ address: destination.trim(), network, compare_address: note.trim() || null }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Address lookup failed.");
+        setChainResult(data);
+        setMessage("Live blockchain address lookup completed.");
+      } catch (error) { setMessage(error.message || "Address lookup failed."); }
+      finally { setToolBusy(false); }
+    };
+    const loadWalletProfiles = async () => {
+      setToolBusy(true); setMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: { Authorization: "Bearer " + accessToken } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to load wallet profiles.");
+        setWalletProfiles(data.wallets || []);
+        setTargetWalletId(data.active_wallet_id || data.wallets?.[0]?.id || "");
+        setMessage("Wallet profiles loaded. Choose where to attach the public address.");
+      } catch (error) { setMessage(error.message || "Unable to load wallet profiles."); }
+      finally { setToolBusy(false); }
+    };
+    const attachAddress = async (value, label) => {
+      if (!targetWalletId) { setMessage("Load wallet profiles and select a target wallet first."); return; }
+      if (!value.trim()) { setMessage("Enter or inspect an address first."); return; }
+      setToolBusy(true); setMessage("");
+      try {
+        const existingResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
+        const existingData = await existingResponse.json();
+        if (!existingResponse.ok) throw new Error(existingData.detail || "Unable to inspect the selected wallet.");
+        const existingAddress = (existingData.addresses || []).find(item => item.network === network);
+        if (existingAddress && existingAddress.address.toLowerCase() === value.trim().toLowerCase()) {
+          setMessage("This address is already attached to the selected wallet.");
+          return;
+        }
+        if (existingAddress && !window.confirm("This wallet already has a " + network + " address. Replacing it will change which address is tracked for this network. Continue?")) {
+          setMessage("Address attachment cancelled; existing wallet address was kept.");
+          return;
+        }
+        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ network, address: value.trim(), label }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to attach address.");
+        setMessage("Public address attached to the selected wallet profile. This does not transfer funds or grant signing access.");
+      } catch (error) { setMessage(error.message || "Unable to attach address."); }
+      finally { setToolBusy(false); }
+    };
+    const renderAddress = (item,label) => <article className="panel action-panel" key={label}>
+      <span className="feature-kicker">{label}</span><h2>{item.address}</h2>
+      <div className="security-note">Input / tracked address: <code>{item.address}</code></div>
+      <div className="feature-kicker">LIVE ON-CHAIN / AVAILABLE BALANCE</div>
+      <div className="hero-balance">{number(item.on_chain_balance)} <small>{item.native_symbol}</small></div>
+      <div className="security-note">Network: {item.network} · block {item.block_number == null ? "confirmed explorer data" : Number(item.block_number).toLocaleString()}</div>
+      <div className="security-note">{item.balance_basis}</div>
+      {item.tokens?.length ? <div className="tool-list">{item.tokens.map(token=><div className="tool-row" key={token.contract_address}><div><b>{token.symbol}</b><small>{token.name}</small></div><code>{token.contract_address}</code><strong>{token.on_chain_balance == null ? "Unavailable" : number(token.on_chain_balance)+" "+token.symbol}</strong></div>)}</div> : null}
+    </article>;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">BLOCKCHAIN TOOLS</p><h1>Address Converter</h1><p className="muted">Compare real on-chain balances for two addresses on the same network.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Wallet management →</button></div>
+      <div className="security-note">This tool reads addresses; it does not move or duplicate assets. A balance shown for one address remains there until a real signed transaction transfers funds.</div>
+      <article className="panel action-panel">
+        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="sepolia">Sepolia testnet</option></select></label>
+        <label>Input address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder={network==="bitcoin"?"bc1…":"0x…"}/></label>
+        <label>Compare with another address (optional)<input value={note} onChange={e=>setNote(e.target.value)} placeholder={network==="bitcoin"?"Second BTC address":"Second 0x address"}/></label>
+        <div className="feature-grid">
+          <label>Attach input address to wallet<select value={targetWalletId} onChange={e=>setTargetWalletId(e.target.value)}><option value="">Select wallet profile</option>{walletProfiles.map(item=><option key={item.id} value={item.id}>{item.name}{item.active?" • Active":""}</option>)}</select></label>
+          <div className="page-actions"><button className="secondary" disabled={toolBusy} onClick={loadWalletProfiles}>Load wallet profiles</button><button className="secondary" disabled={toolBusy||!targetWalletId||!destination.trim()} onClick={()=>attachAddress(destination,"address converter")}>Attach input address</button></div>
+        </div>
+        {note.trim() && <button className="secondary" disabled={toolBusy||!targetWalletId} onClick={()=>attachAddress(note,"comparison address")}>Attach comparison address too</button>}
+        {message && <div className={/failed|unable|invalid|enter|unsupported/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
+        <button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={inspectAddress}>{toolBusy?"Reading blockchain…":"Convert / compare addresses →"}</button>
+      </article>
+      {chainResult && <div className="feature-grid">{renderAddress(chainResult,"INPUT ADDRESS")}{chainResult.comparison ? renderAddress(chainResult.comparison,"COMPARISON ADDRESS") : <article className="panel action-panel"><h2>No comparison address</h2><p className="muted">Only the input address was checked. Enter a second address to compare its actual on-chain balance.</p></article>}</div>}
+    </section>;
+  }
+
+  if (active === "Contract Converter") {
+    const contractNetwork = ["ethereum", "bnb", "sepolia"].includes(network) ? network : "ethereum";
+    const inspectContract = async () => {
+      setToolBusy(true); setMessage(""); setChainResult(null);
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/contracts/inspect", {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+          body: JSON.stringify({ address: destination.trim(), network: contractNetwork }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Contract inspection failed.");
+        setChainResult(data);
+        setMessage(data.is_contract ? "Contract found; available metadata loaded." : "No deployed contract bytecode found at that address.");
+      } catch (error) { setMessage(error.message || "Contract inspection failed."); }
+      finally { setToolBusy(false); }
+    };
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">SMART CONTRACT TOOLS</p><h1>Contract Converter</h1><p className="muted">Inspect a contract address and resolve token metadata where supported.</p></div><button className="secondary" onClick={()=>setActive("Verify Contract")}>Verify bytecode →</button></div>
+      <article className="panel action-panel">
+        <label>Network<select value={contractNetwork} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Sepolia testnet</option></select></label>
+        <label>Contract address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>
+        {message && <div className={/failed|unable|invalid|no deployed/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
+        <button className="primary feature-submit" disabled={toolBusy||destination.trim().length!==42} onClick={inspectContract}>{toolBusy?"Inspecting contract…":"Resolve contract →"}</button>
+        {chainResult && <div className="feature-summary">
+          <div className="tool-status"><span className="status-dot"></span><b>{chainResult.is_contract ? "Deployed contract" : "No contract bytecode"}</b></div>
+          <div className="tool-row"><div><b>Network</b></div><strong>{chainResult.network}</strong></div>
+          <div className="tool-row"><div><b>Contract address</b></div><code>{chainResult.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(chainResult.address)}>Copy</button></div>
+          <div className="tool-row"><div><b>Token name</b></div><strong>{chainResult.name || "Not exposed"}</strong></div>
+          <div className="tool-row"><div><b>Symbol</b></div><strong>{chainResult.symbol || "Not exposed"}</strong></div>
+          <div className="tool-row"><div><b>Decimals</b></div><strong>{chainResult.decimals ?? "Not exposed"}</strong></div>
+          <div className="security-note">{chainResult.note}</div>
+          <div className="security-note">A contract address is not convertible into a normal wallet address. Metadata is optional and untrusted until independently reviewed.</div>
+        </div>}
+      </article>
+    </section>;
+  }
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
