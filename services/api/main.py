@@ -32,6 +32,7 @@ BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
+BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
 
 TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
 if not TRUSTED_ORIGINS:
@@ -174,7 +175,8 @@ def init_db():
           ('native-bnb','BNB','BNB','bnb',NULL,18,'binancecoin','active'),
           ('token-usdt-eth','USDT','Tether USD','ethereum',NULL,6,'tether','catalog_only'),
           ('token-usdt-bnb','USDT','Tether USD','bnb',NULL,6,'tether','catalog_only'),
-          ('token-balmz','BALMZ','BALMZ Token','ethereum',NULL,NULL,NULL,'pending_contract')
+          ('token-balmz','BALMZ','BALMZ Token','ethereum',NULL,NULL,NULL,'pending_contract'),
+          ('token-balmz-sepolia','BALMZ-SEP','BALMZ Token (Sepolia)','sepolia',NULL,18,NULL,'pending_contract')
         ON CONFLICT(symbol,network) DO UPDATE SET
           name=EXCLUDED.name,
           status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
@@ -246,6 +248,12 @@ def init_db():
                 "WHERE symbol='BALMZ' AND network='ethereum'",
                 (BALMZ_ETH_CONTRACT,),
             )
+        if BALMZ_SEPOLIA_CONTRACT and valid_evm_address(BALMZ_SEPOLIA_CONTRACT):
+            conn.execute(
+                "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,18),status='active' "
+                "WHERE symbol='BALMZ-SEP' AND network='sepolia'",
+                (BALMZ_SEPOLIA_CONTRACT,),
+            )
         legacy_holds = conn.execute("""
           SELECT a.wallet_id,a.symbol,COALESCE(SUM(-t.amount),0)
           FROM assets a
@@ -300,7 +308,7 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
             conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)", (wallet_id,user_id,"Production Wallet"))
             conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id,user_id))
         for symbol,asset_name in [
-            ("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
+            ("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
             ("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")
         ]:
             conn.execute(
@@ -1187,8 +1195,8 @@ def sync_wallet(user: dict = Depends(current_user)):
         ).fetchall()
         token_totals = {}
         for symbol, name, network, contract, decimals, status in token_rows:
-            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else None
-            token_address = address if network in ("ethereum","bnb") else None
+            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
+            token_address = address if network in ("ethereum","bnb") else wallet_network_address(user, "sepolia") if network == "sepolia" else None
             if not rpc_url or not token_address:
                 continue
             try:
@@ -1257,6 +1265,7 @@ def refresh_prices(user: dict = Depends(current_user)):
             market_prices[symbol] = float(raw.get(coin_id, {}).get("usd", 0))
         # BALMZ has no deployed contract or verified market price yet.
         market_prices["BALMZ"] = 0.0
+        market_prices["BALMZ-SEP"] = 0.0
         for symbol, price in market_prices.items():
             conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
         conn.commit()
@@ -1321,8 +1330,9 @@ def system_status(user: dict = Depends(current_user)):
         "bitcoin": bool(BTC_ADDRESS),
         "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
         "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
+        "sepolia": bool((EVM_WALLET_ADDRESS or SEPOLIA_RPC_URL) and SEPOLIA_RPC_URL),
         "live_prices": True,
-        "price_assets": ["BALMZ","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
+        "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
         "transaction_broadcast": True,
         "transaction_broadcast_mode": "external_wallet_signed",
@@ -1447,7 +1457,7 @@ def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user
     wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
     with db() as conn:
         conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
-        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
         conn.commit()
