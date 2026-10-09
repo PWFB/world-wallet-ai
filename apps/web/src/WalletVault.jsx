@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { JsonRpcProvider, Wallet, parseEther } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, isAddress, parseEther, parseUnits } from "ethers";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = "https://rpc.sepolia.dev";
@@ -26,6 +26,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [recipient, setRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [txHash, setTxHash] = useState("");
+  const [tokenContractAddress, setTokenContractAddress] = useState("");
+  const [tokenRecipient, setTokenRecipient] = useState("");
+  const [tokenAmount, setTokenAmount] = useState("");
+  const [tokenTxHash, setTokenTxHash] = useState("");
   const [contracts, setContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -41,7 +45,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     fetch(apiBaseUrl + "/api/v1/tokens", { headers: { Authorization: "Bearer " + accessToken } })
       .then(async response => {
         const data = await response.json();
-        if (response.ok) setContracts(data.tokens || []);
+        if (response.ok) {
+          const tokens = data.tokens || [];
+          setContracts(tokens);
+          const balmzSepolia = tokens.find(item => item.symbol === "BALMZ-SEP" && item.network === "sepolia")?.contract_address;
+          if (balmzSepolia) setTokenContractAddress(current => current || balmzSepolia);
+        }
       })
       .catch(() => {});
   }, [accessToken, apiBaseUrl]);
@@ -193,6 +202,67 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     }
   }
 
+  async function sendSepoliaToken() {
+    if (!unlocked || selected?.network !== "sepolia") {
+      setMessage("Unlock a wallet connected to Ethereum Sepolia first.");
+      return;
+    }
+    if (!isAddress(tokenContractAddress.trim())) {
+      setMessage("Enter a valid deployed ERC-20 contract address.");
+      return;
+    }
+    if (!isAddress(tokenRecipient.trim())) {
+      setMessage("Enter a valid recipient address.");
+      return;
+    }
+    if (!tokenAmount.trim()) {
+      setMessage("Enter a token amount greater than zero.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    setTokenTxHash("");
+    try {
+      const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
+      const networkInfo = await provider.getNetwork();
+      if (networkInfo.chainId !== 11155111n) {
+        throw new Error("The configured RPC did not identify itself as Ethereum Sepolia.");
+      }
+      const signer = unlocked.connect(provider);
+      const token = new Contract(
+        tokenContractAddress.trim(),
+        [
+          "function symbol() view returns (string)",
+          "function decimals() view returns (uint8)",
+          "function transfer(address to,uint256 amount) returns (bool)"
+        ],
+        signer
+      );
+      const [symbol, decimalsValue] = await Promise.all([token.symbol(), token.decimals()]);
+      const decimals = Number(decimalsValue);
+      if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+        throw new Error("The token returned invalid decimals.");
+      }
+      let value;
+      try { value = parseUnits(tokenAmount.trim(), decimals); } catch {
+        throw new Error("Enter a valid token amount for " + symbol + ".");
+      }
+      if (value <= 0n) throw new Error("Enter a token amount greater than zero.");
+      if (!window.confirm("Send " + tokenAmount.trim() + " " + symbol + " from " + unlocked.address + " to " + tokenRecipient.trim() + "? Verify the contract address before approving.")) return;
+      const tx = await token.transfer(tokenRecipient.trim(), value);
+      setTokenTxHash(tx.hash);
+      setMessage(symbol + " transfer submitted on Sepolia. Waiting for confirmation…");
+      const receipt = await tx.wait(1);
+      if (!receipt || receipt.status !== 1) throw new Error("The token transfer did not confirm successfully.");
+      setMessage(symbol + " transfer confirmed on Ethereum Sepolia.");
+      setTokenAmount("");
+    } catch (error) {
+      setMessage(error?.shortMessage || error?.message || "Sepolia token transfer failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function forgetLocalEntry(walletId) {
     const next = readVault().filter(item => item.walletId !== walletId);
     persistVault(next);
@@ -273,6 +343,15 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
           <button className="primary feature-submit" disabled={busy || !recipient.trim() || !sendAmount.trim()} onClick={sendSepoliaEth}>{busy ? "Signing / waiting…" : "Sign and send Sepolia ETH →"}</button>
           {txHash && <div className="security-note">Transaction: <a href={"https://sepolia.etherscan.io/tx/" + txHash} target="_blank" rel="noreferrer">{txHash} ↗</a></div>}
           <div className="security-note">Testnet only. Requires Sepolia ETH for gas. The private key signs in this browser and is never uploaded; this direct transfer is not recorded in the app's internal transaction ledger.</div>
+          <div className="wallet-message-signing">
+            <h3>Send Sepolia ERC-20 token</h3>
+            <label>Token contract address<input value={tokenContractAddress} onChange={event => setTokenContractAddress(event.target.value)} placeholder="0x… deployed token contract" autoComplete="off" /></label>
+            <label>Recipient address<input value={tokenRecipient} onChange={event => setTokenRecipient(event.target.value)} placeholder="0x…" autoComplete="off" /></label>
+            <label>Token amount<input inputMode="decimal" value={tokenAmount} onChange={event => setTokenAmount(event.target.value)} placeholder="1.0" /></label>
+            <button className="primary feature-submit" disabled={busy || !tokenContractAddress.trim() || !tokenRecipient.trim() || !tokenAmount.trim()} onClick={sendSepoliaToken}>{busy ? "Signing / waiting…" : "Sign and send ERC-20 →"}</button>
+            {tokenTxHash && <div className="security-note">Token transaction: <a href={"https://sepolia.etherscan.io/tx/" + tokenTxHash} target="_blank" rel="noreferrer">{tokenTxHash} ↗</a></div>}
+            <div className="security-note">Only use a verified ERC-20 contract on Sepolia. This reads the token's on-chain symbol and decimals; it does not invent a token balance or price. Requires Sepolia ETH for gas.</div>
+          </div>
         </div>}
       </div>}
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
