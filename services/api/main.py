@@ -641,15 +641,17 @@ def validate_asset_network(asset: str, network: str):
 def configured_addresses(user):
     with db() as conn:
         rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
-        if EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
+        saved_evm_address = next((r[1] for r in rows if r[0] in ("ethereum", "bnb") and valid_evm_address(r[1])), "")
+        evm_address = EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else saved_evm_address
+        if evm_address:
             # EVM accounts use the same public address on Ethereum mainnet and Sepolia.
             # Keep the testnet address visible without replacing any user-saved address.
             if not rows:
                 for network in ("ethereum", "bnb"):
-                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
+                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, evm_address))
                 if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS):
                     conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], "bitcoin", BTC_ADDRESS))
-            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,'sepolia',%s,'Sepolia testnet') ON CONFLICT DO NOTHING", (user["wallet_id"], EVM_WALLET_ADDRESS))
+            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,'sepolia',%s,'Sepolia testnet') ON CONFLICT DO NOTHING", (user["wallet_id"], evm_address))
             conn.commit()
             rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
     return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
