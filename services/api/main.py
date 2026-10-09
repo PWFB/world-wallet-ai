@@ -652,11 +652,23 @@ def validate_asset_network(asset: str, network: str):
 def configured_addresses(user):
     with db() as conn:
         rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
-        if not rows and EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
+        existing_networks = {row[0] for row in rows}
+        changed = False
+        if EVM_WALLET_ADDRESS and valid_evm_address(EVM_WALLET_ADDRESS):
             for network in ("ethereum", "bnb"):
-                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, EVM_WALLET_ADDRESS))
-            if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS):
-                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], "bitcoin", BTC_ADDRESS))
+                if network not in existing_networks:
+                    conn.execute(
+                        "INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",
+                        (user["wallet_id"], network, EVM_WALLET_ADDRESS),
+                    )
+                    changed = True
+        if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS) and "bitcoin" not in existing_networks:
+            conn.execute(
+                "INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",
+                (user["wallet_id"], "bitcoin", BTC_ADDRESS),
+            )
+            changed = True
+        if changed:
             conn.commit()
             rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
     return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
