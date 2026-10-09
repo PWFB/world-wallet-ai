@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { getNeonAccessToken } from "./auth-client.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -74,11 +75,18 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setMessage("");
     setSignature("");
     try {
+      // Refresh the Neon Auth JWT immediately before the authenticated wallet
+      // profile request; App state can still contain a token from an earlier session.
+      const freshToken = await getNeonAccessToken();
+      const sessionToken = freshToken || accessToken;
+      if (!sessionToken) {
+        throw new Error("Your sign-in session has expired. Please sign out and sign in again before creating a wallet.");
+      }
       const signer = Wallet.createRandom();
       const encryptedJson = await signer.encrypt(password);
       const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
         body: JSON.stringify({ name: walletName.trim() || "New Wallet" }),
       });
       const profile = await profileResponse.json();
@@ -88,7 +96,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       if (!walletId) throw new Error("Wallet profile was created but the API did not return its wallet ID.");
       const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
         body: JSON.stringify({ network, address: signer.address, label: "generated" }),
       });
       const addressData = await addressResponse.json();
