@@ -29,7 +29,8 @@ NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else No
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
-SEPOLIA_RPC_URL = os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL", os.getenv("SEPOLIA_RPC_URL", "")).strip()
+# Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
+SEPOLIA_RPC_URL = os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL", os.getenv("SEPOLIA_RPC_URL", "https://rpc.sepolia.dev")).strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
