@@ -1,0 +1,32 @@
+name: Wallet tools and settlement tests
+
+on:
+  pull_request:
+    paths:
+      - "services/api/**"
+      - ".github/workflows/wallet-tool-tests.yml"
+  push:
+    branches:
+      - main
+      - feat/wallet-reserves-sepolia-converters
+    paths:
+      - "services/api/**"
+      - ".github/workflows/wallet-tool-tests.yml"
+
+jobs:
+  api-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install API dependencies
+        run: python -m pip install -r services/api/requirements.txt
+      - name: Compile API
+        run: python -m py_compile services/api/main.py
+      - name: Run settlement and wallet tool tests
+        working-directory: services/api
+        run: python -m unittest discover -s tests -v
