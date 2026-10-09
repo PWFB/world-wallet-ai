@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { Contract, JsonRpcProvider, Wallet, isAddress, parseEther, parseUnits } from "ethers";
+import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits } from "ethers";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
-const SEPOLIA_RPC = "https://rpc.sepolia.dev";
+const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
 
 function readVault() {
   try {
@@ -23,6 +23,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [unlocked, setUnlocked] = useState(null);
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
+  const [nativeBalance, setNativeBalance] = useState("");
   const [recipient, setRecipient] = useState("");
   const [sendAmount, setSendAmount] = useState("");
   const [txHash, setTxHash] = useState("");
@@ -131,11 +132,19 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setMessage("");
     setSignature("");
     setTxHash("");
+    setNativeBalance("");
     try {
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
       setUnlocked(signer);
       setGenerated(null);
+      if (entry.network === "sepolia") {
+        const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
+        const networkInfo = await provider.getNetwork();
+        if (networkInfo.chainId !== 11155111n) throw new Error("Configured RPC is not Ethereum Sepolia.");
+        const balance = await provider.getBalance(signer.address);
+        setNativeBalance(formatEther(balance));
+      }
       setMessage("Wallet unlocked in this browser session. The decrypted key is not sent to the API.");
     } catch {
       setUnlocked(null);
@@ -193,6 +202,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage("Sepolia transaction submitted. Waiting for confirmation…");
       const receipt = await tx.wait(1);
       if (!receipt || receipt.status !== 1) throw new Error("The transaction did not confirm successfully.");
+      setNativeBalance(formatEther(await provider.getBalance(unlocked.address)));
       setMessage("Sepolia transaction confirmed. This testnet transaction is not a production wallet ledger entry.");
       setSendAmount("");
     } catch (error) {
@@ -316,6 +326,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <label>Private key (shown once)<textarea readOnly rows="2" value={generated.privateKey} /></label>
         {generated.mnemonic && <label>Recovery phrase (shown once)<textarea readOnly rows="2" value={generated.mnemonic} /></label>}
       </div>}
+      {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
       <div className="security-note">BALMZ Ethereum contract: <code>{balmzContract || "Not configured / not deployed"}</code></div>
       <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
       <div className="security-note">A wallet address is not a token contract address. Do not substitute one for the other.</div>
