@@ -116,12 +116,16 @@ function App() {
 
     async function restoreSessionFromNeon() {
       let persistedToken = "";
-      let googleReturn = false;
+      let socialReturn = "";
       try {
         persistedToken = localStorage.getItem(TOKEN_KEY) || "";
-        googleReturn =
-          new URLSearchParams(window.location.search).get("auth_callback") === "google" ||
-          sessionStorage.getItem("world_wallet_google_return") === "1";
+        const callbackProvider = new URLSearchParams(window.location.search).get("auth_callback") || "";
+        const storedProvider = sessionStorage.getItem("world_wallet_social_return") || "";
+        socialReturn = ["google", "github"].includes(callbackProvider)
+          ? callbackProvider
+          : (["google", "github"].includes(storedProvider)
+            ? storedProvider
+            : (sessionStorage.getItem("world_wallet_google_return") === "1" ? "google" : ""));
       } catch {
         // Storage can be unavailable in restricted browser modes.
       }
@@ -132,7 +136,7 @@ function App() {
         return;
       }
 
-      if (!googleReturn) {
+      if (!socialReturn) {
         if (!cancelled) setAuthRestoring(false);
         return;
       }
@@ -143,9 +147,10 @@ function App() {
         timeoutId = window.setTimeout(() => {
           if (!cancelled) {
             setAuthRestoring(false);
-            setLoginError("Google session could not be restored. Please sign in again.");
+            setLoginError((socialReturn === "github" ? "GitHub" : "Google") + " session could not be restored. Please sign in again.");
             setShowLogin(true);
             try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
+        try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
           }
         }, 6000);
         return;
@@ -158,6 +163,7 @@ function App() {
             if (token) {
               try { localStorage.setItem(TOKEN_KEY, token); } catch {}
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
+              try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
               setUser(neonSessionUser);
               setAccessToken(token);
               setActive("Dashboard");
@@ -178,8 +184,9 @@ function App() {
       if (!cancelled) {
         setAuthRestoring(false);
         setShowLogin(true);
-        setLoginError("Google session could not be restored. Please sign in again.");
+        setLoginError((socialReturn === "github" ? "GitHub" : "Google") + " session could not be restored. Please sign in again.");
         try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
+            try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
         if (window.location.search) {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
@@ -491,19 +498,22 @@ function App() {
     }
   }
 
-  async function handleGoogleSignIn() {
+  async function handleSocialSignIn(provider) {
+    const providerName = provider === "github" ? "GitHub" : "Google";
     setLoginError("");
     setAuthBusy(true);
     try {
-      sessionStorage.setItem("world_wallet_google_return", "1");
+      sessionStorage.setItem("world_wallet_social_return", provider);
+      if (provider === "google") sessionStorage.setItem("world_wallet_google_return", "1");
       const result = await authClient.signIn.social({
-        provider: "google",
-        callbackURL: `${window.location.origin}/?auth_callback=google`,
+        provider,
+        callbackURL: window.location.origin + "/?auth_callback=" + provider,
       });
-      if (result?.error) throw new Error(authErrorMessage(result.error, "Google Sign-In failed."));
+      if (result?.error) throw new Error(authErrorMessage(result.error, providerName + " Sign-In failed."));
     } catch (error) {
       sessionStorage.removeItem("world_wallet_google_return");
-      setLoginError(error.message || "Google Sign-In unavailable");
+      sessionStorage.removeItem("world_wallet_social_return");
+      setLoginError(error.message || (providerName + " Sign-In unavailable. Check that the provider is enabled in Neon Auth."));
       setAuthBusy(false);
     }
   }
@@ -568,8 +578,8 @@ function App() {
       <header className="ww-auth-top"><button onClick={() => {setShowLogin(false);setRecoveryMode(false);setLoginError("")}}><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></button><span>SECURE AUTHENTICATION • NEON AUTH</span></header>
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
       <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><button type="button" className="ww-back" onClick={() => {setShowLogin(false);setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← World Wallet AI</button><div className="ww-auth-card-head"><div className="ww-auth-card-icon">◎</div><div><small>{recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{recoveryMode?"Recover access":"Welcome Back"}</h2><p>{recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
-      {!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("")}}>Email &amp; Password</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button></div>}
-      {!recoveryMode&&authMethod==="google"?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button" type="button" onClick={handleGoogleSignIn} disabled={authBusy}>G&nbsp;&nbsp; Continue with Google</button><p className="ww-auth-note"><span>✓</span> Google authentication is handled by Neon Auth.</p></div>:
+      {!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("")}}>Email &amp; Password</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button></div>}
+      {!recoveryMode&&(authMethod==="google"||authMethod==="github")?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button" type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":authMethod==="github"?"Continue with GitHub":"G  Continue with Google"}</button><p className="ww-auth-note"><span>✓</span> {authMethod==="github"?"GitHub authentication is handled by Neon Auth. Enable the GitHub provider in Neon Auth first.":"Google authentication is handled by Neon Auth."}</p></div>:
       <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
       {recoveryMode?(otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify code &amp; sign in <b>→</b></button></>:<button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send recovery code <b>→</b></button>):
       passwordMode?<><label><span>Password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/><button type="button" className="ww-password-toggle" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? "◉" : "◌"}</button></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
