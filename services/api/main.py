@@ -816,7 +816,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                     confirmations = max(0, latest - block_number + 1)
                     if receipt_status == "0x0":
                         status = "failed"
-                    elif receipt is None:
+                    elif receipt is None or receipt_status != "0x1":
                         status = "pending"
                     elif confirmations >= required_confirmations:
                         status = "confirmed"
@@ -849,11 +849,17 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
             for row in conn.execute(
                 "SELECT id,tx_hash,block_height,block_hash FROM transactions "
                 "WHERE wallet_id=%s AND network=%s AND asset=%s AND block_height BETWEEN %s AND %s "
-                "AND status IN ('confirmed','pending','failed')",
+                "AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
                 (user["wallet_id"],network,"ETH" if network=="ethereum" else "BNB",start,latest),
             ).fetchall():
                 txid, old_hash, old_height, old_block_hash = row
                 current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
+                if current_hash is None and old_height is not None:
+                    try:
+                        canonical = rpc_call(url, "eth_getBlockByNumber", [hex(int(old_height)), False])
+                        current_hash = (canonical or {}).get("hash")
+                    except Exception:
+                        current_hash = None
                 if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
                     conn.execute(
                         "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
@@ -912,10 +918,10 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                 receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
                 if receipt_status == "0x0":
                     status = "failed"
-                elif receipt is None:
+                elif receipt is None or receipt_status != "0x1":
                     status = "pending"
                 else:
-                    status = "confirmed" if confirmations >= max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100)) else "pending"
+                    status = "confirmed" if confirmations >= required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS") else "pending"
                 description = f"{symbol} {direction} on {network}"
                 existing = conn.execute(
                     "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
@@ -940,11 +946,17 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                                  "log_index":log_index})
             for row in conn.execute(
                 "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network=%s AND asset=%s "
-                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','pending','failed')",
+                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
                 (user["wallet_id"],network,symbol,start,latest),
             ).fetchall():
                 txid, old_height, old_block_hash = row
                 current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
+                if current_hash is None and old_height is not None:
+                    try:
+                        canonical = rpc_call(url, "eth_getBlockByNumber", [hex(int(old_height)), False])
+                        current_hash = (canonical or {}).get("hash")
+                    except Exception:
+                        current_hash = None
                 if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
                     conn.execute(
                         "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
@@ -990,7 +1002,8 @@ def bitcoin_address_transactions(address: str):
         confirmed = bool(status.get("confirmed"))
         block_height = status.get("block_height")
         confirmations = max(0, tip_height - int(block_height) + 1) if confirmed and block_height else 0
-        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmed else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
+        threshold = required_confirmations("WORLD_WALLET_BTC_CONFIRMATIONS")
+        results.append({"tx_hash":tx.get("txid"),"amount":net_sats/100_000_000,"type":"received" if net_sats > 0 else "sent","status":"confirmed" if confirmations >= threshold else "pending","confirmations":confirmations,"block_height":block_height,"block_hash":status.get("block_hash")})
     return results
 
 def sync_bitcoin_transactions(user, address=None):
