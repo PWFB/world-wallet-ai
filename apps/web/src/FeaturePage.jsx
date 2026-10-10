@@ -307,6 +307,12 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     }
   }
 
+  async function changeWalletConnect() {
+    // Close the existing WalletConnect session before opening a fresh wallet picker.
+    await disconnectWalletConnect();
+    await connectWalletConnect();
+  }
+
   const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
     selectedWalletAsset?.available_balance ??
@@ -1017,7 +1023,10 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
         {wcAccount ? <>
           <div className="tool-row"><div><b>Connected address</b><small>Read from your external wallet</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy</button></div>
           <div className="tool-row"><div><b>Network</b><small>Current wallet chain</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown")}</strong></div>
-          <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>{wcBusy ? "Disconnecting…" : "Disconnect wallet"}</button>
+          <div className="wallet-connection-actions">
+            <button className="primary" disabled={wcBusy} onClick={changeWalletConnect}>{wcBusy ? "Opening wallet picker…" : "⇄ Change wallet"}</button>
+            <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>Disconnect wallet</button>
+          </div>
         </> : <button className="primary feature-submit" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet connection…" : "Connect external wallet →"}</button>}
         {wcError && <div className="feature-error" role="alert">{wcError}</div>}
         <div className="security-note">Never enter a recovery phrase or private key into this site. Review the network and every transaction inside your wallet before approving.</div>
