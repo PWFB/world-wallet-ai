@@ -45,6 +45,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     const saved = readVault();
     setEntries(saved);
     try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); }
+    window.addEventListener("world-wallet-contracts-updated", () => { try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); } });
     if (saved.length) setSelectedId(saved[0].walletId);
     // Contract Generator can hand off a deployed token address to this page.
     try {
@@ -76,6 +77,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   function persistVault(next) {
     localStorage.setItem(VAULT_KEY, JSON.stringify(next));
     setEntries(next);
+    try { window.dispatchEvent(new Event("world-wallet-local-vault-updated")); } catch {}
   }
 
   async function createWallet() {
