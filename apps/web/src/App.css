@@ -567,3 +567,174 @@
     justify-self: center !important;
   }
 }
+
+
+/* World Wallet AI dashboard restructuring — additive overrides.
+   Keep the existing dashboard components and data/authentication flows intact. */
+.app-shell{
+  --ww-bg:#070d1d;--ww-panel:#0c1729;--ww-panel-2:#101f35;
+  --ww-line:#1c2d47;--ww-muted:#8191aa;--ww-cyan:#00d4ff;--ww-gold:#d4af37;
+  background:
+    radial-gradient(ellipse at 72% -10%,rgba(0,212,255,.075),transparent 34%),
+    var(--ww-bg);
+  color:#edf4ff;
+}
+.app-shell .sidebar{
+  width:248px;padding:24px 15px 16px;
+  background:linear-gradient(180deg,#0a1426 0%,#080f1e 100%);
+  border-right:1px solid #1b2b43;box-shadow:10px 0 34px rgba(0,0,0,.12);
+}
+.app-shell .brand{padding:0 10px 25px;gap:12px}
+.app-shell .brand-mark{width:39px;height:39px;border-radius:12px;box-shadow:0 0 24px rgba(212,175,55,.08)}
+.app-shell .brand strong{font-size:11px;letter-spacing:1.35px}
+.app-shell .brand span{display:block;font-size:10px;letter-spacing:2px;margin-top:4px}
+.app-shell .network-pill{border-radius:10px;background:#0c1b30;border-color:#203651;padding:12px;margin-bottom:24px}
+.app-shell .nav-group{margin-bottom:20px}
+.app-shell .nav-group small{font-size:9px;letter-spacing:1.8px;padding-bottom:9px}
+.app-shell .nav-item{padding:11px 12px;border-radius:9px;font-size:11px;transition:background .18s ease,color .18s ease}
+.app-shell .nav-item:hover{background:#10223a;color:#e8f8ff}
+.app-shell .nav-item.active{background:linear-gradient(90deg,rgba(0,212,255,.13),rgba(0,212,255,.035));box-shadow:inset 3px 0 var(--ww-cyan);color:#fff}
+.app-shell .nav-icon{font-size:11px}
+.app-shell .secure{background:#0b1b2b;border-color:#1b3b4c;padding:12px;border-radius:10px}
+.app-shell .profile{border-radius:10px;margin-top:5px}
+.app-shell .profile:hover{background:#102039}
+.app-shell .main{margin-left:248px;width:calc(100% - 248px);min-width:0}
+.app-shell .topbar{
+  height:70px;justify-content:space-between;padding:0 clamp(18px,3vw,42px);
+  background:rgba(7,13,29,.88);border-bottom:1px solid rgba(45,65,94,.65);
+}
+.app-shell .topbar:before{content:"WALLET WORKSPACE";font-size:9px;letter-spacing:2px;color:#637894;margin-right:auto}
+.app-shell .top-actions{align-items:center;gap:9px}
+.app-shell .top-actions button{height:37px;min-width:38px;border-radius:10px;background:#0d1a2d;border-color:#22334d}
+.app-shell .top-actions button:hover{border-color:#3d6485;color:#eafaff}
+.app-shell .top-actions .logout-button{padding:0 12px}
+.app-shell .content{max-width:1640px;padding:32px clamp(18px,3vw,42px) 54px}
+.app-shell .page-heading{align-items:center;gap:18px;margin-bottom:24px}
+.app-shell .page-heading h1{font-size:clamp(23px,2.2vw,31px);letter-spacing:-.7px}
+.app-shell .page-heading .muted{margin-top:8px;line-height:1.6}
+.app-shell .eyebrow{font-size:9px;letter-spacing:2.2px;font-weight:700}
+.app-shell .page-actions{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.app-shell .primary,.app-shell .secondary{
+  min-height:40px;border-radius:10px;padding:0 16px;font-size:11px;font-weight:700;
+  transition:transform .16s ease,filter .16s ease,border-color .16s ease;
+}
+.app-shell .primary:hover,.app-shell .secondary:hover{filter:brightness(1.12);transform:translateY(-1px)}
+.app-shell .secondary{background:#101e33;border:1px solid #2a3d58;color:#d6e6f7}
+.app-shell .balance-grid{grid-template-columns:minmax(260px,1.55fr) repeat(3,minmax(145px,1fr));gap:14px;margin-bottom:14px}
+.app-shell .hero-card,.app-shell .stat-card,.app-shell .panel{
+  border-radius:15px;border-color:#1d304b;
+  background:linear-gradient(145deg,rgba(15,29,49,.97),rgba(9,19,35,.98));
+  box-shadow:0 12px 34px rgba(0,0,0,.10);
+}
+.app-shell .hero-card{padding:23px;background:radial-gradient(ellipse at 100% 0%,rgba(0,212,255,.12),transparent 44%),linear-gradient(140deg,#112442,#0b172a);border-color:#28486b}
+.app-shell .card-top{letter-spacing:1.5px;font-weight:700}
+.app-shell .hero-balance{font-size:clamp(25px,2.3vw,34px);letter-spacing:-1px;margin:16px 0}
+.app-shell .balance-meta{gap:10px;flex-wrap:wrap;line-height:1.6}
+.app-shell .card-actions{gap:8px}
+.app-shell .card-actions button{padding:10px 8px;border-radius:9px;background:#112743;border-color:#284565}
+.app-shell .card-actions button:hover{background:#153657;border-color:#39749a}
+.app-shell .stat-card{padding:21px;min-height:166px;overflow:hidden}
+.app-shell .stat-card>span{font-size:10px;letter-spacing:.2px}
+.app-shell .stat-card strong{font-size:clamp(16px,1.55vw,22px);line-height:1.4;overflow-wrap:anywhere}
+.app-shell .stat-card b{font-size:10px}
+.app-shell .stat-source{font-size:9px;color:#5f7591;line-height:1.5;margin-top:10px}
+.app-shell .live-wallet-panel{margin:14px 0;padding:22px}
+.app-shell .live-wallet-main h2{font-size:17px;margin:8px 0}
+.app-shell .live-wallet-main p,.app-shell .live-wallet-empty{font-size:11px;line-height:1.7;color:#8fa2bc}
+.app-shell .network-sync-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:17px}
+.app-shell .network-sync-card{min-width:0;border:1px solid #1e334e;border-radius:11px;background:#0a1628;padding:13px}
+.app-shell .network-sync-card>div{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.app-shell .network-sync-card>div b{font-size:10px}
+.app-shell .network-sync-card>div small{font-size:8px;color:#7085a1}
+.app-shell .network-sync-card>span{display:block;font-size:9px;color:#7085a1;line-height:1.6;margin-top:5px;overflow-wrap:anywhere}
+.app-shell .network-sync-card em{display:block;color:#f6c879;font-size:9px;line-height:1.5;margin-top:7px}
+.app-shell .live-sync-meta{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:15px;color:#6f829d;font-size:9px}
+.app-shell .dashboard-grid{grid-template-columns:minmax(0,1.6fr) minmax(290px,1fr);gap:14px}
+.app-shell .panel{padding:21px}
+.app-shell .chart-panel,.app-shell .ai-panel{min-height:320px}
+.app-shell .panel-head{gap:12px;align-items:flex-start;margin-bottom:18px}
+.app-shell .panel-head h2{font-size:13px;letter-spacing:-.1px}
+.app-shell .panel-head span{line-height:1.6}
+.app-shell .ranges{flex-shrink:0}
+.app-shell .ranges button{padding:7px 9px;border-radius:7px}
+.app-shell .chart{min-height:190px}
+.app-shell .ai-panel{background:radial-gradient(ellipse at 100% 0%,rgba(0,212,255,.12),transparent 45%),linear-gradient(145deg,#0b1b2d,#0a1425);border-color:#24415e}
+.app-shell .ai-message{border-radius:11px;line-height:1.8;padding:16px;margin:20px 0}
+.app-shell .ai-actions{flex-wrap:wrap}
+.app-shell .ai-actions button{border-radius:8px;padding:9px 11px}
+.app-shell .ai-input{border-radius:9px;line-height:1.6}
+.app-shell .assets-panel,.app-shell .activity-panel{min-height:280px}
+.app-shell .coin-toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.app-shell .coin-toolbar input{flex:1;min-width:160px;background:#081426;border:1px solid #243750;color:#edf4ff;border-radius:9px;padding:11px 12px;font:inherit;font-size:11px}
+.app-shell .coin-toolbar input:focus{outline:1px solid var(--ww-cyan);border-color:var(--ww-cyan)}
+.app-shell .coin-tabs{display:flex;gap:5px}
+.app-shell .coin-tabs button{padding:8px 11px;border-radius:8px;background:#101f34;color:#8fa3bf;font-size:10px}
+.app-shell .coin-tabs button.active{background:#12334a;color:#5be5ff}
+.app-shell .asset-row,.app-shell .activity-row{padding:13px 0;border-color:#1a2b43}
+.app-shell .asset-row:hover,.app-shell .activity-row:hover{background:rgba(20,43,68,.45)}
+.app-shell .quick-grid{gap:12px;margin-top:14px}
+.app-shell .quick-grid button{padding:15px;border-radius:12px;background:linear-gradient(145deg,#0e1d32,#0a1526);border-color:#1e304a;transition:transform .16s ease,border-color .16s ease}
+.app-shell .quick-grid button:hover{transform:translateY(-2px);border-color:#326184}
+.app-shell .quick-grid button>span{width:34px;height:34px;display:grid;place-items:center;background:#112b43;border-radius:10px}
+.app-shell .empty-state,.app-shell .live-chart-empty,.app-shell .live-chart-note{font-size:11px;line-height:1.8;color:#7f93ae;padding:18px 0}
+.app-shell .coin-detail-page .coin-detail-grid{gap:14px}
+.app-shell .coin-detail-page .coin-detail-card,.app-shell .coin-detail-page .coin-stats{border-radius:15px}
+.app-shell .coin-detail-note{font-size:10px;color:#7186a2;line-height:1.7;margin-top:14px}
+@media(max-width:1250px){
+  .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .app-shell .hero-card{grid-column:span 2}
+  .app-shell .network-sync-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .app-shell .dashboard-grid{grid-template-columns:minmax(0,1.2fr) minmax(270px,1fr)}
+}
+@media(max-width:900px){
+  .app-shell .sidebar{width:218px}
+  .app-shell .main{margin-left:218px;width:calc(100% - 218px)}
+  .app-shell .dashboard-grid{grid-template-columns:minmax(0,1fr)}
+  .app-shell .topbar:before{content:"WALLET"}
+  .app-shell .content{padding:25px 20px 40px}
+}
+@media(max-width:760px){
+  .app-shell .sidebar{display:none}
+  .app-shell .main{margin-left:0;width:100%}
+  .app-shell .topbar{height:62px;padding:0 14px;justify-content:space-between}
+  .app-shell .topbar:before{display:none}
+  .app-shell .mobile-brand{display:flex;align-items:center;gap:8px;margin-right:auto;font-size:10px;letter-spacing:.6px}
+  .app-shell .mobile-brand .brand-mark{width:31px;height:31px}
+  .app-shell .top-actions{gap:5px}
+  .app-shell .top-actions button{min-width:34px;height:34px;padding:0 8px}
+  .app-shell .top-actions button:first-child{font-size:0;min-width:34px;padding:0}
+  .app-shell .top-actions button:first-child span{display:none}
+  .app-shell .top-actions .logout-button span{display:none}
+  .app-shell .content{padding:22px 14px 34px}
+  .app-shell .page-heading{align-items:flex-start;flex-direction:column;gap:14px;margin-bottom:18px}
+  .app-shell .page-heading h1{font-size:25px}
+  .app-shell .page-actions{width:100%}
+  .app-shell .page-actions>*{max-width:100%}
+  .app-shell .balance-grid{grid-template-columns:minmax(0,1fr);gap:10px}
+  .app-shell .hero-card{grid-column:auto}
+  .app-shell .hero-card,.app-shell .stat-card,.app-shell .panel{border-radius:13px}
+  .app-shell .hero-card{padding:19px}
+  .app-shell .hero-balance{font-size:28px}
+  .app-shell .stat-card{min-height:130px;padding:17px}
+  .app-shell .live-wallet-panel,.app-shell .panel{padding:16px}
+  .app-shell .network-sync-grid{grid-template-columns:minmax(0,1fr);gap:8px}
+  .app-shell .network-sync-card{padding:12px}
+  .app-shell .dashboard-grid{gap:10px}
+  .app-shell .panel-head{flex-wrap:wrap}
+  .app-shell .panel-head>div:first-child{min-width:0}
+  .app-shell .quick-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .app-shell .quick-grid button{padding:11px;gap:8px}
+  .app-shell .quick-grid button>span{width:30px;height:30px;flex:0 0 30px}
+  .app-shell .quick-grid b{font-size:9px}
+  .app-shell .quick-grid small{font-size:8px;line-height:1.4}
+  .app-shell .coin-toolbar{align-items:stretch}
+  .app-shell .coin-toolbar input{width:100%;flex-basis:100%}
+  .app-shell .live-sync-meta{flex-direction:column}
+  .app-shell .chart-panel,.app-shell .ai-panel{min-height:unset}
+}
+@media(max-width:380px){
+  .app-shell .top-actions button:nth-child(2),.app-shell .top-actions button:nth-child(3){display:none}
+  .app-shell .quick-grid{grid-template-columns:minmax(0,1fr)}
+  .app-shell .card-actions{gap:5px}
+  .app-shell .card-actions button{font-size:9px}
+}
