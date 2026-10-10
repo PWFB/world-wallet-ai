@@ -173,6 +173,11 @@ class ApiKeyRevokeRequest(BaseModel):
     key_id: str = Field(min_length=4, max_length=100)
 
 
+class ApiKeyImportRequest(BaseModel):
+    name: str = Field(default="Imported API key", min_length=1, max_length=80)
+    api_key: str = Field(min_length=30, max_length=300)
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
@@ -2043,6 +2048,29 @@ def create_api_key(request: ApiKeyCreateRequest, user: dict = Depends(current_us
     return {"id": key_id, "name": request.name.strip(), "api_key": raw_key,
             "prefix": raw_key[:13], "created_at": datetime.now(timezone.utc).isoformat(),
             "warning": "Copy this key now. It cannot be displayed again."}
+
+
+@app.post("/api/v1/api-keys/import")
+def import_api_key(request: ApiKeyImportRequest, user: dict = Depends(current_user)):
+    """Import an existing World Wallet AI API key by storing only its hash."""
+    raw_key = request.api_key.strip()
+    if not raw_key.startswith("wwai_") or len(raw_key) < 40:
+        raise HTTPException(status_code=400, detail="Only an existing World Wallet AI key beginning with wwai_ can be imported.")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="API key storage requires the configured PostgreSQL database")
+    with db() as conn:
+        existing = conn.execute("SELECT id,owner_id,revoked_at FROM api_keys WHERE key_hash=%s", (sha(raw_key),)).fetchone()
+        if existing:
+            if existing[1] != user["id"]:
+                raise HTTPException(status_code=409, detail="This API key is already registered to another account.")
+            if existing[2]:
+                raise HTTPException(status_code=409, detail="This API key was revoked and cannot be re-imported.")
+            return {"id": existing[0], "imported": False, "message": "This API key is already in your account."}
+        key_id = "key_" + secrets.token_hex(12)
+        conn.execute("INSERT INTO api_keys(id,owner_id,name,key_hash,key_prefix) VALUES(%s,%s,%s,%s,%s)",
+                     (key_id, user["id"], request.name.strip(), sha(raw_key), raw_key[:13]))
+        conn.commit()
+    return {"id": key_id, "imported": True, "message": "Existing API key imported. Its value is not stored in readable form."}
 
 
 @app.post("/api/v1/api-keys/revoke")
