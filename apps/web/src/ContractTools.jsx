@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { BrowserProvider, ContractFactory } from "ethers";
+import LocalVaultDeploy from "./LocalVaultDeploy.jsx";
 
 const DEPLOYED_CONTRACTS_KEY = "world_wallet_deployed_contracts_v1";
 const readDeployedContracts = () => { try { const v = JSON.parse(localStorage.getItem(DEPLOYED_CONTRACTS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
@@ -296,7 +297,8 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
       <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy contract source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button></div>
       <p className="ct-note">The same generated source can be deployed independently on both networks. Each deployment creates a separate contract address and separate token balances.</p>
-      <div className="ct-actions"><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("sepolia")}>{deployBusy ? "Deploying…" : "Deploy to Sepolia"}</button><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("ethereum")}>{deployBusy ? "Deploying…" : "Deploy to Ethereum Mainnet"}</button></div>
+      <div className="ct-actions"><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("sepolia")}>{deployBusy ? "Deploying…" : "Deploy with external wallet to Sepolia"}</button><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("ethereum")}>{deployBusy ? "Deploying…" : "Deploy to Ethereum Mainnet"}</button></div>
+      <LocalVaultDeploy source={source} tokenName={tokenName} tokenSymbol={tokenSymbol} supply={supply} decimals={decimals} onDeployed={record => { setDeployedContracts(readDeployedContracts()); setDeployedAddress(record.address); setLoadAddress(record.address); setGeneratorMessage("Contract deployed and confirmed with your World Wallet AI local wallet."); }} />
       {deployedAddress && <div className="ct-status good"><strong>Deployment confirmed</strong><br/>Contract address: <code>{deployedAddress}</code><br/><a href={selectedNetwork.explorer + "/address/" + deployedAddress} target="_blank" rel="noreferrer">View deployed contract ↗</a></div>}
       {deployedContracts.length > 0 && <div className="ct-status"><strong>Contracts created in this browser</strong>{deployedContracts.slice(0,5).map((item,index)=><div key={item.address+item.network+index}>{item.name} ({item.symbol}) · {item.network} · <code>{item.address}</code> · <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer</a></div>)}</div>}
       <label>Deployed token contract address (paste after deployment)<input value={loadAddress} onChange={e => setLoadAddress(e.target.value.trim())} spellCheck={false} placeholder="0x…"/></label>
