@@ -178,7 +178,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
       <button className={"ct-tab " + (active === "Verify Contract" ? "active" : "")} onClick={() => setActive("Verify Contract")}>Verify Contract</button>
     </div>
 
-    {active === "Contract Generator" ? <div className="ct-layout">
+    {active === "Contract Generator" ? <><div className="ct-layout">
       <article className="ct-panel">
         <h2>ERC-20 token generator</h2>
         <p>Create a fixed-initial-supply Solidity starter contract. It does not deploy anything or create a token address until you compile and deploy it on-chain.</p>
@@ -208,7 +208,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
       <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Paste the deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallets"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into BALMZ Token →</button></div>
       <div className="ct-note">Mainnet deployment costs real ETH. Sepolia uses test ETH. Never enter a private key or seed phrase into this generator. Verify the contract address and selected network before loading it.</div>
       {generatorMessage && <div className="ct-status">{generatorMessage}</div>}
-    </article>}
+    </article>}</>
     : <div className="ct-layout">
       <article className="ct-panel">
         <h2>Inspect deployed contract</h2>
