@@ -14,6 +14,12 @@ export const authClient = createAuthClient(authUrl, {
   }),
 });
 
+function isJwt(value) {
+  // A Neon API key or opaque session identifier is not a bearer JWT.
+  // Only forward the compact three-part JWT format to the wallet API.
+  return typeof value === "string" && value.split(".").length === 3 && value.split(".").every(Boolean);
+}
+
 export async function getNeonAccessToken() {
   if (!authUrl) return "";
 
@@ -22,7 +28,7 @@ export async function getNeonAccessToken() {
     const token = typeof result === "string"
       ? result
       : result?.token || result?.data?.token || "";
-    if (typeof token === "string" && token) return token;
+    if (isJwt(token)) return token;
   } catch {
     // Fall through to the direct endpoint while the session is being restored.
   }
@@ -36,7 +42,8 @@ export async function getNeonAccessToken() {
     });
     if (response.ok) {
       const data = await response.json();
-      if (typeof data?.token === "string" && data.token) return data.token;
+      const token = data?.token || data?.data?.token || "";
+      if (isJwt(token)) return token;
     }
   } catch {
     // The caller retries while Neon Auth finishes restoring the session.
