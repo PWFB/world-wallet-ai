@@ -572,6 +572,32 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     </section>;
   }
 
+  if (active === "API Keys") {
+    const checkProviderKey = async () => {
+      setApiKeyBalanceBusy(true); setApiKeyBalanceMessage("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/api-request/key-balance", { headers: { Authorization: "Bearer " + accessToken } });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "CoinGecko key status request failed.");
+        setApiKeyBalance(data);
+        setApiKeyBalanceMessage("CoinGecko key status loaded from the backend.");
+      } catch (error) { setApiKeyBalance(null); setApiKeyBalanceMessage(error.message || "CoinGecko key status is unavailable."); }
+      finally { setApiKeyBalanceBusy(false); }
+    };
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">PROVIDER CONFIGURATION</p><h1>CoinGecko API</h1><p className="muted">Market-price integration status and secure API-key setup.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <article className="panel action-panel"><h2>API connection status</h2><p>World Wallet AI fetches market prices through its backend. The API secret must stay in Render's backend environment; it must not be stored in browser localStorage or bundled into frontend code.</p>
+        <div className="security-note">Required backend variable: <code>COINGECKO_API_KEY</code>. For a Demo key use <code>https://api.coingecko.com/api/v3</code>; for a Pro key set <code>COINGECKO_API_BASE_URL=https://pro-api.coingecko.com/api/v3</code>. The backend sends the key in the provider request header.</div>
+        <div className="feature-grid"><div className="stat-card"><span>Market data endpoint</span><strong>/api/v1/prices/market</strong></div><div className="stat-card"><span>Refresh interval</span><strong>60 seconds</strong></div><div className="stat-card"><span>Secret storage</span><strong>Render backend only</strong></div></div>
+        <button className="primary feature-submit" onClick={checkProviderKey} disabled={apiKeyBalanceBusy}>{apiKeyBalanceBusy ? "Checking provider…" : "Check configured CoinGecko key →"}</button>
+        {apiKeyBalanceMessage && <div className={apiKeyBalance ? "feature-success" : "feature-error"}>{apiKeyBalanceMessage}</div>}
+        {apiKeyBalance && <div className="feature-grid"><div className="stat-card"><span>Plan</span><strong>{apiKeyBalance.plan || "Not reported"}</strong></div><div className="stat-card"><span>Monthly calls used</span><strong>{apiKeyBalance.current_total_monthly_calls == null ? "Unavailable" : Number(apiKeyBalance.current_total_monthly_calls).toLocaleString()}</strong></div><div className="stat-card"><span>Monthly calls remaining</span><strong>{apiKeyBalance.current_remaining_monthly_calls == null ? "Unavailable" : Number(apiKeyBalance.current_remaining_monthly_calls).toLocaleString()}</strong></div><div className="stat-card"><span>Rate limit</span><strong>{apiKeyBalance.rate_limit_request_per_minute == null ? "Unavailable" : Number(apiKeyBalance.rate_limit_request_per_minute).toLocaleString() + " req/min"}</strong></div></div>}
+        <div className="security-note">To configure or replace the key: Render Dashboard → select the World Wallet AI backend service → Environment → add/update <code>COINGECKO_API_KEY</code> (and the base URL if Pro) → save and redeploy. Do not paste your secret into this page or send it in chat.</div>
+        <div className="ct-links"><a href="https://www.coingecko.com/en/api" target="_blank" rel="noreferrer">Get a CoinGecko API key ↗</a><a href="https://docs.coingecko.com/" target="_blank" rel="noreferrer">CoinGecko API documentation ↗</a></div>
+      </article>
+    </section>;
+  }
+
   if (active === "API Request") {
     const checkApiKeyBalance = async () => {
       setApiKeyBalanceBusy(true);
