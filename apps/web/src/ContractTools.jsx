@@ -61,6 +61,8 @@ export default function ContractTools({ active, setActive }) {
   const [address, setAddress] = useState("");
   const [checkBusy, setCheckBusy] = useState(false);
   const [checkResult, setCheckResult] = useState(null);
+  const [showCreateCard, setShowCreateCard] = useState(false);
+  const [loadAddress, setLoadAddress] = useState("");
 
   const source = useMemo(() => {
     const name = cleanSolidityString(tokenName.trim() || "My Token");
@@ -192,8 +194,21 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
         <p>OpenZeppelin ERC-20 implementation • Solidity 0.8.24 • fixed initial supply</p>
         <pre className="ct-code"><code>{source}</code></pre>
         <div className="ct-links"><a href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Open Remix IDE ↗</a><a href="https://docs.openzeppelin.com/contracts/5.x/erc20" target="_blank" rel="noreferrer">OpenZeppelin ERC-20 docs ↗</a></div>
+        <div className="ct-actions"><button className="ct-btn primary" onClick={() => { const msg = generateSource(); setShowCreateCard(true); }}>Create Contract →</button></div>
       </article>
-    </div> : <div className="ct-layout">
+    </div>
+    {showCreateCard && active === "Contract Generator" && <article className="ct-panel">
+      <h2>Create Contract · Deployment Options</h2>
+      <p>Source is ready for compilation. Select the target network, then compile and deploy using a wallet-connected environment. This card does not claim deployment until a real transaction confirms.</p>
+      <label>Target network<select value={network} onChange={e => changeNetwork(e.target.value)}><option value="sepolia">Ethereum Sepolia — testnet (recommended first)</option><option value="ethereum">Ethereum Mainnet — real funds / gas fees</option></select></label>
+      <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
+      <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy Solidity source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button><a className="ct-btn primary" href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Compile &amp; deploy in Remix ↗</a></div>
+      <label>Deployed token contract address (paste after deployment)<input value={loadAddress} onChange={e => setLoadAddress(e.target.value.trim())} spellCheck={false} placeholder="0x…"/></label>
+      <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Paste the deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallet"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into BALMZ Token →</button></div>
+      <div className="ct-note">Mainnet deployment costs real ETH. Sepolia uses test ETH. Never enter a private key or seed phrase into this generator. Verify the contract address and selected network before loading it.</div>
+      {generatorMessage && <div className="ct-status">{generatorMessage}</div>}
+    </article>}
+    : <div className="ct-layout">
       <article className="ct-panel">
         <h2>Inspect deployed contract</h2>
         <p>Check the selected RPC chain and whether bytecode exists at the address. Source-code verification must be completed through the explorer.</p>
