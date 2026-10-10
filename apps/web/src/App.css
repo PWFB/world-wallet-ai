@@ -833,3 +833,56 @@
 @media(max-width:1100px){.wallet-functions-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:760px){.wallet-functions-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wallet-function-card{min-height:64px;padding:9px 8px;gap:8px}.wallet-function-icon{flex-basis:29px;width:29px;height:29px}.wallet-function-copy b{font-size:9px}.wallet-function-copy small{font-size:8px}.topbar{padding:0 10px}.top-actions{gap:5px}.top-actions button{min-width:30px}.global-back-button span{display:none}}
 @media(max-width:360px){.wallet-functions-grid{grid-template-columns:1fr}.wallet-function-card{min-height:58px}}
+
+
+/* Account profile and API key manager */
+.ww-profile-page{max-width:1250px}
+.ww-profile-hero{display:flex;align-items:center;gap:18px;padding:24px;margin-bottom:14px;background:radial-gradient(circle at 8% 0,rgba(0,212,255,.12),transparent 40%),linear-gradient(135deg,#101f39,#0a1427)}
+.ww-profile-avatar{width:64px;height:64px;flex:0 0 64px;display:grid;place-items:center;border-radius:20px;background:linear-gradient(145deg,#00c4e8,#125a9c);color:#fff;font-size:25px;font-weight:800;box-shadow:0 8px 30px rgba(0,190,232,.2)}
+.ww-profile-identity{min-width:0;flex:1}
+.ww-profile-identity h2{font-size:21px;margin:0 0 5px}
+.ww-profile-identity p:not(.eyebrow){font-size:12px;color:#a0b0c8;margin:0 0 8px;overflow-wrap:anywhere}
+.ww-profile-identity small{color:#71849f;font-size:10px;overflow-wrap:anywhere}
+.ww-profile-status{white-space:nowrap;color:#4ade80;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:99px;padding:7px 10px;font-size:10px}
+.ww-profile-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}
+.ww-profile-provider{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:13px 0;border-bottom:1px solid #1a2a42}
+.ww-profile-provider b{font-size:12px;color:#d8e2f1}
+.ww-profile-provider span{font-size:10px;color:#71849f;text-align:right}
+.ww-profile-wallet{display:grid;gap:6px;padding:14px;margin:12px 0;border:1px solid #1c304c;border-radius:10px;background:#091426;min-width:0}
+.ww-profile-wallet>b{font-size:12px}
+.ww-profile-wallet small{font-size:9px;color:#6f829d;margin-top:4px}
+.ww-profile-wallet code{font-size:10px;overflow-wrap:anywhere;color:#a8dff0}
+.ww-profile-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ww-profile-logout{width:100%;margin-top:14px;padding:13px 16px;border:1px solid rgba(248,113,113,.35);border-radius:9px;background:rgba(127,29,29,.15);color:#fca5a5;font-weight:700;font-size:11px;text-align:center}
+.ww-profile-logout:hover{background:rgba(127,29,29,.28)}
+.ww-api-key-manager{margin-bottom:14px}
+.ww-api-key-create{display:flex;align-items:end;gap:12px;margin:16px 0}
+.ww-api-key-create label{display:grid;gap:7px;flex:1;color:#9aabc2;font-size:10px}
+.ww-api-key-create input{width:100%;padding:11px 12px;background:#071121;border:1px solid #243955;border-radius:8px;color:#e5edf7;outline:none}
+.ww-api-key-create input:focus{border-color:#00bde8}
+.ww-api-key-once{display:grid;gap:9px;padding:14px;border:1px solid rgba(34,197,94,.32);background:rgba(34,197,94,.055);border-radius:10px;margin:12px 0}
+.ww-api-key-once b{font-size:12px;color:#86efac}
+.ww-api-key-once code{padding:10px;background:#050d19;border-radius:7px;overflow-wrap:anywhere;color:#bceeff;font-size:11px;user-select:all}
+.ww-api-key-once small{font-size:9px;line-height:1.6;color:#8294ad}
+.ww-api-key-list{display:grid;gap:8px;margin-top:14px}
+.ww-api-key-row{display:flex;align-items:center;gap:12px;padding:12px;border:1px solid #1b2b43;border-radius:9px;background:#091426;min-width:0}
+.ww-api-key-row>div{display:grid;gap:5px;flex:1;min-width:0}
+.ww-api-key-row b{font-size:11px;overflow-wrap:anywhere}
+.ww-api-key-row small{font-size:9px;color:#71849f;overflow-wrap:anywhere}
+.ww-key-active,.ww-key-revoked{font-size:9px;padding:5px 8px;border-radius:99px;white-space:nowrap}
+.ww-key-active{color:#4ade80;background:rgba(34,197,94,.08)}
+.ww-key-revoked{color:#fca5a5;background:rgba(248,113,113,.08)}
+.ww-social-twitter{border-color:rgba(255,255,255,.22)!important}
+.ww-social-telegram{border-color:rgba(56,189,248,.35)!important}
+@media(max-width:760px){
+ .ww-profile-hero{align-items:flex-start;flex-wrap:wrap;padding:17px}
+ .ww-profile-avatar{width:50px;height:50px;flex-basis:50px;border-radius:15px}
+ .ww-profile-identity h2{font-size:17px}
+ .ww-profile-status{margin-left:68px}
+ .ww-profile-grid{grid-template-columns:1fr}
+ .ww-profile-provider{align-items:flex-start;flex-direction:column;gap:5px}
+ .ww-profile-provider span{text-align:left}
+ .ww-api-key-create{align-items:stretch;flex-direction:column}
+ .ww-api-key-row{flex-wrap:wrap}
+ .ww-api-key-row>div{flex-basis:calc(100% - 20px)}
+}
