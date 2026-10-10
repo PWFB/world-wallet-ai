@@ -52,6 +52,13 @@ const styles = `
 .contract-tools .ct-links{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
 .contract-tools a{color:#00d4ff;font-size:11px;text-decoration:none}.contract-tools a:hover{text-decoration:underline}
 .contract-tools .ct-note{font-size:10px;color:#71839d;border-left:2px solid #d4af37;padding:9px 11px;background:#0b1424;border-radius:0 6px 6px 0}
+.contract-tools .ct-termux{margin-top:14px;border:1px solid #1b3451;background:radial-gradient(circle at 0 0,rgba(0,189,232,.08),transparent 45%),linear-gradient(145deg,#0b182c,#081222);border-radius:12px;padding:18px}
+.contract-tools .ct-termux h2{font-size:14px;margin:0 0 8px}
+.contract-tools .ct-termux-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}
+.contract-tools .ct-termux pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#040a13;border:1px solid #1b2b41;border-radius:8px;padding:12px;color:#b8d7ef;font:10px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+.contract-tools .ct-termux textarea{width:100%;min-height:100px;background:#050d19;border:1px solid #263b59;border-radius:8px;color:#d9e7f8;padding:11px;font:10px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical}
+.contract-tools .ct-termux .ct-status{margin:10px 0}
+@media(max-width:800px){.contract-tools .ct-termux{padding:14px}.contract-tools .ct-termux-grid{grid-template-columns:1fr}}
 @media(max-width:800px){.contract-tools .ct-layout{grid-template-columns:1fr}.contract-tools .ct-panel{padding:14px}}
 `;
 
@@ -71,6 +78,8 @@ export default function ContractTools({ active, setActive }) {
   const [deployBusy, setDeployBusy] = useState(false);
   const [deployedContracts, setDeployedContracts] = useState(() => readDeployedContracts());
   const [deployedAddress, setDeployedAddress] = useState("");
+  const [termuxManifestJson, setTermuxManifestJson] = useState("");
+  const [termuxImportMessage, setTermuxImportMessage] = useState("");
   useEffect(() => { setDeployedContracts(readDeployedContracts()); }, []);
 
   const source = useMemo(() => {
@@ -218,6 +227,44 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
     setGeneratorMessage("Solidity source download prepared. Compile and test before deploying.");
   }
 
+  function importTermuxManifest() {
+    setTermuxImportMessage("");
+    try {
+      const manifest = JSON.parse(termuxManifestJson);
+      const importedAddress = String(manifest.address || "").trim();
+      const importedNetwork = String(manifest.network || "").toLowerCase();
+      if (!/^0x[a-fA-F0-9]{40}$/.test(importedAddress)) throw new Error("The JSON must contain a valid EVM contract address.");
+      if (!["sepolia", "ethereum", "bnb"].includes(importedNetwork)) throw new Error("Network must be sepolia, ethereum, or bnb.");
+      const expectedChainId = importedNetwork === "sepolia" ? "11155111" : importedNetwork === "ethereum" ? "1" : "56";
+      if (manifest.chainId && String(manifest.chainId) !== expectedChainId) throw new Error("Manifest chain ID does not match its selected network.");
+      const config = NETWORKS[importedNetwork];
+      const record = {
+        name: String(manifest.name || manifest.symbol || "Imported contract").slice(0, 80),
+        symbol: String(manifest.symbol || "").slice(0, 20),
+        address: importedAddress,
+        network: importedNetwork,
+        chainId: expectedChainId,
+        txHash: /^0x[a-fA-F0-9]{64}$/.test(String(manifest.txHash || "")) ? manifest.txHash : "",
+        deployer: /^0x[a-fA-F0-9]{40}$/.test(String(manifest.deployer || "")) ? manifest.deployer : "",
+        explorerUrl: config.explorer + "/address/" + importedAddress,
+        deployedAt: manifest.deployedAt || new Date().toISOString(),
+        status: manifest.status === "confirmed" ? "confirmed" : "imported"
+      };
+      const next = [record, ...readDeployedContracts().filter(item => !(String(item.address || "").toLowerCase() === importedAddress.toLowerCase() && item.network === importedNetwork))];
+      localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
+      localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:record.address,network:record.network,symbol:record.symbol,name:record.name,txHash:record.txHash,deployedAt:record.deployedAt}));
+      setDeployedContracts(next);
+      setDeployedAddress(importedAddress);
+      setLoadAddress(importedAddress);
+      setNetwork(importedNetwork);
+      setRpcUrl(config.rpc);
+      setTermuxImportMessage("Contract reference imported. Confirm its transaction on the explorer before using it.");
+      try { window.dispatchEvent(new Event("world-wallet-contracts-updated")); } catch {}
+    } catch (error) {
+      setTermuxImportMessage(error?.message || "Could not import this deployment JSON.");
+    }
+  }
+
   async function inspectContract() {
     setCheckBusy(true);
     setCheckResult(null);
@@ -287,10 +334,20 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
         <h2>Solidity preview</h2>
         <p>OpenZeppelin ERC-20 implementation • Solidity 0.8.24 • fixed initial supply</p>
         <pre className="ct-code"><code>{source}</code></pre>
-        <div className="ct-links"><a href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Open Remix IDE ↗</a><a href="https://docs.openzeppelin.com/contracts/5.x/erc20" target="_blank" rel="noreferrer">OpenZeppelin ERC-20 docs ↗</a></div>
+        <div className="ct-links"><a href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Open Remix IDE ↗</a><a href="https://docs.openzeppelin.com/contracts/5.x/erc20" target="_blank" rel="noreferrer">OpenZeppelin ERC-20 docs ↗</a><button className="ct-btn" type="button" onClick={copySource}>Copy source for Remix</button></div><p className="ct-note">Remix opens in a separate tab. Use Copy source, create a new .sol file in Remix, paste, compile with a compatible Solidity 0.8.x compiler, and deploy with an injected wallet. The app does not send your private key to Remix.</p>
         <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (generateSource()) setShowCreateCard(true); }}>Create Contract →</button></div>
       </article>
     </div>
+    <article className="ct-termux">
+      <h2>Deploy from Android Termux ↗</h2>
+      <p>Use the same generated Solidity file with the local Termux deploy helper. The helper compiles locally, checks the RPC chain ID, deploys from your own wallet, and writes a JSON manifest. Your private key never enters this app.</p>
+      <div className="ct-actions"><a className="ct-btn primary" href="https://github.com/PWFB/world-wallet-ai/blob/main/docs/TERMUX_CONTRACT_DEPLOY.md" target="_blank" rel="noreferrer">Open Termux setup guide ↗</a><a className="ct-btn" href="https://raw.githubusercontent.com/PWFB/world-wallet-ai/main/tools/termux-deploy.mjs" target="_blank" rel="noreferrer">Get deploy helper ↗</a><button className="ct-btn" type="button" onClick={downloadSource}>Download current .sol</button></div>
+      <div className="ct-termux-grid">
+        <div><p><strong>Quick start (Sepolia testnet)</strong></p><pre>{'pkg update -y && pkg install -y nodejs-lts git\nmkdir -p ~/world-wallet-contracts && cd ~/world-wallet-contracts\nnpm init -y && npm install ethers@^6 solc@^0.8\ncurl -fsSL https://raw.githubusercontent.com/PWFB/world-wallet-ai/main/tools/termux-deploy.mjs -o termux-deploy.mjs\n# Copy your downloaded .sol file into this folder\nexport NETWORK_NAME=sepolia\nexport RPC_URL=https://ethereum-sepolia-rpc.publicnode.com\nread -rsp "Private key (hidden): " PRIVATE_KEY; echo; export PRIVATE_KEY\nnode termux-deploy.mjs MTK.sol MTK\nunset PRIVATE_KEY'}</pre><p className="ct-note">Replace MTK.sol and MTK with your exact filename and Solidity contract name. Use a test wallet first and fund it with Sepolia test ETH.</p></div>
+        <div><p><strong>Import confirmed deployment into this app</strong></p><p>After Termux creates world-wallet-deployment.json, open that JSON file, copy its contents, and paste them below.</p><textarea value={termuxManifestJson} onChange={e=>setTermuxManifestJson(e.target.value)} placeholder='Paste world-wallet-deployment.json contents here…' spellCheck={false}/><div className="ct-actions"><button className="ct-btn primary" type="button" onClick={importTermuxManifest} disabled={!termuxManifestJson.trim()}>Import deployment into app</button><button className="ct-btn" type="button" onClick={()=>{setTermuxManifestJson("");setTermuxImportMessage("");}}>Clear</button></div>{termuxImportMessage&&<div className={"ct-status "+(termuxImportMessage.startsWith("Contract reference imported")?"good":"bad")} role="status">{termuxImportMessage}</div>}</div>
+      </div>
+      <div className="ct-note">Importing only records a deployment reference in this browser. It does not redeploy, verify source code, or prove the contract is safe. Check the address and transaction on the correct block explorer.</div>
+    </article>
     {showCreateCard && active === "Contract Generator" && <article className="ct-panel">
       <h2>Create Contract · Deployment Options</h2>
       <p>Compile in the browser, then deploy from your connected wallet. A contract is recorded only after the selected blockchain confirms the transaction.</p>
