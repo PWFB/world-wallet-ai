@@ -447,8 +447,8 @@ function App() {
     setAuthMessage("");
     setAuthBusy(true);
     try {
-      const phone = registerPhone.trim().replace(/[\\s()-]/g, "");
-      if (!/^\\+[1-9]\\d{7,14}$/.test(phone)) throw new Error("Enter a valid phone number with country code, for example +2348012345678.");
+      const phone = registerPhone.trim().replace(/[\s()-]/g, "");
+      if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error("Enter a valid phone number with country code, for example +2348012345678.");
       const response = await fetch(API_BASE_URL + "/api/v1/auth/phone/send-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -479,7 +479,7 @@ function App() {
       if (!/^\+[1-9]\d{7,14}$/.test(phone)) throw new Error("Use international format, for example +2348012345678.");
       if (!email) throw new Error("Enter your email address.");
       if (!registerPhoneOtpSent) throw new Error("Request and enter the SMS verification code before creating your account.");
-      if (!/^\\d{4,10}$/.test(registerPhoneOtp.trim())) throw new Error("Enter the SMS verification code.");
+      if (!/^\d{4,10}$/.test(registerPhoneOtp.trim())) throw new Error("Enter the SMS verification code.");
       if (loginPassword.length < 8) throw new Error("Use a password with at least 8 characters.");
       const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/register", {
         method: "POST",
