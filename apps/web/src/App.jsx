@@ -61,6 +61,8 @@ function App() {
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
   const [tokenRegistry, setTokenRegistry] = useState([]);
+  const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
     const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
     const liveRecord = records.find(t => t.wallet_network_connected);
@@ -111,6 +113,18 @@ function App() {
   const [performance, setPerformance] = useState({ points: [] });
   const sessionState = authClient.useSession();
   const neonSessionUser = sessionState.data?.user || null;
+
+  useEffect(() => {
+    const refreshLocalWalletData = () => {
+      try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalWalletEntries(Array.isArray(v) ? v : []); } catch { setLocalWalletEntries([]); }
+      try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setLocalContracts(Array.isArray(v) ? v : []); } catch { setLocalContracts([]); }
+    };
+    window.addEventListener("world-wallet-local-vault-updated", refreshLocalWalletData);
+    window.addEventListener("world-wallet-contracts-updated", refreshLocalWalletData);
+    window.addEventListener("storage", refreshLocalWalletData);
+    refreshLocalWalletData();
+    return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocalWalletData); window.removeEventListener("world-wallet-contracts-updated", refreshLocalWalletData); window.removeEventListener("storage", refreshLocalWalletData); };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -636,7 +650,7 @@ function App() {
   }
 
   const nav = useMemo(() => ({
-    Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions"],
+    Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
     Tools: ["Browser", "Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
     Support: ["Support Center", "Help & Docs"],
@@ -764,7 +778,7 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="secure"><span>✓</span><div><b>{user ? "Authenticated wallet" : "Wallet session"}</b><small>{user?.email || "Demo authentication"}</small></div></div>
-          <button className="profile" onClick={handleLogout}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.wallet_id || "Authenticated wallet"}</small></div><span>↪</span></button>
+          <button className="profile" onClick={() => setActive("Profile")}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{localWalletEntries[0]?.walletId || user?.wallet_id || "View wallet profile"}</small></div><span>›</span></button>
         </div>
       </aside>
 
@@ -773,7 +787,7 @@ function App() {
           <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
-            <button type="button" onClick={() => setActive("Browser")}>⌕ <span>Browser</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title={user?.email || "Wallet account"}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
+            <button type="button" onClick={() => setActive("Browser")}>⌕ <span>Browser</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
 
@@ -992,9 +1006,22 @@ function App() {
             </article>
 
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
+            <section className="feature-content" style={{ paddingTop: 0 }}>
+              <article className="panel action-panel">
+                <div className="panel-head"><div><p className="feature-kicker">LOCAL WALLET VAULT</p><h2>Your wallets</h2><span>Generated wallet IDs and public addresses are saved in this browser.</span></div><button className="secondary" onClick={() => setActive("Wallets")}>Manage wallets →</button></div>
+                {localWalletEntries.length ? localWalletEntries.slice(0,3).map(entry => <div className="tool-row" key={entry.walletId}><div><b>{entry.name || "Wallet"}</b><small>Wallet ID: {entry.walletId}</small><small>{entry.network || "EVM"} · {entry.address}</small></div><button className="secondary" onClick={() => navigator.clipboard?.writeText(entry.address)}>Copy address</button></div>) : <div className="live-chart-empty">No local signing wallet yet. Create one from Wallets to show its address here automatically.</div>}
+                {localContracts.length > 0 && <><p className="feature-kicker" style={{ marginTop: 18 }}>SAVED CONTRACTS</p>{localContracts.slice(0,3).map(contract => <div className="tool-row" key={contract.address + contract.network}><div><b>{contract.name || contract.symbol || "Contract"} ({contract.network})</b><small>{contract.address}</small><small>{contract.status || "Saved locally"} · {contract.txHash || ""}</small></div><a href={contract.explorerUrl || (contract.network === "sepolia" ? "https://sepolia.etherscan.io/address/" : "https://etherscan.io/address/") + contract.address} target="_blank" rel="noreferrer">Verify / inspect ↗</a></div>)}</>}
+              </article>
+            </section>
                     </section>
         ) : (
-          active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
+          active === "Profile" ? <section className="content feature-content">
+            <div className="page-heading"><div><p className="eyebrow">ACCOUNT & SECURITY</p><h1>Profile</h1><p className="muted">Your account identity, local wallet IDs, public addresses and saved contracts.</p></div><button className="secondary" onClick={() => setActive("Wallets")}>Manage wallets →</button></div>
+            <article className="panel action-panel"><h2>Account</h2><div className="tool-row"><div><b>{user?.name || "Wallet Owner"}</b><small>{user?.email || "Signed-in account"}</small></div></div><p className="security-note">Google sign-in authenticates your account; it does not automatically connect the Google Wallet app as a Web3 signing wallet.</p></article>
+            <article className="panel action-panel"><h2>Wallet IDs & public addresses</h2>{localWalletEntries.length ? localWalletEntries.map(entry => <div className="tool-row" key={entry.walletId}><div><b>{entry.name || "Wallet"}</b><small>Wallet ID: <code>{entry.walletId}</code></small><small>Public address: <code>{entry.address}</code></small><small>Public key: <code>{entry.publicKey || "Not available"}</code></small></div><button className="secondary" onClick={() => navigator.clipboard?.writeText(entry.address)}>Copy address</button></div>) : <div className="live-chart-empty">No local wallet yet. Open Wallets and generate one.</div>}</article>
+            <article className="panel action-panel"><h2>Saved contract addresses</h2>{localContracts.length ? localContracts.map(contract => <div className="tool-row" key={contract.address + contract.network}><div><b>{contract.name || contract.symbol || "Contract"} · {contract.network}</b><small>Contract: <code>{contract.address}</code></small><small>Status: {contract.status || "Saved locally"} · Tx: {contract.txHash || "Not recorded"}</small></div><div><a href={contract.explorerUrl || (contract.network === "sepolia" ? "https://sepolia.etherscan.io/address/" : "https://etherscan.io/address/") + contract.address} target="_blank" rel="noreferrer">Inspect / verify later ↗</a></div></div>) : <div className="live-chart-empty">No deployed contracts saved in this browser yet.</div>}<button className="secondary" onClick={() => setActive("Contract Generator")}>Generate or deploy contract →</button><button className="secondary" onClick={() => setActive("Verify Contract")}>Verify contract →</button></article>
+            <article className="panel action-panel"><h2>Security</h2><p className="security-note">Private keys and recovery phrases are not listed here and are not uploaded to the server. The encrypted wallet remains in this browser. Keep a secure offline backup and never share recovery material.</p></article>
+          </section> : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
           <FeaturePage selectedAsset={selectedCoin} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
