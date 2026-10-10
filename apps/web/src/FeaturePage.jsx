@@ -57,6 +57,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [label, setLabel] = useState("primary");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [showAddressForm, setShowAddressForm] = useState(false);
+  const [localEntries, setLocalEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
+
+  useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
 
   const loadAddresses = async id => {
     if (!id) return;
@@ -154,6 +158,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
+  const visibleAddresses = [...walletAddresses, ...localEntries.filter(entry => entry.address && (!selectedWallet || entry.walletId === selectedWallet.id || entry.walletId === walletId || entry.walletId.startsWith("local-"))).map(entry => ({ network: entry.network || "ethereum", address: entry.address, label: entry.name || "Local signing wallet", local: true, walletId: entry.walletId }))].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
 
   return <section className="content feature-content">
     <div className="page-heading">
@@ -178,13 +183,14 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
-          {walletAddresses.length ? walletAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <div className="live-chart-empty">No public network addresses connected to this wallet.</div>}
+          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => setShowAddressForm(true)} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
     </div>
-    <article className="panel action-panel">
+    <article className="panel action-panel" id="connect-public-address" style={showAddressForm ? { outline: "2px solid var(--accent, #f59e0b)" } : undefined}>
       <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
       <h2>Attach a blockchain address</h2>
+      {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
         <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
         <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
