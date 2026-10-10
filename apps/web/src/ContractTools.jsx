@@ -351,7 +351,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
     {showCreateCard && active === "Contract Generator" && <article className="ct-panel">
       <h2>Create Contract · Deployment Options</h2>
       <p>Compile in the browser, then deploy from your connected wallet. A contract is recorded only after the selected blockchain confirms the transaction.</p>
-      <label>Target network<select value={network} onChange={e => changeNetwork(e.target.value)}><option value="sepolia">Ethereum Sepolia — testnet (recommended first)</option><option value="ethereum">Ethereum Mainnet — real funds / gas fees</option></select></label>
+      <label>Target network<select value={network} onChange={e => changeNetwork(e.target.value)}><option value="sepolia">Ethereum Sepolia — testnet (recommended first)</option><option value="ethereum">Ethereum Mainnet — real funds / gas fees</option><option value="bnb">BNB Smart Chain — real BNB / gas fees</option></select></label>
       <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
       <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy contract source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button></div>
       <p className="ct-note">The same generated source can be deployed independently on both networks. Each deployment creates a separate contract address and separate token balances.</p>
