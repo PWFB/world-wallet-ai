@@ -1,5 +1,6 @@
 import os
 import hashlib
+import re
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -24,6 +25,9 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
+TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
+TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
+TWILIO_VERIFY_SERVICE_SID = os.getenv("TWILIO_VERIFY_SERVICE_SID", "").strip()
 NEON_AUTH_JWKS_URL = os.getenv("NEON_AUTH_JWKS_URL", "").strip()
 NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else None
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
@@ -76,7 +80,13 @@ class NeonAuthCredentials(BaseModel):
 class NeonAuthRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=5, max_length=254)
+    phone_number: str = Field(min_length=8, max_length=16)
+    phone_otp: str = Field(min_length=4, max_length=10)
     password: str = Field(min_length=8, max_length=128)
+
+
+class PhoneOtpRequest(BaseModel):
+    phone_number: str = Field(min_length=8, max_length=16)
 
 
 class NeonAuthOtpRequest(BaseModel):
@@ -172,9 +182,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS users(
           id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
           password_sha256 TEXT, google_subject TEXT UNIQUE, active_wallet_id TEXT,
+          phone_number TEXT, phone_verified_at TIMESTAMPTZ,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE users ADD COLUMN IF NOT EXISTS active_wallet_id TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT;
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
+        CREATE UNIQUE INDEX IF NOT EXISTS users_phone_number_unique ON users(phone_number) WHERE phone_number IS NOT NULL;
         CREATE TABLE IF NOT EXISTS wallets(
           id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
           name TEXT NOT NULL DEFAULT 'Wallet', currency TEXT NOT NULL DEFAULT 'USD',
@@ -314,13 +328,13 @@ def init_db():
 
 def get_user(email: str):
     with db() as conn:
-        row = conn.execute("SELECT id,email,name,active_wallet_id FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
+        row = conn.execute("SELECT id,email,name,active_wallet_id,phone_number,phone_verified_at FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
         if not row:
             return None
         wallet = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (row[3],row[0])).fetchone() if row[3] else None
         if not wallet:
             wallet = conn.execute("SELECT id FROM wallets WHERE owner_id=%s ORDER BY created_at ASC LIMIT 1", (row[0],)).fetchone()
-        return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": wallet[0] if wallet else None}
+        return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": wallet[0] if wallet else None, "phone_number": row[4], "phone_verified": bool(row[5])}
 
 
 def provision_identity(email: str, password: str | None = None, name: str = "World Wallet User", google_subject: str | None = None):
@@ -1183,15 +1197,63 @@ def neon_password_login(request: NeonAuthCredentials):
         "rememberMe": True,
     })
 
+def _normalise_phone_number(value: str) -> str:
+    phone = re.sub(r"[\\s()-]", "", value or "")
+    if not re.fullmatch(r"\\+[1-9]\\d{7,14}", phone):
+        raise HTTPException(status_code=400, detail="Enter a valid phone number in international format, for example +2348012345678.")
+    return phone
+
+
+def _twilio_verify_request(phone_number: str, code: str | None = None):
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID):
+        raise HTTPException(status_code=503, detail="Phone verification is not configured. The SMS provider credentials and Verify Service must be configured by the operator.")
+    url = f"https://verify.twilio.com/v2/Services/{TWILIO_VERIFY_SERVICE_SID}/" + ("VerificationCheck" if code is not None else "Verifications")
+    form = {"To": phone_number, "Channel": "sms"}
+    if code is not None:
+        form["Code"] = code.strip()
+    try:
+        response = httpx.post(url, data=form, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN), timeout=15.0)
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Phone verification provider could not be reached. Please try again.") from exc
+    try:
+        payload = response.json()
+    except ValueError:
+        payload = {}
+    if not response.is_success:
+        # Never return provider credentials or raw provider responses to clients.
+        detail = "Unable to send phone verification code." if code is None else "Phone verification failed."
+        raise HTTPException(status_code=502 if response.status_code >= 500 else 400, detail=detail)
+    if code is None:
+        if payload.get("status") not in {"pending", "approved"}:
+            raise HTTPException(status_code=502, detail="Phone verification provider did not accept the SMS request.")
+        return payload
+    return payload.get("status") == "approved"
+
+
+@app.post("/api/v1/auth/phone/send-otp")
+def send_registration_phone_otp(request: PhoneOtpRequest):
+    phone = _normalise_phone_number(request.phone_number)
+    # Provider configuration is required; no pretend/simulated SMS codes are issued.
+    _twilio_verify_request(phone)
+    return {"ok": True, "message": "If the phone number can receive verification SMS, a code has been requested."}
+
+
 @app.post("/api/v1/auth/neon/register")
 def neon_register(request: NeonAuthRegistration):
     name = request.name.strip()
     email = request.email.strip().lower()
+    phone = _normalise_phone_number(request.phone_number)
     if not name:
         raise HTTPException(status_code=400, detail="Enter your name")
-    # Use the same cookie-preserving Neon sign-up/token exchange as sign-in.
-    # This returns the application's verified session token, not Better Auth's
-    # internal session token or a provider secret.
+    if not request.phone_otp.strip():
+        raise HTTPException(status_code=400, detail="Enter the SMS verification code.")
+    # Check conflicts before creating the external Neon Auth identity.
+    with db() as conn:
+        if conn.execute("SELECT 1 FROM users WHERE phone_number=%s", (phone,)).fetchone():
+            raise HTTPException(status_code=409, detail="That phone number is already linked to an account.")
+    if not _twilio_verify_request(phone, request.phone_otp):
+        raise HTTPException(status_code=400, detail="The phone verification code is invalid or expired.")
+    # Create the Neon Auth identity only after the SMS code has been verified.
     signed_in = _neon_auth_sign_in("/sign-up/email", {
         "name": name,
         "email": email,
@@ -1199,12 +1261,20 @@ def neon_register(request: NeonAuthRegistration):
     })
     user = signed_in.get("user")
     if isinstance(user, dict):
-        with db() as conn:
-            conn.execute("UPDATE users SET name=%s WHERE lower(email)=lower(%s)", (name, email))
-            conn.commit()
+        try:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE users SET name=%s, phone_number=%s, phone_verified_at=NOW() WHERE lower(email)=lower(%s)",
+                    (name, phone, email),
+                )
+                conn.commit()
+        except psycopg.errors.UniqueViolation as exc:
+            raise HTTPException(status_code=409, detail="That phone number is already linked to an account.") from exc
         refreshed = get_user(email)
         if refreshed:
             signed_in["user"] = refreshed
+    else:
+        raise HTTPException(status_code=502, detail="The authentication provider did not return a user identity.")
     return signed_in
 
 
