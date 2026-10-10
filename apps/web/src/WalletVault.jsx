@@ -37,12 +37,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [tokenAmount, setTokenAmount] = useState("");
   const [tokenTxHash, setTokenTxHash] = useState("");
   const [contracts, setContracts] = useState([]);
+  const [deployedContracts, setDeployedContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
     const saved = readVault();
     setEntries(saved);
+    try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); }
     if (saved.length) setSelectedId(saved[0].walletId);
     // Contract Generator can hand off a deployed token address to this page.
     try {
@@ -389,6 +391,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       </div>}
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
       <div className="security-note">BALMZ Ethereum contract: <code>{balmzContract || "Not configured / not deployed"}</code></div>
+      <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
+      {deployedContracts.length > 0 && <article className="panel action-panel">
+        <p className="feature-kicker">CONTRACTS DEPLOYED FROM WORLD WALLET AI</p>
+        <h3>Created token contracts</h3>
+        {deployedContracts.map((item,index) => <div className="tool-row" key={item.address + item.network + index}>
+          <div><b>{item.name} ({item.symbol})</b><small>{item.network === "sepolia" ? "Ethereum Sepolia" : item.network === "ethereum" ? "Ethereum Mainnet" : item.network} · {item.status || "saved locally"}</small><small>Supply: {item.supply} · Decimals: {item.decimals}</small></div>
+          <code>{item.address}</code>
+          <div><button className="secondary" onClick={() => navigator.clipboard?.writeText(item.address)}>Copy address</button> <button className="secondary" onClick={() => setTokenContractAddress(item.address)}>Use token</button> <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer ↗</a></div>
+        </div>)}
+      </article>}
       <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
       <div className="security-note">A wallet address is not a token contract address. Do not substitute one for the other.</div>
       <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.address)}>Copy wallet address</button>
