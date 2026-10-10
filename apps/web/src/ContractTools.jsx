@@ -96,11 +96,12 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
     const symbol = tokenSymbol.trim();
     const numericSupply = Number(supply);
     const numericDecimals = Number(decimals);
-    if (!name || name.length > 64) return setGeneratorMessage("Enter a token name of 1–64 characters.");
-    if (!/^[A-Za-z][A-Za-z0-9]{1,10}$/.test(symbol)) return setGeneratorMessage("Token symbol must start with a letter and contain 2–11 letters or numbers.");
-    if (!Number.isSafeInteger(numericSupply) || numericSupply < 1 || numericSupply > 1000000000000000) return setGeneratorMessage("Enter a whole-token supply from 1 to 1,000,000,000,000,000.");
-    if (!Number.isInteger(numericDecimals) || numericDecimals < 0 || numericDecimals > 18) return setGeneratorMessage("Decimals must be a whole number from 0 to 18.");
+    if (!name || name.length > 64) { setGeneratorMessage("Enter a token name of 1–64 characters."); return false; }
+    if (!/^[A-Za-z][A-Za-z0-9]{1,10}$/.test(symbol)) { setGeneratorMessage("Token symbol must start with a letter and contain 2–11 letters or numbers."); return false; }
+    if (!Number.isSafeInteger(numericSupply) || numericSupply < 1 || numericSupply > 1000000000000000) { setGeneratorMessage("Enter a whole-token supply from 1 to 1,000,000,000,000,000."); return false; }
+    if (!Number.isInteger(numericDecimals) || numericDecimals < 0 || numericDecimals > 18) { setGeneratorMessage("Decimals must be a whole number from 0 to 18."); return false; }
     setGeneratorMessage("Source generated. Review it, compile and test it, then deploy only to a network you selected.");
+    return true;
   }
 
   async function copySource() {
@@ -194,7 +195,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
         <p>OpenZeppelin ERC-20 implementation • Solidity 0.8.24 • fixed initial supply</p>
         <pre className="ct-code"><code>{source}</code></pre>
         <div className="ct-links"><a href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Open Remix IDE ↗</a><a href="https://docs.openzeppelin.com/contracts/5.x/erc20" target="_blank" rel="noreferrer">OpenZeppelin ERC-20 docs ↗</a></div>
-        <div className="ct-actions"><button className="ct-btn primary" onClick={() => { const msg = generateSource(); setShowCreateCard(true); }}>Create Contract →</button></div>
+        <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (generateSource()) setShowCreateCard(true); }}>Create Contract →</button></div>
       </article>
     </div>
     {showCreateCard && active === "Contract Generator" && <article className="ct-panel">
@@ -204,7 +205,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
       <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
       <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy Solidity source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button><a className="ct-btn primary" href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Compile &amp; deploy in Remix ↗</a></div>
       <label>Deployed token contract address (paste after deployment)<input value={loadAddress} onChange={e => setLoadAddress(e.target.value.trim())} spellCheck={false} placeholder="0x…"/></label>
-      <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Paste the deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallet"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into BALMZ Token →</button></div>
+      <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Paste the deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallets"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into BALMZ Token →</button></div>
       <div className="ct-note">Mainnet deployment costs real ETH. Sepolia uses test ETH. Never enter a private key or seed phrase into this generator. Verify the contract address and selected network before loading it.</div>
       {generatorMessage && <div className="ct-status">{generatorMessage}</div>}
     </article>}
