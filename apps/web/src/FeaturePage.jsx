@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from "react";
+import { EthereumProvider } from "@walletconnect/ethereum-provider";
 import WalletVault from "./WalletVault.jsx";
 import ContractTools from "./ContractTools.jsx";
+
+const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
+const WALLETCONNECT_CHAINS = [1, 11155111, 56];
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
@@ -204,6 +208,11 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   const [message, setMessage] = useState("");
   const [addresses, setAddresses] = useState([]);
   const [addressMessage, setAddressMessage] = useState("");
+  const [wcProvider, setWcProvider] = useState(null);
+  const [wcAccount, setWcAccount] = useState("");
+  const [wcChainId, setWcChainId] = useState(null);
+  const [wcBusy, setWcBusy] = useState(false);
+  const [wcError, setWcError] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
@@ -240,6 +249,58 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
       .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+  async function connectWalletConnect() {
+    setWcBusy(true);
+    setWcError("");
+    try {
+      const provider = await EthereumProvider.init({
+        projectId: WALLETCONNECT_PROJECT_ID,
+        chains: [1],
+        optionalChains: [11155111, 56],
+        showQrModal: true,
+        methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
+        events: ["accountsChanged", "chainChanged", "disconnect"],
+        metadata: {
+          name: "World Wallet AI",
+          description: "Connect an external wallet to World Wallet AI",
+          url: window.location.origin,
+          icons: [window.location.origin + "/favicon.ico"],
+        },
+      });
+      provider.on("accountsChanged", accounts => setWcAccount(accounts?.[0] || ""));
+      provider.on("chainChanged", chain => setWcChainId(Number(chain)));
+      provider.on("disconnect", () => { setWcAccount(""); setWcChainId(null); setWcProvider(null); });
+      await provider.connect();
+      const accounts = await provider.request({ method: "eth_accounts" });
+      setWcAccount(accounts?.[0] || "");
+      setWcChainId(Number(provider.chainId) || null);
+      setWcProvider(provider);
+      if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
+    } catch (error) {
+      setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
+    } finally {
+      setWcBusy(false);
+    }
+  }
+
+  async function disconnectWalletConnect() {
+    setWcBusy(true);
+    setWcError("");
+    try {
+      if (wcProvider) {
+        await wcProvider.disconnect();
+        wcProvider.removeAllListeners?.();
+      }
+    } catch (error) {
+      setWcError(error?.message || "Could not disconnect the wallet session cleanly.");
+    } finally {
+      setWcProvider(null);
+      setWcAccount("");
+      setWcChainId(null);
+      setWcBusy(false);
+    }
+  }
+
   const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
     selectedWalletAsset?.available_balance ??
@@ -914,11 +975,26 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   }
 
   if (active === "Wallet Connect") {
-    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Wallet Connect</h1><p className="muted">Inspect configured production wallet addresses.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <article className="panel tool-panel"><div className="tool-status"><span className="status-dot"></span><b>Read-only connection</b></div>
-      <p className="muted">This view never creates a signing session or stores private keys.</p>
-      <button className="secondary" onClick={async()=>{setSyncBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/wallet/connect",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();setAddresses(d.addresses||[]);setAddressMessage(d.message||"");}catch{setAddressMessage("Unable to load connection status.");}finally{setSyncBusy(false)}}}>{syncBusy?"Checking…":"Check connection"}</button>
-      {addresses.length?addresses.map(a=><div className="tool-row" key={a.network+a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(a.address)}>Copy</button></div>):<div className="live-chart-empty">{addressMessage||"No configured production address."}</div>}</article>
+    const chainNames = { 1: "Ethereum Mainnet", 11155111: "Sepolia Testnet", 56: "BNB Smart Chain" };
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+      <article className="panel tool-panel">
+        <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "WalletConnect v2 ready"}</b></div>
+        <p className="muted">Project ID configured. Supported networks: Ethereum, Sepolia testnet, and BNB Smart Chain.</p>
+        {wcAccount ? <>
+          <div className="tool-row"><div><b>Connected address</b><small>Read from your external wallet</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy</button></div>
+          <div className="tool-row"><div><b>Network</b><small>Current wallet chain</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown")}</strong></div>
+          <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>{wcBusy ? "Disconnecting…" : "Disconnect wallet"}</button>
+        </> : <button className="primary feature-submit" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet connection…" : "Connect external wallet →"}</button>}
+        {wcError && <div className="feature-error" role="alert">{wcError}</div>}
+        <div className="security-note">Never enter a recovery phrase or private key into this site. Review the network and every transaction inside your wallet before approving.</div>
+      </article>
+      <article className="panel tool-panel">
+        <h2>Configured production addresses</h2>
+        <p className="muted">These are backend-configured addresses, separate from the external wallet session above.</p>
+        <button className="secondary" onClick={async()=>{setSyncBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/wallet/connect",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();setAddresses(d.addresses||[]);setAddressMessage(d.message||"");}catch{setAddressMessage("Unable to load connection status.");}finally{setSyncBusy(false)}}}>{syncBusy?"Checking…":"Check production addresses"}</button>
+        {addresses.length?addresses.map(a=><div className="tool-row" key={a.network+a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(a.address)}>Copy</button></div>):<div className="live-chart-empty">{addressMessage||"No configured production address loaded."}</div>}
+      </article>
     </section>;
   }
 
