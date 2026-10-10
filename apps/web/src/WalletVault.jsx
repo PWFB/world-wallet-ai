@@ -51,7 +51,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       const pending = JSON.parse(localStorage.getItem("world_wallet_pending_token_contract") || "null");
       if (pending && /^0x[a-fA-F0-9]{40}$/.test(String(pending.address || ""))) {
         setTokenContractAddress(pending.address);
-        if (pending.network === "sepolia") setNetwork("sepolia");
+        if (pending.network === "sepolia" || pending.network === "ethereum") setNetwork(pending.network);
         setMessage("Loaded " + (pending.symbol || "token") + " contract address from Contract Generator (" + (pending.network || "selected network") + "). Confirm the network and address before interacting.");
         localStorage.removeItem("world_wallet_pending_token_contract");
       }
@@ -398,7 +398,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         {deployedContracts.map((item,index) => <div className="tool-row" key={item.address + item.network + index}>
           <div><b>{item.name} ({item.symbol})</b><small>{item.network === "sepolia" ? "Ethereum Sepolia" : item.network === "ethereum" ? "Ethereum Mainnet" : item.network} · {item.status || "saved locally"}</small><small>Supply: {item.supply} · Decimals: {item.decimals}</small></div>
           <code>{item.address}</code>
-          <div><button className="secondary" onClick={() => navigator.clipboard?.writeText(item.address)}>Copy address</button> <button className="secondary" onClick={() => setTokenContractAddress(item.address)}>Use token</button> <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer ↗</a></div>
+          <div><button className="secondary" onClick={() => navigator.clipboard?.writeText(item.address)}>Copy address</button> <button className="secondary" onClick={() => { setTokenContractAddress(item.address); if (item.network === "sepolia" || item.network === "ethereum") setNetwork(item.network); setMessage("Selected " + item.symbol + " on " + item.network + ". Verify the network before interacting."); }}>Use token</button> <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer ↗</a></div>
         </div>)}
       </article>}
       <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
