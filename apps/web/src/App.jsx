@@ -771,7 +771,10 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
-          <div className="top-actions"><button>⌕ <span>Search</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title={user?.email || "Wallet account"}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button></div>
+          <div className="top-actions">
+            {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
+            <button type="button" onClick={() => setActive("Browser")}>⌕ <span>Browser</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title={user?.email || "Wallet account"}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
+          </div>
         </header>
 
         {selectedCoin ? (() => {
@@ -947,11 +950,46 @@ function App() {
             </div>
 
             <div className="quick-grid">
+              <button onClick={() => setActive("Browser")}><span>⌕</span><div><b>Open Browser</b><small>Search web &amp; explore Etherscan</small></div>→</button>
               <button onClick={() => setActive("Wallet Connect")}><span>◈</span><div><b>Connect wallet</b><small>Manage connected accounts</small></div>→</button>
               <button onClick={() => setActive("Withdraw")}><span>↗</span><div><b>Direct withdrawal</b><small>Move funds securely</small></div>→</button>
               <button onClick={() => setActive("Request Center")}><span>◎</span><div><b>Request funds</b><small>Create a payment request</small></div>→</button>
-              <button onClick={() => setActive("Verify Contract")}><span>✓</span><div><b>Verify contract</b><small>Check smart-contract status</small></div>→</button>
             </div>
+
+            <article className="panel wallet-functions-panel">
+              <div className="panel-head"><div><h2>All wallet functions</h2><span>Quick access to wallet, security, explorer, and account tools</span></div><span className="wallet-function-count">20 tools</span></div>
+              <div className="wallet-functions-grid">
+                {[
+                  ["Wallets","◈","Create and manage wallets"],
+                  ["Portfolio","▥","Assets and holdings"],
+                  ["Send","↗","Send crypto assets"],
+                  ["Receive","↙","Receive and deposit"],
+                  ["Swap","⇄","Convert supported assets"],
+                  ["Staking","⌁","Staking tools"],
+                  ["NFTs","◇","NFT workspace"],
+                  ["Transactions","↔","Transaction history"],
+                  ["Browser","⌕","Search websites and explorers"],
+                  ["Wallet Connect","⌘","Connected wallet addresses"],
+                  ["Proof of Reserves","✓","On-chain reserve snapshot"],
+                  ["API Request","⌘","API request workspace"],
+                  ["API Keys","⚿","Manage API credentials"],
+                  ["Contract Generator","⌁","Generate contract drafts"],
+                  ["Verify Contract","✓","Verify deployed contracts"],
+                  ["Address Converter","⇄","Inspect and compare addresses"],
+                  ["Sepolia Converter","◇","Sepolia testnet tools"],
+                  ["Contract Converter","⌁","Inspect contract data"],
+                  ["Address Book","▤","Saved trusted addresses"],
+                  ["Request Center","◎","Requests and support"],
+                ].map(([page, icon, description]) => (
+                  <button type="button" key={page} className="wallet-function-card" onClick={() => setActive(page)}>
+                    <span className="wallet-function-icon">{icon}</span>
+                    <span className="wallet-function-copy"><b>{page}</b><small>{description}</small></span>
+                    <span className="wallet-function-arrow">›</span>
+                  </button>
+                ))}
+              </div>
+              <p className="wallet-functions-note">Proof of Reserves is an on-chain snapshot only; it is not an audited solvency report and does not include all customer liabilities.</p>
+            </article>
 
             <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
                     </section>
@@ -990,6 +1028,7 @@ function App() {
                       ["Portfolio", "▥", "Assets and holdings"],
                       ["Transactions", "↔", "Transaction history"],
                       ["Proof of Reserves", "✓", "Reserve snapshot"],
+                      ["Browser", "⌕", "Search websites and explorers"],
                       ["Wallet Connect", "⌘", "Connected addresses"],
                       ["Address Converter", "⇄", "Compare addresses"],
                       ["Sepolia Converter", "◇", "Sepolia testnet"],
