@@ -893,3 +893,9 @@
 .ww-api-import label{display:grid;gap:7px;color:#9aabc2;font-size:10px}
 .ww-api-import input{width:100%;padding:11px 12px;background:#050d19;border:1px solid #243955;border-radius:8px;color:#e5edf7;outline:none}
 .ww-api-import input:focus{border-color:#00bde8}
+
+.ww-register-social{display:grid;gap:8px;margin:16px 0;padding-top:13px;border-top:1px solid #1a2a42}
+.ww-register-social>span{font-size:10px;color:#7487a2;text-align:center;margin-bottom:2px}
+.ww-register-social button{width:100%;padding:11px 12px;border:1px solid #263a56;border-radius:8px;background:#0a1729;color:#dbe7f5;font-size:11px;font-weight:700}
+.ww-register-social button:hover{border-color:#00bde8;background:#10213a}
+.ww-register-social button:disabled{opacity:.6}
