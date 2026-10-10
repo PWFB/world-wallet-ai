@@ -147,21 +147,23 @@ contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
     return true;
   }
 
-  async function deployContract() {
+  async function deployContract(targetNetwork = network) {
     if (!generateSource()) return;
     if (!window.ethereum) { setGeneratorMessage("No browser wallet detected. Open World Wallet AI in a browser with an injected EVM wallet such as MetaMask."); return; }
-    const expectedChainId = network === "sepolia" ? 11155111n : network === "ethereum" ? 1n : 56n;
+    const deploymentNetwork = targetNetwork;
+    const deploymentConfig = NETWORKS[deploymentNetwork] || NETWORKS.sepolia;
+    const expectedChainId = deploymentNetwork === "sepolia" ? 11155111n : deploymentNetwork === "ethereum" ? 1n : 56n;
     setDeployBusy(true); setGeneratorMessage(""); setDeployedAddress("");
     try {
       await window.ethereum.request({ method: "eth_requestAccounts" });
       const currentChain = await window.ethereum.request({ method: "eth_chainId" });
       if (BigInt(currentChain) !== expectedChainId) {
-        try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: selectedNetwork.chainId }] }); }
-        catch (error) { if (Number(error?.code) === 4001) throw new Error("Network switch was cancelled in your wallet."); throw new Error("Switch your connected wallet to " + selectedNetwork.label + " and try again."); }
+        try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: deploymentConfig.chainId }] }); }
+        catch (error) { if (Number(error?.code) === 4001) throw new Error("Network switch was cancelled in your wallet."); throw new Error("Switch your connected wallet to " + deploymentConfig.label + " and try again."); }
       }
       const provider = new BrowserProvider(window.ethereum);
       const chain = await provider.getNetwork();
-      if (chain.chainId !== expectedChainId) throw new Error("Connected wallet network does not match " + selectedNetwork.label + ".");
+      if (chain.chainId !== expectedChainId) throw new Error("Connected wallet network does not match " + deploymentConfig.label + ".");
       const compiled = JSON.parse(solc.compile(JSON.stringify({
         language: "Solidity",
         sources: { "GeneratedToken.sol": { content: source } },
@@ -181,12 +183,12 @@ contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       const receipt = await tx.wait(1);
       const address = await contract.getAddress();
       if (!receipt || receipt.status !== 1 || !address) throw new Error("Deployment failed or returned no contract address.");
-      const record = { name: tokenName.trim(), symbol: tokenSymbol.trim(), supply: String(supply), decimals: Number(decimals), address, network, chainId: String(expectedChainId), txHash: tx.hash, deployer: await signer.getAddress(), explorerUrl: selectedNetwork.explorer + "/address/" + address, deployedAt: new Date().toISOString(), status: "confirmed" };
-      const next = [record, ...readDeployedContracts().filter(item => !(item.address.toLowerCase() === address.toLowerCase() && item.network === network))];
+      const record = { name: tokenName.trim(), symbol: tokenSymbol.trim(), supply: String(supply), decimals: Number(decimals), address, network: deploymentNetwork, chainId: String(expectedChainId), txHash: tx.hash, deployer: await signer.getAddress(), explorerUrl: deploymentConfig.explorer + "/address/" + address, deployedAt: new Date().toISOString(), status: "confirmed" };
+      const next = [record, ...readDeployedContracts().filter(item => !(item.address.toLowerCase() === address.toLowerCase() && item.network === deploymentNetwork))];
       localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
-      localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({ address, network, symbol: record.symbol, name: record.name, decimals: record.decimals, txHash: record.txHash, deployedAt: record.deployedAt }));
+      localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({ address, network: deploymentNetwork, symbol: record.symbol, name: record.name, decimals: record.decimals, txHash: record.txHash, deployedAt: record.deployedAt }));
       setDeployedContracts(next); setDeployedAddress(address); setLoadAddress(address);
-      setGeneratorMessage("Contract deployed and confirmed on " + selectedNetwork.label + ". Address saved in this browser and ready to load into Wallets.");
+      setGeneratorMessage("Contract deployed and confirmed on " + deploymentConfig.label + ". Address saved in this browser and ready to load into Wallets.");
     } catch (error) {
       setGeneratorMessage(error?.shortMessage || error?.message || "Contract deployment failed. No successful deployment is confirmed.");
     } finally { setDeployBusy(false); }
@@ -291,7 +293,9 @@ contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       <p>Compile in the browser, then deploy from your connected wallet. A contract is recorded only after the selected blockchain confirms the transaction.</p>
       <label>Target network<select value={network} onChange={e => changeNetwork(e.target.value)}><option value="sepolia">Ethereum Sepolia — testnet (recommended first)</option><option value="ethereum">Ethereum Mainnet — real funds / gas fees</option></select></label>
       <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
-      <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy contract source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button><button className="ct-btn primary" disabled={deployBusy} onClick={deployContract}>{deployBusy ? "Deploying…" : "Deploy directly from wallet →"}</button></div>
+      <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy contract source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button></div>
+      <p className="ct-note">The same generated source can be deployed independently on both networks. Each deployment creates a separate contract address and separate token balances.</p>
+      <div className="ct-actions"><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("sepolia")}>{deployBusy ? "Deploying…" : "Deploy to Sepolia"}</button><button className="ct-btn primary" disabled={deployBusy} onClick={() => deployContract("ethereum")}>{deployBusy ? "Deploying…" : "Deploy to Ethereum Mainnet"}</button></div>
       {deployedAddress && <div className="ct-status good"><strong>Deployment confirmed</strong><br/>Contract address: <code>{deployedAddress}</code><br/><a href={selectedNetwork.explorer + "/address/" + deployedAddress} target="_blank" rel="noreferrer">View deployed contract ↗</a></div>}
       {deployedContracts.length > 0 && <div className="ct-status"><strong>Contracts created in this browser</strong>{deployedContracts.slice(0,5).map((item,index)=><div key={item.address+item.network+index}>{item.name} ({item.symbol}) · {item.network} · <code>{item.address}</code> · <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer</a></div>)}</div>}
       <label>Deployed token contract address (paste after deployment)<input value={loadAddress} onChange={e => setLoadAddress(e.target.value.trim())} spellCheck={false} placeholder="0x…"/></label>
