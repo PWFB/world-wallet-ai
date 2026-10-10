@@ -631,9 +631,91 @@ function App() {
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
-  if (!accessToken) {
+  if (!accessToken && !showLogin) {
+    return (
+      <div className="ww-public-shell">
+        <header className="ww-public-nav">
+          <button className="ww-public-brand" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="World Wallet AI home">
+            <span className="ww-globe">◎</span>
+            <span><b>WORLD WALLET <em>AI</em></b><small>YOUR INTELLIGENT DIGITAL WALLET</small></span>
+          </button>
+          <nav aria-label="Main navigation">
+            <a href="#features">Features</a><a href="#security">Security</a><a href="#assets">Digital assets</a>
+          </nav>
+          <button className="ww-nav-login" type="button" onClick={() => setShowLogin(true)}>Sign in <span>↗</span></button>
+        </header>
+
+        <main>
+          <section className="ww-landing-hero">
+            <div className="ww-hero-copy">
+              <span className="ww-live-badge"><i /> THE INTELLIGENT DIGITAL WALLET</span>
+              <h1>Your Crypto.<br /><em>Your Freedom.</em></h1>
+              <p>Manage your digital assets, monitor your available balance, and make smarter wallet decisions in one secure place — with BALMZ AI alongside you.</p>
+              <div className="ww-hero-cta">
+                <button className="ww-preview-submit" type="button" onClick={() => setShowLogin(true)}>Open your wallet <span>→</span></button>
+                <a href="#features">Explore features <span>↓</span></a>
+              </div>
+              <div className="ww-hero-features">
+                <div><b>◈</b><span><strong>Multi-chain</strong><small>Supported networks</small></span></div>
+                <div><b>✦</b><span><strong>BALMZ AI</strong><small>Wallet intelligence</small></span></div>
+                <div><b>↗</b><span><strong>Live wallet</strong><small>Connected data</small></span></div>
+                <div><b>⌑</b><span><strong>Security first</strong><small>Protected access</small></span></div>
+              </div>
+              <div className="ww-market-strip" id="assets">
+                <div><b>BALMZ</b><span>World Wallet token</span></div>
+                <div><b>ETH · USDT</b><span>Ethereum ecosystem</span></div>
+                <div><b>BNB</b><span>BNB Chain</span></div>
+              </div>
+              <div className="ww-trust-line"><span>●</span> Available balance and portfolio data load after secure sign-in.</div>
+            </div>
+
+            <div className="ww-login-preview" aria-label="Wallet dashboard preview">
+              <div className="ww-orbit ww-orbit-a" /><div className="ww-orbit ww-orbit-b" />
+              <div className="ww-login-card">
+                <div className="ww-login-heading"><div className="ww-login-icon">◈</div><div><span>WORLD WALLET AI</span><h2>Your wallet at a glance</h2><p>A preview of your secure workspace</p></div></div>
+                <div className="ww-preview-balance"><span>AVAILABLE BALANCE</span><b>••••••••</b><small>Private until you sign in</small></div>
+                <div className="ww-preview-stats">
+                  <div><span>Portfolio</span><b>Live asset data</b></div><div><span>Wallet network</span><b><i /> Connection status</b></div>
+                </div>
+                <div className="ww-preview-assets">
+                  <div><span className="ww-preview-coin coin-balmz">B</span><span><b>BALMZ</b><small>Wallet token</small></span><strong>—</strong></div>
+                  <div><span className="ww-preview-coin coin-eth">Ξ</span><span><b>ETH</b><small>Ethereum</small></span><strong>—</strong></div>
+                  <div><span className="ww-preview-coin coin-usdt">$</span><span><b>USDT</b><small>Tether USD</small></span><strong>—</strong></div>
+                  <div><span className="ww-preview-coin coin-bnb">◆</span><span><b>BNB</b><small>BNB Chain</small></span><strong>—</strong></div>
+                </div>
+                <button className="ww-preview-submit" type="button" onClick={() => setShowLogin(true)}>Sign in to view your wallet <span>→</span></button>
+                <p className="ww-create">Your balances are not shown in this public preview.</p>
+              </div>
+            </div>
+          </section>
+
+          <section className="ww-feature-section" id="features">
+            <div className="ww-section-title"><span>01 / FEATURES</span><div><small>BUILT AROUND YOUR WALLET</small><h2>One wallet. More clarity.</h2></div></div>
+            <div className="ww-feature-grid">
+              <article><b>◈</b><h3>Multi-chain wallet</h3><p>Review supported assets and network connections in one workspace.</p></article>
+              <article><b>✦</b><h3>BALMZ AI insights</h3><p>Get wallet-aware assistance based on available, authenticated account data.</p></article>
+              <article><b>↔</b><h3>Wallet activity</h3><p>Review transaction history and use wallet tools built around your account.</p></article>
+              <article><b>▥</b><h3>Portfolio overview</h3><p>See connected asset balances and portfolio information when available.</p></article>
+            </div>
+          </section>
+
+          <section className="ww-security-section" id="security">
+            <div><small>02 / SECURITY & CONTROL</small><h2>Your wallet data stays yours.</h2><p>Sign in to access your account. Balances, transaction history, and wallet status are loaded from authenticated services rather than invented public demo figures.</p></div>
+            <div className="ww-security-points">
+              <div><b>01</b><span><strong>Secure sign-in</strong><br />Account access through the configured authentication provider.</span></div>
+              <div><b>02</b><span><strong>Real account data</strong><br />Private wallet information is shown inside your signed-in workspace.</span></div>
+              <div><b>03</b><span><strong>Network visibility</strong><br />See connection and synchronization status where configured.</span></div>
+            </div>
+          </section>
+        </main>
+        <footer className="ww-public-footer"><span>© WORLD WALLET AI</span><span>YOUR CRYPTO. YOUR FREEDOM.</span><button type="button" onClick={() => setShowLogin(true)}>Sign in ↗</button></footer>
+      </div>
+    );
+  }
+
+  if (!accessToken && showLogin) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
-      <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></div><span>SECURE SIGN IN</span></header>
+      <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></div><button className="ww-auth-home" type="button" onClick={() => { setShowLogin(false); setLoginError(""); setAuthMessage(""); }}>← Back to home</button></header>
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
       <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon">◎</div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
       {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("");setAuthMessage("")}}>Password</button><button type="button" className={!passwordMode&&authMethod==="email"?"active":""} onClick={() => {setPasswordMode(false);setAuthMethod("email");setOtpRequested(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Email OTP</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button></div>}
