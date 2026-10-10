@@ -738,3 +738,7 @@
   .app-shell .card-actions{gap:5px}
   .app-shell .card-actions button{font-size:9px}
 }
+
+/* Registration phone field */
+.ww-auth-form .ww-phone-hint{display:block;color:#8295ae;font-size:10px;line-height:1.55;margin:-5px 0 4px 2px}
+.ww-auth-form input[type="tel"]{font-variant-numeric:tabular-nums}
