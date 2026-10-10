@@ -1009,6 +1009,8 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   if (active === "Wallet Connect") {
     const chainNames = { 1: "Ethereum Mainnet", 11155111: "Sepolia Testnet", 56: "BNB Smart Chain" };
     return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect EVM wallets through WalletConnect or a supported browser wallet.</p></div><button className="secondary" onClick={() => setActive("Wallets")}>My local wallets →</button></div>
+      <div className="security-note">Google sign-in connects your Google account to World Wallet AI, but Google Wallet is not itself a standard EVM Web3 wallet provider for signing Ethereum or BNB Chain transactions. For blockchain signing, use a WalletConnect-compatible crypto wallet. Never enter Google account credentials or wallet recovery phrases here.</div>
       <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <article className="panel tool-panel">
         <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "WalletConnect v2 ready"}</b></div>
