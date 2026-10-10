@@ -625,6 +625,13 @@ function App() {
   async function handleSocialSignIn(provider) {
     const providerName = ({ github: "GitHub", twitter: "X", telegram: "Telegram", google: "Google" }[provider] || provider);
     setLoginError("");
+    if (provider === "twitter" || provider === "telegram") {
+      setLoginError(provider === "twitter"
+        ? "X sign-in UI is ready, but authentication is not configured on the server yet. X OAuth 2.0 Client ID/Secret and a verified callback flow must be configured before this can sign you in."
+        : "Telegram sign-in UI is ready, but authentication is not configured on the server yet. It requires a Telegram bot token, verified Telegram login data, and a secure server-side session exchange.");
+      setAuthBusy(false);
+      return;
+    }
     setAuthBusy(true);
     try {
       sessionStorage.setItem("world_wallet_social_return", provider);
