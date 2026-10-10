@@ -37,7 +37,18 @@ function authErrorMessage(error, fallback) {
 }
 
 function App() {
-  const [active, setActive] = useState("Dashboard");
+  const [active, setActive] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ww_active_page");
+      return saved || "Dashboard";
+    } catch { return "Dashboard"; }
+  });
+  useEffect(() => {
+    try {
+      if (active) localStorage.setItem("ww_active_page", active);
+    } catch {}
+  }, [active]);
+
   const [showDashboardMore, setShowDashboardMore] = useState(false);
   const [coinFilter, setCoinFilter] = useState("all");
   const [coinSearch, setCoinSearch] = useState("");
