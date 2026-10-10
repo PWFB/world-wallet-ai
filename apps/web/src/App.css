@@ -776,3 +776,43 @@
 .ww-auth-home{background:transparent;color:#ff7a18;font-size:9px;padding:8px 0}
 @media(max-width:850px){.ww-landing-hero{min-height:auto;padding-top:48px;padding-bottom:45px}.ww-hero-copy h1{font-size:clamp(40px,8vw,60px)}.ww-login-preview{width:100%}.ww-orbit-a{right:-180px}.ww-orbit-b{right:-120px}.ww-public-footer{padding-left:18px;padding-right:18px}}
 @media(max-width:480px){.ww-hero-cta{gap:13px;flex-wrap:wrap}.ww-hero-cta .ww-preview-submit{width:190px}.ww-hero-cta>a{font-size:9px}.ww-login-card{padding:20px}.ww-preview-balance>b{font-size:24px}.ww-public-footer{gap:12px;flex-wrap:wrap}.ww-public-footer>span:last-of-type{display:none}}
+
+
+/* World Wallet AI integrated browser */
+.browser-page{min-width:0}
+.browser-panel{padding:14px;overflow:hidden}
+.browser-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.browser-icon-button{width:36px;height:36px;flex:0 0 36px;border:1px solid #243854;border-radius:9px;background:#0b172a;color:#a9bdd5}
+.browser-icon-button:disabled{opacity:.35;cursor:not-allowed}
+.browser-address-form{display:flex;align-items:center;gap:8px;flex:1;min-width:190px;height:42px;border:1px solid #2b4260;border-radius:10px;background:#071326;padding:3px 4px 3px 12px}
+.browser-lock{color:#35d0e9;font-size:13px}
+.browser-address-form input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:#f4f7fb;font-size:12px}
+.browser-address-form input::placeholder{color:#60748e}
+.browser-address-form .primary{padding:9px 15px}
+.browser-open-button{height:38px}
+.browser-site-meta{display:flex;align-items:center;gap:8px;padding:12px 3px;color:#7286a1;font-size:10px}
+.browser-site-meta b{color:#c4d4e7;font-size:11px}
+.browser-site-meta>span:nth-of-type(2){padding-left:8px;border-left:1px solid #263954}
+.browser-site-meta button{margin-left:auto;background:transparent;color:#00d4ff;font-size:10px}
+.browser-live-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 9px #22c556}
+.browser-help{padding:12px 14px;border:1px solid #28415e;border-radius:9px;background:#0b1b30;color:#93a8c1;font-size:11px;line-height:1.65;margin-bottom:12px}
+.browser-help b{color:#e0eaf6}
+.browser-help p{margin:5px 0 0}
+.browser-shortcuts{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.browser-shortcut{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:0;padding:12px 10px;text-align:left;border:1px solid #203451;border-radius:9px;background:#0a1629}
+.browser-shortcut:hover,.browser-shortcut.selected{border-color:#087da1;background:#0c2238}
+.browser-shortcut b{font-size:11px;color:#dbe7f5}
+.browser-shortcut small{font-size:9px;line-height:1.4;color:#647b98}
+.browser-frame-wrap{position:relative;height:min(68vh,760px);min-height:420px;border:1px solid #243650;border-radius:10px;overflow:hidden;background:#fff}
+.browser-frame{width:100%;height:100%;display:block;border:0;background:#fff}
+.browser-frame-notice{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:25px;background:#0b1729;color:#c7d5e7}
+.browser-frame-notice b{font-size:15px}
+.browser-frame-notice p{max-width:420px;color:#8396b0;font-size:11px;line-height:1.7}
+.browser-footer{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:10px;color:#647b98;font-size:9px}
+.browser-footer span{overflow-wrap:anywhere}
+.browser-footer b{color:#a9bdd5;font-weight:500}
+.browser-footer .secondary{flex-shrink:0}
+.browser-security-note{margin-top:12px;padding:12px 14px;border:1px solid #26374e;border-radius:9px;background:#0b1526;color:#7e91ab;font-size:10px;line-height:1.7}
+.browser-security-note b{color:#d4af37}
+@media(max-width:1000px){.browser-shortcuts{grid-template-columns:repeat(3,minmax(0,1fr))}.browser-frame-wrap{height:65vh}}
+@media(max-width:600px){.browser-heading{gap:12px}.browser-heading .page-actions{width:auto}.browser-toolbar{gap:5px}.browser-address-form{order:1;flex-basis:100%;height:44px}.browser-open-button{margin-left:auto}.browser-shortcuts{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.browser-shortcut{padding:10px 8px}.browser-frame-wrap{height:62vh;min-height:360px}.browser-footer{align-items:flex-start;flex-direction:column}.browser-footer .secondary{width:100%}.browser-site-meta{flex-wrap:wrap}}
