@@ -273,14 +273,39 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
           icons: [window.location.origin + "/favicon.ico"],
         },
       });
-      provider.on("accountsChanged", accounts => setWcAccount(accounts?.[0] || ""));
-      provider.on("chainChanged", chain => setWcChainId(Number(chain)));
-      provider.on("disconnect", () => { setWcAccount(""); setWcChainId(null); setWcProvider(null); });
+      provider.on("accountsChanged", accounts => {
+        const address = accounts?.[0] || "";
+        setWcAccount(address);
+        const connection = address ? { address, chainId: Number(provider.chainId) || null, connectedAt: new Date().toISOString() } : null;
+        try { if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); else localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
+        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+      });
+      provider.on("chainChanged", chain => {
+        setWcChainId(Number(chain));
+        try {
+          const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
+          if (previous?.address) {
+            const connection = { ...previous, chainId: Number(chain) };
+            localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+            window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+          }
+        } catch {}
+      });
+      provider.on("disconnect", () => {
+        setWcAccount(""); setWcChainId(null); setWcProvider(null);
+        try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
+        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
+      });
       await provider.connect();
       const accounts = await provider.request({ method: "eth_accounts" });
       setWcAccount(accounts?.[0] || "");
       setWcChainId(Number(provider.chainId) || null);
       setWcProvider(provider);
+      if (accounts?.[0]) {
+        const connection = { address: accounts[0], chainId: Number(provider.chainId) || null, connectedAt: new Date().toISOString() };
+        try { localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); } catch {}
+        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+      }
       if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
     } catch (error) {
       setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
@@ -303,6 +328,8 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
       setWcProvider(null);
       setWcAccount("");
       setWcChainId(null);
+      try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
       setWcBusy(false);
     }
   }
