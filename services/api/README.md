@@ -34,3 +34,15 @@ Sepolia uses the same EVM public address as Ethereum for a given wallet. The API
 ## Development
 
 Use real chain responses for balances and transaction status. Never fabricate token balances, settlement confirmations, or market prices.
+
+## Phone-number registration and SMS verification
+
+Registration requires a verified phone number in E.164 international format (for example, `+2348012345678`). The API requests a code from **Twilio Verify** at `POST /api/v1/auth/phone/send-otp`; account creation at `POST /api/v1/auth/neon/register` is blocked unless Twilio confirms the submitted `phone_otp`. A successfully verified number is saved to `users.phone_number` with `phone_verified_at`, and a unique index prevents one number from being linked to multiple local accounts. Existing rows are migrated additively when `init_db()` runs.
+
+Configure these secrets on the API service before enabling phone registration:
+
+- `TWILIO_ACCOUNT_SID` — Twilio Account SID
+- `TWILIO_AUTH_TOKEN` — Twilio Auth Token (secret)
+- `TWILIO_VERIFY_SERVICE_SID` — SID of a configured Twilio Verify Service
+
+Do not commit these values to GitHub or expose them as frontend/Vite variables. If any setting is absent, the send-code endpoint returns HTTP 503 and does not simulate or claim that an SMS was sent. Confirm the Verify Service is approved for your target countries and set suitable Twilio Verify rate limits/geo permissions before production use. Provider credentials and live delivery have not been verified by this code change alone.
