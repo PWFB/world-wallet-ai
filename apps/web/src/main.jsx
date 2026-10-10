@@ -1,8 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import App from './App.jsx'
 import './index.css'
-
-const App = React.lazy(() => import('./App.jsx'))
 
 class AppRecoveryBoundary extends React.Component {
   constructor(props) {
@@ -38,7 +37,7 @@ class AppRecoveryBoundary extends React.Component {
             Your Crypto.<br /><span style={{ color: '#ff7a18' }}>Your Freedom.</span>
           </h1>
           <p style={{ color: '#a8b7cb', lineHeight: 1.8, maxWidth: 560 }}>
-            The wallet application could not start correctly. This recovery screen keeps the page usable and shows the startup error below instead of leaving a blank blue screen.
+            The wallet page encountered a rendering error. The recovery screen is active instead of leaving a blank page.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 28 }}>
             <button onClick={() => window.location.reload()} style={{
@@ -63,19 +62,10 @@ class AppRecoveryBoundary extends React.Component {
   }
 }
 
-function StartupFallback() {
-  return <main style={{
-    minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24,
-    color: '#f4f7fb', background: '#070d1d', fontFamily: 'Inter, system-ui, sans-serif'
-  }}><p role="status">Loading World Wallet AI…</p></main>
-}
-
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppRecoveryBoundary>
-      <React.Suspense fallback={<StartupFallback />}>
-        <App />
-      </React.Suspense>
+      <App />
     </AppRecoveryBoundary>
   </React.StrictMode>,
 )
