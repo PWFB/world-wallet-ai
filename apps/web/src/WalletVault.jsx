@@ -87,49 +87,33 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setMessage("");
     setSignature("");
     try {
-      // Refresh the Neon Auth JWT immediately before the authenticated wallet
-      // profile request; App state can still contain a token from an earlier session.
-      const freshToken = await getNeonAccessToken();
-      const sessionToken = freshToken || accessToken;
-      if (!sessionToken) {
-        throw new Error("Your sign-in session has expired. Please sign out and sign in again before creating a wallet.");
-      }
+      // Generate and securely encrypt locally first. A temporary API/auth outage must
+      // never prevent the user from seeing or saving the key material they just created.
       const signer = Wallet.createRandom();
       const encryptedJson = await signer.encrypt(password);
-      const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-        body: JSON.stringify({ name: walletName.trim() || "New Wallet" }),
-      });
-      const profile = await profileResponse.json();
-      if (!profileResponse.ok) throw new Error(profile.detail || "Could not create wallet profile.");
+      const localWalletId = "local-" + (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      const createdAt = new Date().toISOString();
+      let walletId = localWalletId;
+      let profileWarning = "";
+      let addressWarning = "";
 
-      const walletId = profile.wallet?.id;
-      if (!walletId) throw new Error("Wallet profile was created but the API did not return its wallet ID.");
-      const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-        body: JSON.stringify({ network, address: signer.address, label: "generated" }),
-      });
-      const addressData = await addressResponse.json();
-      const addressConnected = addressResponse.ok;
-
-      const entry = {
+      // Persist a recoverable encrypted local entry and show the generated keys before
+      // making optional backend calls. Neither password nor plaintext private key is sent.
+      const localEntry = {
         walletId,
         name: walletName.trim() || "New Wallet",
         address: signer.address,
         publicKey: signer.publicKey,
         network,
         encryptedJson,
-        createdAt: new Date().toISOString(),
+        createdAt,
       };
-      const next = [entry, ...readVault().filter(item => item.walletId !== walletId)];
-      persistVault(next);
+      persistVault([localEntry, ...readVault()]);
       setSelectedId(walletId);
       setUnlocked(null);
       setGenerated({
         walletId,
-        name: entry.name,
+        name: localEntry.name,
         address: signer.address,
         publicKey: signer.publicKey,
         privateKey: signer.privateKey,
@@ -137,12 +121,51 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         network,
       });
       setPassword("");
-      onWalletCreated?.();
-      setMessage(addressConnected
-        ? "Wallet created and public address connected. The private key and recovery phrase are shown only in this session; save them securely before leaving this page."
-        : "Wallet and encrypted local copy created, but address linking failed: " + (addressData.detail || "try connecting the public address again."));
+      setMessage("Wallet keys generated locally. Save the private key and recovery phrase securely now.");
+
+      // Backend profile and address linking are best-effort follow-up operations.
+      try {
+        const freshToken = await getNeonAccessToken();
+        const sessionToken = freshToken || accessToken;
+        if (!sessionToken) throw new Error("No valid sign-in session.");
+        const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+          body: JSON.stringify({ name: localEntry.name }),
+        });
+        const profile = await profileResponse.json();
+        if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
+        const serverWalletId = profile.wallet?.id;
+        if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
+
+        const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+          body: JSON.stringify({ network, address: signer.address, label: "generated" }),
+        });
+        const addressData = await addressResponse.json();
+        if (!addressResponse.ok) {
+          walletId = serverWalletId;
+          addressWarning = addressData.detail || "Public address linking failed.";
+        } else {
+          walletId = serverWalletId;
+        }
+        const linkedEntry = { ...localEntry, walletId };
+        persistVault([linkedEntry, ...readVault().filter(item => item.address.toLowerCase() !== signer.address.toLowerCase())]);
+        setSelectedId(walletId);
+        setGenerated(current => current ? { ...current, walletId } : current);
+        if (!addressResponse.ok) {
+          setMessage("Wallet keys generated and saved locally, but the server could not link the public address: " + addressWarning + " You can connect it again later.");
+        } else {
+          setMessage("Wallet generated. Public key and address are saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
+        }
+        try { await onWalletCreated?.(); } catch {}
+      } catch (error) {
+        profileWarning = error?.message || "The server profile could not be created.";
+        setMessage("Wallet keys generated and encrypted locally, but server sync failed: " + profileWarning + " Your local wallet is saved in this browser. Keep the recovery material safe; use the same browser and vault password to unlock it.");
+      }
     } catch (error) {
-      setMessage(error.message || "Wallet generation failed.");
+      setMessage(error?.message || "Wallet generation failed.");
     } finally {
       setBusy(false);
     }
