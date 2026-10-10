@@ -1,4 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import solc from "solc";
+import { BrowserProvider, ContractFactory } from "ethers";
+
+const DEPLOYED_CONTRACTS_KEY = "world_wallet_deployed_contracts_v1";
+const readDeployedContracts = () => { try { const v = JSON.parse(localStorage.getItem(DEPLOYED_CONTRACTS_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
 
 const NETWORKS = {
   sepolia: {
@@ -63,6 +68,10 @@ export default function ContractTools({ active, setActive }) {
   const [checkResult, setCheckResult] = useState(null);
   const [showCreateCard, setShowCreateCard] = useState(false);
   const [loadAddress, setLoadAddress] = useState("");
+  const [deployBusy, setDeployBusy] = useState(false);
+  const [deployedContracts, setDeployedContracts] = useState(() => readDeployedContracts());
+  const [deployedAddress, setDeployedAddress] = useState("");
+  useEffect(() => { setDeployedContracts(readDeployedContracts()); }, []);
 
   const source = useMemo(() => {
     const name = cleanSolidityString(tokenName.trim() || "My Token");
@@ -102,6 +111,51 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
     if (!Number.isInteger(numericDecimals) || numericDecimals < 0 || numericDecimals > 18) { setGeneratorMessage("Decimals must be a whole number from 0 to 18."); return false; }
     setGeneratorMessage("Source generated. Review it, compile and test it, then deploy only to a network you selected.");
     return true;
+  }
+
+  async function deployContract() {
+    if (!generateSource()) return;
+    if (!window.ethereum) { setGeneratorMessage("No browser wallet detected. Open World Wallet AI in a browser with an injected EVM wallet such as MetaMask."); return; }
+    const expectedChainId = network === "sepolia" ? 11155111n : network === "ethereum" ? 1n : 56n;
+    setDeployBusy(true); setGeneratorMessage(""); setDeployedAddress("");
+    try {
+      await window.ethereum.request({ method: "eth_requestAccounts" });
+      const currentChain = await window.ethereum.request({ method: "eth_chainId" });
+      if (BigInt(currentChain) !== expectedChainId) {
+        try { await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: selectedNetwork.chainId }] }); }
+        catch (error) { if (Number(error?.code) === 4001) throw new Error("Network switch was cancelled in your wallet."); throw new Error("Switch your connected wallet to " + selectedNetwork.label + " and try again."); }
+      }
+      const provider = new BrowserProvider(window.ethereum);
+      const chain = await provider.getNetwork();
+      if (chain.chainId !== expectedChainId) throw new Error("Connected wallet network does not match " + selectedNetwork.label + ".");
+      const compiled = JSON.parse(solc.compile(JSON.stringify({
+        language: "Solidity",
+        sources: { "GeneratedToken.sol": { content: source } },
+        settings: { optimizer: { enabled: true, runs: 200 }, outputSelection: { "*": { "*": ["abi", "evm.bytecode.object"] } } }
+      })));
+      const errors = (compiled.errors || []).filter(item => item.severity === "error");
+      if (errors.length) throw new Error("Solidity compile error: " + errors.map(item => item.formattedMessage).join("\n"));
+      const contractName = tokenSymbol.trim().replace(/[^A-Za-z0-9_]/g, "") || "MyToken";
+      const artifact = compiled.contracts?.["GeneratedToken.sol"]?.[contractName];
+      if (!artifact?.evm?.bytecode?.object) throw new Error("Compiler did not produce deployable bytecode for " + contractName + ".");
+      const signer = await provider.getSigner();
+      const factory = new ContractFactory(artifact.abi, "0x" + artifact.evm.bytecode.object, signer);
+      const contract = await factory.deploy();
+      const tx = contract.deploymentTransaction();
+      if (!tx) throw new Error("Wallet did not return a deployment transaction.");
+      setGeneratorMessage("Deployment submitted: " + tx.hash + ". Waiting for on-chain confirmation…");
+      const receipt = await tx.wait(1);
+      const address = await contract.getAddress();
+      if (!receipt || receipt.status !== 1 || !address) throw new Error("Deployment failed or returned no contract address.");
+      const record = { name: tokenName.trim(), symbol: tokenSymbol.trim(), supply: String(supply), decimals: Number(decimals), address, network, chainId: String(expectedChainId), txHash: tx.hash, deployer: await signer.getAddress(), explorerUrl: selectedNetwork.explorer + "/address/" + address, deployedAt: new Date().toISOString(), status: "confirmed" };
+      const next = [record, ...readDeployedContracts().filter(item => !(item.address.toLowerCase() === address.toLowerCase() && item.network === network))];
+      localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
+      localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({ address, network, symbol: record.symbol, name: record.name, decimals: record.decimals, txHash: record.txHash, deployedAt: record.deployedAt }));
+      setDeployedContracts(next); setDeployedAddress(address); setLoadAddress(address);
+      setGeneratorMessage("Contract deployed and confirmed on " + selectedNetwork.label + ". Address saved in this browser and ready to load into Wallets.");
+    } catch (error) {
+      setGeneratorMessage(error?.shortMessage || error?.message || "Contract deployment failed. No successful deployment is confirmed.");
+    } finally { setDeployBusy(false); }
   }
 
   async function copySource() {
@@ -181,7 +235,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
     {active === "Contract Generator" ? <><div className="ct-layout">
       <article className="ct-panel">
         <h2>ERC-20 token generator</h2>
-        <p>Create a fixed-initial-supply Solidity starter contract. It does not deploy anything or create a token address until you compile and deploy it on-chain.</p>
+        <p>Generate Solidity, preview the exact source, then compile and deploy directly from a connected wallet. Your wallet signs and pays network gas; the app never receives your private key.</p>
         <label>Token name<input value={tokenName} maxLength={64} onChange={e => setTokenName(e.target.value)} placeholder="My Token"/></label>
         <label>Token symbol<input value={tokenSymbol} maxLength={11} onChange={e => setTokenSymbol(e.target.value)} placeholder="MTK"/></label>
         <label>Initial supply (whole tokens)<input type="number" min="1" max="1000000000000000" step="1" value={supply} onChange={e => setSupply(e.target.value)}/></label>
@@ -200,12 +254,14 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
     </div>
     {showCreateCard && active === "Contract Generator" && <article className="ct-panel">
       <h2>Create Contract · Deployment Options</h2>
-      <p>Source is ready for compilation. Select the target network, then compile and deploy using a wallet-connected environment. This card does not claim deployment until a real transaction confirms.</p>
+      <p>Compile in the browser, then deploy from your connected wallet. A contract is recorded only after the selected blockchain confirms the transaction.</p>
       <label>Target network<select value={network} onChange={e => changeNetwork(e.target.value)}><option value="sepolia">Ethereum Sepolia — testnet (recommended first)</option><option value="ethereum">Ethereum Mainnet — real funds / gas fees</option></select></label>
       <div className="ct-status">Selected: <strong>{selectedNetwork.label}</strong> · Chain ID <code>{network === "sepolia" ? "11155111" : "1"}</code></div>
-      <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy Solidity source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button><a className="ct-btn primary" href="https://remix.ethereum.org/" target="_blank" rel="noreferrer">Compile &amp; deploy in Remix ↗</a></div>
+      <div className="ct-actions"><button className="ct-btn" onClick={copySource}>Copy contract source</button><button className="ct-btn" onClick={downloadSource}>Download .sol</button><button className="ct-btn primary" disabled={deployBusy} onClick={deployContract}>{deployBusy ? "Deploying…" : "Deploy directly from wallet →"}</button></div>
+      {deployedAddress && <div className="ct-status good"><strong>Deployment confirmed</strong><br/>Contract address: <code>{deployedAddress}</code><br/><a href={selectedNetwork.explorer + "/address/" + deployedAddress} target="_blank" rel="noreferrer">View deployed contract ↗</a></div>}
+      {deployedContracts.length > 0 && <div className="ct-status"><strong>Contracts created in this browser</strong>{deployedContracts.slice(0,5).map((item,index)=><div key={item.address+item.network+index}>{item.name} ({item.symbol}) · {item.network} · <code>{item.address}</code> · <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer</a></div>)}</div>}
       <label>Deployed token contract address (paste after deployment)<input value={loadAddress} onChange={e => setLoadAddress(e.target.value.trim())} spellCheck={false} placeholder="0x…"/></label>
-      <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Paste the deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallets"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into BALMZ Token →</button></div>
+      <div className="ct-actions"><button className="ct-btn primary" onClick={() => { if (!/^0x[a-fA-F0-9]{40}$/.test(loadAddress)) { setGeneratorMessage("Deploy a contract or paste a deployed contract address first."); return; } try { localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({address:loadAddress,network, symbol:tokenSymbol.trim(), name:tokenName.trim(), decimals:Number(decimals), loadedAt:new Date().toISOString()})); setGeneratorMessage("Contract address saved for BALMZ Token loading. Opening Wallet now."); setActive("Wallets"); } catch { setGeneratorMessage("Could not save contract details in this browser."); } }}>Load into Wallets / BALMZ Token →</button></div>
       <div className="ct-note">Mainnet deployment costs real ETH. Sepolia uses test ETH. Never enter a private key or seed phrase into this generator. Verify the contract address and selected network before loading it.</div>
       {generatorMessage && <div className="ct-status">{generatorMessage}</div>}
     </article>}</>
