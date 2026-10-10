@@ -189,6 +189,12 @@ def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
         CREATE UNIQUE INDEX IF NOT EXISTS users_phone_number_unique ON users(phone_number) WHERE phone_number IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS phone_otp_requests(
+          id BIGSERIAL PRIMARY KEY,
+          phone_number TEXT NOT NULL,
+          requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS phone_otp_requests_phone_time_idx ON phone_otp_requests(phone_number,requested_at DESC);
         CREATE TABLE IF NOT EXISTS wallets(
           id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
           name TEXT NOT NULL DEFAULT 'Wallet', currency TEXT NOT NULL DEFAULT 'USD',
@@ -1234,6 +1240,20 @@ def _twilio_verify_request(phone_number: str, code: str | None = None):
 def send_registration_phone_otp(request: PhoneOtpRequest):
     phone = _normalise_phone_number(request.phone_number)
     # Provider configuration is required; no pretend/simulated SMS codes are issued.
+    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID):
+        raise HTTPException(status_code=503, detail="Phone verification is not configured. The SMS provider credentials and Verify Service must be configured by the operator.")
+    # Add a local per-number throttle as well as the provider's own Verify limits.
+    with db() as conn:
+        counts = conn.execute(
+            "SELECT COUNT(*) FILTER (WHERE requested_at > NOW() - INTERVAL '1 minute'), "
+            "COUNT(*) FILTER (WHERE requested_at > NOW() - INTERVAL '1 hour') "
+            "FROM phone_otp_requests WHERE phone_number=%s",
+            (phone,),
+        ).fetchone()
+        if counts and (counts[0] >= 1 or counts[1] >= 5):
+            raise HTTPException(status_code=429, detail="Too many verification requests. Wait before requesting another code.")
+        conn.execute("INSERT INTO phone_otp_requests(phone_number) VALUES(%s)", (phone,))
+        conn.commit()
     _twilio_verify_request(phone)
     return {"ok": True, "message": "If the phone number can receive verification SMS, a code has been requested."}
 
