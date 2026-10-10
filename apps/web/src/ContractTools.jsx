@@ -188,6 +188,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       const record = { name: tokenName.trim(), symbol: tokenSymbol.trim(), supply: String(supply), decimals: Number(decimals), address, network: deploymentNetwork, chainId: String(expectedChainId), txHash: tx.hash, deployer: await signer.getAddress(), explorerUrl: deploymentConfig.explorer + "/address/" + address, deployedAt: new Date().toISOString(), status: "confirmed" };
       const next = [record, ...readDeployedContracts().filter(item => !(item.address.toLowerCase() === address.toLowerCase() && item.network === deploymentNetwork))];
       localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
+      try { window.dispatchEvent(new Event("world-wallet-contracts-updated")); } catch {}
       localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({ address, network: deploymentNetwork, symbol: record.symbol, name: record.name, decimals: record.decimals, txHash: record.txHash, deployedAt: record.deployedAt }));
       setDeployedContracts(next); setDeployedAddress(address); setLoadAddress(address);
       setGeneratorMessage("Contract deployed and confirmed on " + deploymentConfig.label + ". Address saved in this browser and ready to load into Wallets.");
