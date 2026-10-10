@@ -78,24 +78,58 @@ export default function ContractTools({ active, setActive }) {
     const symbol = cleanSolidityString(tokenSymbol.trim() || "MTK");
     const wholeSupply = String(Math.floor(Number(supply) || 0));
     const tokenDecimals = String(Math.floor(Number(decimals) || 0));
-    return `// SPDX-License-Identifier: MIT
+    return \`// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-
 /**
- * Generated ERC-20 starter contract.
- * Fixed initial supply; no owner-only mint function.
- * Review and test the source before deploying.
+ * World Wallet AI generated ERC-20.
+ * Fixed initial supply, standard transfers and allowances, no owner mint.
+ * Generated source is not an audit or guarantee of safety.
  */
-contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} is ERC20 {
-    uint256 public constant INITIAL_SUPPLY = ${wholeSupply} * 10 ** ${tokenDecimals};
+contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
+    string public name = "\${name}";
+    string public symbol = "\${symbol}";
+    uint8 public immutable decimals = \${tokenDecimals};
+    uint256 public totalSupply;
+    mapping(address => uint256) public balanceOf;
+    mapping(address => mapping(address => uint256)) public allowance;
 
-    constructor() ERC20("${name}", "${symbol}") {
-        _mint(msg.sender, INITIAL_SUPPLY);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+
+    constructor() {
+        uint256 initial = \${wholeSupply} * (10 ** uint256(decimals));
+        totalSupply = initial;
+        balanceOf[msg.sender] = initial;
+        emit Transfer(address(0), msg.sender, initial);
+    }
+
+    function transfer(address to, uint256 value) external returns (bool) {
+        require(to != address(0), "zero recipient");
+        require(balanceOf[msg.sender] >= value, "insufficient balance");
+        unchecked { balanceOf[msg.sender] -= value; balanceOf[to] += value; }
+        emit Transfer(msg.sender, to, value);
+        return true;
+    }
+
+    function approve(address spender, uint256 value) external returns (bool) {
+        allowance[msg.sender][spender] = value;
+        emit Approval(msg.sender, spender, value);
+        return true;
+    }
+
+    function transferFrom(address from, address to, uint256 value) external returns (bool) {
+        require(to != address(0), "zero recipient");
+        require(balanceOf[from] >= value, "insufficient balance");
+        uint256 allowed = allowance[from][msg.sender];
+        require(allowed >= value, "allowance exceeded");
+        if (allowed != type(uint256).max) allowance[from][msg.sender] = allowed - value;
+        unchecked { balanceOf[from] -= value; balanceOf[to] += value; }
+        emit Transfer(from, to, value);
+        return true;
     }
 }
-`;
+\`;
   }, [tokenName, tokenSymbol, supply, decimals]);
 
   const selectedNetwork = NETWORKS[network] || NETWORKS.sepolia;
