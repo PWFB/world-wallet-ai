@@ -1198,8 +1198,8 @@ def neon_password_login(request: NeonAuthCredentials):
     })
 
 def _normalise_phone_number(value: str) -> str:
-    phone = re.sub(r"[\\s()-]", "", value or "")
-    if not re.fullmatch(r"\\+[1-9]\\d{7,14}", phone):
+    phone = re.sub(r"[\s()-]", "", value or "")
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
         raise HTTPException(status_code=400, detail="Enter a valid phone number in international format, for example +2348012345678.")
     return phone
 
