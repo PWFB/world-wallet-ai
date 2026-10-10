@@ -261,7 +261,6 @@ function App() {
           tx_hash: tx.tx_hash,
           confirmations: Number(tx.confirmations || 0),
           block_height: tx.block_height,
-          network: tx.network,
           block_hash: tx.block_hash,
           log_index: tx.log_index,
         })));
