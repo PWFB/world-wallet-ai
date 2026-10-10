@@ -63,6 +63,7 @@ function App() {
   const [tokenRegistry, setTokenRegistry] = useState([]);
   const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
+  const [externalWalletConnection, setExternalWalletConnection] = useState(() => { try { return JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return null; } });
   const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
     const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
     const liveRecord = records.find(t => t.wallet_network_connected);
@@ -119,11 +120,27 @@ function App() {
       try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalWalletEntries(Array.isArray(v) ? v : []); } catch { setLocalWalletEntries([]); }
       try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setLocalContracts(Array.isArray(v) ? v : []); } catch { setLocalContracts([]); }
     };
+    const refreshExternalConnection = event => {
+      if (event && Object.prototype.hasOwnProperty.call(event, "detail")) {
+        setExternalWalletConnection(event.detail || null);
+        return;
+      }
+      try { setExternalWalletConnection(JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null")); } catch { setExternalWalletConnection(null); }
+    };
     window.addEventListener("world-wallet-local-vault-updated", refreshLocalWalletData);
     window.addEventListener("world-wallet-contracts-updated", refreshLocalWalletData);
+    window.addEventListener("world-wallet-external-connection-updated", refreshExternalConnection);
     window.addEventListener("storage", refreshLocalWalletData);
+    window.addEventListener("storage", refreshExternalConnection);
     refreshLocalWalletData();
-    return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocalWalletData); window.removeEventListener("world-wallet-contracts-updated", refreshLocalWalletData); window.removeEventListener("storage", refreshLocalWalletData); };
+    refreshExternalConnection();
+    return () => {
+      window.removeEventListener("world-wallet-local-vault-updated", refreshLocalWalletData);
+      window.removeEventListener("world-wallet-contracts-updated", refreshLocalWalletData);
+      window.removeEventListener("world-wallet-external-connection-updated", refreshExternalConnection);
+      window.removeEventListener("storage", refreshLocalWalletData);
+      window.removeEventListener("storage", refreshExternalConnection);
+    };
   }, []);
 
   useEffect(() => {
@@ -962,6 +979,14 @@ function App() {
                 <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
               </article>
             </div>
+
+            <article className="panel action-panel dashboard-connected-wallet">
+              <div className="panel-head">
+                <div><p className="feature-kicker">EXTERNAL WALLET</p><h2>{externalWalletConnection?.address ? "Connected wallet" : "Connect a wallet"}</h2><span>{externalWalletConnection?.address ? "Your selected WalletConnect account" : "Connect or switch to another wallet from your dashboard."}</span></div>
+                <button className="primary" onClick={() => setActive("Wallet Connect")}>{externalWalletConnection?.address ? "⇄ Change wallet" : "Connect wallet →"}</button>
+              </div>
+              {externalWalletConnection?.address ? <div className="tool-row"><div><b>Public address</b><small>Chain ID: {externalWalletConnection.chainId ?? "Unknown"}</small></div><code>{externalWalletConnection.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(externalWalletConnection.address)}>Copy</button></div> : <div className="live-chart-empty">No external wallet selected yet. Use Connect wallet to choose one.</div>}
+            </article>
 
             <div className="quick-grid">
               <button onClick={() => setActive("Browser")}><span>⌕</span><div><b>Open Browser</b><small>Search web &amp; explore Etherscan</small></div>→</button>
