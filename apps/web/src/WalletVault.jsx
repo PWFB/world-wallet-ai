@@ -44,6 +44,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     const saved = readVault();
     setEntries(saved);
     if (saved.length) setSelectedId(saved[0].walletId);
+    // Contract Generator can hand off a deployed token address to this page.
+    try {
+      const pending = JSON.parse(localStorage.getItem("world_wallet_pending_token_contract") || "null");
+      if (pending && /^0x[a-fA-F0-9]{40}$/.test(String(pending.address || ""))) {
+        setTokenContractAddress(pending.address);
+        if (pending.network === "sepolia") setNetwork("sepolia");
+        setMessage("Loaded " + (pending.symbol || "token") + " contract address from Contract Generator (" + (pending.network || "selected network") + "). Confirm the network and address before interacting.");
+        localStorage.removeItem("world_wallet_pending_token_contract");
+      }
+    } catch {}
   }, []);
 
   useEffect(() => {
