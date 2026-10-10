@@ -6,3 +6,4 @@ psycopg[binary]==3.2.10
 httpx==0.28.1
 PyJWT==2.10.1
 pycryptodome==3.23.0
+cryptography==45.0.7
