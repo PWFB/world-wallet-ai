@@ -228,10 +228,28 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   const [apiKeyBalance, setApiKeyBalance] = useState(null);
   const [apiKeyBalanceBusy, setApiKeyBalanceBusy] = useState(false);
   const [apiKeyBalanceMessage, setApiKeyBalanceMessage] = useState("");
+  const [userApiKeys, setUserApiKeys] = useState([]);
+  const [userApiKeyName, setUserApiKeyName] = useState("My API key");
+  const [createdUserApiKey, setCreatedUserApiKey] = useState("");
+  const [userApiKeyMessage, setUserApiKeyMessage] = useState("");
+  const [userApiKeysBusy, setUserApiKeysBusy] = useState(false);
   const [walletProfiles, setWalletProfiles] = useState([]);
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    if (active !== "API Keys" || !accessToken) return;
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/api-keys", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load API keys.");
+        if (!cancelled) setUserApiKeys(data.keys || []);
+      })
+      .catch(error => { if (!cancelled) setUserApiKeyMessage(error.message || "Could not load API keys."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
 
   useEffect(() => {
     if (selectedAsset && selectedAsset !== asset) setAsset(selectedAsset);
@@ -619,6 +637,15 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     };
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">PROVIDER CONFIGURATION</p><h1>CoinGecko API</h1><p className="muted">Market-price integration status and secure API-key setup.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <article className="panel action-panel ww-api-key-manager">
+        <div className="panel-head"><div><h2>Your World Wallet API keys</h2><span>Create keys for your own API integrations</span></div><button className="secondary" disabled={userApiKeysBusy} onClick={async()=>{setUserApiKeysBusy(true);setUserApiKeyMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/api-keys",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load keys.");setUserApiKeys(d.keys||[]);setUserApiKeyMessage("API key list refreshed.");}catch(e){setUserApiKeyMessage(e.message||"Unable to load keys.");}finally{setUserApiKeysBusy(false);}}}>↻ Refresh</button></div>
+        <p className="muted">Keys are stored as one-way hashes on the server. A newly created key is shown only once; copy it immediately and keep it private.</p>
+        <div className="ww-api-key-create"><label>Key name<input value={userApiKeyName} maxLength={80} onChange={e=>setUserApiKeyName(e.target.value)} placeholder="My integration"/></label><button className="primary" disabled={userApiKeysBusy||!userApiKeyName.trim()} onClick={async()=>{setUserApiKeysBusy(true);setUserApiKeyMessage("");setCreatedUserApiKey("");try{const r=await fetch(apiBaseUrl+"/api/v1/api-keys",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({name:userApiKeyName.trim()})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Could not create API key.");setCreatedUserApiKey(d.api_key||"");setUserApiKeyMessage("API key created. Copy it now; it will not be shown again.");const list=await fetch(apiBaseUrl+"/api/v1/api-keys",{headers:{Authorization:"Bearer "+accessToken}});const listData=await list.json();if(list.ok)setUserApiKeys(listData.keys||[]);}catch(e){setUserApiKeyMessage(e.message||"Could not create API key.");}finally{setUserApiKeysBusy(false);}}}>{userApiKeysBusy?"Working…":"＋ Create API key"}</button></div>
+        {createdUserApiKey&&<div className="ww-api-key-once"><b>Copy your new key now</b><code>{createdUserApiKey}</code><button className="secondary" onClick={async()=>{try{await navigator.clipboard.writeText(createdUserApiKey);setUserApiKeyMessage("API key copied to clipboard.");}catch{setUserApiKeyMessage("Clipboard unavailable. Select and copy the key manually.");}}}>Copy key</button><small>For security, this raw key is held in the current page only and is not saved in browser storage.</small></div>}
+        {userApiKeyMessage&&<div className={/could not|unable|failed|unavailable|requires/i.test(userApiKeyMessage)?"feature-error":"feature-success"} role="status">{userApiKeyMessage}</div>}
+        <div className="ww-api-key-list">{userApiKeys.length?userApiKeys.map(key=><div className="ww-api-key-row" key={key.id}><div><b>{key.name}</b><small>{key.prefix}•••••• • Created {key.created_at?new Date(key.created_at).toLocaleDateString():"date unavailable"}</small><small>{key.revoked?"Revoked":key.last_used_at?"Last used "+new Date(key.last_used_at).toLocaleString():"Not used yet"}</small></div><span className={key.revoked?"ww-key-revoked":"ww-key-active"}>{key.revoked?"Revoked":"Active"}</span>{!key.revoked&&<button className="secondary" disabled={userApiKeysBusy} onClick={async()=>{if(!window.confirm("Revoke this API key? Any integration using it will stop authenticating."))return;setUserApiKeysBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/api-keys/revoke",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({key_id:key.id})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to revoke key.");setUserApiKeys(items=>items.map(item=>item.id===key.id?{...item,revoked:true}:item));setUserApiKeyMessage("API key revoked.");}catch(e){setUserApiKeyMessage(e.message||"Unable to revoke key.");}finally{setUserApiKeysBusy(false);}}}>Revoke</button>}</div>):<div className="live-chart-empty">No API keys created yet. Create one above to start.</div>}</div>
+        <div className="security-note">These keys authenticate requests to World Wallet AI's API using the Bearer token header. Do not place keys in public repositories or frontend source code. Revoked keys stop working immediately.</div>
+      </article>
       <article className="panel action-panel"><h2>API connection status</h2><p>World Wallet AI fetches market prices through its backend. The API secret must stay in Render's backend environment; it must not be stored in browser localStorage or bundled into frontend code.</p>
         <div className="security-note">Required backend variable: <code>COINGECKO_API_KEY</code>. For a Demo key use <code>https://api.coingecko.com/api/v3</code>; for a Pro key set <code>COINGECKO_API_BASE_URL=https://pro-api.coingecko.com/api/v3</code>. The backend sends the key in the provider request header.</div>
         <div className="feature-grid"><div className="stat-card"><span>Market data endpoint</span><strong>/api/v1/prices/market</strong></div><div className="stat-card"><span>Refresh interval</span><strong>60 seconds</strong></div><div className="stat-card"><span>Secret storage</span><strong>Render backend only</strong></div></div>
