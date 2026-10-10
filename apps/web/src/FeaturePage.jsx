@@ -183,7 +183,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
-          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => setShowAddressForm(true)} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
+          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
     </div>
