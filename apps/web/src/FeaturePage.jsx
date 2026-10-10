@@ -441,6 +441,7 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
       } catch (error) { setMessage(error.message || "Reserve snapshot unavailable."); }
       finally { setToolBusy(false); }
     };
+    const createdContracts = (() => { try { const value = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(value) ? value : []; } catch { return []; } })();
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">TRANSPARENCY</p><h1>Proof of Reserves</h1><p className="muted">Read-only balances from public blockchain addresses connected to your wallet.</p></div><button className="secondary" onClick={loadProof} disabled={toolBusy}>{toolBusy ? "Checking chains…" : "↻ Refresh snapshot"}</button></div>
       {message && <div className={/unavailable|failed|unable|not configured/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
@@ -450,6 +451,16 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
         {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
         {proofData?.warnings?.map((warning,index)=><div className="security-note" key={index}>Warning: {warning}</div>)}
+        <div className="panel action-panel">
+          <p className="feature-kicker">DEPLOYED TOKEN CONTRACT REGISTER · READ ONLY</p>
+          <h2>World Wallet AI created contracts</h2>
+          <p className="muted">Read-only records saved in this browser. A listed contract is not itself proof of reserves or an audit.</p>
+          {createdContracts.length ? <div className="tool-list">{createdContracts.map((item,index)=><div className="tool-row" key={item.address + item.network + index}>
+            <div><b>{item.name} ({item.symbol})</b><small>{item.network === "sepolia" ? "Ethereum Sepolia" : item.network === "ethereum" ? "Ethereum Mainnet" : item.network} · {item.status || "local record"}</small><small>Supply: {item.supply} · Decimals: {item.decimals}</small><small>Transaction: {item.txHash || "Not recorded"}</small></div>
+            <code>{item.address}</code>
+            <strong><a href={item.explorerUrl} target="_blank" rel="noreferrer">View on explorer ↗</a></strong>
+          </div>)}</div> : <div className="live-chart-empty">No locally recorded contracts. Create and deploy a contract from Contract Generator first.</div>}
+        </div>
         <div className="security-note">Important: this is not an audited proof of reserves. It shows on-chain assets at connected addresses only; it does not verify ownership, platform-wide customer liabilities, off-chain assets, or solvency. Sepolia test funds are excluded.</div>
         {proofData && <button className="secondary" onClick={()=>navigator.clipboard?.writeText(JSON.stringify(proofData,null,2))}>Copy snapshot data</button>}
       </article>
