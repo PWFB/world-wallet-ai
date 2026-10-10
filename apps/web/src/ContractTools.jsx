@@ -78,7 +78,7 @@ export default function ContractTools({ active, setActive }) {
     const symbol = cleanSolidityString(tokenSymbol.trim() || "MTK");
     const wholeSupply = String(Math.floor(Number(supply) || 0));
     const tokenDecimals = String(Math.floor(Number(decimals) || 0));
-    return \`// SPDX-License-Identifier: MIT
+    return `// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
 /**
@@ -86,10 +86,10 @@ pragma solidity ^0.8.24;
  * Fixed initial supply, standard transfers and allowances, no owner mint.
  * Generated source is not an audit or guarantee of safety.
  */
-contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
-    string public name = "\${name}";
-    string public symbol = "\${symbol}";
-    uint8 public immutable decimals = \${tokenDecimals};
+contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
+    string public name = "${name}";
+    string public symbol = "${symbol}";
+    uint8 public immutable decimals = ${tokenDecimals};
     uint256 public totalSupply;
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -98,7 +98,7 @@ contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
     event Approval(address indexed owner, address indexed spender, uint256 value);
 
     constructor() {
-        uint256 initial = \${wholeSupply} * (10 ** uint256(decimals));
+        uint256 initial = ${wholeSupply} * (10 ** uint256(decimals));
         totalSupply = initial;
         balanceOf[msg.sender] = initial;
         emit Transfer(address(0), msg.sender, initial);
@@ -129,7 +129,7 @@ contract \${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
         return true;
     }
 }
-\`;
+`;
   }, [tokenName, tokenSymbol, supply, decimals]);
 
   const selectedNetwork = NETWORKS[network] || NETWORKS.sepolia;
