@@ -1,7 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
 import './index.css'
+
+const App = React.lazy(() => import('./App.jsx'))
 
 class AppRecoveryBoundary extends React.Component {
   constructor(props) {
@@ -22,30 +23,22 @@ class AppRecoveryBoundary extends React.Component {
 
     return (
       <main style={{
-        minHeight: '100vh',
-        padding: 'clamp(24px, 6vw, 72px)',
-        display: 'grid',
-        placeItems: 'center',
-        color: '#f4f7fb',
+        minHeight: '100vh', padding: 'clamp(24px, 6vw, 72px)',
+        display: 'grid', placeItems: 'center', color: '#f4f7fb',
         background: 'radial-gradient(circle at 80% 10%, rgba(255,107,0,.14), transparent 34%), #070d1d',
         fontFamily: 'Inter, system-ui, sans-serif'
       }}>
         <section style={{
-          width: 'min(720px, 100%)',
-          padding: 'clamp(24px, 5vw, 48px)',
-          border: '1px solid #243650',
-          borderRadius: 22,
-          background: 'rgba(12,23,41,.96)',
-          boxShadow: '0 24px 80px rgba(0,0,0,.28)'
+          width: 'min(720px, 100%)', padding: 'clamp(24px, 5vw, 48px)',
+          border: '1px solid #243650', borderRadius: 22,
+          background: 'rgba(12,23,41,.96)', boxShadow: '0 24px 80px rgba(0,0,0,.28)'
         }}>
-          <div style={{ color: '#ff7a18', fontSize: 12, fontWeight: 800, letterSpacing: 2 }}>
-            WORLD WALLET AI
-          </div>
+          <div style={{ color: '#ff7a18', fontSize: 12, fontWeight: 800, letterSpacing: 2 }}>WORLD WALLET AI</div>
           <h1 style={{ fontSize: 'clamp(34px, 7vw, 58px)', lineHeight: 1.08, margin: '22px 0 16px' }}>
             Your Crypto.<br /><span style={{ color: '#ff7a18' }}>Your Freedom.</span>
           </h1>
           <p style={{ color: '#a8b7cb', lineHeight: 1.8, maxWidth: 560 }}>
-            Your wallet page encountered a startup error. The recovery screen is active so you are not left with a blank page. Reload to try the full application again.
+            The wallet application could not start correctly. This recovery screen keeps the page usable and shows the startup error below instead of leaving a blank blue screen.
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 28 }}>
             <button onClick={() => window.location.reload()} style={{
@@ -70,10 +63,19 @@ class AppRecoveryBoundary extends React.Component {
   }
 }
 
+function StartupFallback() {
+  return <main style={{
+    minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 24,
+    color: '#f4f7fb', background: '#070d1d', fontFamily: 'Inter, system-ui, sans-serif'
+  }}><p role="status">Loading World Wallet AI…</p></main>
+}
+
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <AppRecoveryBoundary>
-      <App />
+      <React.Suspense fallback={<StartupFallback />}>
+        <App />
+      </React.Suspense>
     </AppRecoveryBoundary>
   </React.StrictMode>,
 )
