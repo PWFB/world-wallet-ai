@@ -816,3 +816,20 @@
 .browser-security-note b{color:#d4af37}
 @media(max-width:1000px){.browser-shortcuts{grid-template-columns:repeat(3,minmax(0,1fr))}.browser-frame-wrap{height:65vh}}
 @media(max-width:600px){.browser-heading{gap:12px}.browser-heading .page-actions{width:auto}.browser-toolbar{gap:5px}.browser-address-form{order:1;flex-basis:100%;height:44px}.browser-open-button{margin-left:auto}.browser-shortcuts{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}.browser-shortcut{padding:10px 8px}.browser-frame-wrap{height:62vh;min-height:360px}.browser-footer{align-items:flex-start;flex-direction:column}.browser-footer .secondary{width:100%}.browser-site-meta{flex-wrap:wrap}}
+
+/* Wallet function launcher, visible on desktop and mobile */
+.wallet-functions-panel{margin-top:14px}
+.wallet-function-count{display:inline-flex;align-items:center;justify-content:center;border:1px solid #24415f;border-radius:999px;padding:6px 9px;color:#91a8c4;font-size:9px;white-space:nowrap}
+.wallet-functions-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.wallet-function-card{display:flex;align-items:center;gap:10px;min-width:0;min-height:66px;padding:11px 10px;border:1px solid #1b304b;border-radius:11px;background:#091629;text-align:left;transition:background .15s,border-color .15s,transform .15s}
+.wallet-function-card:hover{background:#10233a;border-color:#00a9d1;transform:translateY(-1px)}
+.wallet-function-icon{flex:0 0 32px;width:32px;height:32px;display:grid;place-items:center;border:1px solid rgba(0,212,255,.2);border-radius:9px;background:rgba(0,212,255,.07);color:#00d4ff;font-size:16px}
+.wallet-function-copy{display:grid;gap:4px;min-width:0;flex:1}
+.wallet-function-copy b{font-size:10px;overflow-wrap:anywhere}
+.wallet-function-copy small{font-size:8px;line-height:1.4;color:#8194af;overflow-wrap:anywhere}
+.wallet-function-arrow{color:#00d4ff;font-size:18px}
+.wallet-functions-note{margin:12px 0 0;color:#71849f;font-size:9px;line-height:1.6}
+.global-back-button{display:inline-flex;align-items:center;gap:5px;padding:0 10px!important;width:auto!important;white-space:nowrap;color:#00d4ff!important}
+@media(max-width:1100px){.wallet-functions-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:760px){.wallet-functions-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.wallet-function-card{min-height:64px;padding:9px 8px;gap:8px}.wallet-function-icon{flex-basis:29px;width:29px;height:29px}.wallet-function-copy b{font-size:9px}.wallet-function-copy small{font-size:8px}.topbar{padding:0 10px}.top-actions{gap:5px}.top-actions button{min-width:30px}.global-back-button span{display:none}}
+@media(max-width:360px){.wallet-functions-grid{grid-template-columns:1fr}.wallet-function-card{min-height:58px}}
