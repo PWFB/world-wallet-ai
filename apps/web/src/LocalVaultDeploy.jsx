@@ -67,6 +67,7 @@ export default function LocalVaultDeploy({ source, tokenName, tokenSymbol, suppl
       };
       const saved = readArray(DEPLOYED_KEY);
       localStorage.setItem(DEPLOYED_KEY, JSON.stringify([record, ...saved.filter(item => !(item.address?.toLowerCase() === deployedAddress.toLowerCase() && item.network === "sepolia"))]));
+      try { window.dispatchEvent(new Event("world-wallet-contracts-updated")); } catch {}
       localStorage.setItem("world_wallet_pending_token_contract", JSON.stringify({
         address: deployedAddress, network: "sepolia", symbol: record.symbol, name: record.name,
         decimals: record.decimals, txHash: tx.hash, deployedAt: record.deployedAt
