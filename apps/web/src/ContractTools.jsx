@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from "react";
-import solc from "solc";
 import { BrowserProvider, ContractFactory } from "ethers";
 
 const DEPLOYED_CONTRACTS_KEY = "world_wallet_deployed_contracts_v1";
@@ -164,6 +163,8 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       const provider = new BrowserProvider(window.ethereum);
       const chain = await provider.getNetwork();
       if (chain.chainId !== expectedChainId) throw new Error("Connected wallet network does not match " + deploymentConfig.label + ".");
+      const solcModule = await import("solc");
+      const solc = solcModule.default || solcModule;
       const compiled = JSON.parse(solc.compile(JSON.stringify({
         language: "Solidity",
         sources: { "GeneratedToken.sol": { content: source } },
