@@ -1,6 +1,7 @@
 import os
 import hashlib
 import re
+import secrets
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -164,6 +165,14 @@ class WalletActivateRequest(BaseModel):
     wallet_id: str = Field(min_length=4, max_length=80)
 
 
+class ApiKeyCreateRequest(BaseModel):
+    name: str = Field(default="My API key", min_length=1, max_length=80)
+
+
+class ApiKeyRevokeRequest(BaseModel):
+    key_id: str = Field(min_length=4, max_length=100)
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
@@ -189,6 +198,13 @@ def init_db():
         ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_number TEXT;
         ALTER TABLE users ADD COLUMN IF NOT EXISTS phone_verified_at TIMESTAMPTZ;
         CREATE UNIQUE INDEX IF NOT EXISTS users_phone_number_unique ON users(phone_number) WHERE phone_number IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS api_keys(
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
+          name TEXT NOT NULL, key_hash TEXT UNIQUE NOT NULL, key_prefix TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_used_at TIMESTAMPTZ,
+          revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS api_keys_owner_created_idx ON api_keys(owner_id,created_at DESC);
         CREATE TABLE IF NOT EXISTS phone_otp_requests(
           id BIGSERIAL PRIMARY KEY,
           phone_number TEXT NOT NULL,
@@ -450,6 +466,23 @@ def current_user(authorization: str | None = Header(default=None)):
         if not user:
             raise HTTPException(status_code=401, detail="Wallet user not found")
         return user
+    # First accept app-issued API keys. Only a SHA-256 digest is stored in PostgreSQL.
+    if DATABASE_URL and token.startswith("wwai_"):
+        try:
+            with db() as conn:
+                row = conn.execute("""
+                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id
+                    FROM api_keys k JOIN users u ON u.id=k.owner_id
+                    WHERE k.key_hash=%s AND k.revoked_at IS NULL
+                """, (sha(token),)).fetchone()
+                if row:
+                    conn.execute("UPDATE api_keys SET last_used_at=NOW() WHERE id=%s", (row[6],))
+                    conn.commit()
+                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "phone_number": row[4], "phone_verified": bool(row[5])}
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="API key authentication is temporarily unavailable") from exc
     return neon_auth_user(token)
 
 
@@ -1982,6 +2015,44 @@ def api_request_key_balance(user: dict = Depends(current_user)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=503, detail="CoinGecko API-key usage is temporarily unavailable") from exc
+
+
+@app.get("/api/v1/api-keys")
+def list_api_keys(user: dict = Depends(current_user)):
+    """List key metadata only; full key values are never retrievable after creation."""
+    with db() as conn:
+        rows = conn.execute("""
+            SELECT id,name,key_prefix,created_at,last_used_at,revoked_at
+            FROM api_keys WHERE owner_id=%s ORDER BY created_at DESC LIMIT 100
+        """, (user["id"],)).fetchall()
+    return {"keys": [{"id": r[0], "name": r[1], "prefix": r[2], "created_at": r[3].isoformat() if r[3] else None,
+                       "last_used_at": r[4].isoformat() if r[4] else None, "revoked": bool(r[5])} for r in rows]}
+
+
+@app.post("/api/v1/api-keys")
+def create_api_key(request: ApiKeyCreateRequest, user: dict = Depends(current_user)):
+    """Create an app API key. The raw value is returned once and is never stored."""
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="API key storage requires the configured PostgreSQL database")
+    raw_key = "wwai_" + secrets.token_urlsafe(32)
+    key_id = "key_" + secrets.token_hex(12)
+    with db() as conn:
+        conn.execute("INSERT INTO api_keys(id,owner_id,name,key_hash,key_prefix) VALUES(%s,%s,%s,%s,%s)",
+                     (key_id, user["id"], request.name.strip(), sha(raw_key), raw_key[:13]))
+        conn.commit()
+    return {"id": key_id, "name": request.name.strip(), "api_key": raw_key,
+            "prefix": raw_key[:13], "created_at": datetime.now(timezone.utc).isoformat(),
+            "warning": "Copy this key now. It cannot be displayed again."}
+
+
+@app.post("/api/v1/api-keys/revoke")
+def revoke_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    with db() as conn:
+        result = conn.execute("UPDATE api_keys SET revoked_at=NOW() WHERE id=%s AND owner_id=%s AND revoked_at IS NULL", (request.key_id, user["id"]))
+        conn.commit()
+        if result.rowcount < 1:
+            raise HTTPException(status_code=404, detail="API key not found or already revoked")
+    return {"revoked": True, "id": request.key_id}
 
 
 @app.post("/api/v1/tools/address-balance")
