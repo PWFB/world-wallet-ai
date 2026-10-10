@@ -25,6 +25,7 @@ export default function BrowserPage({ onNavigateLogin }) {
   const [history, setHistory] = useState(["https://etherscan.io/"]);
   const [historyIndex, setHistoryIndex] = useState(0);
   const [frameError, setFrameError] = useState(false);
+  const [frameVersion, setFrameVersion] = useState(0);
   const [showHelp, setShowHelp] = useState(false);
   const secureHost = useMemo(() => {
     try { return new URL(currentUrl).hostname.replace(/^www\./, ""); } catch { return "Search"; }
@@ -77,7 +78,7 @@ export default function BrowserPage({ onNavigateLogin }) {
         <div className="browser-toolbar">
           <button className="browser-icon-button" type="button" onClick={goBack} disabled={historyIndex <= 0} aria-label="Back">←</button>
           <button className="browser-icon-button" type="button" onClick={goForward} disabled={historyIndex >= history.length - 1} aria-label="Forward">→</button>
-          <button className="browser-icon-button" type="button" onClick={() => { setFrameError(false); setCurrentUrl(value => value); }} aria-label="Refresh">↻</button>
+          <button className="browser-icon-button" type="button" onClick={() => { setFrameError(false); setFrameVersion(value => value + 1); }} aria-label="Refresh">↻</button>
           <form className="browser-address-form" onSubmit={event => { event.preventDefault(); navigate(address); }}>
             <span className="browser-lock">⌑</span>
             <input aria-label="Search or enter website" value={address} onChange={event => setAddress(event.target.value)} placeholder="Search Google or enter website / address" autoCapitalize="none" autoCorrect="off" spellCheck="false" />
