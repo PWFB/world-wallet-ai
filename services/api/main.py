@@ -23,6 +23,9 @@ SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_ADMIN_EMAIL = (os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
+GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
@@ -2878,3 +2881,79 @@ def github_oauth_disconnect(user=Depends(current_user)):
         conn.execute("DELETE FROM github_oauth_states WHERE user_id=%s", (user["id"],))
         conn.commit()
     return {"connected": False}
+
+
+# Gemini provider connection check. The API key stays in backend environment only.
+def _gemini_admin(user):
+    if not GEMINI_ADMIN_EMAIL:
+        raise HTTPException(status_code=503, detail="Gemini admin email is not configured on the server")
+    if str((user or {}).get("email") or "").strip().lower() != GEMINI_ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Gemini integration is restricted to the configured administrator")
+    return user
+
+
+@app.get("/api/v1/integrations/gemini/status")
+def gemini_status(user=Depends(current_user)):
+    _gemini_admin(user)
+    return {
+        "configured": bool(GEMINI_API_KEY),
+        "model": GEMINI_MODEL,
+        "provider": "Google Gemini",
+        "key_present": bool(GEMINI_API_KEY),
+    }
+
+
+@app.post("/api/v1/integrations/gemini/test")
+async def gemini_connection_test(user=Depends(current_user)):
+    _gemini_admin(user)
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini API key is not configured on the backend. Set GEMINI_API_KEY in Render.")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            response = await client.post(
+                url,
+                params={"key": GEMINI_API_KEY},
+                json={
+                    "contents": [{"parts": [{"text": "Reply with exactly: World Wallet AI Gemini connection OK"}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 24},
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Gemini connection timed out. Try again shortly.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Unable to reach the Gemini API from the backend.") from exc
+
+    if response.is_error:
+        # Do not echo provider response bodies; they may contain request metadata.
+        if response.status_code in (401, 403):
+            detail = "Gemini rejected the API key or its permissions. Check the key and Gemini API access in Google AI Studio/Cloud."
+            status_code = 502
+        elif response.status_code == 429:
+            detail = "Gemini rate limit or quota reached. Check the project's quota and billing settings."
+            status_code = 429
+        else:
+            detail = f"Gemini API returned HTTP {response.status_code}. Check the selected model and provider configuration."
+            status_code = 502
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    try:
+        data = response.json()
+        text = "".join(
+            part.get("text", "")
+            for candidate in data.get("candidates", [])
+            for part in candidate.get("content", {}).get("parts", [])
+            if isinstance(part, dict)
+        ).strip()
+    except (ValueError, AttributeError, TypeError):
+        text = ""
+    if not text:
+        raise HTTPException(status_code=502, detail="Gemini responded but returned no text. Check model availability and API access.")
+    return {
+        "success": True,
+        "provider": "Google Gemini",
+        "model": GEMINI_MODEL,
+        "message": "Gemini connection test passed.",
+        "response_preview": text[:160],
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
