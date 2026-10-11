@@ -1,0 +1,15 @@
+{
+  "name": "balmz-solana-devnet",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Guarded local-only workflow for preparing and explicitly creating BALMZ on Solana Devnet.",
+  "scripts": {
+    "prepare": "node create-balmz-devnet.mjs --prepare-keypairs",
+    "dry-run": "node create-balmz-devnet.mjs"
+  },
+  "dependencies": {
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4"
+  }
+}
