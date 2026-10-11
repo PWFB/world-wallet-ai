@@ -1,11 +1,24 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getNeonTokenExpiry, isUsableNeonAccessToken } from "./neon-token.js";
+import { extractNeonToken, getNeonTokenExpiry, isUsableNeonAccessToken } from "./neon-token.js";
 
 function token(payload) {
   const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
   return encode({ alg: "none" }) + "." + encode(payload) + ".signature";
 }
+
+test("extracts supported Neon token response formats", () => {
+  assert.equal(extractNeonToken("direct-token"), "direct-token");
+  assert.equal(extractNeonToken({ token: "top-level-token" }), "top-level-token");
+  assert.equal(extractNeonToken({ data: { token: "nested-token" } }), "nested-token");
+});
+
+test("rejects absent or non-string token response values", () => {
+  assert.equal(extractNeonToken(null), "");
+  assert.equal(extractNeonToken({}), "");
+  assert.equal(extractNeonToken({ token: 42 }), "");
+  assert.equal(extractNeonToken({ data: { token: {} } }), "");
+});
 
 test("accepts a well-formed token with sufficient remaining lifetime", () => {
   assert.equal(isUsableNeonAccessToken(token({ exp: 2000 }), 1000), true);
