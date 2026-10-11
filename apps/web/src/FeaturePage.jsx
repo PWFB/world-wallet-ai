@@ -136,6 +136,35 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     finally { setBusy(false); }
   };
 
+  const connectPhantom = async () => {
+    setMessage("");
+    const provider = window.phantom?.solana || (window.solana?.isPhantom ? window.solana : null);
+    if (!provider || !provider.isPhantom) {
+      setMessage("Phantom was not detected. Open World Wallet AI in a browser with the Phantom extension, or use the Phantom mobile in-app browser.");
+      return;
+    }
+    if (!walletId) {
+      setMessage("Select a wallet profile before connecting Phantom.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await provider.connect();
+      const publicAddress = String(result?.publicKey || provider.publicKey || "").trim();
+      if (!publicAddress) throw new Error("Phantom connected without returning a public address.");
+      setNetwork("solana");
+      setAddress(publicAddress);
+      setLabel("Phantom read-only");
+      setShowAddressForm(true);
+      setMessage("Phantom public address loaded. Review the selected wallet profile, then choose Connect address to save it. No transaction was requested.");
+    } catch (error) {
+      if (error?.code === 4001) setMessage("Phantom connection was cancelled.");
+      else setMessage(error?.message || "Unable to connect Phantom.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const addAddress = async () => {
     const value = address.trim();
     if (!value) return setMessage("Enter a public wallet address.");
@@ -191,14 +220,18 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
       <h2>Attach a blockchain address</h2>
       <div className="security-note">Read-only tracking: this connects a public address to the wallet profile you select. It never imports a private key or enables signing.</div>
-      <button type="button" className="secondary" onClick={() => { setNetwork("ethereum"); setAddress("0xb6e8a3F11e0fd557fd14A28096fC0F6A62e25a1C"); setLabel("World Wallet AI read-only"); setShowAddressForm(true); setMessage("Existing World Wallet AI public address loaded. Select the correct wallet profile, then choose Connect address to save it to that profile."); }}>Use existing World Wallet AI address</button>
+      <div className="feature-grid">
+        <button type="button" className="secondary" disabled={busy} onClick={() => { setNetwork("ethereum"); setAddress("0xb6e8a3F11e0fd557fd14A28096fC0F6A62e25a1C"); setLabel("World Wallet AI read-only"); setShowAddressForm(true); setMessage("Existing World Wallet AI public address loaded. Select the correct wallet profile, then choose Connect address to save it to that profile."); }}>Use existing World Wallet AI address</button>
+        <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectPhantom}>{busy ? "Connecting…" : "Connect Phantom (Solana)"}</button>
+      </div>
       {showAddressForm && <div className="feature-success">Review the public address and selected wallet before connecting. Saving it attaches the address to this wallet profile only.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="solana">Solana (Phantom)</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana" ? "Solana public address (base58)" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
+      <div className="security-note">Phantom connection only reads the public address and does not request a recovery phrase, private key, or transaction approval. Solana address saving is supported; SOL/SPL balance and history sync will appear only when the backend tracking service is configured.</div>
       <div className="security-note">Sepolia is a test network. You can save its public 0x address without entering a private key; live testnet balances require a configured Sepolia RPC endpoint.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
