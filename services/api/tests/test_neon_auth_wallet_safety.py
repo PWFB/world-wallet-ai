@@ -125,5 +125,45 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         self.assertFalse(decode.call_args.kwargs["options"]["verify_aud"])
 
 
+    def test_neon_jwt_accepts_configured_auth_url_as_issuer(self):
+        decoded_claims = {
+            "sub": "neon-user-123",
+            "email": "test@example.invalid",
+            "iss": "https://auth.example.invalid/neondb/auth",
+        }
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
+            patch.object(main, "NEON_AUTH_EXPECTED_AUDIENCE", ""),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main.jwt, "decode", return_value=decoded_claims),
+            patch.object(main, "NEON_AUTH_BASE_URL", "https://auth.example.invalid/neondb/auth"),
+            patch.object(main, "get_user", return_value={"id": "local-user", "email": "test@example.invalid"}) as get_user,
+        ):
+            user = main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(user["id"], "local-user")
+        get_user.assert_called_once_with("test@example.invalid")
+
+    def test_neon_jwt_rejects_wrong_issuer_before_local_user_lookup(self):
+        decoded_claims = {
+            "sub": "neon-user-123",
+            "email": "test@example.invalid",
+            "iss": "https://untrusted.example.invalid",
+        }
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
+            patch.object(main, "NEON_AUTH_EXPECTED_AUDIENCE", ""),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main.jwt, "decode", return_value=decoded_claims),
+            patch.object(main, "NEON_AUTH_BASE_URL", "https://auth.example.invalid/neondb/auth"),
+            patch.object(main, "get_user") as get_user,
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(raised.exception.status_code, 401)
+        get_user.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
