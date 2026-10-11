@@ -51,6 +51,34 @@ class FakeJwksClient:
 
 
 class NeonAuthWalletSafetyTests(unittest.TestCase):
+    def test_solana_public_address_validation(self):
+        self.assertTrue(main.valid_solana_address("11111111111111111111111111111111"))
+        self.assertFalse(main.valid_solana_address("not-a-solana-address"))
+        self.assertFalse(main.valid_solana_address("0x" + "a" * 40))
+
+    def test_solana_balance_uses_read_only_confirmed_rpc(self):
+        class FakeSolanaResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"result": {"context": {"slot": 123}, "value": 2500000000}}
+
+        with patch.object(main.httpx, "post", return_value=FakeSolanaResponse()) as request:
+            balance = main.solana_balance("11111111111111111111111111111111", "https://solana-rpc.invalid")
+
+        self.assertEqual(balance, 2.5)
+        request.assert_called_once_with(
+            "https://solana-rpc.invalid",
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getBalance",
+                "params": ["11111111111111111111111111111111", {"commitment": "confirmed"}],
+            },
+            timeout=12,
+        )
+
     def test_configured_addresses_is_read_only_and_uses_saved_wallet_rows(self):
         saved_address = "0x" + "a" * 40
         connection = FakeConnection([("ethereum", saved_address, "primary")])
