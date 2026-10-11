@@ -2913,7 +2913,7 @@ async def gemini_connection_test(user=Depends(current_user)):
         async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
             response = await client.post(
                 url,
-                params={"key": GEMINI_API_KEY},
+                headers={"x-goog-api-key": GEMINI_API_KEY},
                 json={
                     "contents": [{"parts": [{"text": "Reply with exactly: World Wallet AI Gemini connection OK"}]}],
                     "generationConfig": {"temperature": 0, "maxOutputTokens": 24},
