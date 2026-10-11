@@ -6,7 +6,11 @@ function decodeJwtPayload(token) {
     if (!encoded) return null;
     const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
     const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);
-    return JSON.parse(atob(padded));
+    // Decode the JWT payload as UTF-8. Plain atob() produces a Latin-1
+    // string and can reject otherwise valid claims containing Unicode names.
+    const binary = atob(padded);
+    const bytes = Uint8Array.from(binary, character => character.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
   } catch {
     return null;
   }
