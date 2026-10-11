@@ -746,6 +746,8 @@ def valid_destination_for_network(address: str, network: str) -> bool:
         return valid_evm_address(value)
     if network == "bitcoin":
         return valid_bitcoin_address(value)
+    if network in {"solana", "solana-devnet"}:
+        return valid_solana_address(value)
     return False
 
 
@@ -1457,10 +1459,13 @@ def sync_wallet(user: dict = Depends(current_user)):
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     solana_address = wallet_network_address(user, "solana")
-    if not btc_address and not ethereum_address and not bnb_address and not solana_address:
-        raise HTTPException(status_code=503, detail="No production wallet address is configured")
+    solana_devnet_address = wallet_network_address(user, "solana-devnet")
+    if not btc_address and not ethereum_address and not bnb_address and not solana_address and not solana_devnet_address:
+        raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
+    if solana_devnet_address:
+        warnings.append("Solana Devnet address is saved separately; Devnet balances and SPL tokens are not included in production portfolio totals.")
     with db() as conn:
         if btc_address:
             try:
@@ -1858,8 +1863,8 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     network=request.network.strip().lower(); address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network=="solana" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin","solana"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network in {"solana","solana-devnet"} and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana","solana-devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
