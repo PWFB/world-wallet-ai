@@ -48,3 +48,13 @@ Set these environment variables on the **World Wallet AI backend service only** 
 - `WORLD_WALLET_GEMINI_MODEL` (optional): model name; defaults to `gemini-2.5-flash`.
 
 Never add the key to frontend variables, source code, logs, or chat. After saving the Render variables, redeploy/restart the backend, sign in with the configured administrator account, open **Admin → Gemini Integration**, and select **Test Gemini connection**. The page reports a successful live request or a safe error message. A configured key alone does not prove the API works.
+
+
+## Live wallet transaction history (Alchemy Ethereum Mainnet)
+
+To enable Ethereum transaction syncing, configure the World Wallet AI backend service in Render with either:
+
+- `ALCHEMY_API_KEY`: your Alchemy API key, stored as a backend secret. If `WORLD_WALLET_ETH_RPC_URL` is not set, the API constructs the Ethereum Mainnet RPC endpoint from this key.
+- `WORLD_WALLET_ETH_RPC_URL` (optional alternative): the full Ethereum Mainnet RPC URL from your provider. This takes precedence over `ALCHEMY_API_KEY`.
+
+Then sign in to World Wallet AI, open **Wallets**, and add the public Ethereum address to the active wallet. A public address is required to discover transactions; a wallet private key or seed phrase is not required for read-only history. The current sync scans a limited recent block window for native ETH transfers and registered token contracts, so it is not a full historical indexer. Keep provider credentials server-side only; never use a `VITE_` variable or commit the key.
