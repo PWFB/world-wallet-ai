@@ -4,8 +4,6 @@ import { isUsableNeonAccessToken } from "./neon-token.js";
 
 const authUrl = import.meta.env.VITE_NEON_AUTH_URL || "";
 
-// Neon Auth is hosted on a different origin from the Render SPA. Include
-// credentials for cookie-backed session restoration and JWT exchange.
 export const authClient = createAuthClient(authUrl, {
   adapter: BetterAuthReactAdapter({
     fetchOptions: {
@@ -19,18 +17,22 @@ function tokenFromResult(result) {
   return result?.token || result?.data?.token || "";
 }
 
-export async function getNeonAccessToken({ forceRefresh = false } = {}) {
-  if (!authUrl) return "";
-
-  try {
-    const token = tokenFromResult(await authClient.getJWTToken());
-    if (!forceRefresh && isUsableNeonAccessToken(token)) return token;
-  } catch {
-    // Fall through to the session-cookie token endpoint during restoration.
+async function requestTokenEndpoint() {
+  // Neon Auth's Better Auth JWT plugin exposes /token and the SDK's
+  // jwtClient plugin exposes the same endpoint as authClient.token().
+  // Prefer the SDK method so its configured fetch/cookie behavior is retained.
+  if (typeof authClient.token === "function") {
+    try {
+      const result = await authClient.token();
+      const token = tokenFromResult(result);
+      if (isUsableNeonAccessToken(token)) return token;
+    } catch {
+      // Try the documented endpoint directly as a compatibility fallback.
+    }
   }
 
   try {
-    const response = await fetch(authUrl.replace(/\/$/, "") + "/token", {
+    const response = await fetch(authUrl.replace(/\\/$/, "") + "/token", {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
@@ -46,4 +48,21 @@ export async function getNeonAccessToken({ forceRefresh = false } = {}) {
   }
 
   return "";
+}
+
+export async function getNeonAccessToken({ forceRefresh = false } = {}) {
+  if (!authUrl) return "";
+
+  // A forced refresh must hit the JWT endpoint; getJWTToken() can return the
+  // token held in the SDK's current session state rather than force a new JWT.
+  if (forceRefresh) return requestTokenEndpoint();
+
+  try {
+    const token = tokenFromResult(await authClient.getJWTToken());
+    if (isUsableNeonAccessToken(token)) return token;
+  } catch {
+    // Fall through to the JWT endpoint during session restoration.
+  }
+
+  return requestTokenEndpoint();
 }
