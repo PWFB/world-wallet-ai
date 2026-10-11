@@ -37,6 +37,165 @@ function authErrorMessage(error, fallback) {
   return `${message}${code}`;
 }
 
+
+function GitHubIntegration({ accessToken, apiBaseUrl }) {
+  const [status, setStatus] = useState(null);
+  const [repositories, setRepositories] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const authHeaders = { Authorization: "Bearer " + accessToken };
+  const loadStatus = async () => {
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/github/status", { headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load GitHub connection status.");
+      setStatus(data);
+    } catch (err) { setError(err.message || "Unable to load GitHub connection status."); }
+  };
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const callbackStatus = params.get("github_oauth");
+    if (callbackStatus) {
+      const messages = {
+        connected: "GitHub connected successfully.",
+        denied: "GitHub authorization was cancelled.",
+        invalid: "The GitHub authorization state was invalid or expired. Please try again.",
+        not_configured: "GitHub OAuth is not configured on the backend.",
+        exchange_failed: "GitHub authorization could not be completed. Check the OAuth app settings and try again.",
+        profile_failed: "GitHub did not return a valid account profile.",
+        not_authorized: "The initiating account is no longer authorized as administrator."
+      };
+      setNotice(messages[callbackStatus] || "GitHub authorization returned an unknown status.");
+      window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+    }
+    loadStatus();
+  }, [accessToken, apiBaseUrl]);
+
+  const connect = async () => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/github/oauth/start", { method: "POST", headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to start GitHub authorization.");
+      if (!data.authorize_url || !data.authorize_url.startsWith("https://github.com/login/oauth/authorize?")) throw new Error("The backend returned an invalid GitHub authorization URL.");
+      window.location.assign(data.authorize_url);
+    } catch (err) { setError(err.message || "Unable to connect GitHub."); setBusy(false); }
+  };
+
+  const loadRepositories = async () => {
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/github/repositories", { headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load repository metadata.");
+      setRepositories(data.repositories || []);
+      setNotice("Loaded " + (data.count || 0) + " repositories from GitHub.");
+    } catch (err) { setError(err.message || "Unable to load repository metadata."); }
+    finally { setBusy(false); }
+  };
+
+  const disconnect = async () => {
+    if (!window.confirm("Disconnect GitHub from World Wallet AI? Saved repository access will be removed.")) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/github", { method: "DELETE", headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to disconnect GitHub.");
+      setStatus(current => ({ ...(current || {}), connected: false, login: null, scopes: [] }));
+      setRepositories([]);
+      setNotice("GitHub disconnected. The stored credential has been removed.");
+    } catch (err) { setError(err.message || "Unable to disconnect GitHub."); }
+    finally { setBusy(false); }
+  };
+
+  const card = { background: "var(--panel, #111a2d)", border: "1px solid var(--border, #26334d)", borderRadius: 16, padding: 20 };
+  const muted = { color: "var(--muted, #9aa8c2)", fontSize: 13 };
+  return <section className="content">
+    <div className="page-heading"><div><p className="eyebrow">ADMIN CONSOLE / INTEGRATIONS</p><h1>GitHub Integration</h1><p className="muted">Connect your GitHub account and inspect repository metadata securely.</p></div></div>
+    <div style={{ ...card, marginBottom: 18 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div><p className="eyebrow">ACCOUNT CONNECTION</p><h2 style={{ margin: "8px 0" }}>{status?.connected ? "GitHub is connected" : "Connect GitHub"}</h2><p style={muted}>{status?.connected ? "Authorized account: " + (status.login || "GitHub user") : "OAuth credentials and encryption must be configured on the backend before connecting."}</p></div>
+        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+          {status?.connected ? <><button type="button" className="primary" disabled={busy} onClick={loadRepositories}>{busy ? "Loading…" : "Load repositories"}</button><button type="button" className="secondary" disabled={busy} onClick={disconnect}>Disconnect</button></> : <button type="button" className="primary" disabled={busy || status?.configured === false} onClick={connect}>{busy ? "Please wait…" : "Connect GitHub account ↗"}</button>}
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 12, marginTop: 18 }}>
+        <div><span style={muted}>Connection</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.connected ? "Connected" : status?.configured === false ? "Needs configuration" : "Not connected"}</div></div>
+        <div><span style={muted}>Granted scopes</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.scopes?.length ? status.scopes.join(", ") : "Not authorized"}</div></div>
+        <div><span style={muted}>Connected since</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.connected_at ? new Date(status.connected_at).toLocaleString() : "—"}</div></div>
+      </div>
+      <p style={{ ...muted, marginTop: 16 }}>Default access requests public repository metadata only (read:user, public_repo). The OAuth token is encrypted at rest on the backend and is never sent to this page. Private repository access is not requested by default.</p>
+      {error && <div role="alert" style={{ marginTop: 14, color: "#ff8585" }}>{error}</div>}
+      {notice && <div role="status" style={{ marginTop: 14, color: "#7ee2ad" }}>{notice}</div>}
+    </div>
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}><div><h2 style={{ margin: "0 0 6px" }}>Repository metadata</h2><p style={muted}>Name, visibility, default branch, language, last update and public activity metadata.</p></div><span style={muted}>{repositories.length} loaded</span></div>
+      {!repositories.length ? <p style={{ ...muted, padding: "20px 0" }}>Connect GitHub and select “Load repositories” to display your accessible repositories.</p> : <div style={{ overflowX: "auto", marginTop: 12 }}><table style={{ width: "100%", borderCollapse: "collapse", minWidth: 620 }}><thead><tr>{["Repository","Visibility","Branch","Language","Last updated"].map(label => <th key={label} style={{ textAlign: "left", padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}>{label}</th>)}</tr></thead><tbody>{repositories.map(repo => <tr key={repo.id}><td style={{ padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}><a href={repo.html_url} target="_blank" rel="noreferrer" style={{ fontWeight: 700 }}>{repo.full_name || repo.name}</a>{repo.description && <div style={muted}>{repo.description}</div>}{repo.archived && <small>Archived</small>}</td><td style={{ padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}>{repo.private ? "Private" : "Public"}{repo.fork ? " · Fork" : ""}</td><td style={{ padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}>{repo.default_branch || "—"}</td><td style={{ padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}>{repo.language || "—"}</td><td style={{ padding: "12px 10px", borderBottom: "1px solid var(--border, #26334d)" }}>{repo.updated_at ? new Date(repo.updated_at).toLocaleDateString() : "—"}</td></tr>)}</tbody></table></div>}
+    </div>
+  </section>;
+}
+
+
+function GeminiIntegration({ accessToken, apiBaseUrl }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const authHeaders = { Authorization: "Bearer " + accessToken };
+  const loadStatus = async () => {
+    setError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/gemini/status", { headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load Gemini configuration status.");
+      setStatus(data);
+    } catch (err) { setError(err.message || "Unable to load Gemini configuration status."); }
+  };
+
+  useEffect(() => { loadStatus(); }, [accessToken, apiBaseUrl]);
+
+  const runTest = async () => {
+    setBusy(true); setError(""); setResult(null);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/gemini/test", {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Gemini connection test failed.");
+      setResult(data);
+      setStatus(current => ({ ...(current || {}), configured: true, key_present: true, model: data.model }));
+    } catch (err) { setError(err.message || "Gemini connection test failed."); }
+    finally { setBusy(false); }
+  };
+
+  const card = { background: "var(--panel, #111a2d)", border: "1px solid var(--border, #26334d)", borderRadius: 16, padding: 20 };
+  const muted = { color: "var(--muted, #9aa8c2)", fontSize: 13 };
+  return <section className="content">
+    <div className="page-heading"><div><p className="eyebrow">ADMIN CONSOLE / AI PROVIDERS</p><h1>Gemini Integration</h1><p className="muted">Check World Wallet AI's private server-side Google Gemini connection.</p></div></div>
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div><p className="eyebrow">GOOGLE GEMINI API</p><h2 style={{ margin: "8px 0" }}>{status?.configured ? "Backend key configured" : status ? "Backend key missing" : "Checking configuration…"}</h2><p style={muted}>The API key is read only by the backend environment. It is never sent to the browser or returned by these endpoints.</p></div>
+        <button type="button" className="primary" disabled={busy || !status?.configured} onClick={runTest}>{busy ? "Testing Gemini…" : "Test Gemini connection"}</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginTop: 20 }}>
+        <div><span style={muted}>Provider</span><div style={{ fontWeight: 700, marginTop: 5 }}>Google Gemini</div></div>
+        <div><span style={muted}>API key</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.configured ? "Present · hidden" : status ? "Not configured" : "Checking…"}</div></div>
+        <div><span style={muted}>Model</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.model || "gemini-2.5-flash"}</div></div>
+        <div><span style={muted}>Connection test</span><div style={{ fontWeight: 700, marginTop: 5 }}>{result?.success ? "Passed" : "Not tested"}</div></div>
+      </div>
+      {error && <div role="alert" style={{ marginTop: 16, color: "#ff8585" }}>{error}</div>}
+      {result && <div role="status" style={{ marginTop: 16, padding: 14, borderRadius: 10, border: "1px solid #277c59" }}><strong style={{ color: "#7ee2ad" }}>✓ {result.message}</strong><p style={{ ...muted, marginBottom: 4 }}>Model: {result.model} · Tested: {new Date(result.tested_at).toLocaleString()}</p><p style={{ marginBottom: 0, overflowWrap: "anywhere" }}>Gemini response: {result.response_preview}</p></div>}
+      <p style={{ ...muted, marginTop: 18 }}>A successful test confirms the backend can authenticate and receive a response from Gemini at test time. It does not guarantee quota availability or uninterrupted future service.</p>
+    </div>
+  </section>;
+}
+
 function App() {
   const [active, setActive] = useState(() => {
     try {
@@ -676,7 +835,7 @@ function App() {
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
     Tools: ["Browser", "Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
-    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management"],
+    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
@@ -815,7 +974,7 @@ function App() {
           </div>
         </header>
 
-        {selectedCoin ? (() => {
+        {active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
           const balance = live?.balance || 0;

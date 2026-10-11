@@ -23,6 +23,9 @@ SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 IDENTITY_EMAIL = os.getenv("WORLD_WALLET_DEMO_EMAIL", "")
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_ADMIN_EMAIL = (os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
+GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
@@ -2601,3 +2604,356 @@ def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(cu
         conn.execute("UPDATE transactions SET status='cancelled' WHERE id=%s AND wallet_id=%s",(txid,user["wallet_id"]))
         conn.commit()
     return {"status":"cancelled","transaction_id":txid,"asset":symbol,"released":float(hold)}
+
+
+# GitHub account OAuth: tokens are encrypted at rest and never returned to the browser.
+import hmac as _github_hmac
+from fastapi import Request
+from fastapi.responses import RedirectResponse
+from cryptography.fernet import Fernet, InvalidToken
+
+GITHUB_OAUTH_CLIENT_ID = os.getenv("WORLD_WALLET_GITHUB_CLIENT_ID", "").strip()
+GITHUB_OAUTH_CLIENT_SECRET = os.getenv("WORLD_WALLET_GITHUB_CLIENT_SECRET", "").strip()
+GITHUB_OAUTH_REDIRECT_URI = os.getenv("WORLD_WALLET_GITHUB_REDIRECT_URI", "").strip()
+GITHUB_OAUTH_ADMIN_EMAIL = os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL", "").strip().lower()
+GITHUB_OAUTH_FRONTEND_URL = os.getenv("WORLD_WALLET_GITHUB_FRONTEND_URL", "").strip().rstrip("/")
+GITHUB_OAUTH_SCOPES = os.getenv("WORLD_WALLET_GITHUB_SCOPES", "read:user,public_repo").strip()
+GITHUB_TOKEN_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_GITHUB_TOKEN_ENCRYPTION_KEY", "").strip()
+
+
+def _github_fernet():
+    if not GITHUB_TOKEN_ENCRYPTION_KEY:
+        raise HTTPException(status_code=503, detail="GitHub token encryption is not configured")
+    try:
+        return Fernet(GITHUB_TOKEN_ENCRYPTION_KEY.encode("ascii"))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="GitHub token encryption key is invalid") from exc
+
+
+def _github_oauth_configured():
+    if not (GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET and GITHUB_OAUTH_REDIRECT_URI):
+        raise HTTPException(status_code=503, detail="GitHub OAuth is not configured on the server")
+    if not GITHUB_OAUTH_ADMIN_EMAIL:
+        raise HTTPException(status_code=503, detail="GitHub admin email is not configured on the server")
+    _github_fernet()
+
+
+def _github_admin(user):
+    if not GITHUB_OAUTH_ADMIN_EMAIL:
+        raise HTTPException(status_code=503, detail="GitHub admin email is not configured on the server")
+    if str((user or {}).get("email") or "").strip().lower() != GITHUB_OAUTH_ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="GitHub integration is restricted to the configured administrator")
+    return user
+
+
+def _github_tables(conn):
+    conn.execute("""
+      CREATE TABLE IF NOT EXISTS github_oauth_states (
+        state_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    """)
+    conn.execute("""
+      CREATE TABLE IF NOT EXISTS github_oauth_connections (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        github_user_id BIGINT NOT NULL,
+        github_login TEXT NOT NULL,
+        encrypted_access_token TEXT NOT NULL,
+        scopes TEXT NOT NULL DEFAULT '',
+        connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    """)
+    conn.commit()
+
+
+def _github_frontend_redirect(status):
+    base = GITHUB_OAUTH_FRONTEND_URL or (TRUSTED_ORIGINS[0] if TRUSTED_ORIGINS else "")
+    if not base:
+        raise HTTPException(status_code=503, detail="GitHub OAuth frontend URL is not configured")
+    return RedirectResponse(url=base + "/?github_oauth=" + status, status_code=303)
+
+
+@app.get("/api/v1/integrations/github/status")
+def github_oauth_status(user=Depends(current_user)):
+    _github_admin(user)
+    with db() as conn:
+        _github_tables(conn)
+        row = conn.execute(
+            "SELECT github_login,scopes,connected_at FROM github_oauth_connections WHERE user_id=%s",
+            (user["id"],),
+        ).fetchone()
+    return {
+        "configured": bool(GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET and GITHUB_OAUTH_REDIRECT_URI and GITHUB_TOKEN_ENCRYPTION_KEY),
+        "connected": bool(row),
+        "login": row[0] if row else None,
+        "scopes": row[1].split(",") if row and row[1] else [],
+        "connected_at": row[2].isoformat() if row and row[2] else None,
+        "repository_access": "public_and_authorized_public_repositories",
+    }
+
+
+@app.post("/api/v1/integrations/github/oauth/start")
+def github_oauth_start(user=Depends(current_user)):
+    _github_admin(user)
+    _github_oauth_configured()
+    state = secrets.token_urlsafe(32)
+    state_hash = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    with db() as conn:
+        _github_tables(conn)
+        conn.execute("DELETE FROM github_oauth_states WHERE expires_at < NOW()")
+        conn.execute(
+            "INSERT INTO github_oauth_states(state_hash,user_id,expires_at) VALUES(%s,%s,NOW()+INTERVAL '10 minutes')",
+            (state_hash, user["id"]),
+        )
+        conn.commit()
+    from urllib.parse import urlencode
+    query = urlencode({
+        "client_id": GITHUB_OAUTH_CLIENT_ID,
+        "redirect_uri": GITHUB_OAUTH_REDIRECT_URI,
+        "scope": GITHUB_OAUTH_SCOPES.replace(" ", ""),
+        "state": state,
+        "allow_signup": "false",
+    })
+    return {"authorize_url": "https://github.com/login/oauth/authorize?" + query}
+
+
+@app.get("/api/v1/integrations/github/oauth/callback")
+def github_oauth_callback(code: str = "", state: str = "", error: str = ""):
+    # Callback is protected by a high-entropy, single-use state tied to the initiating admin.
+    if error:
+        return _github_frontend_redirect("denied")
+    if not code or not state or len(state) > 200:
+        return _github_frontend_redirect("invalid")
+    if not (GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET and GITHUB_OAUTH_REDIRECT_URI):
+        return _github_frontend_redirect("not_configured")
+    state_hash = hashlib.sha256(state.encode("utf-8")).hexdigest()
+    with db() as conn:
+        _github_tables(conn)
+        row = conn.execute(
+            "DELETE FROM github_oauth_states WHERE state_hash=%s AND expires_at > NOW() RETURNING user_id",
+            (state_hash,),
+        ).fetchone()
+        conn.commit()
+    if not row:
+        return _github_frontend_redirect("invalid")
+    admin_user_id = row[0]
+    try:
+        token_response = httpx.post(
+            "https://github.com/login/oauth/access_token",
+            headers={"Accept": "application/json", "User-Agent": "WorldWalletAI"},
+            data={
+                "client_id": GITHUB_OAUTH_CLIENT_ID,
+                "client_secret": GITHUB_OAUTH_CLIENT_SECRET,
+                "code": code,
+                "redirect_uri": GITHUB_OAUTH_REDIRECT_URI,
+            },
+            timeout=15,
+            follow_redirects=False,
+        )
+        if not token_response.is_success:
+            return _github_frontend_redirect("exchange_failed")
+        token_payload = token_response.json()
+        access_token = str(token_payload.get("access_token") or "")
+        granted_scopes = str(token_payload.get("scope") or "")
+        if not access_token or token_payload.get("error"):
+            return _github_frontend_redirect("exchange_failed")
+        gh_headers = {
+            "Authorization": "Bearer " + access_token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "WorldWalletAI",
+        }
+        profile_response = httpx.get("https://api.github.com/user", headers=gh_headers, timeout=15, follow_redirects=False)
+        if not profile_response.is_success:
+            return _github_frontend_redirect("profile_failed")
+        profile = profile_response.json()
+        github_id = profile.get("id")
+        github_login = str(profile.get("login") or "").strip()
+        if not isinstance(github_id, int) or not github_login:
+            return _github_frontend_redirect("profile_failed")
+        encrypted_token = _github_fernet().encrypt(access_token.encode("utf-8")).decode("ascii")
+        with db() as conn:
+            _github_tables(conn)
+            # Ensure the OAuth flow's initiating user is still the configured admin.
+            admin = conn.execute("SELECT email FROM users WHERE id=%s", (admin_user_id,)).fetchone()
+            if not admin or str(admin[0] or "").strip().lower() != GITHUB_OAUTH_ADMIN_EMAIL:
+                return _github_frontend_redirect("not_authorized")
+            conn.execute("""
+              INSERT INTO github_oauth_connections(user_id,github_user_id,github_login,encrypted_access_token,scopes,connected_at,updated_at)
+              VALUES(%s,%s,%s,%s,%s,NOW(),NOW())
+              ON CONFLICT(user_id) DO UPDATE SET
+                github_user_id=EXCLUDED.github_user_id,
+                github_login=EXCLUDED.github_login,
+                encrypted_access_token=EXCLUDED.encrypted_access_token,
+                scopes=EXCLUDED.scopes,
+                connected_at=NOW(),
+                updated_at=NOW()
+            """, (admin_user_id, github_id, github_login, encrypted_token, granted_scopes))
+            conn.commit()
+        return _github_frontend_redirect("connected")
+    except (httpx.HTTPError, ValueError, KeyError):
+        return _github_frontend_redirect("exchange_failed")
+
+
+@app.get("/api/v1/integrations/github/repositories")
+def github_oauth_repositories(user=Depends(current_user)):
+    _github_admin(user)
+    with db() as conn:
+        _github_tables(conn)
+        row = conn.execute(
+            "SELECT encrypted_access_token FROM github_oauth_connections WHERE user_id=%s",
+            (user["id"],),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=409, detail="Connect GitHub before loading repository metadata")
+    try:
+        access_token = _github_fernet().decrypt(row[0].encode("ascii")).decode("utf-8")
+    except (InvalidToken, ValueError, UnicodeError) as exc:
+        raise HTTPException(status_code=503, detail="Stored GitHub credential cannot be decrypted; reconnect GitHub") from exc
+    response = httpx.get(
+        "https://api.github.com/user/repos",
+        headers={
+            "Authorization": "Bearer " + access_token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "WorldWalletAI",
+        },
+        params={"per_page": 100, "sort": "updated", "direction": "desc", "visibility": "all"},
+        timeout=20,
+        follow_redirects=False,
+    )
+    if response.status_code == 401:
+        raise HTTPException(status_code=409, detail="GitHub authorization expired or was revoked; reconnect GitHub")
+    if not response.is_success:
+        raise HTTPException(status_code=502, detail="GitHub repository metadata could not be loaded")
+    repositories = []
+    for item in response.json():
+        if not isinstance(item, dict):
+            continue
+        repositories.append({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "full_name": item.get("full_name"),
+            "private": bool(item.get("private")),
+            "default_branch": item.get("default_branch"),
+            "description": item.get("description"),
+            "html_url": item.get("html_url"),
+            "updated_at": item.get("updated_at"),
+            "pushed_at": item.get("pushed_at"),
+            "language": item.get("language"),
+            "fork": bool(item.get("fork")),
+            "archived": bool(item.get("archived")),
+            "stargazers_count": item.get("stargazers_count"),
+            "open_issues_count": item.get("open_issues_count"),
+        })
+    return {"repositories": repositories, "count": len(repositories)}
+
+
+@app.delete("/api/v1/integrations/github")
+def github_oauth_disconnect(user=Depends(current_user)):
+    _github_admin(user)
+    with db() as conn:
+        _github_tables(conn)
+        row = conn.execute("SELECT encrypted_access_token FROM github_oauth_connections WHERE user_id=%s", (user["id"],)).fetchone()
+    if row and GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET:
+        try:
+            token = _github_fernet().decrypt(row[0].encode("ascii")).decode("utf-8")
+            revoke = httpx.delete(
+                "https://api.github.com/applications/" + GITHUB_OAUTH_CLIENT_ID + "/grant",
+                auth=(GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET),
+                headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "WorldWalletAI"},
+                json={"access_token": token},
+                timeout=15,
+                follow_redirects=False,
+            )
+            if revoke.status_code not in {204, 404} and not revoke.is_success:
+                raise HTTPException(status_code=502, detail="GitHub token revocation failed; the saved connection was kept. Try again.")
+        except (InvalidToken, ValueError, UnicodeError) as exc:
+            raise HTTPException(status_code=503, detail="Stored GitHub token cannot be decrypted; connection was kept for manual recovery") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="GitHub token revocation could not be reached; the saved connection was kept") from exc
+    with db() as conn:
+        _github_tables(conn)
+        conn.execute("DELETE FROM github_oauth_connections WHERE user_id=%s", (user["id"],))
+        conn.execute("DELETE FROM github_oauth_states WHERE user_id=%s", (user["id"],))
+        conn.commit()
+    return {"connected": False}
+
+
+# Gemini provider connection check. The API key stays in backend environment only.
+def _gemini_admin(user):
+    if not GEMINI_ADMIN_EMAIL:
+        raise HTTPException(status_code=503, detail="Gemini admin email is not configured on the server")
+    if str((user or {}).get("email") or "").strip().lower() != GEMINI_ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Gemini integration is restricted to the configured administrator")
+    return user
+
+
+@app.get("/api/v1/integrations/gemini/status")
+def gemini_status(user=Depends(current_user)):
+    _gemini_admin(user)
+    return {
+        "configured": bool(GEMINI_API_KEY),
+        "model": GEMINI_MODEL,
+        "provider": "Google Gemini",
+        "key_present": bool(GEMINI_API_KEY),
+    }
+
+
+@app.post("/api/v1/integrations/gemini/test")
+async def gemini_connection_test(user=Depends(current_user)):
+    _gemini_admin(user)
+    if not GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini API key is not configured on the backend. Set GEMINI_API_KEY in Render.")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+            response = await client.post(
+                url,
+                headers={"x-goog-api-key": GEMINI_API_KEY},
+                json={
+                    "contents": [{"parts": [{"text": "Reply with exactly: World Wallet AI Gemini connection OK"}]}],
+                    "generationConfig": {"temperature": 0, "maxOutputTokens": 24},
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Gemini connection timed out. Try again shortly.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Unable to reach the Gemini API from the backend.") from exc
+
+    if response.is_error:
+        # Do not echo provider response bodies; they may contain request metadata.
+        if response.status_code in (401, 403):
+            detail = "Gemini rejected the API key or its permissions. Check the key and Gemini API access in Google AI Studio/Cloud."
+            status_code = 502
+        elif response.status_code == 429:
+            detail = "Gemini rate limit or quota reached. Check the project's quota and billing settings."
+            status_code = 429
+        else:
+            detail = f"Gemini API returned HTTP {response.status_code}. Check the selected model and provider configuration."
+            status_code = 502
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    try:
+        data = response.json()
+        text = "".join(
+            part.get("text", "")
+            for candidate in data.get("candidates", [])
+            for part in candidate.get("content", {}).get("parts", [])
+            if isinstance(part, dict)
+        ).strip()
+    except (ValueError, AttributeError, TypeError):
+        text = ""
+    if not text:
+        raise HTTPException(status_code=502, detail="Gemini responded but returned no text. Check model availability and API access.")
+    return {
+        "success": True,
+        "provider": "Google Gemini",
+        "model": GEMINI_MODEL,
+        "message": "Gemini connection test passed.",
+        "response_preview": text[:160],
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
