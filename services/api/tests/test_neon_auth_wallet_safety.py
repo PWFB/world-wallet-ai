@@ -52,7 +52,10 @@ class FakeJwksClient:
 
 class NeonAuthWalletSafetyTests(unittest.TestCase):
     def test_solana_public_address_validation(self):
-        self.assertTrue(main.valid_solana_address("11111111111111111111111111111111"))
+        address = "11111111111111111111111111111111"
+        self.assertTrue(main.valid_solana_address(address))
+        self.assertTrue(main.valid_destination_for_network(address, "solana"))
+        self.assertTrue(main.valid_destination_for_network(address, "solana-devnet"))
         self.assertFalse(main.valid_solana_address("not-a-solana-address"))
         self.assertFalse(main.valid_solana_address("0x" + "a" * 40))
 
