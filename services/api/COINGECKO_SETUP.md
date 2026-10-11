@@ -16,6 +16,8 @@ For CoinGecko Pro, use:
 
 The backend chooses the appropriate `x-cg-demo-api-key` or `x-cg-pro-api-key` request header from the configured host. The key is not returned by the market endpoint and must never be placed in a `VITE_*` frontend variable, committed to Git, or embedded in browser JavaScript.
 
+The market endpoint caches successful quotes in-process for 45 seconds to reduce duplicate upstream requests. If CoinGecko is temporarily unavailable, it can return the last successful quote set with `stale: true` and the original `updated_at`; the UI should treat that timestamp as the quote time, not the current time. If no successful quote has been cached yet, the endpoint returns HTTP 503.
+
 If the key is missing or rejected, inspect backend logs and CoinGecko plan/rate limits. Do not print the key in logs. This repository change does not alter hosted environment variables or deploy any service.
 
 ## Read-only address tracking
