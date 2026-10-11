@@ -2,6 +2,7 @@ import os
 import hashlib
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -25,6 +26,9 @@ IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
+COINGECKO_PRICE_CACHE_TTL_SECONDS = 45
+_coingecko_market_cache = None
+_coingecko_market_cache_at = 0.0
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
 NEON_AUTH_EXPECTED_AUDIENCE = os.getenv("NEON_AUTH_EXPECTED_AUDIENCE", "").strip()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
@@ -1510,7 +1514,16 @@ def sync_wallet(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/prices/market")
 def market_prices():
-    """Public market quotes for the wallet's supported coin catalog."""
+    """Public market quotes with short caching and explicit stale fallback."""
+    global _coingecko_market_cache, _coingecko_market_cache_at
+
+    now_monotonic = time.monotonic()
+    if (
+        _coingecko_market_cache is not None
+        and now_monotonic - _coingecko_market_cache_at < COINGECKO_PRICE_CACHE_TTL_SECONDS
+    ):
+        return _coingecko_market_cache
+
     coin_ids = {
         "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
         "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
@@ -1530,6 +1543,9 @@ def market_prices():
         response.raise_for_status()
         raw = response.json()
     except Exception as exc:
+        if _coingecko_market_cache is not None:
+            # Keep the last known quotes visible, but label them as stale.
+            return {**_coingecko_market_cache, "stale": True}
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
 
     prices = {}
@@ -1544,7 +1560,15 @@ def market_prices():
     # BALMZ has no verified market quote yet. Never invent a price.
     prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False}
     prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
-    return {"source": "CoinGecko", "updated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
+    result = {
+        "source": "CoinGecko",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "prices": prices,
+        "stale": False,
+    }
+    _coingecko_market_cache = result
+    _coingecko_market_cache_at = time.monotonic()
+    return result
 
 
 @app.post("/api/v1/prices/refresh")
