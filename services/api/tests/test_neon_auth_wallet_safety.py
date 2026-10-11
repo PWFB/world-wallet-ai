@@ -198,5 +198,53 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         decode.assert_not_called()
 
 
+    def test_coingecko_demo_key_uses_server_side_header(self):
+        with (
+            patch.object(main, "COINGECKO_API_KEY", "demo-test-key"),
+            patch.object(main, "COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3"),
+        ):
+            headers = main.coingecko_headers()
+
+        self.assertEqual(headers, {"x-cg-demo-api-key": "demo-test-key"})
+
+    def test_coingecko_pro_key_uses_server_side_header(self):
+        with (
+            patch.object(main, "COINGECKO_API_KEY", "pro-test-key"),
+            patch.object(main, "COINGECKO_API_BASE_URL", "https://pro-api.coingecko.com/api/v3"),
+        ):
+            headers = main.coingecko_headers()
+
+        self.assertEqual(headers, {"x-cg-pro-api-key": "pro-test-key"})
+
+    def test_market_prices_uses_coingecko_and_never_returns_api_key(self):
+        class FakePriceResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "bitcoin": {"usd": 65000, "usd_24h_change": 1.25},
+                    "ethereum": {"usd": 3200, "usd_24h_change": -0.5},
+                    "tether": {"usd": 1},
+                }
+
+        with (
+            patch.object(main, "COINGECKO_API_KEY", "server-only-test-key"),
+            patch.object(main, "COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3"),
+            patch.object(main.httpx, "get", return_value=FakePriceResponse()) as request,
+        ):
+            result = main.market_prices()
+
+        request.assert_called_once()
+        args, kwargs = request.call_args
+        self.assertEqual(args[0], "https://api.coingecko.com/api/v3/simple/price")
+        self.assertEqual(kwargs["headers"], {"x-cg-demo-api-key": "server-only-test-key"})
+        self.assertEqual(result["source"], "CoinGecko")
+        self.assertEqual(result["prices"]["BTC"]["usd"], 65000.0)
+        self.assertEqual(result["prices"]["ETH"]["usd_24h_change"], -0.5)
+        self.assertFalse(result["prices"]["BALMZ"]["listed"])
+        self.assertNotIn("server-only-test-key", repr(result))
+
+
 if __name__ == "__main__":
     unittest.main()
