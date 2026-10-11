@@ -1,6 +1,6 @@
 import { createAuthClient } from "@neondatabase/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/auth/react/adapters";
-import { isUsableNeonAccessToken } from "./neon-token.js";
+import { extractNeonToken, isUsableNeonAccessToken } from "./neon-token.js";
 
 const authUrl = import.meta.env.VITE_NEON_AUTH_URL || "";
 
@@ -12,11 +12,6 @@ export const authClient = createAuthClient(authUrl, {
   }),
 });
 
-function tokenFromResult(result) {
-  if (typeof result === "string") return result;
-  return result?.token || result?.data?.token || "";
-}
-
 async function requestTokenEndpoint() {
   // Neon Auth's Better Auth JWT plugin exposes /token and the SDK's
   // jwtClient plugin exposes the same endpoint as authClient.token().
@@ -24,7 +19,7 @@ async function requestTokenEndpoint() {
   if (typeof authClient.token === "function") {
     try {
       const result = await authClient.token();
-      const token = tokenFromResult(result);
+      const token = extractNeonToken(result);
       if (isUsableNeonAccessToken(token)) return token;
     } catch {
       // Try the documented endpoint directly as a compatibility fallback.
@@ -40,7 +35,7 @@ async function requestTokenEndpoint() {
     });
     if (response.ok) {
       const data = await response.json();
-      const token = tokenFromResult(data);
+      const token = extractNeonToken(data);
       if (isUsableNeonAccessToken(token)) return token;
     }
   } catch {
@@ -58,7 +53,7 @@ export async function getNeonAccessToken({ forceRefresh = false } = {}) {
   if (forceRefresh) return requestTokenEndpoint();
 
   try {
-    const token = tokenFromResult(await authClient.getJWTToken());
+    const token = extractNeonToken(await authClient.getJWTToken());
     if (isUsableNeonAccessToken(token)) return token;
   } catch {
     // Fall through to the JWT endpoint during session restoration.
