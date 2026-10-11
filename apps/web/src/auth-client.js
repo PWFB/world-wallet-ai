@@ -32,7 +32,7 @@ async function requestTokenEndpoint() {
   }
 
   try {
-    const response = await fetch(authUrl.replace(/\\/$/, "") + "/token", {
+    const response = await fetch(authUrl.replace(/\/$/, "") + "/token", {
       method: "GET",
       credentials: "include",
       headers: { Accept: "application/json" },
