@@ -39,6 +39,7 @@ NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else No
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+SOLANA_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
@@ -730,6 +731,15 @@ def valid_bitcoin_address(address: str) -> bool:
     return valid_bitcoin_base58(value) or valid_bitcoin_segwit(value)
 
 
+def valid_solana_address(address: str) -> bool:
+    """Validate a Solana public key as a base58-encoded 32-byte value."""
+    value = address.strip()
+    if not 32 <= len(value) <= 44:
+        return False
+    decoded = _base58_decode(value)
+    return decoded is not None and len(decoded) == 32
+
+
 def valid_destination_for_network(address: str, network: str) -> bool:
     value = address.strip()
     if network in {"ethereum", "bnb"}:
@@ -787,6 +797,23 @@ def rpc_call(url: str, method: str, params: list):
 def evm_balance(url: str, address: str):
     raw = rpc_call(url, "eth_getBalance", [address, "latest"])
     return int(raw, 16) / 10**18 if raw else 0.0
+
+
+def solana_balance(address: str, rpc_url: str = SOLANA_RPC_URL):
+    """Read the confirmed native SOL balance; never signs or submits transactions."""
+    if not valid_solana_address(address):
+        raise ValueError("Invalid Solana public address")
+    response = httpx.post(
+        rpc_url,
+        json={"jsonrpc":"2.0","id":1,"method":"getBalance","params":[address,{"commitment":"confirmed"}]},
+        timeout=12,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("error"):
+        raise ValueError("Solana RPC balance lookup failed")
+    result = payload.get("result") or {}
+    return int(result.get("value", 0)) / 1_000_000_000
 
 
 def btc_balance(address: str):
@@ -1429,7 +1456,8 @@ def sync_wallet(user: dict = Depends(current_user)):
     ethereum_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
-    if not btc_address and not ethereum_address and not bnb_address:
+    solana_address = wallet_network_address(user, "solana")
+    if not btc_address and not ethereum_address and not bnb_address and not solana_address:
         raise HTTPException(status_code=503, detail="No production wallet address is configured")
     updates = []
     warnings = []
@@ -1456,6 +1484,13 @@ def sync_wallet(user: dict = Depends(current_user)):
                 updates.append({"network":"bnb","asset":"BNB","balance":bnb})
             except Exception:
                 warnings.append("BNB Chain balance service unavailable")
+        if solana_address:
+            try:
+                sol = solana_balance(solana_address)
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'", (sol,user["wallet_id"]))
+                updates.append({"network":"solana","asset":"SOL","balance":sol})
+            except Exception:
+                warnings.append("Solana balance service unavailable")
 
         token_rows = conn.execute(
             "SELECT symbol,name,network,contract_address,decimals,status "
@@ -1823,7 +1858,8 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     network=request.network.strip().lower(); address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network=="solana" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
