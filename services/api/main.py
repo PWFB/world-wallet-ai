@@ -26,6 +26,7 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
+NEON_AUTH_EXPECTED_AUDIENCE = os.getenv("NEON_AUTH_EXPECTED_AUDIENCE", "").strip()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
 TWILIO_VERIFY_SERVICE_SID = os.getenv("TWILIO_VERIFY_SERVICE_SID", "").strip()
@@ -419,7 +420,8 @@ def neon_auth_user(token: str):
             token,
             signing_key.key,
             algorithms=[algorithm],
-            options={"verify_aud": False},
+            audience=NEON_AUTH_EXPECTED_AUDIENCE or None,
+            options={"verify_aud": bool(NEON_AUTH_EXPECTED_AUDIENCE)},
         )
     except Exception as exc:
         # Never log the bearer token, claims, or raw exception text. The
