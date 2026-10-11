@@ -40,6 +40,16 @@ class FakeDatabaseContext:
         return False
 
 
+class FakeSigningKey:
+    key = object()
+    algorithm_name = "EdDSA"
+
+
+class FakeJwksClient:
+    def get_signing_key_from_jwt(self, _token):
+        return FakeSigningKey()
+
+
 class NeonAuthWalletSafetyTests(unittest.TestCase):
     def test_configured_addresses_is_read_only_and_uses_saved_wallet_rows(self):
         saved_address = "0x" + "a" * 40
@@ -73,6 +83,46 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         ]
         self.assertEqual(len(routes), 1)
         self.assertEqual(routes[0].endpoint.__name__, "_chain_heights")
+
+    def test_neon_jwt_audience_is_verified_when_expected_audience_is_configured(self):
+        decoded_claims = {
+            "sub": "neon-user-123",
+            "email": "test@example.invalid",
+            "iss": "https://auth.example.invalid",
+        }
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
+            patch.object(main, "NEON_AUTH_EXPECTED_AUDIENCE", "world-wallet-api"),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main.jwt, "decode", return_value=decoded_claims) as decode,
+            patch.object(main, "NEON_AUTH_BASE_URL", ""),
+            patch.object(main, "get_user", return_value={"id": "local-user", "email": "test@example.invalid"}),
+        ):
+            user = main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(user["id"], "local-user")
+        self.assertEqual(decode.call_args.kwargs["audience"], "world-wallet-api")
+        self.assertTrue(decode.call_args.kwargs["options"]["verify_aud"])
+
+    def test_neon_jwt_audience_check_remains_optional_until_configured(self):
+        decoded_claims = {
+            "sub": "neon-user-123",
+            "email": "test@example.invalid",
+            "iss": "https://auth.example.invalid",
+        }
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
+            patch.object(main, "NEON_AUTH_EXPECTED_AUDIENCE", ""),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main.jwt, "decode", return_value=decoded_claims) as decode,
+            patch.object(main, "NEON_AUTH_BASE_URL", ""),
+            patch.object(main, "get_user", return_value={"id": "local-user", "email": "test@example.invalid"}),
+        ):
+            user = main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(user["id"], "local-user")
+        self.assertIsNone(decode.call_args.kwargs["audience"])
+        self.assertFalse(decode.call_args.kwargs["options"]["verify_aud"])
 
 
 if __name__ == "__main__":
