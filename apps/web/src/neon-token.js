@@ -16,12 +16,20 @@ function decodeJwtPayload(token) {
   }
 }
 
+export function getNeonTokenExpiry(value) {
+  if (typeof value !== "string") return null;
+  const parts = value.split(".");
+  if (parts.length !== 3 || parts.some(part => !part)) return null;
+  const claims = decodeJwtPayload(value);
+  return Number.isFinite(claims?.exp) ? claims.exp : null;
+}
+
 // This is a client-side freshness check, not signature verification. The API
 // must still verify the signature and enforce its issuer/expiry policy.
 export function isUsableNeonAccessToken(value, nowSeconds = Math.floor(Date.now() / 1000)) {
   if (typeof value !== "string") return false;
   const parts = value.split(".");
   if (parts.length !== 3 || parts.some(part => !part)) return false;
-  const claims = decodeJwtPayload(value);
-  return Number.isFinite(claims?.exp) && claims.exp > nowSeconds + TOKEN_EXPIRY_SKEW_SECONDS;
+  const expiry = getNeonTokenExpiry(value);
+  return expiry !== null && expiry > nowSeconds + TOKEN_EXPIRY_SKEW_SECONDS;
 }
