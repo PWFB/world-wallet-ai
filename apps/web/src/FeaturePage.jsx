@@ -231,7 +231,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Phantom connection only reads the public address and does not request a recovery phrase, private key, or transaction approval. Solana address saving is supported; SOL/SPL balance and history sync will appear only when the backend tracking service is configured.</div>
+      <div className="security-note">Phantom connection only reads the public address and does not request a recovery phrase, private key, or transaction approval. The backend can read native SOL balance through Solana RPC; SPL token balances (including BALMZ) and Solana transaction history are not yet synced.</div>
       <div className="security-note">Sepolia is a test network. You can save its public 0x address without entering a private key; live testnet balances require a configured Sepolia RPC endpoint.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
