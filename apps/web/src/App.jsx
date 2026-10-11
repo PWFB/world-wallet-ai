@@ -124,8 +124,8 @@ function App() {
     if (!expiry) return undefined;
 
     let cancelled = false;
-    const delay = Math.max(1000, (expiry - Math.floor(Date.now() / 1000) - 45) * 1000);
-    const timer = window.setTimeout(async () => {
+    let timer = null;
+    const refreshBeforeExpiry = async () => {
       const freshToken = await getNeonAccessToken({ forceRefresh: true });
       if (cancelled) return;
       if (freshToken && isUsableNeonAccessToken(freshToken) && freshToken !== accessToken) {
@@ -138,12 +138,17 @@ function App() {
         setAccessToken("");
         setShowLogin(true);
         setLoginError("Your session expired or could not be refreshed. Please sign in again.");
+        return;
       }
-    }, delay);
+      // Retry quietly while the current JWT still has time left.
+      timer = window.setTimeout(refreshBeforeExpiry, 10000);
+    };
+    const delay = Math.max(1000, (expiry - Math.floor(Date.now() / 1000) - 45) * 1000);
+    timer = window.setTimeout(refreshBeforeExpiry, delay);
 
     return () => {
       cancelled = true;
-      window.clearTimeout(timer);
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [accessToken]);
 
