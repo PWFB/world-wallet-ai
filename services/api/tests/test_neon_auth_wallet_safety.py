@@ -276,6 +276,7 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         with (
             patch.object(main, "_coingecko_market_cache", cached),
             patch.object(main, "_coingecko_market_cache_at", 0.0),
+            patch.object(main.time, "monotonic", return_value=1000.0),
             patch.object(main.httpx, "get", side_effect=RuntimeError("upstream unavailable")),
         ):
             result = main.market_prices()
