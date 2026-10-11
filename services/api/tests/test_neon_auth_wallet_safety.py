@@ -231,6 +231,8 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         with (
             patch.object(main, "COINGECKO_API_KEY", "server-only-test-key"),
             patch.object(main, "COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3"),
+            patch.object(main, "_coingecko_market_cache", None),
+            patch.object(main, "_coingecko_market_cache_at", 0.0),
             patch.object(main.httpx, "get", return_value=FakePriceResponse()) as request,
         ):
             result = main.market_prices()
@@ -244,6 +246,43 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         self.assertEqual(result["prices"]["ETH"]["usd_24h_change"], -0.5)
         self.assertFalse(result["prices"]["BALMZ"]["listed"])
         self.assertNotIn("server-only-test-key", repr(result))
+
+
+    def test_market_prices_uses_fresh_cache_without_another_upstream_request(self):
+        cached = {
+            "source": "CoinGecko",
+            "updated_at": "2026-10-11T00:00:00+00:00",
+            "prices": {"BTC": {"usd": 65000.0, "usd_24h_change": 1.25, "listed": True}},
+            "stale": False,
+        }
+        with (
+            patch.object(main, "_coingecko_market_cache", cached),
+            patch.object(main, "_coingecko_market_cache_at", __import__("time").monotonic()),
+            patch.object(main, "COINGECKO_PRICE_CACHE_TTL_SECONDS", 45),
+            patch.object(main.httpx, "get") as request,
+        ):
+            result = main.market_prices()
+
+        self.assertEqual(result, cached)
+        request.assert_not_called()
+
+    def test_market_prices_returns_marked_stale_cache_if_upstream_fails(self):
+        cached = {
+            "source": "CoinGecko",
+            "updated_at": "2026-10-11T00:00:00+00:00",
+            "prices": {"BTC": {"usd": 65000.0, "usd_24h_change": 1.25, "listed": True}},
+            "stale": False,
+        }
+        with (
+            patch.object(main, "_coingecko_market_cache", cached),
+            patch.object(main, "_coingecko_market_cache_at", 0.0),
+            patch.object(main.httpx, "get", side_effect=RuntimeError("upstream unavailable")),
+        ):
+            result = main.market_prices()
+
+        self.assertTrue(result["stale"])
+        self.assertEqual(result["updated_at"], cached["updated_at"])
+        self.assertEqual(result["prices"], cached["prices"])
 
 
 if __name__ == "__main__":
