@@ -1,5 +1,11 @@
 const TOKEN_EXPIRY_SKEW_SECONDS = 30;
 
+export function extractNeonToken(result) {
+  if (typeof result === "string") return result;
+  const token = result?.token || result?.data?.token;
+  return typeof token === "string" ? token : "";
+}
+
 function decodeJwtPayload(token) {
   try {
     const encoded = token.split(".")[1];
