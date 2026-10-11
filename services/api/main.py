@@ -2854,6 +2854,26 @@ def github_oauth_disconnect(user=Depends(current_user)):
     _github_admin(user)
     with db() as conn:
         _github_tables(conn)
+        row = conn.execute("SELECT encrypted_access_token FROM github_oauth_connections WHERE user_id=%s", (user["id"],)).fetchone()
+    if row and GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET:
+        try:
+            token = _github_fernet().decrypt(row[0].encode("ascii")).decode("utf-8")
+            revoke = httpx.delete(
+                "https://api.github.com/applications/" + GITHUB_OAUTH_CLIENT_ID + "/grant",
+                auth=(GITHUB_OAUTH_CLIENT_ID, GITHUB_OAUTH_CLIENT_SECRET),
+                headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28", "User-Agent": "WorldWalletAI"},
+                json={"access_token": token},
+                timeout=15,
+                follow_redirects=False,
+            )
+            if revoke.status_code not in {204, 404} and not revoke.is_success:
+                raise HTTPException(status_code=502, detail="GitHub token revocation failed; the saved connection was kept. Try again.")
+        except (InvalidToken, ValueError, UnicodeError) as exc:
+            raise HTTPException(status_code=503, detail="Stored GitHub token cannot be decrypted; connection was kept for manual recovery") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="GitHub token revocation could not be reached; the saved connection was kept") from exc
+    with db() as conn:
+        _github_tables(conn)
         conn.execute("DELETE FROM github_oauth_connections WHERE user_id=%s", (user["id"],))
         conn.execute("DELETE FROM github_oauth_states WHERE user_id=%s", (user["id"],))
         conn.commit()
