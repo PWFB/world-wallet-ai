@@ -450,15 +450,9 @@ def neon_auth_user(token: str):
     name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
     user = get_user(email)
     if not user:
+        # Provision only when a verified Neon identity has no local wallet
+        # mapping yet. Routine authenticated reads must not mutate user rows.
         user = provision_identity(email, name=name, google_subject=subject)
-    else:
-        with db() as conn:
-            conn.execute(
-                "UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s",
-                (name, subject, user["id"]),
-            )
-            conn.commit()
-        user = get_user(email)
     return user
 
 
