@@ -61,6 +61,7 @@ function App() {
   const [assets, setAssets] = useState(fallbackAssets);
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
+  const [marketPricesStale, setMarketPricesStale] = useState(false);
   const [tokenRegistry, setTokenRegistry] = useState([]);
   const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
@@ -190,6 +191,7 @@ function App() {
         if (!cancelled) {
           setMarketPrices(data.prices || {});
           setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+          setMarketPricesStale(data.stale === true);
         }
       } catch {
         // Keep the last successful quote set if the market service is temporarily unavailable.
@@ -1052,7 +1054,7 @@ function App() {
                     </button>;
                   })}
                 </div>
-                <div className="coin-catalog-note">Market prices are refreshed from CoinGecko{marketPricesUpdatedAt ? ` • Updated ${marketPricesUpdatedAt.toLocaleTimeString()}` : ""}. Wallet values require a real connected balance. BALMZ stays unpriced until a verified market quote exists.</div>
+                <div className="coin-catalog-note">Market prices are refreshed from CoinGecko{marketPricesUpdatedAt ? ` • ${marketPricesStale ? "Last successful quote" : "Updated"} ${marketPricesUpdatedAt.toLocaleTimeString()}` : ""}{marketPricesStale ? " • Feed temporarily unavailable; showing cached prices" : ""}. Wallet values require a real connected balance. BALMZ stays unpriced until a verified market quote exists.</div>
               </article>
 
               <article className="panel activity-panel">
