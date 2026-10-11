@@ -190,7 +190,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     <article className="panel action-panel" id="connect-public-address" style={showAddressForm ? { outline: "2px solid var(--accent, #f59e0b)" } : undefined}>
       <p className="feature-kicker">CONNECT PUBLIC ADDRESS</p>
       <h2>Attach a blockchain address</h2>
-      {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
+      <div className="security-note">Read-only tracking: this connects a public address to the wallet profile you select. It never imports a private key or enables signing.</div>
+      <button type="button" className="secondary" onClick={() => { setNetwork("ethereum"); setAddress("0xb6e8a3F11e0fd557fd14A28096fC0F6A62e25a1C"); setLabel("World Wallet AI read-only"); setShowAddressForm(true); setMessage("Existing World Wallet AI public address loaded. Select the correct wallet profile, then choose Connect address to save it to that profile."); }}>Use existing World Wallet AI address</button>
+      {showAddressForm && <div className="feature-success">Review the public address and selected wallet before connecting. Saving it attaches the address to this wallet profile only.</div>}
       <div className="feature-grid">
         <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
         <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
