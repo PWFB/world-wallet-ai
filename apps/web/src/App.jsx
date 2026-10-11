@@ -138,6 +138,64 @@ function GitHubIntegration({ accessToken, apiBaseUrl }) {
   </section>;
 }
 
+
+function GeminiIntegration({ accessToken, apiBaseUrl }) {
+  const [status, setStatus] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const authHeaders = { Authorization: "Bearer " + accessToken };
+  const loadStatus = async () => {
+    setError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/gemini/status", { headers: authHeaders });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load Gemini configuration status.");
+      setStatus(data);
+    } catch (err) { setError(err.message || "Unable to load Gemini configuration status."); }
+  };
+
+  useEffect(() => { loadStatus(); }, [accessToken, apiBaseUrl]);
+
+  const runTest = async () => {
+    setBusy(true); setError(""); setResult(null);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/integrations/gemini/test", {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Gemini connection test failed.");
+      setResult(data);
+      setStatus(current => ({ ...(current || {}), configured: true, key_present: true, model: data.model }));
+    } catch (err) { setError(err.message || "Gemini connection test failed."); }
+    finally { setBusy(false); }
+  };
+
+  const card = { background: "var(--panel, #111a2d)", border: "1px solid var(--border, #26334d)", borderRadius: 16, padding: 20 };
+  const muted = { color: "var(--muted, #9aa8c2)", fontSize: 13 };
+  return <section className="content">
+    <div className="page-heading"><div><p className="eyebrow">ADMIN CONSOLE / AI PROVIDERS</p><h1>Gemini Integration</h1><p className="muted">Check World Wallet AI's private server-side Google Gemini connection.</p></div></div>
+    <div style={card}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
+        <div><p className="eyebrow">GOOGLE GEMINI API</p><h2 style={{ margin: "8px 0" }}>{status?.configured ? "Backend key configured" : status ? "Backend key missing" : "Checking configuration…"}</h2><p style={muted}>The API key is read only by the backend environment. It is never sent to the browser or returned by these endpoints.</p></div>
+        <button type="button" className="primary" disabled={busy || !status?.configured} onClick={runTest}>{busy ? "Testing Gemini…" : "Test Gemini connection"}</button>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginTop: 20 }}>
+        <div><span style={muted}>Provider</span><div style={{ fontWeight: 700, marginTop: 5 }}>Google Gemini</div></div>
+        <div><span style={muted}>API key</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.configured ? "Present · hidden" : status ? "Not configured" : "Checking…"}</div></div>
+        <div><span style={muted}>Model</span><div style={{ fontWeight: 700, marginTop: 5 }}>{status?.model || "gemini-2.5-flash"}</div></div>
+        <div><span style={muted}>Connection test</span><div style={{ fontWeight: 700, marginTop: 5 }}>{result?.success ? "Passed" : "Not tested"}</div></div>
+      </div>
+      {error && <div role="alert" style={{ marginTop: 16, color: "#ff8585" }}>{error}</div>}
+      {result && <div role="status" style={{ marginTop: 16, padding: 14, borderRadius: 10, border: "1px solid #277c59" }}><strong style={{ color: "#7ee2ad" }}>✓ {result.message}</strong><p style={{ ...muted, marginBottom: 4 }}>Model: {result.model} · Tested: {new Date(result.tested_at).toLocaleString()}</p><p style={{ marginBottom: 0, overflowWrap: "anywhere" }}>Gemini response: {result.response_preview}</p></div>}
+      <p style={{ ...muted, marginTop: 18 }}>A successful test confirms the backend can authenticate and receive a response from Gemini at test time. It does not guarantee quota availability or uninterrupted future service.</p>
+    </div>
+  </section>;
+}
+
 function App() {
   const [active, setActive] = useState(() => {
     try {
@@ -777,7 +835,7 @@ function App() {
   const nav = useMemo(() => ({
     Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
     Tools: ["Browser", "Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
-    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration"],
+    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
     Support: ["Support Center", "Help & Docs"],
   }), []);
 
@@ -916,7 +974,7 @@ function App() {
           </div>
         </header>
 
-        {active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
+        {active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
           const balance = live?.balance || 0;
