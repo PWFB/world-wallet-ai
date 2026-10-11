@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
+import { isUsableNeonAccessToken } from "./neon-token.js";
 import BrowserPage from "./BrowserPage.jsx";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -182,9 +183,28 @@ function App() {
         // Storage can be unavailable in restricted browser modes.
       }
 
-      if (persistedToken) {
+      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
         if (!accessToken && !cancelled) setAccessToken(persistedToken);
         if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      if (persistedToken) {
+        if (!cancelled) setAuthRestoring(true);
+        const freshToken = await getNeonAccessToken();
+        if (freshToken && !cancelled) {
+          try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
+          setAccessToken(freshToken);
+          setAuthRestoring(false);
+          return;
+        }
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        if (!cancelled) {
+          setAccessToken("");
+          setAuthRestoring(false);
+          setShowLogin(true);
+          setLoginError("Your session expired or could not be refreshed. Please sign in again.");
+        }
         return;
       }
 
@@ -272,9 +292,17 @@ function App() {
             setAccessToken(freshToken);
             return;
           }
-          // A single wallet API 401 must not forcibly redirect a user who still
-          // has a Neon Auth session. Keep the dashboard visible and surface the
-          // API authentication failure so it can be diagnosed without a login loop.
+          if (!isUsableNeonAccessToken(accessToken)) {
+            try { localStorage.removeItem(TOKEN_KEY); } catch {}
+            if (!cancelled) {
+              setAccessToken("");
+              setShowLogin(true);
+              setLoginError("Your session expired or could not be refreshed. Please sign in again.");
+            }
+            return;
+          }
+          // Do not clear a still-valid token solely because the API rejected it:
+          // issuer/configuration mismatches need diagnosis rather than a login loop.
           if (!cancelled) {
             setApiStatus("error");
             setSyncMessage("Wallet API rejected the current session token. Your sign-in was kept; please retry after the session token is refreshed.");
@@ -343,7 +371,17 @@ function App() {
         if (response.status === 401) {
           const freshToken = await getNeonAccessToken();
           if (freshToken && freshToken !== accessToken && !cancelled) {
+            try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
             setAccessToken(freshToken);
+            return;
+          }
+          if (!isUsableNeonAccessToken(accessToken)) {
+            try { localStorage.removeItem(TOKEN_KEY); } catch {}
+            if (!cancelled) {
+              setAccessToken("");
+              setShowLogin(true);
+              setLoginError("Your session expired or could not be refreshed. Please sign in again.");
+            }
             return;
           }
         }
