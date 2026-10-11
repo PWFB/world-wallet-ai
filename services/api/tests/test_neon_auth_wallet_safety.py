@@ -66,6 +66,49 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         self.assertIn("SELECT network,address,label FROM wallet_addresses", connection.queries[0][0])
         self.assertFalse(connection.committed)
 
+    def test_wallet_sync_uses_separate_saved_addresses_for_each_evm_network(self):
+        ethereum_address = "0x" + "1" * 40
+        bnb_address = "0x" + "2" * 40
+        connection = FakeConnection([])
+        user = {"wallet_id": "wallet_profile_123", "id": "user_123"}
+        with (
+            patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+                "ethereum": ethereum_address,
+                "bnb": bnb_address,
+                "bitcoin": None,
+            }.get(network)),
+            patch.object(main, "ETH_RPC_URL", "https://ethereum-rpc.invalid"),
+            patch.object(main, "BSC_RPC_URL", "https://bnb-rpc.invalid"),
+            patch.object(main, "USDT_ETH_CONTRACT", ""),
+            patch.object(main, "USDT_BSC_CONTRACT", ""),
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "evm_balance", side_effect=[1.25, 2.5]) as evm_balance,
+            patch.object(main, "sync_bitcoin_transactions", return_value=[]),
+            patch.object(main, "sync_evm_native_transactions", return_value=([], None)) as sync_native,
+            patch.object(main, "wallet_snapshot", return_value=([], [], {})),
+            patch.object(main, "_network_sync_status", return_value={}),
+        ):
+            result = main.sync_wallet(user)
+
+        self.assertEqual(
+            [call.args for call in evm_balance.call_args_list],
+            [
+                ("https://ethereum-rpc.invalid", ethereum_address),
+                ("https://bnb-rpc.invalid", bnb_address),
+            ],
+        )
+        self.assertEqual(
+            [call.args for call in sync_native.call_args_list],
+            [
+                (user, "https://ethereum-rpc.invalid", "ethereum", ethereum_address),
+                (user, "https://bnb-rpc.invalid", "bnb", bnb_address),
+            ],
+        )
+        self.assertEqual(
+            [(item["network"], item["asset"], item["balance"]) for item in result["updates"]],
+            [("ethereum", "ETH", 1.25), ("bnb", "BNB", 2.5)],
+        )
+
     def test_wallet_sync_post_route_has_one_authenticated_handler(self):
         routes = [
             route for route in main.app.routes
