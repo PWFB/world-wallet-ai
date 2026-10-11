@@ -165,5 +165,38 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
         get_user.assert_not_called()
 
 
+    def test_neon_jwt_rejects_unapproved_signing_algorithm(self):
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
+            patch.object(main, "jwt.get_unverified_header", return_value={"alg": "HS256"}),
+            patch.object(main, "jwt.decode") as decode,
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(raised.exception.status_code, 401)
+        decode.assert_not_called()
+
+    def test_neon_jwt_rejects_algorithm_mismatch_with_jwks_key(self):
+        class MismatchedSigningKey:
+            key = object()
+            algorithm_name = "RS256"
+
+        class MismatchedJwksClient:
+            def get_signing_key_from_jwt(self, _token):
+                return MismatchedSigningKey()
+
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT", MismatchedJwksClient()),
+            patch.object(main, "jwt.get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main, "jwt.decode") as decode,
+        ):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.neon_auth_user("header.payload.signature")
+
+        self.assertEqual(raised.exception.status_code, 401)
+        decode.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()
