@@ -19,12 +19,12 @@ function tokenFromResult(result) {
   return result?.token || result?.data?.token || "";
 }
 
-export async function getNeonAccessToken() {
+export async function getNeonAccessToken({ forceRefresh = false } = {}) {
   if (!authUrl) return "";
 
   try {
     const token = tokenFromResult(await authClient.getJWTToken());
-    if (isUsableNeonAccessToken(token)) return token;
+    if (!forceRefresh && isUsableNeonAccessToken(token)) return token;
   } catch {
     // Fall through to the session-cookie token endpoint during restoration.
   }
