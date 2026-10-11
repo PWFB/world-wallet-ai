@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isUsableNeonAccessToken } from "./neon-token.js";
+import { getNeonTokenExpiry, isUsableNeonAccessToken } from "./neon-token.js";
 
 function token(payload) {
   const encode = value => Buffer.from(JSON.stringify(value)).toString("base64url");
@@ -17,6 +17,12 @@ test("rejects an expired token", () => {
 
 test("rejects tokens inside the clock-skew margin", () => {
   assert.equal(isUsableNeonAccessToken(token({ exp: 1020 }), 1000), false);
+});
+
+test("reads expiry from well-formed JWT payloads", () => {
+  assert.equal(getNeonTokenExpiry(token({ exp: 2000 })), 2000);
+  assert.equal(getNeonTokenExpiry("not-a-jwt"), null);
+  assert.equal(getNeonTokenExpiry(token({ sub: "user" })), null);
 });
 
 test("accepts valid UTF-8 claims with Unicode names", () => {
