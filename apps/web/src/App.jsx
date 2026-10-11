@@ -322,7 +322,7 @@ function App() {
           headers: authHeaders,
         });
         if (response.status === 401) {
-          const freshToken = await getNeonAccessToken();
+          const freshToken = await getNeonAccessToken({ forceRefresh: true });
           if (freshToken && freshToken !== accessToken && !cancelled) {
             try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
             setAccessToken(freshToken);
@@ -405,7 +405,7 @@ function App() {
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
         if (response.status === 401) {
-          const freshToken = await getNeonAccessToken();
+          const freshToken = await getNeonAccessToken({ forceRefresh: true });
           if (freshToken && freshToken !== accessToken && !cancelled) {
             try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
             setAccessToken(freshToken);
