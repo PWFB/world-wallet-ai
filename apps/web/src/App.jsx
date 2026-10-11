@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
-import { isUsableNeonAccessToken } from "./neon-token.js";
+import { getNeonTokenExpiry, isUsableNeonAccessToken } from "./neon-token.js";
 import BrowserPage from "./BrowserPage.jsx";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
@@ -115,6 +115,37 @@ function App() {
   const [performance, setPerformance] = useState({ points: [] });
   const sessionState = authClient.useSession();
   const neonSessionUser = sessionState.data?.user || null;
+
+  // Refresh the JWT before it expires so routine API requests do not keep
+  // sending an expired bearer token during a long-lived dashboard session.
+  useEffect(() => {
+    if (!accessToken) return undefined;
+    const expiry = getNeonTokenExpiry(accessToken);
+    if (!expiry) return undefined;
+
+    let cancelled = false;
+    const delay = Math.max(1000, (expiry - Math.floor(Date.now() / 1000) - 45) * 1000);
+    const timer = window.setTimeout(async () => {
+      const freshToken = await getNeonAccessToken({ forceRefresh: true });
+      if (cancelled) return;
+      if (freshToken && isUsableNeonAccessToken(freshToken) && freshToken !== accessToken) {
+        try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
+        setAccessToken(freshToken);
+        return;
+      }
+      if (!isUsableNeonAccessToken(accessToken)) {
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        setAccessToken("");
+        setShowLogin(true);
+        setLoginError("Your session expired or could not be refreshed. Please sign in again.");
+      }
+    }, delay);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [accessToken]);
 
   useEffect(() => {
     const refreshLocalWalletData = () => {
