@@ -928,9 +928,11 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                     else:
                         status = "pending"
                     tx_id = "evm_" + tx_hash
+                    native_asset = "ETH" if network == "ethereum" else ("BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else network.upper())
                     existing = conn.execute(
-                        "SELECT id,status,type,description,block_hash FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
-                        (user["wallet_id"], tx_hash),
+                        "SELECT id,status,type,description,block_hash FROM transactions "
+                        "WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s",
+                        (user["wallet_id"], tx_hash, network, native_asset),
                     ).fetchone()
                     if existing:
                         old_id, old_status, old_type, old_description, old_block_hash = existing
@@ -951,11 +953,11 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                         conn.execute(
                             "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) "
                             "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                            (tx_id,user["wallet_id"],direction,"ETH" if network=="ethereum" else "BNB",
+                            (tx_id,user["wallet_id"],direction,native_asset,
                              f"{network} native {direction}",signed_amount,status,
                              recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number,block_hash),
                         )
-                    imported.append({"tx_hash":tx_hash,"asset":"ETH" if network=="ethereum" else "BNB","network":network,
+                    imported.append({"tx_hash":tx_hash,"asset":native_asset,"network":network,
                                      "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,
                                      "block_height":block_number,"block_hash":block_hash})
             # A block hash changing inside the overlap means an old record can no longer
@@ -964,7 +966,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                 "SELECT id,tx_hash,block_height,block_hash FROM transactions "
                 "WHERE wallet_id=%s AND network=%s AND asset=%s AND block_height BETWEEN %s AND %s "
                 "AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
-                (user["wallet_id"],network,"ETH" if network=="ethereum" else "BNB",start,latest),
+                (user["wallet_id"],network,native_asset,start,latest),
             ).fetchall():
                 txid, old_hash, old_height, old_block_hash = row
                 current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
