@@ -1005,6 +1005,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     if not url or not contract or not wallet_address:
         return [], None
     try:
+        if network == "sepolia":
+            require_sepolia_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
