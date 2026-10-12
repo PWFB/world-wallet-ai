@@ -18,6 +18,7 @@ function transactionExplorerUrl(transaction) {
   if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
   if (network === "sepolia" || asset === "BALMZ-SEP") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
   if (network === "ethereum" || ["ETH","USDT","USDC","BALMZ"].includes(asset)) return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
+  if (asset === "USDT-BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
   if (asset === "SOL") return `https://solscan.io/tx/${encodeURIComponent(hash)}`;
   if (asset === "XRP") return `https://xrpscan.com/tx/${encodeURIComponent(hash)}`;
   if (asset === "ADA") return `https://cardanoscan.io/transaction/${encodeURIComponent(hash)}`;
@@ -44,6 +45,7 @@ const networksForAsset = symbol => ({
   ETH: [{ value: "ethereum", label: "Ethereum" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
   USDT: [{ value: "ethereum", label: "Ethereum" }, { value: "bnb", label: "BNB Chain" }],
+  "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
   BALMZ: [{ value: "ethereum", label: "Ethereum" }],
 }[symbol] || []);
 
