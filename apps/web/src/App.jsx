@@ -200,6 +200,7 @@ function App() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try { return localStorage.getItem("ww_sidebar_collapsed") === "true"; } catch { return false; }
   });
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [active, setActive] = useState(() => {
     try {
       const saved = localStorage.getItem("ww_active_page");
@@ -222,6 +223,8 @@ function App() {
   const [assets, setAssets] = useState(fallbackAssets);
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
+  const [marketPricesError, setMarketPricesError] = useState("");
+  const [marketPricesLoading, setMarketPricesLoading] = useState(false);
   const [tokenRegistry, setTokenRegistry] = useState([]);
   const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
@@ -315,19 +318,37 @@ function App() {
     };
   }, []);
 
+  async function refreshMarketPrices() {
+    setMarketPricesLoading(true);
+    setMarketPricesError("");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || ("Market service returned " + response.status));
+      if (!data.prices || typeof data.prices !== "object") throw new Error("Market service returned no price data.");
+      setMarketPrices(data.prices);
+      setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+    } catch (error) {
+      setMarketPricesError(error.message || "Live market prices could not be loaded. Check the API connection and try again.");
+    } finally {
+      setMarketPricesLoading(false);
+    }
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function loadMarketPrices() {
       try {
-        const response = await fetch(API_BASE_URL + "/api/v1/prices/market");
+        const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Market prices unavailable");
         if (!cancelled) {
           setMarketPrices(data.prices || {});
           setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+          setMarketPricesError("");
         }
-      } catch {
-        // Keep the last successful quote set if the market service is temporarily unavailable.
+      } catch (error) {
+        if (!cancelled) setMarketPricesError(error.message || "Market price service unavailable.");
       }
     }
     loadMarketPrices();
@@ -1041,10 +1062,11 @@ function App() {
   }
 
   return (
-    <div className={"app-shell" + (active === "Dashboard" && !selectedCoin ? " dashboard-shortcuts-active" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+    <div className={"app-shell" + (active === "Dashboard" && !selectedCoin ? " dashboard-shortcuts-active" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "") + (mobileMenuOpen ? " mobile-menu-open" : "")}>
+      {mobileMenuOpen && <button type="button" className="mobile-menu-scrim" aria-label="Close wallet navigation" onClick={() => setMobileMenuOpen(false)} />}
       <aside className={"sidebar" + (sidebarCollapsed ? " sidebar-is-collapsed" : "")}>
         <div className="brand">
-          <div className="brand-mark">W</div>
+          <button type="button" className="brand-mark brand-home-button" aria-label="World Wallet AI home and wallet navigation" title="Open wallet navigation" onClick={() => { setActive("Dashboard"); setSelectedCoin(null); if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(current => !current); else setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; }); }}>W</button>
           <div className="brand-copy"><strong>WORLD WALLET</strong><span>AI</span></div>
           <button type="button" className="sidebar-toggle" onClick={() => setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; })} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}><span aria-hidden="true">⋯</span></button>
         </div>
@@ -1071,7 +1093,7 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
+          <button type="button" className="mobile-brand" aria-label={mobileMenuOpen ? "Close wallet navigation" : "Open wallet navigation"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(current => !current)}><span className="brand-mark">W</span><b>WORLD WALLET <span>AI</span></b></button>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
@@ -1153,6 +1175,29 @@ function App() {
               <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="stat-source">Verified wallet transaction records</div></article>
               <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.find(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase()))?.balance || 0)} <small>BALMZ</small></strong><b className="neutral">{assets.some(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase())) ? "Wallet token balance" : "No balance recorded"}</b><div className="stat-source">Shows recorded BALMZ holdings only</div></article>
             </div>
+
+
+            <article className="panel market-prices-panel">
+              <div className="panel-head">
+                <div><h2>Live market prices</h2><span>Spot quotes from CoinGecko · refreshed every 60 seconds</span></div>
+                <button type="button" className="text-btn" onClick={refreshMarketPrices} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing…" : "↻ Refresh prices"}</button>
+              </div>
+              {marketPricesError && <div className="market-price-error" role="status">{marketPricesError}</div>}
+              <div className="market-price-grid">
+                {["BTC","ETH","BNB","USDT","USDC","SOL","XRP","ADA","LTC","DOGE","BALMZ"].map(symbol => {
+                  const quote = marketPrices[symbol] || {};
+                  const hasPrice = quote.usd != null && Number.isFinite(Number(quote.usd));
+                  const change = quote.usd_24h_change == null ? null : Number(quote.usd_24h_change);
+                  const coin = walletCoinCatalog.find(item => item.symbol === symbol) || {};
+                  return <div className="market-price-item" key={symbol}>
+                    <span className={"asset-icon coin-icon coin-" + symbol.toLowerCase()}>{coin.icon || "•"}</span>
+                    <div className="market-price-name"><b>{symbol}</b><small>{symbol === "BALMZ" ? "World Wallet token" : coin.name || symbol}</small></div>
+                    <div className="market-price-value"><b>{hasPrice ? money(Number(quote.usd)) : symbol === "BALMZ" ? "Not listed" : marketPricesLoading && !marketPricesUpdatedAt ? "Loading…" : "Unavailable"}</b><small className={change == null ? "neutral" : change >= 0 ? "positive" : "negative"}>{change == null ? (symbol === "BALMZ" ? "No verified quote" : "24h change unavailable") : (change >= 0 ? "+" : "") + change.toFixed(2) + "% · 24h"}</small></div>
+                  </div>;
+                })}
+              </div>
+              <div className="coin-catalog-note">{marketPricesUpdatedAt ? "Last updated " + marketPricesUpdatedAt.toLocaleTimeString() : "Waiting for the first successful market response."} · BALMZ is intentionally unpriced until a verified market quote exists.</div>
+            </article>
 
             <div className="dashboard-grid">
               <article className="panel chart-panel">
