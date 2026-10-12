@@ -1050,11 +1050,7 @@ function App() {
           <button type="button" className="sidebar-toggle" onClick={() => setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; })} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}><span aria-hidden="true">⋯</span></button>
         </div>
 
-        <div className="network-pill"><i /><select aria-label="Selected blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option></select>
-          {dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).length > 1 && <select aria-label="Selected public address" value={selectedNetworkAddress} onChange={event => setSelectedNetworkAddress(event.target.value)}><option value="">Choose address…</option>{dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).map(item => <option key={item.address} value={item.address}>{item.label || item.address.slice(0, 10)} • {item.address.slice(0, 8)}…{item.address.slice(-6)}</option>)}</select>}
-          <small className="network-pill-balance">{selectedNetworkBalanceBusy ? "Checking balance…" : selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "No balance checked"}</small>
-          {selectedNetworkBalance?.address && <small className="network-pill-address">{selectedNetworkBalance.address.slice(0, 9)}…{selectedNetworkBalance.address.slice(-7)}</small>}
-          <button type="button" className="network-pill-refresh" onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "Checking…" : "Check balance ↻"}</button></div>
+
 
         <nav>
           {Object.entries(nav).map(([group, items]) => (
@@ -1079,7 +1075,7 @@ function App() {
           <div className="mobile-brand"><div className="brand-mark">W</div><b>WORLD WALLET <span>AI</span></b></div>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
-            <button type="button" onClick={() => setActive("Browser")}>⌕ <span>Browser</span></button><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
+            <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
 
@@ -1146,43 +1142,6 @@ function App() {
               </div>
             </div>
 
-            <article className="panel action-panel" style={{ marginBottom: 18 }}>
-              <div className="panel-head">
-                <div><h2>Wallet addresses</h2><span>Attach a public Ethereum address and sync its on-chain activity</span></div>
-                <button type="button" className="text-btn" onClick={() => setActive("Wallets")}>Manage wallets →</button>
-              </div>
-              <div className="feature-grid">
-                <label>Ethereum public address
-                  <input value={dashboardAddress} onChange={e => setDashboardAddress(e.target.value)} spellCheck={false} placeholder="0x…" />
-                </label>
-                <label>Address label
-                  <input value={dashboardAddressLabel} onChange={e => setDashboardAddressLabel(e.target.value)} maxLength={80} placeholder="My Ethereum wallet" />
-                </label>
-              </div>
-              <div className="page-actions" style={{ marginTop: 12 }}>
-                <button type="button" className="primary" disabled={dashboardAddressBusy || !accessToken} onClick={attachDashboardAddress}>
-                  {dashboardAddressBusy ? "Attaching…" : "＋ Attach public address"}
-                </button>
-                <button type="button" className="secondary" disabled={dashboardAddressBusy} onClick={loadDashboardAddresses}>↻ Reload addresses</button>
-              </div>
-              {dashboardAddressMessage && <p role="status" className={/unable|valid|could not|error/i.test(dashboardAddressMessage) ? "feature-error" : "feature-success"} style={{ marginTop: 12 }}>{dashboardAddressMessage}</p>}
-              <div className="tool-list" style={{ marginTop: 12 }}>
-                {dashboardAddresses.map(item => <div className="tool-row" key={item.network + ":" + item.address}>
-                  <div><b>{String(item.network || "").toUpperCase()}</b><small>{item.label || "Public address"}</small></div>
-                  <code style={{ overflowWrap: "anywhere" }}>{item.address}</code>
-                  <a href={"https://etherscan.io/address/" + encodeURIComponent(item.address)} target="_blank" rel="noreferrer">Explorer ↗</a>
-                </div>)}
-                {!dashboardAddresses.length && <p className="muted">No address returned yet. Attach the address above or open Wallets to select the active wallet profile.</p>}
-              </div>
-              <p className="security-note">Read-only address tracking only. Never enter a seed phrase or private key. The Alchemy key stays on the backend.</p>
-            </article>
-            <article className="panel mobile-network-panel">
-              <div className="panel-head"><div><h2>Network balance</h2><span>Read-only balance for the selected public address</span></div></div>
-              <label className="mobile-network-label">Network<select aria-label="Mobile selected blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option></select></label>
-              {dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).length > 1 && <label className="mobile-network-label">Public address<select aria-label="Mobile selected public address" value={selectedNetworkAddress} onChange={event => setSelectedNetworkAddress(event.target.value)}><option value="">Choose address…</option>{dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).map(item => <option key={item.address} value={item.address}>{item.label || item.address.slice(0, 10)} • {item.address.slice(0, 8)}…{item.address.slice(-6)}</option>)}</select></label>}
-              <div className="mobile-network-balance">{selectedNetworkBalanceBusy ? "Checking balance…" : selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "No balance checked"}{selectedNetworkBalance?.address && <small>{selectedNetworkBalance.address}</small>}</div>
-              <button type="button" className="secondary" onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "Checking…" : "Check selected balance ↻"}</button>
-            </article>
             <div className="balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
@@ -1193,48 +1152,7 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{money(wallet.total_received_usd)}</strong><b className="neutral">Live wallet data</b><div className="stat-source">Live value from authenticated wallet</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="stat-source">Verified wallet transaction records</div></article>
-              <article className="stat-card"><span>Portfolio profit</span><strong>{money(wallet.profit_usd)}</strong><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}%</b><div className="stat-source">Calculated from recorded live holdings</div></article>
-            </div>
-
-            <div className="live-wallet-panel panel">
-              <div className="live-wallet-main">
-                <div>
-                  <span className="feature-kicker">LIVE WALLET</span>
-                  <h2>{liveWallet.status === "connected" ? "Production wallet connected" : liveWallet.status === "checking" ? "Checking production wallet…" : "Production wallet not configured"}</h2>
-                  <p>{liveWallet.mode === "read_only" ? "Read-only blockchain connection • no private key or signing key is stored by the API." : "Wallet connection status"}</p>
-                </div>
-                
-              </div>
-              {liveWallet.addresses.length ? (
-                <div className="live-wallet-addresses">
-                  {liveWallet.addresses.map(item => <div className="live-wallet-address" key={item.network + ":" + item.address}>
-                    <b>{item.network === "bitcoin" ? "Bitcoin" : item.network === "bnb" ? "BNB Chain" : item.network === "sepolia" ? "Ethereum Sepolia (testnet)" : "Ethereum"}</b>
-                    <code>{item.address}</code>
-                  </div>)}
-                </div>
-              ) : (
-                <div className="live-wallet-empty">{liveWallet.message || "Configure the production wallet address and chain RPC settings on the backend to enable live balances."}</div>
-              )}
-              <div className="network-sync-grid">
-                {["bitcoin", "ethereum", "bnb", "sepolia"].map(network => {
-                  const item = networkStatus[network] || {};
-                  const label = network === "bitcoin" ? "Bitcoin" : network === "ethereum" ? "Ethereum" : network === "bnb" ? "BNB Chain" : "Ethereum Sepolia (testnet)";
-                  const needsAddress = network === "ethereum" && item.rpc_configured && !item.address_configured;
-                  const statusLabel = item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : needsAddress ? "ADDRESS NEEDED" : item.configured ? "CHECKING" : "NOT CONFIGURED";
-                  return <div className="network-sync-card" key={network}>
-                    <div><b>{label}</b><span className={"sync-dot " + (needsAddress ? "warning" : item.status || "not_configured")} /> <small>{statusLabel}</small></div>
-                    <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : needsAddress ? "RPC connected; no Ethereum wallet address is saved for this wallet." : "No successful balance sync recorded."}</span>
-                    <span>{item.chain_height != null ? "Chain height " + Number(item.chain_height).toLocaleString() : "Chain height unavailable."}</span>
-                    {needsAddress && <button type="button" className="secondary network-sync-action" onClick={() => setActive("Wallets")}>Add Ethereum address →</button>}
-                    {item.configuration_message && <em>{item.configuration_message}</em>}
-                    {item.warning && <em>{item.warning}</em>}
-                  </div>;
-                })}
-              </div>
-              <div className="live-sync-meta">
-                <span>Last wallet refresh: {lastSyncedAt ? lastSyncedAt.toLocaleString() : "Not yet"}</span>
-                <span>Last transaction sync: {networkStatus.bitcoin?.last_transaction_sync_at || networkStatus.ethereum?.last_transaction_sync_at || networkStatus.bnb?.last_transaction_sync_at ? new Date(networkStatus.bitcoin?.last_transaction_sync_at || networkStatus.ethereum?.last_transaction_sync_at || networkStatus.bnb?.last_transaction_sync_at).toLocaleString() : "Not yet"}</span>
-              </div>
+              <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.find(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase()))?.balance || 0)} <small>BALMZ</small></strong><b className="neutral">{assets.some(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase())) ? "Wallet token balance" : "No balance recorded"}</b><div className="stat-source">Shows recorded BALMZ holdings only</div></article>
             </div>
 
             <div className="dashboard-grid">
