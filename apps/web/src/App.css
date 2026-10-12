@@ -1079,3 +1079,7 @@
   .app-shell .top-actions button:nth-child(2),.app-shell .top-actions button:nth-child(3){display:none}
   .app-shell .balance-grid>.stat-card{padding:11px}
 }
+
+@media(max-width:380px){
+  .app-shell .top-actions>button:not(.top-browser-button):not(.global-back-button):not(.logout-button):not(.top-avatar){display:none}
+}
