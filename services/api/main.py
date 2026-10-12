@@ -809,6 +809,19 @@ def rpc_call(url: str, method: str, params: list):
     return payload.get("result")
 
 
+def evm_chain_id(url: str):
+    """Return the connected EVM RPC chain ID as an integer."""
+    raw = rpc_call(url, "eth_chainId", [])
+    return int(raw, 16) if raw else None
+
+
+def require_sepolia_rpc(url: str):
+    """Fail closed if a configured Sepolia endpoint is actually another chain."""
+    chain_id = evm_chain_id(url)
+    if chain_id != 11155111:
+        raise ValueError("Configured Sepolia RPC did not report chain ID 11155111")
+
+
 def evm_balance(url: str, address: str):
     raw = rpc_call(url, "eth_getBalance", [address, "latest"])
     return int(raw, 16) / 10**18 if raw else 0.0
@@ -1785,6 +1798,12 @@ def sync_transactions(user: dict = Depends(current_user)):
         (SEPOLIA_RPC_URL if sepolia_address else "", "sepolia", BALMZ_SEPOLIA_CONTRACT),
     ):
         if rpc_url:
+            if network == "sepolia":
+                try:
+                    require_sepolia_rpc(rpc_url)
+                except Exception:
+                    warnings.append("Sepolia RPC chain ID mismatch or unavailable; Sepolia sync skipped.")
+                    continue
             native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, wallet_network_address(user, network))
             imported.extend(native_imported)
             if native_warning:
@@ -1961,6 +1980,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         elif network == "sepolia":
             rpc_url, asset = SEPOLIA_RPC_URL, "ETH (Sepolia)"
             if not rpc_url: raise HTTPException(status_code=503, detail="Ethereum Sepolia RPC is not configured")
+            require_sepolia_rpc(rpc_url)
             balance = evm_balance(rpc_url, address)
         elif network == "bnb":
             rpc_url, asset = BSC_RPC_URL, "BNB"
