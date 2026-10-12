@@ -241,6 +241,11 @@ function App() {
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [dashboardAddresses, setDashboardAddresses] = useState([]);
+  const [dashboardAddress, setDashboardAddress] = useState("0x5c43B1eD97e52d009611D89b74fA829FE4ac56b1");
+  const [dashboardAddressLabel, setDashboardAddressLabel] = useState("Main Ethereum wallet");
+  const [dashboardAddressBusy, setDashboardAddressBusy] = useState(false);
+  const [dashboardAddressMessage, setDashboardAddressMessage] = useState("");
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [networkStatus, setNetworkStatus] = useState({});
@@ -576,6 +581,60 @@ function App() {
       if (liveTransactionTimer) window.clearInterval(liveTransactionTimer);
     };
   }, [accessToken, refreshInterval]);
+
+  async function loadDashboardAddresses() {
+    if (!accessToken) return;
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", {
+        headers: { Authorization: "Bearer " + accessToken },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to load wallet addresses.");
+      setDashboardAddresses(data.addresses || []);
+    } catch (error) {
+      setDashboardAddressMessage(error.message || "Unable to load wallet addresses.");
+    }
+  }
+
+  async function attachDashboardAddress() {
+    const address = dashboardAddress.trim();
+    const walletId = wallet?.wallet_id || user?.wallet_id;
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+      setDashboardAddressMessage("Enter a valid 0x Ethereum address.");
+      return;
+    }
+    if (!walletId) {
+      setDashboardAddressMessage("The active wallet profile could not be identified. Open Wallets and select a wallet first.");
+      return;
+    }
+    const existingEthereum = dashboardAddresses.find(item => String(item.network || "").toLowerCase() === "ethereum");
+    if (existingEthereum && String(existingEthereum.address || "").toLowerCase() !== address.toLowerCase()) {
+      setDashboardAddressMessage("This wallet profile already has a different Ethereum address. To protect the saved address, create or switch to another wallet profile in Wallets, then attach this address there.");
+      return;
+    }
+    setDashboardAddressBusy(true);
+    setDashboardAddressMessage("");
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ network: "ethereum", address, label: dashboardAddressLabel.trim() || "Ethereum address" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to attach this address.");
+      setDashboardAddressMessage("Ethereum address attached. Refreshing wallet history…");
+      await loadDashboardAddresses();
+      await syncWallet();
+    } catch (error) {
+      setDashboardAddressMessage(error.message || "Unable to attach this address.");
+    } finally {
+      setDashboardAddressBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (active === "Dashboard" && accessToken) loadDashboardAddresses();
+  }, [active, accessToken]);
 
   async function syncWallet() {
     if (!accessToken || syncBusy) return;
@@ -1038,6 +1097,36 @@ function App() {
               </div>
             </div>
 
+            <article className="panel action-panel" style={{ marginBottom: 18 }}>
+              <div className="panel-head">
+                <div><h2>Wallet addresses</h2><span>Attach a public Ethereum address and sync its on-chain activity</span></div>
+                <button type="button" className="text-btn" onClick={() => setActive("Wallets")}>Manage wallets →</button>
+              </div>
+              <div className="feature-grid">
+                <label>Ethereum public address
+                  <input value={dashboardAddress} onChange={e => setDashboardAddress(e.target.value)} spellCheck={false} placeholder="0x…" />
+                </label>
+                <label>Address label
+                  <input value={dashboardAddressLabel} onChange={e => setDashboardAddressLabel(e.target.value)} maxLength={80} placeholder="My Ethereum wallet" />
+                </label>
+              </div>
+              <div className="page-actions" style={{ marginTop: 12 }}>
+                <button type="button" className="primary" disabled={dashboardAddressBusy || !accessToken} onClick={attachDashboardAddress}>
+                  {dashboardAddressBusy ? "Attaching…" : "＋ Attach address & sync"}
+                </button>
+                <button type="button" className="secondary" disabled={dashboardAddressBusy} onClick={loadDashboardAddresses}>↻ Reload addresses</button>
+              </div>
+              {dashboardAddressMessage && <p role="status" className={/unable|valid|could not|error/i.test(dashboardAddressMessage) ? "feature-error" : "feature-success"} style={{ marginTop: 12 }}>{dashboardAddressMessage}</p>}
+              <div className="tool-list" style={{ marginTop: 12 }}>
+                {dashboardAddresses.map(item => <div className="tool-row" key={item.network + ":" + item.address}>
+                  <div><b>{String(item.network || "").toUpperCase()}</b><small>{item.label || "Public address"}</small></div>
+                  <code style={{ overflowWrap: "anywhere" }}>{item.address}</code>
+                  <a href={"https://etherscan.io/address/" + encodeURIComponent(item.address)} target="_blank" rel="noreferrer">Explorer ↗</a>
+                </div>)}
+                {!dashboardAddresses.length && <p className="muted">No address returned yet. Attach the address above or open Wallets to select the active wallet profile.</p>}
+              </div>
+              <p className="security-note">Read-only address tracking only. Never enter a seed phrase or private key. The Alchemy key stays on the backend.</p>
+            </article>
             <div className="balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
