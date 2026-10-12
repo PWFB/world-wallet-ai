@@ -1614,6 +1614,27 @@ def market_prices():
     return payload
 
 
+@app.get("/api/v1/prices/history/{symbol}")
+def market_price_history(symbol: str, days: int = 1):
+    """Return provider-sourced market history; unlisted tokens remain uncharted."""
+    coin_ids = {"BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin","USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano","LTC":"litecoin","DOGE":"dogecoin"}
+    key = symbol.strip().upper()
+    if key not in coin_ids:
+        raise HTTPException(status_code=404, detail="No verified market history is available for this token")
+    if days not in (1, 7, 14, 30):
+        raise HTTPException(status_code=400, detail="Supported chart ranges are 1, 7, 14, or 30 days")
+    try:
+        response = httpx.get(f"{COINGECKO_API_BASE_URL}/coins/{coin_ids[key]}/market_chart", params={"vs_currency":"usd","days":days}, headers=coingecko_headers(), timeout=12)
+        response.raise_for_status()
+        raw = response.json()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Verified market history service unavailable") from exc
+    points = [{"timestamp":int(item[0]),"price":float(item[1])} for item in raw.get("prices",[]) if isinstance(item,list) and len(item)>=2 and item[1] is not None]
+    if len(points)<2:
+        raise HTTPException(status_code=503, detail="Provider returned insufficient market history")
+    return {"symbol":key,"currency":"USD","days":days,"source":"CoinGecko","points":points}
+
+
 @app.post("/api/v1/prices/refresh")
 def refresh_prices(user: dict = Depends(current_user)):
     coin_ids = {
