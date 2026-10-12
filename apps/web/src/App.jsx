@@ -1169,6 +1169,13 @@ function App() {
               </div>
               <p className="security-note">Read-only address tracking only. Never enter a seed phrase or private key. The Alchemy key stays on the backend.</p>
             </article>
+            <article className="panel mobile-network-panel">
+              <div className="panel-head"><div><h2>Network balance</h2><span>Read-only balance for the selected public address</span></div></div>
+              <label className="mobile-network-label">Network<select aria-label="Mobile selected blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option></select></label>
+              {dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).length > 1 && <label className="mobile-network-label">Public address<select aria-label="Mobile selected public address" value={selectedNetworkAddress} onChange={event => setSelectedNetworkAddress(event.target.value)}><option value="">Choose address…</option>{dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork).map(item => <option key={item.address} value={item.address}>{item.label || item.address.slice(0, 10)} • {item.address.slice(0, 8)}…{item.address.slice(-6)}</option>)}</select></label>}
+              <div className="mobile-network-balance">{selectedNetworkBalanceBusy ? "Checking balance…" : selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "No balance checked"}{selectedNetworkBalance?.address && <small>{selectedNetworkBalance.address}</small>}</div>
+              <button type="button" className="secondary" onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "Checking…" : "Check selected balance ↻"}</button>
+            </article>
             <div className="balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
