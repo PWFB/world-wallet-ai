@@ -47,6 +47,21 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         with patch.object(main, "rpc_call", return_value=hex(11155111)):
             main.require_sepolia_rpc("https://rpc.example")
 
+    def test_sepolia_address_inspection_stops_before_balance_on_wrong_chain(self):
+        address = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Balance must not be read from the wrong chain")
+
+        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+            with self.assertRaisesRegex(ValueError, "chain ID 11155111"):
+                main._inspect_evm_address(address, "sepolia", "https://rpc.example")
+        self.assertEqual(calls, ["eth_chainId"])
+
     def test_sepolia_rpc_rejects_mainnet_chain_id(self):
         with patch.object(main, "rpc_call", return_value=hex(1)):
             with self.assertRaisesRegex(ValueError, "chain ID 11155111"):
@@ -73,7 +88,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             result = main._inspect_evm_address(address, "sepolia", "https://rpc.example")
         self.assertEqual(result["on_chain_balance"], 1.0)
         self.assertEqual(result["block_number"], 0x123)
-        self.assertEqual(result["native_symbol"], "ETH")
+        self.assertEqual(result["native_symbol"], "ETH-SEP")
+        self.assertIn("testnet", result["balance_basis"])
 
     def test_evm_settlement_waits_for_confirmation_threshold(self):
         tx_hash = "0x" + "a" * 64
