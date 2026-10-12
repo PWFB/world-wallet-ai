@@ -22,8 +22,25 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [balmzSummary, setBalmzSummary] = useState(null);
+  const [balmzLoading, setBalmzLoading] = useState(false);
 
   const authHeaders = useMemo(() => ({ Authorization: "Bearer " + accessToken }), [accessToken]);
+
+  const loadBalmzSummary = useCallback(async () => {
+    if (!accessToken) return;
+    setBalmzLoading(true);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/tokens/balmz/summary", { headers: authHeaders });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "BALMZ summary is unavailable.");
+      setBalmzSummary(data);
+    } catch (err) {
+      setBalmzSummary({ status: "api_unavailable", configured: false, message: err.message || "BALMZ summary is unavailable." });
+    } finally {
+      setBalmzLoading(false);
+    }
+  }, [accessToken, apiBaseUrl, authHeaders]);
 
   const loadWalletsAndAddresses = useCallback(async () => {
     if (!accessToken) return;
@@ -53,22 +70,25 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
     } finally {
       setLoading(false);
     }
-  }, [accessToken, apiBaseUrl, authHeaders]);
+    await loadBalmzSummary();
+  }, [accessToken, apiBaseUrl, authHeaders, loadBalmzSummary]);
 
   useEffect(() => { loadWalletsAndAddresses(); }, [loadWalletsAndAddresses]);
 
   const selectedAddress = addresses.find(item => item.network + ":" + item.address === selectedAddressKey) || addresses[0] || null;
   const balmzAsset = assets.find(item => String(item.symbol).toUpperCase() === "BALMZ");
-  const balmzBalance = Number(balmzAsset?.available_balance ?? balmzAsset?.balance ?? 0);
+  const summaryConfigured = balmzSummary?.configured === true && balmzSummary?.status === "connected";
+  const balmzBalance = Number(balmzSummary?.available_balance ?? balmzAsset?.available_balance ?? balmzAsset?.balance ?? 0);
   const balmzActual = Number(balmzAsset?.actual_balance ?? balmzBalance);
   const balmzReserved = Number(balmzAsset?.reserved_balance ?? Math.max(0, balmzActual - balmzBalance));
-  const balmzPrice = Number(balmzAsset?.price_usd || marketPrices.BALMZ?.usd || 0);
+  const balmzPrice = Number(balmzSummary?.price_usd || balmzAsset?.price_usd || marketPrices.BALMZ?.usd || 0);
   const balmzPending = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && ["pending", "pending_review", "broadcast_pending"].includes(String(item.status || "").toLowerCase()));
-  const pendingAmount = balmzPending.reduce((total, item) => total + Math.abs(txAmount(item)), 0);
-  const totalReceived = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (String(item.type).toLowerCase() === "received" || txAmount(item) > 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(txAmount(item)), 0);
-  const totalSent = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (["sent", "withdrawal"].includes(String(item.type).toLowerCase()) || txAmount(item) < 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(Number(item.raw_amount ?? item.amount ?? 0)), 0);
+  const pendingAmount = Number(balmzSummary?.total_pending ?? balmzPending.reduce((total, item) => total + Math.abs(txAmount(item)), 0));
+  const totalReceived = Number(balmzSummary?.total_received ?? activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (String(item.type).toLowerCase() === "received" || txAmount(item) > 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(txAmount(item)), 0));
+  const totalSent = Number(balmzSummary?.total_sent ?? activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (["sent", "withdrawal"].includes(String(item.type).toLowerCase()) || txAmount(item) < 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(txAmount(item)), 0));
   const balmzRegistry = tokenRegistry.find(item => String(item.symbol).toUpperCase() === "BALMZ" && String(item.network).toLowerCase() === "ethereum");
-  const contractPending = !balmzRegistry?.contract_address || balmzRegistry?.status === "pending_contract";
+  const contractPending = !balmzSummary?.contract_address && !balmzRegistry?.contract_address;
+  const displayTokenAmount = value => summaryConfigured || balmzSummary?.configured === true ? amount(value) + " BALMZ" : "Not connected";
 
   async function switchWallet(nextId) {
     if (!nextId || nextId === activeWalletId) return;
@@ -172,16 +192,16 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
     {(error || notice) && <div className={error ? "dashboard-wallet-feedback error" : "dashboard-wallet-feedback"} role={error ? "alert" : "status"}>{error || notice}</div>}
 
     <div className="dashboard-balmz-section">
-      <div className="dashboard-balmz-title"><div><p className="feature-kicker">BALMZ TOKEN</p><h2>BALMZ wallet summary</h2><span>On-chain values only appear when the token contract and wallet balance are available.</span></div><span className={"dashboard-balmz-status" + (contractPending ? " pending" : "")}>{contractPending ? "Contract pending" : "Contract configured"}</span></div>
+      <div className="dashboard-balmz-title"><div><p className="feature-kicker">BALMZ TOKEN</p><h2>BALMZ wallet summary</h2><span>{balmzSummary?.message || "Live Ethereum balance and supply are read from the configured contract for the active wallet address."}</span></div><span className={"dashboard-balmz-status" + (contractPending ? " pending" : "")}>{balmzLoading ? "Checking contract…" : contractPending ? "Contract pending" : summaryConfigured ? "On-chain connected" : balmzSummary?.status === "rpc_error" ? "RPC read error" : "Contract configured"}</span></div>
       <div className="dashboard-balmz-metrics">
-        <article><span>Available / remaining</span><strong>{amount(balmzBalance)} BALMZ</strong><small>Spendable balance reported by the wallet API</small></article>
-        <article><span>Total pending</span><strong>{amount(pendingAmount)} BALMZ</strong><small>{balmzPending.length} pending transaction{balmzPending.length === 1 ? "" : "s"}</small></article>
-        <article><span>Total received</span><strong>{amount(totalReceived)} BALMZ</strong><small>Non-pending wallet history</small></article>
-        <article><span>Total sent</span><strong>{amount(totalSent)} BALMZ</strong><small>Completed outgoing history</small></article>
-        <article><span>Reserved balance</span><strong>{amount(balmzReserved)} BALMZ</strong><small>Excluded from available balance</small></article>
-        <article><span>Coin price</span><strong>{balmzPrice > 0 ? money(balmzPrice) : "Not listed"}</strong><small>{balmzPrice > 0 ? "Current quote source" : contractPending ? "Waiting for deployed contract / verified market quote" : "No verified market quote available"}</small></article>
+        <article><span>Available balance</span><strong>{displayTokenAmount(balmzBalance)}</strong><small>{summaryConfigured ? "Live ERC-20 balance for the active Ethereum address" : "Connect a deployed contract and receive address to read chain data"}</small></article>
+        <article><span>Total pending</span><strong>{displayTokenAmount(pendingAmount)}</strong><small>{summaryConfigured ? (balmzSummary?.pending_transactions ?? balmzPending.length) + " pending transaction(s) recorded by the app" : "Pending records appear after BALMZ is connected"}</small></article>
+        <article><span>Total received</span><strong>{displayTokenAmount(totalReceived)}</strong><small>Confirmed BALMZ transfer history indexed for this wallet</small></article>
+        <article><span>Total sent</span><strong>{displayTokenAmount(totalSent)}</strong><small>Confirmed outgoing BALMZ transfer history</small></article>
+        <article><span>Total supply</span><strong>{balmzSummary?.total_supply != null ? amount(balmzSummary.total_supply) + " BALMZ" : "Not available"}</strong><small>Read from the deployed contract totalSupply()</small></article>
+        <article><span>Coin price</span><strong>{balmzPrice > 0 ? money(balmzPrice) : "Not listed"}</strong><small>{balmzPrice > 0 ? (balmzSummary?.price_source || "Verified market quote") : "No verified market quote available"}</small></article>
       </div>
-      <div className="dashboard-balmz-footer"><span>Wallet value</span><strong>{balmzPrice > 0 ? money(balmzBalance * balmzPrice) : "—"}</strong><span className="dashboard-balmz-note">No price or balance is invented. BALMZ testnet and Ethereum Mainnet are kept separate.</span></div>
+      <div className="dashboard-balmz-footer"><span>Wallet value</span><strong>{summaryConfigured && balmzPrice > 0 ? money(balmzBalance * balmzPrice) : "—"}</strong><span className="dashboard-balmz-note">Wallet-specific on-chain data is separate from token total supply. Price remains unlisted until a verified market quote exists.</span></div>
     </div>
   </section>;
 }
