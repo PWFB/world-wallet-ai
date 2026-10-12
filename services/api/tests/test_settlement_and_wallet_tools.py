@@ -163,3 +163,22 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_sepolia_native_sync_stops_before_block_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Sepolia blocks must not be queried on the wrong chain")
+
+        user = {"wallet_id": "wallet_test"}
+        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_native_transactions(
+                user, "https://rpc.example", "sepolia", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
