@@ -1765,6 +1765,11 @@ def transactions(user: dict = Depends(current_user)):
 def sync_transactions(user: dict = Depends(current_user)):
     imported = []
     warnings = []
+    sepolia_address = wallet_network_address(user, "sepolia")
+    if sepolia_address:
+        # Sepolia is intentionally not included in this endpoint yet: the current
+        # transaction table/asset accounting does not isolate testnet ETH from mainnet ETH.
+        warnings.append("Sepolia address attached; Sepolia transaction history is not yet supported by live sync.")
     btc_address = wallet_network_address(user, "bitcoin")
     if btc_address:
         try:
@@ -1799,8 +1804,17 @@ def sync_transactions(user: dict = Depends(current_user)):
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
-    if not imported and not btc_address and not any(wallet_network_address(user,n) and u for n,u in (("ethereum",ETH_RPC_URL),("bnb",BSC_RPC_URL))):
-        raise HTTPException(status_code=503, detail="No live transaction source is configured")
+    supported_source_configured = bool(btc_address) or any(
+        wallet_network_address(user, network) and rpc_url
+        for network, rpc_url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL))
+    )
+    if not imported and not supported_source_configured:
+        detail = (
+            "Sepolia transaction history is not yet supported by live sync."
+            if sepolia_address
+            else "No live transaction source is configured for this wallet."
+        )
+        raise HTTPException(status_code=503, detail=detail)
     assets,tx,summary = wallet_snapshot(user)
     return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
             "transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
