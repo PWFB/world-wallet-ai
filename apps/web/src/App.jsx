@@ -4,7 +4,7 @@ const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import BrowserPage from "./BrowserPage.jsx";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://world-wallet-ai-backend.onrender.com").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
 
 const fallbackAssets = [];
@@ -1106,7 +1106,7 @@ function App() {
           const balance = live?.balance || 0;
           const value = live?.value_usd || 0;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
-          const change = live?.change_24h;
+          const change = live?.change_24h ?? marketPrices[selectedCoin]?.usd_24h_change;
           const rows = activity.filter(item => item.asset === selectedCoin || item.symbol === selectedCoin);
           return <section className="content coin-detail-page">
             <div className="page-heading">
@@ -1138,6 +1138,22 @@ function App() {
               <button onClick={() => { setActive("Send"); setSelectedCoin(null); }}>Send</button>
               <button onClick={() => { setActive("Swap"); setSelectedCoin(null); }}>Swap</button>
             </div>
+            <article className="panel coin-trading-panel">
+              <div className="panel-head"><div><h2>{selectedCoin} trading card</h2><span>Asset-specific market and execution details</span></div><span className="coin-trading-status">{price > 0 ? "Quote available" : "Quote unavailable"}</span></div>
+              <div className="coin-trading-metrics">
+                <div><small>Spot price</small><b>{price > 0 ? money(price) : "Not listed"}</b><span>{price > 0 ? "USD per " + selectedCoin : "No verified market quote"}</span></div>
+                <div><small>24-hour movement</small><b className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "—" : (Number(change) >= 0 ? "+" : "") + Number(change).toFixed(2) + "%"}</b><span>Market-data provider quote</span></div>
+                <div><small>Available balance</small><b>{number(balance)} {selectedCoin}</b><span>{money(value)} reported value</span></div>
+                <div><small>Network / execution</small><b>{coin?.status || "Network not configured"}</b><span>Review network and fee before signing</span></div>
+              </div>
+              {selectedCoin === "BALMZ" && Number(marketPrices.ETH?.usd) > 0 && <div className="balmz-eth-reference"><b>ETH reference price: {money(Number(marketPrices.ETH.usd))}</b><span>This is the current ETH market price for reference only. It is not a BALMZ token price or valuation.</span></div>}
+              <div className="coin-trading-actions">
+                <button className="secondary" onClick={() => { setActive("Receive"); setSelectedCoin(null); }}>Receive {selectedCoin}</button>
+                <button className="secondary" onClick={() => { setActive("Send"); setSelectedCoin(null); }}>Send {selectedCoin}</button>
+                <button className="primary" onClick={() => { setActive("Swap"); setSelectedCoin(null); }}>Open swap desk</button>
+              </div>
+              <p className="coin-trading-disclaimer">Execution requires a supported connected wallet, correct network, sufficient gas, and explicit wallet approval. A price quote alone does not execute a trade.</p>
+            </article>
             <article className="panel">
               <div className="panel-head"><div><h2>{selectedCoin} activity</h2><span>Authenticated wallet records only</span></div><button className="text-btn" onClick={() => { setActive("Transactions"); setSelectedCoin(null); }}>All transactions →</button></div>
               {rows.length ? rows.map((item,i) => <button type="button" className="activity-row coin-history-clickable" key={item.id || item.tx_hash || i} onClick={() => { setFocusedTransaction(item); setSelectedCoin(null); setActive("Transactions"); }}><div><b>{item.type || item.direction || "Transaction"}</b><small>{item.status || "Recorded"} · View details ↗</small></div><strong>{item.amount || "—"} {selectedCoin}</strong></button>) : <div className="empty-state">No real {selectedCoin} transactions recorded yet.</div>}
@@ -1330,7 +1346,7 @@ function App() {
               <article className="panel action-panel"><h2>Security & session</h2><p className="security-note">Your sign-in session is handled by Neon Auth. Private keys and recovery phrases are never shown in this profile or uploaded to the server. Signing out ends the app session on this device.</p><button className="ww-profile-logout" type="button" onClick={handleLogout}>↪ Log out of World Wallet AI</button></article>
             </div>
           </section> : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
-          <FeaturePage selectedAsset={selectedCoin} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive> onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             asset: tx.asset || tx.symbol || "",
