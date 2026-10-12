@@ -990,7 +990,6 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
       receiveOptions.some(option => option.value === item.network) &&
       (receiveNetwork === "all" || receiveNetwork === item.network)
     );
-    const selectedReceiveNetwork = receiveOptions.find(item => item.value === receiveNetwork);
     return <section className="content feature-content wallet-action-page">
       <div className="page-heading"><div><p className="eyebrow">WALLET / DEPOSIT</p><h1>Receive assets</h1><p className="muted">Choose the asset and copy a configured public address to receive funds.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
       <div className="wallet-receive-layout">
