@@ -324,35 +324,49 @@ function App() {
   async function refreshMarketPrices() {
     setMarketPricesLoading(true);
     setMarketPricesError("");
-    try {
-      const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || ("Market service returned " + response.status));
-      if (!data.prices || typeof data.prices !== "object") throw new Error("Market service returned no price data.");
-      setMarketPrices(data.prices);
-      setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
-    } catch (error) {
-      setMarketPricesError(error.message || "Live market prices could not be loaded. Check the API connection and try again.");
-    } finally {
-      setMarketPricesLoading(false);
+    let lastError;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || ("Market service returned " + response.status));
+        if (!data.prices || typeof data.prices !== "object") throw new Error("Market service returned no price data.");
+        setMarketPrices(data.prices);
+        setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+        setMarketPricesError(data.stale ? "Showing the last verified market quotes because the price provider is temporarily unavailable." : "");
+        setMarketPricesLoading(false);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (attempt === 0) await new Promise(resolve => window.setTimeout(resolve, 900));
+      }
     }
+    setMarketPricesError(lastError?.message || "Live market prices could not be loaded. Check the API connection and try again.");
+    setMarketPricesLoading(false);
   }
 
   useEffect(() => {
     let cancelled = false;
     async function loadMarketPrices() {
-      try {
-        const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "Market prices unavailable");
-        if (!cancelled) {
-          setMarketPrices(data.prices || {});
-          setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
-          setMarketPricesError("");
+      let lastError;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          const response = await fetch(API_BASE_URL + "/api/v1/prices/market", { cache: "no-store" });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Market prices unavailable");
+          if (!data.prices || typeof data.prices !== "object") throw new Error("Market service returned no price data.");
+          if (!cancelled) {
+            setMarketPrices(data.prices);
+            setMarketPricesUpdatedAt(data.updated_at ? new Date(data.updated_at) : new Date());
+            setMarketPricesError(data.stale ? "Showing the last verified market quotes because the price provider is temporarily unavailable." : "");
+          }
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt === 0) await new Promise(resolve => window.setTimeout(resolve, 900));
         }
-      } catch (error) {
-        if (!cancelled) setMarketPricesError(error.message || "Market price service unavailable.");
       }
+      if (!cancelled) setMarketPricesError(lastError?.message || "Market price service unavailable. Retrying automatically.");
     }
     loadMarketPrices();
     const timer = window.setInterval(loadMarketPrices, 60000);
