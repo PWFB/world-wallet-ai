@@ -198,6 +198,9 @@ function GeminiIntegration({ accessToken, apiBaseUrl }) {
 }
 
 function App() {
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try { return localStorage.getItem("ww_sidebar_collapsed") === "true"; } catch { return false; }
+  });
   const [active, setActive] = useState(() => {
     try {
       const saved = localStorage.getItem("ww_active_page");
@@ -1039,11 +1042,12 @@ function App() {
   }
 
   return (
-    <div className={"app-shell" + (active === "Dashboard" && !selectedCoin ? " dashboard-shortcuts-active" : "")}>
-      <aside className="sidebar">
+    <div className={"app-shell" + (active === "Dashboard" && !selectedCoin ? " dashboard-shortcuts-active" : "") + (sidebarCollapsed ? " sidebar-collapsed" : "")}>
+      <aside className={"sidebar" + (sidebarCollapsed ? " sidebar-is-collapsed" : "")}>
         <div className="brand">
           <div className="brand-mark">W</div>
-          <div><strong>WORLD WALLET</strong><span>AI</span></div>
+          <div className="brand-copy"><strong>WORLD WALLET</strong><span>AI</span></div>
+          <button type="button" className="sidebar-toggle" onClick={() => setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; })} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}><span aria-hidden="true">⋯</span></button>
         </div>
 
         <div className="network-pill"><i /><select aria-label="Selected blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option></select>
@@ -1058,7 +1062,7 @@ function App() {
               <small>{group}</small>
               {items.map(item => (
                 <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
-                  <span className="nav-icon">{item.slice(0, 1)}</span>{item}
+                  <span className="nav-icon">{item.slice(0, 1)}</span><span className="nav-label">{item}</span>
                 </button>
               ))}
             </div>
