@@ -211,6 +211,32 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("evm_transactions", result)
 
 
+    def test_refresh_does_not_claim_transaction_sync_succeeded_with_warnings(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+             patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": ["Ethereum RPC unavailable"]}), \
+             patch.object(main, "refresh_prices", return_value={"source": "test"}), \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            result = main.refresh_wallet(user)
+
+        self.assertEqual(result["status"], "refreshed_with_warnings")
+        self.assertIsNone(result["last_transaction_sync_at"])
+        self.assertIn("Ethereum RPC unavailable", result["warnings"])
+
+    def test_refresh_reports_transaction_sync_time_after_clean_sync(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+             patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": []}), \
+             patch.object(main, "refresh_prices", return_value={"source": "test"}), \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            result = main.refresh_wallet(user)
+
+        self.assertEqual(result["status"], "refreshed")
+        self.assertIsNotNone(result["last_transaction_sync_at"])
+
+
     def test_token_asset_symbol_keeps_bnb_usdt_separate(self):
         # The same ERC-20 symbol on two chains must not be merged into one balance.
         self.assertEqual(main.wallet_asset_symbol("USDT", "ethereum"), "USDT")
