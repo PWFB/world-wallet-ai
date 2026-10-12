@@ -966,7 +966,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
                 "SELECT id,tx_hash,block_height,block_hash FROM transactions "
                 "WHERE wallet_id=%s AND network=%s AND asset=%s AND block_height BETWEEN %s AND %s "
                 "AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
-                (user["wallet_id"],network,"ETH" if network=="ethereum" else "BNB",start,latest),
+                (user["wallet_id"],network,native_asset,start,latest),
             ).fetchall():
                 txid, old_hash, old_height, old_block_hash = row
                 current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
