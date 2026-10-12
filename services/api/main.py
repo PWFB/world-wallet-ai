@@ -1426,20 +1426,37 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
     warning_text = {network: next((w for w in warnings if network in w.lower()), None) for network in ("bitcoin", "ethereum", "bnb", "sepolia")}
     updated_networks = {str(item.get("network")) for item in updates}
     chain_heights = _chain_heights()
-    configured = {
+    address_configured = {
         "bitcoin": bool(wallet_network_address(user, "bitcoin")),
-        "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
-        "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
-        "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
+        "ethereum": bool(wallet_network_address(user, "ethereum")),
+        "bnb": bool(wallet_network_address(user, "bnb")),
+        "sepolia": bool(wallet_network_address(user, "sepolia")),
     }
+    rpc_configured = {
+        "bitcoin": True,  # Bitcoin balances use the configured public Blockstream API.
+        "ethereum": bool(ETH_RPC_URL),
+        "bnb": bool(BSC_RPC_URL),
+        "sepolia": bool(SEPOLIA_RPC_URL),
+    }
+    configured = {network: address_configured[network] and rpc_configured[network]
+                  for network in ("bitcoin", "ethereum", "bnb", "sepolia")}
     result = {}
     for network in ("bitcoin", "ethereum", "bnb", "sepolia"):
         warning = warning_text[network]
         sepolia_healthy = network == "sepolia" and configured[network] and chain_heights.get(network) is not None
         result[network] = {
             "configured": configured[network],
+            "address_configured": address_configured[network],
+            "rpc_configured": rpc_configured[network],
             "status": "healthy" if (network in updated_networks or sepolia_healthy) and not warning else (
                 "warning" if configured[network] and (warning or (network == "sepolia" and chain_heights.get(network) is None)) else "not_configured"
+            ),
+            "configuration_message": (
+                "Blockchain RPC is responding; add an Ethereum wallet address to enable balance syncing."
+                if network == "ethereum" and rpc_configured[network] and not address_configured[network]
+                else "Ethereum RPC is not configured on the backend."
+                if network == "ethereum" and not rpc_configured[network]
+                else None
             ),
             "last_balance_sync_at": now if network in updated_networks else None,
             "last_transaction_sync_at": transaction_sync_at if network in updated_networks and not warning else None,
