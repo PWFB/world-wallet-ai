@@ -1842,8 +1842,9 @@ def sync_transactions(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, token_contract, token_decimals in token_rows:
+                transaction_symbol = "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
                 token_imported, warning = sync_evm_token_transactions(
-                    user, rpc_url, network, token_contract, symbol,
+                    user, rpc_url, network, token_contract, transaction_symbol,
                     decimals=int(token_decimals), wallet_address=wallet_network_address(user, network)
                 )
                 imported.extend(token_imported)
