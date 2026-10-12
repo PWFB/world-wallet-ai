@@ -58,18 +58,20 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             raise AssertionError("Balance must not be read from the wrong chain")
 
         with patch.object(main, "rpc_call", side_effect=fake_rpc):
-            with self.assertRaisesRegex(ValueError, "chain ID 11155111"):
+            with self.assertRaises(main.HTTPException) as caught:
                 main._inspect_evm_address(address, "sepolia", "https://rpc.example")
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("balance lookup failed", caught.exception.detail)
         self.assertEqual(calls, ["eth_chainId"])
 
     def test_sepolia_rpc_rejects_mainnet_chain_id(self):
         with patch.object(main, "rpc_call", return_value=hex(1)):
-            with self.assertRaisesRegex(ValueError, "chain ID 11155111"):
+            with self.assertRaisesRegex(ValueError, "returned chain ID 1, expected 11155111"):
                 main.require_sepolia_rpc("https://rpc.example")
 
     def test_sepolia_rpc_rejects_missing_chain_id(self):
         with patch.object(main, "rpc_call", return_value=None):
-            with self.assertRaisesRegex(ValueError, "chain ID 11155111"):
+            with self.assertRaisesRegex(ValueError, "did not return a chain ID"):
                 main.require_sepolia_rpc("https://rpc.example")
 
     def test_sepolia_address_balance_uses_chain_rpc(self):
