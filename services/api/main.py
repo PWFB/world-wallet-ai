@@ -1501,8 +1501,9 @@ def sync_wallet(user: dict = Depends(current_user)):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
-    if not btc_address and not eth_address and not bnb_address:
-        raise HTTPException(status_code=503, detail="No production wallet address is configured")
+    sepolia_address = wallet_network_address(user, "sepolia")
+    if not btc_address and not eth_address and not bnb_address and not sepolia_address:
+        raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
     with db() as conn:
@@ -1558,9 +1559,10 @@ def sync_wallet(user: dict = Depends(current_user)):
     imported_transactions = sync_bitcoin_transactions(user, btc_address)
     evm_transactions = []
     evm_warnings = []
-    for rpc_url, network, contract, network_address in (
-        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, eth_address),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, bnb_address),
+    for rpc_url, network, contract, token_symbol, network_address in (
+        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
+        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT", bnb_address),
+        (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
     ):
         if rpc_url and network_address:
             native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
@@ -1568,7 +1570,10 @@ def sync_wallet(user: dict = Depends(current_user)):
             if native_warning:
                 evm_warnings.append(native_warning)
             if contract:
-                imported, warning = sync_evm_token_transactions(user, rpc_url, network, contract, "USDT", wallet_address=network_address)
+                imported, warning = sync_evm_token_transactions(
+                    user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                    decimals=18 if network == "sepolia" else 6,
+                )
                 evm_transactions.extend(imported)
                 if warning:
                     evm_warnings.append(warning)
@@ -1578,7 +1583,7 @@ def sync_wallet(user: dict = Depends(current_user)):
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address) else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}

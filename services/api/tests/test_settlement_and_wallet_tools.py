@@ -184,5 +184,32 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(calls, ["eth_chainId"])
 
 
+    def test_wallet_sync_includes_sepolia_native_and_balmz_history(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        sepolia_address = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        with patch.object(main, "db") as mocked_db, \
+             patch.object(main, "wallet_network_address", side_effect=lambda _user, network: sepolia_address if network == "sepolia" else None), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "BALMZ_SEPOLIA_CONTRACT", contract), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "sync_bitcoin_transactions", return_value=[]), \
+             patch.object(main, "sync_evm_native_transactions", return_value=([], None)) as native_sync, \
+             patch.object(main, "sync_evm_token_transactions", return_value=([], None)) as token_sync, \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            conn = mocked_db.return_value.__enter__.return_value
+            conn.execute.return_value.fetchall.return_value = []
+            result = main.sync_wallet(user)
+
+        native_sync.assert_called_once_with(user, "https://sepolia.example", "sepolia", sepolia_address)
+        token_sync.assert_called_once_with(
+            user, "https://sepolia.example", "sepolia", contract, "BALMZ-SEP",
+            wallet_address=sepolia_address, decimals=18,
+        )
+        self.assertIn("evm_transactions", result)
+
+
 if __name__ == "__main__":
     unittest.main()
