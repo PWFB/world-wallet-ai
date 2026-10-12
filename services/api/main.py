@@ -1497,6 +1497,11 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 
 @app.post("/api/v1/wallet/sync")
+def wallet_asset_symbol(symbol: str, network: str) -> str:
+    """Keep identical token symbols on different chains in separate wallet assets."""
+    return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+
+
 def sync_wallet(user: dict = Depends(current_user)):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
@@ -1549,7 +1554,7 @@ def sync_wallet(user: dict = Depends(current_user)):
                 # Asset balances are keyed by symbol, so never combine the same
                 # token symbol across chains. Keep Ethereum USDT as USDT and
                 # represent BNB Chain USDT separately.
-                asset_symbol = "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+                asset_symbol = wallet_asset_symbol(symbol, network)
                 asset_name = f"{name} (BNB Chain)" if asset_symbol == "USDT-BNB" else name
                 conn.execute(
                     "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
@@ -1842,7 +1847,7 @@ def sync_transactions(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, token_contract, token_decimals in token_rows:
-                transaction_symbol = "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+                transaction_symbol = wallet_asset_symbol(symbol, network)
                 token_imported, warning = sync_evm_token_transactions(
                     user, rpc_url, network, token_contract, transaction_symbol,
                     decimals=int(token_decimals), wallet_address=wallet_network_address(user, network)
