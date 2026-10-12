@@ -1782,6 +1782,8 @@ def list_token_registry(user: dict = Depends(current_user)):
     for r in rows:
         supported = r[2] in networks
         tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"wallet_network_connected":supported})
+    if valid_evm_address(BALMZ_ETH_CONTRACT) and not any(t["symbol"].upper()=="BALMZ" and t["network"].lower()=="ethereum" for t in tokens):
+        tokens.append({"symbol":"BALMZ","name":"BALMZ Token","network":"ethereum","contract_address":BALMZ_ETH_CONTRACT,"decimals":18,"coingecko_id":None,"status":"active","wallet_network_connected":"ethereum" in networks})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/tokens/balmz/summary")
