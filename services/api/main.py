@@ -762,7 +762,9 @@ def configured_addresses(user):
     with db() as conn:
         rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
         saved_evm_address = next((r[1] for r in rows if r[0] in ("ethereum", "bnb") and valid_evm_address(r[1])), "")
-        evm_address = EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else saved_evm_address
+        # A user's saved address for the active wallet profile takes precedence.
+        # The server-level address is only a bootstrap fallback for empty profiles.
+        evm_address = saved_evm_address if valid_evm_address(saved_evm_address) else (EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else "")
         existing_networks = {row[0] for row in rows}
         changed = False
         if evm_address:
@@ -1440,8 +1442,9 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 @app.post("/api/v1/wallet/sync")
 def sync_wallet(user: dict = Depends(current_user)):
-    evm_addresses = [a for a in configured_addresses(user) if a["network"] in ("ethereum", "bnb")]
-    address = evm_addresses[0]["address"] if evm_addresses else None
+    # Read each EVM network from its own saved profile address. Prefer Ethereum
+    # Mainnet explicitly rather than whichever alphabetic network sorts first.
+    address = wallet_network_address(user, "ethereum") or wallet_network_address(user, "bnb")
     btc_addresses = [a for a in configured_addresses(user) if a["network"]=="bitcoin"]
     btc_address = btc_addresses[0]["address"] if btc_addresses else None
     if not btc_address and not address:
@@ -1780,6 +1783,99 @@ def list_token_registry(user: dict = Depends(current_user)):
         supported = r[2] in networks
         tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
+
+@app.get("/api/v1/tokens/balmz/summary")
+def balmz_onchain_summary(user: dict = Depends(current_user)):
+    """Return BALMZ data from the active wallet profile and Ethereum RPC.
+
+    Never substitutes a made-up balance or market price when configuration is absent.
+    """
+    ethereum_address = wallet_network_address(user, "ethereum")
+    contract = BALMZ_ETH_CONTRACT if valid_evm_address(BALMZ_ETH_CONTRACT) else ""
+    decimals = 18
+    with db() as conn:
+        row = conn.execute(
+            "SELECT contract_address,decimals FROM token_registry "
+            "WHERE upper(symbol)='BALMZ' AND lower(network)='ethereum' "
+            "ORDER BY CASE WHEN status='active' THEN 0 ELSE 1 END LIMIT 1"
+        ).fetchone()
+    if row and valid_evm_address(row[0] or "") and not contract:
+        contract = row[0]
+    if row and row[1] is not None:
+        decimals = max(0, min(int(row[1]), 36))
+
+    base = {
+        "symbol": "BALMZ",
+        "network": "ethereum",
+        "wallet_address": ethereum_address,
+        "contract_address": contract or None,
+        "decimals": decimals,
+        "configured": bool(ETH_RPC_URL and ethereum_address and contract),
+        "price_usd": None,
+        "price_source": None,
+    }
+    if not base["configured"]:
+        base.update({
+            "balance": None,
+            "available_balance": None,
+            "total_supply": None,
+            "total_pending": 0.0,
+            "pending_transactions": 0,
+            "total_received": 0.0,
+            "total_sent": 0.0,
+            "transaction_count": 0,
+            "status": "contract_not_configured" if not contract else "wallet_or_rpc_not_configured",
+            "message": "Configure the deployed BALMZ Ethereum contract, an Ethereum RPC, and this wallet's saved Ethereum receive address to load on-chain data.",
+        })
+        return base
+
+    warning = None
+    balance = None
+    total_supply = None
+    try:
+        balance = erc20_balance(ETH_RPC_URL, contract, ethereum_address, decimals)
+        raw_supply = rpc_call(ETH_RPC_URL, "eth_call", [{"to": contract, "data": "0x18160ddd"}, "latest"])
+        total_supply = int(raw_supply, 16) / (10 ** decimals) if raw_supply else None
+    except Exception:
+        warning = "Ethereum RPC could not read BALMZ contract data."
+
+    # Import confirmed ERC-20 Transfer events for this active wallet, without signing
+    # or broadcasting any transaction.
+    try:
+        _, tx_warning = sync_evm_token_transactions(
+            user, ETH_RPC_URL, "ethereum", contract, "BALMZ",
+            decimals=decimals, wallet_address=ethereum_address
+        )
+        warning = warning or tx_warning
+    except Exception:
+        warning = warning or "BALMZ transfer history could not be synchronized."
+
+    with db() as conn:
+        pending_row = conn.execute(
+            "SELECT COALESCE(SUM(ABS(amount)),0),COUNT(*) FROM transactions "
+            "WHERE wallet_id=%s AND upper(asset)='BALMZ' AND lower(network)='ethereum' "
+            "AND status IN ('pending','pending_review','broadcast_pending')",
+            (user["wallet_id"],),
+        ).fetchone()
+        totals = conn.execute(
+            "SELECT COALESCE(SUM(CASE WHEN amount>0 AND type='received' AND status NOT IN ('pending','pending_review','broadcast_pending','failed','reorged') THEN amount ELSE 0 END),0),"
+            "COALESCE(SUM(CASE WHEN amount<0 AND type IN ('sent','withdrawal') AND status NOT IN ('pending','pending_review','broadcast_pending','failed','reorged') THEN ABS(amount) ELSE 0 END),0),"
+            "COUNT(*) FROM transactions WHERE wallet_id=%s AND upper(asset)='BALMZ' AND lower(network)='ethereum'",
+            (user["wallet_id"],),
+        ).fetchone()
+    base.update({
+        "balance": balance,
+        "available_balance": balance,
+        "total_supply": total_supply,
+        "total_pending": float(pending_row[0] or 0),
+        "pending_transactions": int(pending_row[1] or 0),
+        "total_received": float(totals[0] or 0),
+        "total_sent": float(totals[1] or 0),
+        "transaction_count": int(totals[2] or 0),
+        "status": "connected" if balance is not None and total_supply is not None else "rpc_error",
+        "message": warning,
+    })
+    return base
 
 @app.get("/api/v1/wallets")
 def list_wallets(user: dict = Depends(current_user)):
