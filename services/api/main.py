@@ -42,6 +42,7 @@ ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
+SOLANA_DEVNET_RPC_URL = os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL", "").strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
@@ -260,6 +261,9 @@ def init_db():
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
         );
+        -- Upgrade legacy one-address-per-network wallets without removing saved addresses.
+        ALTER TABLE wallet_addresses DROP CONSTRAINT IF EXISTS wallet_addresses_pkey;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallet_addresses_unique_address_idx ON wallet_addresses(wallet_id,network,address);
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
@@ -646,6 +650,13 @@ def _base58_decode(value: str):
     return b"\\x00" * leading + raw
 
 
+def valid_solana_address(address: str) -> bool:
+    """Validate a Solana public key as a Base58-encoded 32-byte value."""
+    value = address.strip()
+    raw = _base58_decode(value)
+    return bool(raw and len(raw) == 32 and 32 <= len(value) <= 44)
+
+
 def valid_bitcoin_base58(address: str) -> bool:
     raw = _base58_decode(address.strip())
     if not raw or len(raw) != 25:
@@ -760,7 +771,7 @@ def validate_asset_network(asset: str, network: str):
 
 def configured_addresses(user):
     with db() as conn:
-        rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
+        rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address", (user["wallet_id"],)).fetchall()
         saved_evm_address = next((r[1] for r in rows if r[0] in ("ethereum", "bnb") and valid_evm_address(r[1])), "")
         evm_address = EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else saved_evm_address
         existing_networks = {row[0] for row in rows}
@@ -779,7 +790,7 @@ def configured_addresses(user):
             changed = True
         if changed:
             conn.commit()
-            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
+            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address", (user["wallet_id"],)).fetchall()
     return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
 
 
@@ -1817,7 +1828,7 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
     with db() as conn:
         owner=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",(wallet_id,)).fetchall()
+        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",(wallet_id,)).fetchall()
     return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None} for r in rows]}
 
 
@@ -1826,13 +1837,75 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     network=request.network.strip().lower(); address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network=="solana_devnet" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,%s) ON CONFLICT DO UPDATE SET address=EXCLUDED.address,label=EXCLUDED.label",(wallet_id,network,address,request.label.strip()))
+        # EVM addresses are case-insensitive; Base58 Solana addresses are case-sensitive.
+        comparison = "lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+        existing=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
+        if existing:
+            conn.execute(f"UPDATE wallet_addresses SET label=%s WHERE wallet_id=%s AND network=%s AND {comparison}",(request.label.strip(),wallet_id,network,address))
+        else:
+            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
         conn.commit()
     return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip()}}
+
+
+@app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
+def read_wallet_address_balance(wallet_id: str, network: str, address: str, user: dict = Depends(current_user)):
+    """Read the balance for one attached public address without mutating portfolio assets."""
+    network = network.strip().lower()
+    address = address.strip()
+    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"}:
+        raise HTTPException(status_code=400, detail="Unsupported wallet network")
+    if network in {"ethereum", "sepolia", "bnb"} and not valid_evm_address(address):
+        raise HTTPException(status_code=400, detail="Invalid EVM address")
+    if network == "bitcoin" and not valid_bitcoin_address(address):
+        raise HTTPException(status_code=400, detail="Invalid Bitcoin address")
+    if network == "solana_devnet" and not valid_solana_address(address):
+        raise HTTPException(status_code=400, detail="Invalid Solana public address")
+    with db() as conn:
+        owner = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (wallet_id, user["id"])).fetchone()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Wallet not found")
+        comparison = "lower(address)=lower(%s)" if network in {"ethereum", "sepolia", "bnb"} else "address=%s"
+        attached = conn.execute(
+            f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",
+            (wallet_id, network, address),
+        ).fetchone()
+        if not attached:
+            raise HTTPException(status_code=404, detail="Attach this public address to the selected wallet before checking its balance")
+    try:
+        if network == "ethereum":
+            rpc_url, asset = ETH_RPC_URL, "ETH"
+            if not rpc_url: raise HTTPException(status_code=503, detail="Ethereum Mainnet RPC is not configured")
+            balance = evm_balance(rpc_url, address)
+        elif network == "sepolia":
+            rpc_url, asset = SEPOLIA_RPC_URL, "ETH (Sepolia)"
+            if not rpc_url: raise HTTPException(status_code=503, detail="Ethereum Sepolia RPC is not configured")
+            balance = evm_balance(rpc_url, address)
+        elif network == "bnb":
+            rpc_url, asset = BSC_RPC_URL, "BNB"
+            if not rpc_url: raise HTTPException(status_code=503, detail="BNB Chain RPC is not configured")
+            balance = evm_balance(rpc_url, address)
+        elif network == "solana_devnet":
+            if not SOLANA_DEVNET_RPC_URL: raise HTTPException(status_code=503, detail="Solana Devnet RPC is not configured. Set WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.")
+            raw = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+            balance = int((raw or {}).get("value", 0)) / 1_000_000_000
+            asset = "SOL (Devnet)"
+        else:
+            balance = btc_balance(address)
+            asset = "BTC"
+            if balance is None: raise HTTPException(status_code=503, detail="Bitcoin balance service is unavailable")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{network.replace('_', ' ').title()} balance service unavailable") from exc
+    return {"wallet_id": wallet_id, "network": network, "address": address, "asset": asset,
+            "balance": balance, "unit": asset, "read_only": True,
+            "synced_at": datetime.now(timezone.utc).isoformat()}
 
 
 @app.get("/api/v1/wallet/connect")
