@@ -10,6 +10,17 @@ import main
 
 
 class SettlementAndWalletToolTests(unittest.TestCase):
+    def test_wallet_sync_route_is_registered_on_sync_handler_only(self):
+        sync_routes = [
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/wallet/sync"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        ]
+        self.assertEqual(len(sync_routes), 1)
+        self.assertIs(sync_routes[0].endpoint, main.sync_wallet)
+        self.assertNotIn(main._chain_heights, [route.endpoint for route in main.app.routes])
+        self.assertNotIn(main.wallet_asset_symbol, [route.endpoint for route in main.app.routes])
+
     def test_exact_base_units_accepts_supported_precision(self):
         self.assertEqual(main.exact_base_units(Decimal("1.25"), 8), 125000000)
         self.assertEqual(main.exact_base_units(Decimal("0.000001"), 6), 1)
