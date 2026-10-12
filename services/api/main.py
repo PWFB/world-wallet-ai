@@ -1861,6 +1861,8 @@ def sync_transactions(user: dict = Depends(current_user)):
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
+        elif wallet_network_address(user, network):
+            warnings.append(f"{network.title()} RPC is not configured; {network.title()} transaction sync skipped.")
     supported_source_configured = bool(btc_address) or any(
         wallet_network_address(user, network) and rpc_url
         for network, rpc_url in (
