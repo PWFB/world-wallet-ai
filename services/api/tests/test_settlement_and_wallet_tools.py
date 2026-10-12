@@ -244,5 +244,32 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(main.wallet_asset_symbol("BALMZ-SEP", "sepolia"), "BALMZ-SEP")
 
 
+
+    def test_configured_addresses_never_inject_service_fallback_addresses(self):
+        saved = [("sepolia", "0x" + "1" * 40, "Sepolia testnet")]
+        class FakeCursor:
+            def __init__(self, rows):
+                self.rows = rows
+            def fetchall(self):
+                return self.rows
+        class FakeConnection:
+            def __init__(self):
+                self.calls = []
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+            def execute(self, query, params):
+                self.calls.append((query, params))
+                return FakeCursor(saved)
+        fake_conn = FakeConnection()
+        with patch.object(main, "db", return_value=fake_conn), \\
+             patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "2" * 40), \\
+             patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38):
+            result = main.configured_addresses({"wallet_id": "wallet_test"})
+        self.assertEqual(result, [{"network": "sepolia", "address": saved[0][1], "label": "Sepolia testnet"}])
+        self.assertEqual(len(fake_conn.calls), 1)
+        self.assertNotIn("INSERT", fake_conn.calls[0][0].upper())
+
 if __name__ == "__main__":
     unittest.main()
