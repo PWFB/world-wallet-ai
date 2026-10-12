@@ -289,7 +289,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [asset]);
 
   useEffect(() => {
-    if (active !== "Receive") return;
+    if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
     fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
       .then(async r => ({ ok: r.ok, data: await r.json() }))
@@ -984,6 +984,43 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </section>;
   }
 
+  if (active === "Deposit") {
+    const depositOptions = networksForAsset(asset);
+    const compatibleAddresses = addresses.filter(item =>
+      depositOptions.some(option => option.value === item.network) &&
+      (receiveNetwork === "all" || receiveNetwork === item.network)
+    );
+    return <section className="content feature-content wallet-action-page">
+      <div className="page-heading"><div><p className="eyebrow">WALLET / FUNDING</p><h1>Deposit to wallet</h1><p className="muted">Follow the funding steps for your selected asset and network.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="wallet-receive-layout">
+        <article className="panel wallet-form-card">
+          <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↓</span><div><h2>Prepare a deposit</h2><p>Select the exact asset and network before sending funds.</p></div></div>
+          <label>Asset to deposit<select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>{assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}</select></label>
+          <label>Deposit network<select value={receiveNetwork} onChange={e => setReceiveNetwork(e.target.value)}><option value="all">All compatible networks</option>{depositOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
+          <div className="wallet-network-check is-warning"><span>!</span><div><b>Check the network before sending</b><small>Only send {asset} through a network shown for the destination address. Mainnet funds and testnet tokens are not interchangeable.</small></div></div>
+          {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
+          <h3>Step 1 · Choose a destination address</h3>
+          <div className="wallet-address-list">
+            {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <code>{item.address}</code>
+              <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
+            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
+          </div>
+          <h3>Step 2 · Send from the source wallet</h3>
+          <p className="muted">Open the wallet or exchange holding your funds, choose the same asset and network, paste the copied address, and review the address and network carefully before confirming.</p>
+          <h3>Step 3 · Verify the transaction</h3>
+          <div className="wallet-network-check"><span>i</span><div><b>Deposit status is not yet independently tracked here</b><small>This screen does not mark a deposit as complete. Check the transaction hash on the correct network explorer and wait for confirmations.</small></div></div>
+        </article>
+        <aside className="wallet-review-column">
+          <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Never share your secret phrase</b><p>A deposit only needs the correct public receiving address. Never provide a seed phrase or private key to a sender.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia is for testing only. Do not send real mainnet funds to a Sepolia address.</p></div></article>
+        </aside>
+      </div>
+    </section>;
+  }
+
   if (active === "Receive") {
     const receiveOptions = networksForAsset(asset);
     const compatibleAddresses = addresses.filter(item =>
@@ -991,10 +1028,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       (receiveNetwork === "all" || receiveNetwork === item.network)
     );
     return <section className="content feature-content wallet-action-page">
-      <div className="page-heading"><div><p className="eyebrow">WALLET / DEPOSIT</p><h1>Receive assets</h1><p className="muted">Choose the asset and copy a configured public address to receive funds.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="page-heading"><div><p className="eyebrow">WALLET / RECEIVE</p><h1>Receive assets</h1><p className="muted">Share your public receiving address with the sender. Use Deposit for funding instructions and verification steps.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
       <div className="wallet-receive-layout">
         <article className="panel wallet-form-card">
-          <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Deposit address</h2><p>Only send the selected asset using a compatible network.</p></div></div>
+          <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Receiving address</h2><p>Copy the public address to share with the person sending you funds.</p></div></div>
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
               {assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
