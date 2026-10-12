@@ -1282,5 +1282,28 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </section>;
   }
 
-  return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI</p><h1>{active}</h1><p className="muted">Production tool workflows are being connected to live wallet data.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><article className="panel placeholder-panel"><div className="feature-icon">✦</div><h2>{active}</h2><p>This module is connected to the main navigation and ready for its dedicated backend workflow.</p></article></section>;
+  if (active === "Help & Docs") {
+    const docs = [
+      ["Getting started","Create a wallet profile or attach a public address from Wallets. A profile is not the same as a generated on-chain wallet.","Wallets"],
+      ["Balances and prices","Balances require a verified source. Market quotes can be stale while the price provider is rate-limiting requests.","Portfolio"],
+      ["Receive and deposit","Verify the destination address and network before sending. A displayed address is not proof that funds arrived.","Receive"],
+      ["Transactions","Use the transaction hash and matching blockchain explorer to verify on-chain activity.","Transactions"],
+      ["Security","Never share a seed phrase, private key, password, one-time code, or API secret. Store API secrets in backend environment variables.","API Keys"]
+    ];
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / DOCUMENTATION</p><h1>Help &amp; Docs</h1><p className="muted">Guidance for using the wallet safely and checking live data.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="feature-grid">{docs.map(([title,body,target],i)=><article className="panel action-panel" key={title}><p className="feature-kicker">GUIDE {String(i+1).padStart(2,"0")}</p><h2>{title}</h2><p>{body}</p><button className="secondary" onClick={()=>setActive(target)}>Open {target} →</button></article>)}</div></section>;
+  }
+  if (active === "Support Center") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / SUPPORT</p><h1>Support Center</h1><p className="muted">Choose a connected page to investigate an issue.</p></div><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs →</button></div><article className="panel action-panel"><h2>Troubleshooting</h2><p>These shortcuts open the relevant app pages. This screen does not submit a support ticket or claim that a service is healthy.</p>{[["Sign-in and account","Profile"],["Wallets and addresses","Wallets"],["Market prices and API keys","API Keys"],["Transaction history","Transactions"]].map(([label,target])=><div className="tool-row" key={target}><div><b>{label}</b></div><button className="secondary" onClick={()=>setActive(target)}>{target} →</button></div>)}<div className="security-note">Never provide support with a private key or seed phrase. A ticket submission channel is not configured on this page.</div></article></section>;
+  }
+  const moduleGuidance = {
+    "Admin Editor":"Editing tools are not connected to a verified backend workflow yet.",
+    "User Management":"Account changes require administrator-authorized server endpoints.",
+    "System Settings":"System settings are not editable until an authorized, audited backend API is available.",
+    "Logs & Activity":"A verified administrative audit-log endpoint is not connected yet. User transaction history is under Transactions.",
+    "Role Management":"Role changes require server-side authorization and audit logging.",
+    "Staking":"Staking is not enabled until supported contracts and transaction verification are configured.",
+    "NFTs":"NFTs are not loaded from a verified wallet indexer. No sample NFTs are displayed."
+  };
+  const guidance = moduleGuidance[active];
+  return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI</p><h1>{active}</h1><p className="muted">{guidance ? "Module readiness" : "Feature workspace"}</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><article className="panel placeholder-panel"><div className="feature-icon">✦</div><h2>{active}</h2><p>{guidance || "This module does not yet have a dedicated verified workflow. Use the connected pages below rather than treating this page as an active service."}</p><div className="page-actions"><button className="secondary" onClick={()=>setActive("Wallets")}>Wallets</button><button className="secondary" onClick={()=>setActive("Transactions")}>Transactions</button><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs</button></div></article></section>;
 }
