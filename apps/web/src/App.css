@@ -1026,3 +1026,56 @@
 
 .network-sync-action{align-self:flex-start;margin-top:4px;padding:7px 10px!important;font-size:10px!important}
 .network-sync-card>em{display:block;color:#d4b35e;font-size:10px;line-height:1.5;font-style:normal;margin-top:3px}
+
+
+/* Compact dashboard and global network switcher */
+.app-shell,.app-shell .main,.app-shell .content{min-width:0;max-width:100%;overflow-x:clip}
+.app-shell .top-actions{min-width:0;flex-wrap:nowrap}
+.app-shell .top-browser-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.app-shell .top-network-switch{display:flex;align-items:center;gap:4px;min-width:0;padding:3px;border:1px solid #263c58;border-radius:10px;background:#0b1729}
+.app-shell .top-network-switch select{width:100px;max-width:28vw;min-width:0;height:31px;padding:0 5px;border:0;border-radius:7px;background:#102039;color:#dce9fa;font:600 10px Inter,system-ui,sans-serif}
+.app-shell .top-network-refresh{display:grid;place-items:center;flex:0 0 30px;width:30px;height:31px!important;min-width:30px!important;padding:0!important;border:0!important;border-radius:7px!important;background:#123047!important;color:#6ee7f9!important;font-size:15px!important}
+.app-shell .top-network-refresh:disabled{opacity:.55;cursor:wait}
+.app-shell .balance-grid{grid-template-columns:minmax(230px,1.5fr) repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
+.app-shell .balance-grid>.hero-card,.app-shell .balance-grid>.stat-card{min-width:0}
+.app-shell .balance-grid>.stat-card{padding:16px;min-height:142px}
+.app-shell .balance-grid>.stat-card>span{line-height:1.4;min-height:27px}
+.app-shell .balmz-balance-card strong small{font:600 10px Inter,system-ui,sans-serif;color:#8ea5c2}
+.app-shell .feature-content,.app-shell .feature-grid,.app-shell .panel,.app-shell .action-panel,.app-shell .feature-summary{min-width:0;max-width:100%}
+.app-shell input,.app-shell select,.app-shell textarea,.app-shell button{max-width:100%}
+@media(max-width:1250px){
+  .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .app-shell .balance-grid>.hero-card{grid-column:1 / -1}
+}
+@media(max-width:760px){
+  .app-shell .topbar{gap:8px;padding-inline:10px}
+  .app-shell .top-actions{gap:5px;flex:0 1 auto}
+  .app-shell .top-browser-button{font-size:0;min-width:31px!important;width:31px;padding:0!important}
+  .app-shell .top-browser-button span{display:none}
+  .app-shell .top-network-switch{gap:2px;padding:2px}
+  .app-shell .top-network-switch select{width:86px;max-width:25vw;height:30px;font-size:9px}
+  .app-shell .top-network-refresh{flex-basis:27px;width:27px;min-width:27px!important;height:30px!important}
+  .app-shell .content{width:100%;padding:18px 12px calc(28px + env(safe-area-inset-bottom))}
+  .app-shell .page-heading{gap:10px;margin-bottom:14px}
+  .app-shell .page-heading h1{font-size:clamp(20px,5vw,25px)}
+  .app-shell .page-actions{gap:7px}
+  .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .app-shell .balance-grid>.hero-card{grid-column:1 / -1}
+  .app-shell .balance-grid>.hero-card,.app-shell .balance-grid>.stat-card{padding:13px;min-width:0}
+  .app-shell .balance-grid>.stat-card{min-height:116px}
+  .app-shell .balance-grid>.stat-card strong{font-size:clamp(13px,3.6vw,18px)}
+  .app-shell .stat-source{font-size:8px;overflow-wrap:anywhere}
+  .app-shell .hero-balance{font-size:clamp(24px,7vw,30px)}
+  .app-shell .dashboard-grid{grid-template-columns:minmax(0,1fr);gap:9px}
+  .app-shell .panel-head{min-width:0}
+  .app-shell .panel-head h2{overflow-wrap:anywhere}
+  .app-shell .top-actions .logout-button{display:none}
+}
+@media(max-width:380px){
+  .app-shell .mobile-brand{gap:5px;font-size:8px}
+  .app-shell .mobile-brand .brand-mark{width:27px;height:27px;flex:0 0 27px}
+  .app-shell .top-network-switch select{width:73px;max-width:23vw}
+  .app-shell .top-network-refresh{display:none}
+  .app-shell .top-actions button:nth-child(2),.app-shell .top-actions button:nth-child(3){display:none}
+  .app-shell .balance-grid>.stat-card{padding:11px}
+}
