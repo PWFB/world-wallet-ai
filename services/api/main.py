@@ -429,7 +429,9 @@ def neon_auth_user(token: str):
             token,
             signing_key.key,
             algorithms=[algorithm],
-            options={"verify_aud": False},
+            # A signed token without an expiry must never become a permanent session.
+            # Neon Auth access tokens must carry expiry and user identity claims.
+            options={"verify_aud": False, "require": ["exp", "sub", "email"]},
         )
     except Exception as exc:
         # Never log the bearer token, claims, or raw exception text. The
