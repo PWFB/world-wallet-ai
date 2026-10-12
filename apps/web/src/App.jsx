@@ -3,7 +3,6 @@ import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import BrowserPage from "./BrowserPage.jsx";
-import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
@@ -1222,7 +1221,7 @@ function App() {
               {externalWalletConnection?.address ? <div className="tool-row"><div><b>Public address</b><small>Chain ID: {externalWalletConnection.chainId ?? "Unknown"}</small></div><code>{externalWalletConnection.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(externalWalletConnection.address)}>Copy</button></div> : <div className="live-chart-empty">No external wallet selected yet. Use Connect wallet to choose one.</div>}
             </article>
 
-<DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} assets={assets} activity={activity} marketPrices={marketPrices} tokenRegistry={tokenRegistry} setActive={setActive} onWalletSwitched={syncWallet} />
+
 
             <div className="quick-grid">
               <button onClick={() => setActive("Browser")}><span>⌕</span><div><b>Open Browser</b><small>Search web &amp; explore Etherscan</small></div>→</button>
