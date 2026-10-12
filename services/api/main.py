@@ -1497,6 +1497,11 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 
 @app.post("/api/v1/wallet/sync")
+def wallet_asset_symbol(symbol: str, network: str) -> str:
+    """Keep identical token symbols on different chains in separate wallet assets."""
+    return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+
+
 def sync_wallet(user: dict = Depends(current_user)):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
@@ -1535,7 +1540,6 @@ def sync_wallet(user: dict = Depends(current_user)):
             "FROM token_registry WHERE contract_address IS NOT NULL "
             "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
         ).fetchall()
-        token_totals = {}
         for symbol, name, network, contract, decimals, status in token_rows:
             rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
             token_address = eth_address if network == "ethereum" else bnb_address if network == "bnb" else wallet_network_address(user, "sepolia") if network == "sepolia" else None
@@ -1547,21 +1551,27 @@ def sync_wallet(user: dict = Depends(current_user)):
                 balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
                 if balance is None:
                     continue
-                token_totals[symbol] = token_totals.get(symbol, 0.0) + balance
-                updates.append({"network":network,"asset":symbol,"balance":balance,
+                # Asset balances are keyed by symbol, so never combine the same
+                # token symbol across chains. Keep Ethereum USDT as USDT and
+                # represent BNB Chain USDT separately.
+                asset_symbol = wallet_asset_symbol(symbol, network)
+                asset_name = f"{name} (BNB Chain)" if asset_symbol == "USDT-BNB" else name
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"],asset_symbol,asset_name,balance),
+                )
+                updates.append({"network":network,"asset":asset_symbol,"balance":balance,
                                 "contract_address":contract,"decimals":int(decimals)})
             except Exception:
                 warnings.append(f"{network} {symbol} token balance service unavailable")
-        for symbol, total in token_totals.items():
-            conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s",
-                         (total,user["wallet_id"],symbol))
         conn.commit()
     imported_transactions = sync_bitcoin_transactions(user, btc_address)
     evm_transactions = []
     evm_warnings = []
     for rpc_url, network, contract, token_symbol, network_address in (
         (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT", bnb_address),
+        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
         (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
     ):
         if rpc_url and network_address:
@@ -1598,7 +1608,7 @@ def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
     global _MARKET_PRICE_CACHE
     coin_ids = {
-        "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
+        "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
         "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
         "LTC":"litecoin","DOGE":"dogecoin",
     }
@@ -1837,8 +1847,9 @@ def sync_transactions(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, token_contract, token_decimals in token_rows:
+                transaction_symbol = wallet_asset_symbol(symbol, network)
                 token_imported, warning = sync_evm_token_transactions(
-                    user, rpc_url, network, token_contract, symbol,
+                    user, rpc_url, network, token_contract, transaction_symbol,
                     decimals=int(token_decimals), wallet_address=wallet_network_address(user, network)
                 )
                 imported.extend(token_imported)

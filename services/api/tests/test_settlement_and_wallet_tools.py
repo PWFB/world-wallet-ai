@@ -211,5 +211,12 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("evm_transactions", result)
 
 
+    def test_token_asset_symbol_keeps_bnb_usdt_separate(self):
+        # The same ERC-20 symbol on two chains must not be merged into one balance.
+        self.assertEqual(main.wallet_asset_symbol("USDT", "ethereum"), "USDT")
+        self.assertEqual(main.wallet_asset_symbol("USDT", "bnb"), "USDT-BNB")
+        self.assertEqual(main.wallet_asset_symbol("BALMZ-SEP", "sepolia"), "BALMZ-SEP")
+
+
 if __name__ == "__main__":
     unittest.main()
