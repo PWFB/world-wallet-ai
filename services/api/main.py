@@ -1423,7 +1423,6 @@ def wallet_addresses(user: dict = Depends(current_user)):
     return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "No production wallet address is configured yet"}
 
 
-@app.post("/api/v1/wallet/sync")
 def _chain_heights():
     heights = {}
     try:
@@ -1485,12 +1484,12 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
     return result
 
 
-@app.post("/api/v1/wallet/sync")
 def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
     return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
 
 
+@app.post("/api/v1/wallet/sync")
 def sync_wallet(user: dict = Depends(current_user)):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
