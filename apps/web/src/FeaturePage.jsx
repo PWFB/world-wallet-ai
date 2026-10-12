@@ -128,8 +128,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to switch wallet.");
-      setWalletId(id);
-      await loadAddresses(id);
+      // Refresh the canonical wallet list after activation; loadWallets also loads
+      // the active wallet's addresses, so avoid a duplicate address request here.
       await refreshActiveWallet();
       await loadWallets();
       setMessage("Wallet switched. Live balances now belong to the selected wallet.");
