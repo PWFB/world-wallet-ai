@@ -644,13 +644,16 @@ function App() {
       setSelectedNetworkBalanceMessage("Attach a public address for this network.");
       return;
     }
+    if (selectedNetworkAddress !== chosen.address) {
+      setSelectedNetworkAddress(chosen.address);
+      return;
+    }
     const walletId = wallet?.wallet_id || user?.wallet_id;
     if (!walletId) {
       setSelectedNetworkBalance(null);
       setSelectedNetworkBalanceMessage("Select a wallet before checking balances.");
       return;
     }
-    setSelectedNetworkAddress(chosen.address);
     setSelectedNetworkBalanceBusy(true);
     setSelectedNetworkBalanceMessage("");
     try {
