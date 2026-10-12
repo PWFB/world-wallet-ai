@@ -57,6 +57,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [label, setLabel] = useState("primary");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [addressBalances, setAddressBalances] = useState({});
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [localEntries, setLocalEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
 
@@ -151,10 +152,26 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
       setAddress("");
       await loadAddresses(walletId);
-      await refreshActiveWallet();
-      setMessage("Address connected. Compatible wallet coins will use this network automatically.");
+      setMessage("Address connected. Check its balance below; portfolio balances were left unchanged.");
     } catch (error) { setMessage(error.message || "Unable to connect address."); }
     finally { setBusy(false); }
+  };
+
+  const checkAddressBalance = async item => {
+    if (!walletId || item.local) return;
+    const key = item.network + ":" + item.address;
+    setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: true, error: "" } }));
+    try {
+      const query = new URLSearchParams({ network: item.network, address: item.address });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), {
+        headers: { Authorization: "Bearer " + accessToken },
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
+      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance || 0), asset: data.asset || item.network, syncedAt: data.synced_at, error: "" } }));
+    } catch (error) {
+      setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: false, error: error.message || "Balance check failed." } }));
+    }
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
@@ -183,7 +200,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
-          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
+          {visibleAddresses.length ? visibleAddresses.map(a => {
+            const key = a.network + ":" + a.address;
+            const balance = addressBalances[key];
+            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+          }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
     </div>
@@ -192,12 +214,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <h2>Attach a blockchain address</h2>
       {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" ? "Solana Base58 public address" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Sepolia is a test network. You can save its public 0x address without entering a private key; live testnet balances require a configured Sepolia RPC endpoint.</div>
+      <div className="security-note">Sepolia and Solana Devnet are test networks. You can attach public addresses without a private key. Solana Devnet balance checks require WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
     </article>
