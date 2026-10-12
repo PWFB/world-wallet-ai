@@ -761,7 +761,7 @@ def validate_asset_network(asset: str, network: str):
 def configured_addresses(user):
     with db() as conn:
         rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address", (user["wallet_id"],)).fetchall()
-        saved_evm_address = next((r[1] for r in rows if r[0] in ("ethereum", "bnb") and valid_evm_address(r[1])), "")
+        saved_evm_address = next((r[1] for r in rows if r[0] == "ethereum" and valid_evm_address(r[1])), "") or next((r[1] for r in rows if r[0] == "bnb" and valid_evm_address(r[1])), "")
         # A user's saved address for the active wallet profile takes precedence.
         # The server-level address is only a bootstrap fallback for empty profiles.
         evm_address = saved_evm_address if valid_evm_address(saved_evm_address) else (EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else "")
