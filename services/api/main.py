@@ -1768,10 +1768,6 @@ def sync_transactions(user: dict = Depends(current_user)):
     imported = []
     warnings = []
     sepolia_address = wallet_network_address(user, "sepolia")
-    if sepolia_address:
-        # Sepolia is intentionally not included in this endpoint yet: the current
-        # transaction table/asset accounting does not isolate testnet ETH from mainnet ETH.
-        warnings.append("Sepolia address attached; Sepolia transaction history is not yet supported by live sync.")
     btc_address = wallet_network_address(user, "bitcoin")
     if btc_address:
         try:
@@ -1786,6 +1782,7 @@ def sync_transactions(user: dict = Depends(current_user)):
     for rpc_url, network, contract in (
         (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
         (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
+        (SEPOLIA_RPC_URL if sepolia_address else "", "sepolia", BALMZ_SEPOLIA_CONTRACT),
     ):
         if rpc_url:
             native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, wallet_network_address(user, network))
@@ -1808,7 +1805,11 @@ def sync_transactions(user: dict = Depends(current_user)):
                     warnings.append(warning)
     supported_source_configured = bool(btc_address) or any(
         wallet_network_address(user, network) and rpc_url
-        for network, rpc_url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL))
+        for network, rpc_url in (
+            ("ethereum", ETH_RPC_URL),
+            ("bnb", BSC_RPC_URL),
+            ("sepolia", SEPOLIA_RPC_URL),
+        )
     )
     if not imported and not supported_source_configured:
         detail = (
