@@ -1212,7 +1212,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <div><p className="eyebrow">WALLET HISTORY</p><h1>Transactions</h1><p className="muted">Track wallet activity with blockchain transaction details when available.</p></div>
         <div className="page-actions"><button className="secondary" onClick={syncTransactions} disabled={syncBusy}>{syncBusy ? "Syncing live wallet…" : "↻ Sync live wallet"}</button><button className="primary" onClick={()=>setActive("Send")}>+ Send funds</button></div>
       </div>
-      {syncMessage && <div className={syncMessage.includes("failed") ? "feature-error" : "feature-success"}>{syncMessage}</div>}
+      {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       <article className="panel transaction-panel">
         <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{activity.length} transaction{activity.length===1?"":"s"}</small></div>
         {activity.length ? activity.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
