@@ -1115,3 +1115,34 @@
   .market-price-grid{grid-template-columns:minmax(0,1fr)}
   .market-price-name small{display:block}
 }
+
+/* Portfolio coin trading cards */
+.portfolio-market-panel{margin-bottom:16px}
+.portfolio-market-coin{width:100%;color:inherit;text-align:left;cursor:pointer;font:inherit}
+.portfolio-market-coin:hover,.portfolio-coin-card:hover{border-color:var(--accent,#00d4ff);transform:translateY(-1px)}
+.portfolio-coin-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.portfolio-coin-card{min-width:0;display:flex;flex-direction:column;gap:12px;padding:15px;border:1px solid var(--border,#24334d);border-radius:13px;background:var(--panel,#101a2c);color:var(--text,#edf4ff);text-align:left;cursor:pointer;transition:border-color .15s ease,transform .15s ease;font:inherit}
+.portfolio-coin-top,.portfolio-coin-title,.portfolio-coin-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+.portfolio-coin-network{font-size:10px;color:var(--muted,#9aa8c2);text-align:right;overflow-wrap:anywhere}
+.portfolio-coin-title{align-items:flex-start;flex-direction:column;gap:3px}
+.portfolio-coin-title b{font-size:14px}
+.portfolio-coin-title span{font-size:11px;color:var(--muted,#9aa8c2)}
+.portfolio-coin-price{font-size:20px;font-weight:750;overflow-wrap:anywhere}
+.portfolio-coin-price small{display:block;margin-top:4px;font-size:10px;font-weight:400;color:var(--muted,#9aa8c2)}
+.portfolio-coin-meta{padding-top:8px;border-top:1px solid var(--border,#24334d);font-size:11px}
+.portfolio-coin-meta span{color:var(--muted,#9aa8c2)}
+.portfolio-coin-meta b{text-align:right;overflow-wrap:anywhere}
+.portfolio-open-card{margin-top:auto;padding-top:7px;color:var(--accent,#00d4ff);font-size:11px;font-weight:700}
+.coin-trading-panel{margin:14px 0}
+.coin-trading-status{border:1px solid var(--border,#26334d);border-radius:999px;padding:5px 9px;font-size:10px;color:var(--muted,#9aa8c2);white-space:nowrap}
+.coin-trading-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.coin-trading-metrics>div{display:flex;flex-direction:column;gap:6px;min-width:0;padding:12px;border:1px solid var(--border,#26334d);border-radius:10px;background:rgba(5,14,29,.45)}
+.coin-trading-metrics small,.coin-trading-metrics span{font-size:10px;color:var(--muted,#9aa8c2);overflow-wrap:anywhere}
+.coin-trading-metrics b{font-size:14px;overflow-wrap:anywhere}
+.balmz-eth-reference{display:flex;flex-direction:column;gap:5px;margin-top:12px;padding:12px;border:1px solid #55462a;border-radius:9px;background:rgba(120,83,17,.13)}
+.balmz-eth-reference b{font-size:12px}
+.balmz-eth-reference span,.coin-trading-disclaimer{font-size:11px;color:var(--muted,#9aa8c2);line-height:1.6}
+.coin-trading-actions{display:flex;flex-wrap:wrap;gap:9px;margin-top:12px}
+.coin-trading-disclaimer{margin-bottom:0}
+@media(max-width:900px){.portfolio-coin-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.coin-trading-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.portfolio-coin-grid{grid-template-columns:minmax(0,1fr)}.coin-trading-metrics{grid-template-columns:minmax(0,1fr)}.portfolio-coin-card{padding:13px}.coin-trading-actions button{flex:1 1 100%}}
