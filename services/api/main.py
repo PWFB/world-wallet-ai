@@ -1541,6 +1541,8 @@ def sync_wallet(user: dict = Depends(current_user)):
             if not rpc_url or not token_address:
                 continue
             try:
+                if network == "sepolia":
+                    require_sepolia_rpc(rpc_url)
                 balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
                 if balance is None:
                     continue
@@ -2157,6 +2159,8 @@ def _inspect_evm_address(address, network, rpc):
     if not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM address")
     try:
+        if network == "sepolia":
+            require_sepolia_rpc(rpc)
         raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
         block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
         balance = int(raw_balance or "0x0", 16) / 10**18
