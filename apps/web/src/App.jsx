@@ -606,6 +606,11 @@ function App() {
       setDashboardAddressMessage("The active wallet profile could not be identified. Open Wallets and select a wallet first.");
       return;
     }
+    const existingEthereum = dashboardAddresses.find(item => String(item.network || "").toLowerCase() === "ethereum");
+    if (existingEthereum && String(existingEthereum.address || "").toLowerCase() !== address.toLowerCase()) {
+      setDashboardAddressMessage("This wallet profile already has a different Ethereum address. To protect the saved address, create or switch to another wallet profile in Wallets, then attach this address there.");
+      return;
+    }
     setDashboardAddressBusy(true);
     setDashboardAddressMessage("");
     try {
