@@ -74,6 +74,27 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "did not return a chain ID"):
                 main.require_sepolia_rpc("https://rpc.example")
 
+    def test_sepolia_token_sync_skips_logs_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Token logs must not be queried on the wrong chain")
+
+        user = {"wallet_id": "wallet_test"}
+        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                user, "https://rpc.example", "sepolia", contract, "BALMZ-SEP",
+                decimals=18, wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
     def test_sepolia_address_balance_uses_chain_rpc(self):
         address = "0x" + "1" * 40
 
