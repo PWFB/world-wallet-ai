@@ -1586,7 +1586,7 @@ def market_prices():
             "listed": usd is not None,
         }
     # BALMZ has no verified market quote yet. Never invent a price.
-    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False}
+    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
     prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
     return {"source": "CoinGecko", "updated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
 
