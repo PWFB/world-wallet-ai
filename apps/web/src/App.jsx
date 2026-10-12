@@ -1154,7 +1154,7 @@ function App() {
               </div>
               <div className="page-actions" style={{ marginTop: 12 }}>
                 <button type="button" className="primary" disabled={dashboardAddressBusy || !accessToken} onClick={attachDashboardAddress}>
-                  {dashboardAddressBusy ? "Attaching…" : "＋ Attach address & sync"}
+                  {dashboardAddressBusy ? "Attaching…" : "＋ Attach public address"}
                 </button>
                 <button type="button" className="secondary" disabled={dashboardAddressBusy} onClick={loadDashboardAddresses}>↻ Reload addresses</button>
               </div>
