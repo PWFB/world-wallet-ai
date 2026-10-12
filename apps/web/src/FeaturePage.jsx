@@ -1201,7 +1201,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         if (!response.ok) throw new Error(data.detail || "live transaction sync failed.");
         onTransactionsUpdated?.(data.transactions || []);
         onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
-        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : (data.imported?.length ? `Synced ${data.imported.length} live transaction(s).` : "No new live wallet transactions found."));
+        const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
+        const importedCount = Array.isArray(data.imported) ? data.imported.length : 0;
+        const syncTime = data.last_transaction_sync_at
+          ? new Date(data.last_transaction_sync_at).toLocaleString()
+          : "";
+        const syncSummary = importedCount
+          ? `Imported ${importedCount} live blockchain transaction(s).`
+          : "Sync completed; no new live wallet transactions were returned.";
+        setSyncMessage([
+          warnings.length ? "PARTIAL SYNC — " + warnings.join(" • ") : syncSummary,
+          syncTime ? "Transaction sync time: " + syncTime : "A successful transaction-sync timestamp was not supplied; do not treat this as proof that every network synced."
+        ].join(" "));
       } catch (error) {
         setSyncMessage(error.message || "live transaction sync failed.");
       } finally {
