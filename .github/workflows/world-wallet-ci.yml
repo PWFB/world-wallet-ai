@@ -21,9 +21,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install API dependencies
-        run: pip install -r services/api/requirements.txt
+        run: python -m pip install -r services/api/requirements.txt
       - name: Compile API
         run: python -m py_compile services/api/main.py
+      - name: Run API regression tests
+        working-directory: services/api
+        run: python -m unittest discover -s tests -v
 
   build-web:
     runs-on: ubuntu-latest
