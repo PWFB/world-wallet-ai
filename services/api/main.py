@@ -1719,6 +1719,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
     updates = []
     sync_error = None
     transaction_sync_error = None
+    last_transaction_sync_at = None
     price_error = None
     sync_result = {}
     bitcoin_transactions = []
@@ -1741,6 +1742,11 @@ def refresh_wallet(user: dict = Depends(current_user)):
         bitcoin_transactions = transaction_result.get("imported", bitcoin_transactions)
         tx_warnings = transaction_result.get("warnings", [])
         transaction_sync_error = " • ".join(tx_warnings) or None
+        # Only publish a successful sync timestamp when every configured source
+        # completed without warnings; otherwise the UI could imply stale history
+        # was freshly verified.
+        if transaction_sync_error is None:
+            last_transaction_sync_at = datetime.now(timezone.utc).isoformat()
     except HTTPException as exc:
         transaction_sync_error = str(exc.detail)
     except Exception:
@@ -1769,7 +1775,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         "warnings": warnings,
         "network_status": network_status,
         "last_balance_sync_at": sync_result.get("last_balance_sync_at"),
-        "last_transaction_sync_at": datetime.now(timezone.utc).isoformat(),
+        "last_transaction_sync_at": last_transaction_sync_at,
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
         "duration_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
     }
