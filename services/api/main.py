@@ -1601,7 +1601,10 @@ def refresh_wallet(user: dict = Depends(current_user)):
     started_at = datetime.now(timezone.utc)
     updates = []
     sync_error = None
+    transaction_sync_error = None
     price_error = None
+    sync_result = {}
+    bitcoin_transactions = []
 
     try:
         sync_result = sync_wallet(user)
@@ -1609,13 +1612,22 @@ def refresh_wallet(user: dict = Depends(current_user)):
         bitcoin_transactions = sync_result.get("bitcoin_transactions", [])
         sync_error = " • ".join(sync_result.get("warnings", [])) or None
     except HTTPException as exc:
-        sync_result = {}
-        bitcoin_transactions = []
         sync_error = str(exc.detail)
     except Exception:
-        sync_result = {}
-        bitcoin_transactions = []
         sync_error = "Wallet chain synchronization failed"
+
+    # The dashboard's Refresh button must import transactions too, not only
+    # update balances/prices. Keep this independent so one failing source does
+    # not prevent price refresh or return an otherwise useful wallet snapshot.
+    try:
+        transaction_result = sync_transactions(user)
+        bitcoin_transactions = transaction_result.get("imported", bitcoin_transactions)
+        tx_warnings = transaction_result.get("warnings", [])
+        transaction_sync_error = " • ".join(tx_warnings) or None
+    except HTTPException as exc:
+        transaction_sync_error = str(exc.detail)
+    except Exception:
+        transaction_sync_error = "Wallet transaction synchronization failed"
 
     try:
         price_result = refresh_prices(user)
@@ -1627,7 +1639,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         price_error = "Live market price refresh failed"
 
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
-    warnings = [x for x in (sync_error, price_error) if x]
+    warnings = [x for x in (sync_error, transaction_sync_error, price_error) if x]
     network_status = sync_result.get("network_status") or _network_sync_status(user, warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
@@ -1640,7 +1652,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         "warnings": warnings,
         "network_status": network_status,
         "last_balance_sync_at": sync_result.get("last_balance_sync_at"),
-        "last_transaction_sync_at": sync_result.get("last_transaction_sync_at"),
+        "last_transaction_sync_at": datetime.now(timezone.utc).isoformat(),
         "refreshed_at": datetime.now(timezone.utc).isoformat(),
         "duration_ms": int((datetime.now(timezone.utc) - started_at).total_seconds() * 1000),
     }
