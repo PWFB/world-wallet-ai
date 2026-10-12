@@ -1219,10 +1219,14 @@ function App() {
                 {["bitcoin", "ethereum", "bnb", "sepolia"].map(network => {
                   const item = networkStatus[network] || {};
                   const label = network === "bitcoin" ? "Bitcoin" : network === "ethereum" ? "Ethereum" : network === "bnb" ? "BNB Chain" : "Ethereum Sepolia (testnet)";
+                  const needsAddress = network === "ethereum" && item.rpc_configured && !item.address_configured;
+                  const statusLabel = item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : needsAddress ? "ADDRESS NEEDED" : item.configured ? "CHECKING" : "NOT CONFIGURED";
                   return <div className="network-sync-card" key={network}>
-                    <div><b>{label}</b><span className={"sync-dot " + (item.status || "not_configured")} /> <small>{item.status === "healthy" ? "LIVE" : item.status === "warning" ? "WARNING" : item.configured ? "CHECKING" : "NOT CONFIGURED"}</small></div>
-                    <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : "No successful balance sync recorded."}</span>
+                    <div><b>{label}</b><span className={"sync-dot " + (needsAddress ? "warning" : item.status || "not_configured")} /> <small>{statusLabel}</small></div>
+                    <span>{item.last_balance_sync_at ? "Balance synced " + new Date(item.last_balance_sync_at).toLocaleTimeString() : needsAddress ? "RPC connected; no Ethereum wallet address is saved for this wallet." : "No successful balance sync recorded."}</span>
                     <span>{item.chain_height != null ? "Chain height " + Number(item.chain_height).toLocaleString() : "Chain height unavailable."}</span>
+                    {needsAddress && <button type="button" className="secondary network-sync-action" onClick={() => setActive("Wallets")}>Add Ethereum address →</button>}
+                    {item.configuration_message && <em>{item.configuration_message}</em>}
                     {item.warning && <em>{item.warning}</em>}
                   </div>;
                 })}
