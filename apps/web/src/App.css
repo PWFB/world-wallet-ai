@@ -899,3 +899,11 @@
 .ww-register-social button{width:100%;padding:11px 12px;border:1px solid #263a56;border-radius:8px;background:#0a1729;color:#dbe7f5;font-size:11px;font-weight:700}
 .ww-register-social button:hover{border-color:#00bde8;background:#10213a}
 .ww-register-social button:disabled{opacity:.6}
+
+
+.mobile-network-panel{display:none}
+.mobile-network-label{display:flex;flex-direction:column;gap:6px;margin:10px 0;color:#8da0bb;font-size:10px}
+.mobile-network-label select{width:100%;padding:10px;border:1px solid #263954;border-radius:7px;background:#101d33;color:#dce7f8;font-size:12px}
+.mobile-network-balance{display:flex;flex-direction:column;gap:6px;margin:12px 0;color:#e6edf8;font-size:15px;font-weight:700;overflow-wrap:anywhere}
+.mobile-network-balance small{color:#7e91ae;font-size:10px;font-weight:400;overflow-wrap:anywhere}
+@media(max-width:760px){.mobile-network-panel{display:block;margin-bottom:12px}.network-pill{display:none}}
