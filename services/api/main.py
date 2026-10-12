@@ -857,6 +857,17 @@ def evm_block_number(url: str):
     return int(raw, 16) if raw else None
 
 
+def require_sepolia_rpc(url: str):
+    """Fail closed if a Sepolia-configured RPC actually points at another EVM chain."""
+    raw = rpc_call(url, "eth_chainId", [])
+    if not raw:
+        raise ValueError("Sepolia RPC did not return a chain ID")
+    chain_id = int(raw, 16)
+    if chain_id != 11155111:
+        raise ValueError("Configured Sepolia RPC returned chain ID %s, expected 11155111" % chain_id)
+    return chain_id
+
+
 def evm_transfer_logs(url: str, contract: str, wallet_address: str, from_block: int, to_block: int):
     if not url or not contract or not valid_evm_address(contract) or not valid_evm_address(wallet_address):
         return []
@@ -894,6 +905,8 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
     if not url or not wallet_address:
         return [], None
     try:
+        if network == "sepolia":
+            require_sepolia_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
@@ -1005,6 +1018,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     if not url or not contract or not wallet_address:
         return [], None
     try:
+        if network == "sepolia":
+            require_sepolia_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
