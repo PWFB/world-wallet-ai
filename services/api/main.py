@@ -1558,6 +1558,7 @@ _MARKET_PRICE_CACHE = None
 
 @app.get("/api/v1/prices/market")
 def market_prices():
+    global _MARKET_PRICE_CACHE
     """Public market quotes for the wallet's supported coin catalog."""
     coin_ids = {
         "BTC":"bitcoin","USDT":"tether","ETH":"ethereum","BNB":"binancecoin",
