@@ -547,13 +547,6 @@ function App() {
         setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
         setNetworkStatus(data.network_status || {});
         setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
-      try {
-        const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: { Authorization: "Bearer " + accessToken } });
-        const walletData = await walletResponse.json();
-        setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
-      } catch {
-        setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
-      }
         try {
           const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: authHeaders });
           const walletData = await walletResponse.json();
@@ -1121,7 +1114,13 @@ function App() {
             <div className="nav-group" key={group}>
               <small>{group}</small>
               {items.map(item => (
-                <button key={item} className={active === item ? "nav-item active" : "nav-item"} onClick={() => setActive(item)}>
+                <button key={item} className={active === item ? "nav-item active" : "nav-item"} aria-current={active === item ? "page" : undefined} onClick={() => {
+                  // A selected coin or transaction detail must not trap navigation on its detail screen.
+                  setSelectedCoin(null);
+                  if (item !== "Transactions") setFocusedTransaction(null);
+                  setActive(item);
+                  if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(false);
+                }}>
                   <span className="nav-icon">{item.slice(0, 1)}</span><span className="nav-label">{item}</span>
                 </button>
               ))}
