@@ -128,8 +128,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to switch wallet.");
-      setWalletId(id);
-      await loadAddresses(id);
+      // Refresh the canonical wallet list after activation; loadWallets also loads
+      // the active wallet's addresses, so avoid a duplicate address request here.
       await refreshActiveWallet();
       await loadWallets();
       setMessage("Wallet switched. Live balances now belong to the selected wallet.");
@@ -152,7 +152,22 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
       setAddress("");
       await loadAddresses(walletId);
-      setMessage("Address connected. Check its balance below; portfolio balances were left unchanged.");
+      // Attaching an address is only the first step; refresh the active wallet so
+      // configured chain sources can update balances and import verifiable activity.
+      const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + accessToken },
+      });
+      const refreshData = await refreshResponse.json();
+      if (!refreshResponse.ok) {
+        throw new Error(refreshData.detail || "Address was attached, but wallet refresh failed. Use Refresh to retry.");
+      }
+      onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [] });
+      onTransactionsUpdated?.(refreshData.transactions || []);
+      const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
+      setMessage(warnings.length
+        ? "Address attached. Wallet data refreshed with warnings: " + warnings.join(" • ")
+        : "Address attached. Wallet refresh completed; verify the selected network and balance before relying on it.");
     } catch (error) { setMessage(error.message || "Unable to connect address."); }
     finally { setBusy(false); }
   };
