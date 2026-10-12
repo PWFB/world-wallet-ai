@@ -235,6 +235,11 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [addresses, setAddresses] = useState([]);
+  const [receiveNetwork, setReceiveNetwork] = useState("all");
+  const [swapFrom, setSwapFrom] = useState("ETH");
+  const [swapTo, setSwapTo] = useState("USDT");
+  const [swapAmount, setSwapAmount] = useState("");
+  const [swapNotice, setSwapNotice] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
   const [wcProvider, setWcProvider] = useState(null);
   const [wcAccount, setWcAccount] = useState("");
@@ -911,49 +916,160 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
-    return <section className="content feature-content">
-      <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>{active}</h1><p className="muted">{send ? "Send assets to an external wallet." : "Request a secure withdrawal."}</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <div className="feature-grid"><article className="panel action-panel">
-        <div className="feature-icon">{send ? "↗" : "⇥"}</div><h2>{send ? "Send funds" : "Direct withdrawal"}</h2>
-        <label>Asset<select value={asset} onChange={e=>{setAsset(e.target.value);setAmount("");setMessage("");}}>{assets.map(a=>{const available=Math.max(0,Number(a.available_balance ?? a.available ?? a.balance ?? 0));return <option key={a.symbol} value={a.symbol}>{a.symbol} • {number(available)} available</option>;})}</select></label>
-        <div className="amount-field">
-          <div className="amount-label-row"><span>Amount</span><button type="button" className="amount-max" onClick={useMaxAvailable} disabled={selectedAssetAvailable <= 0 || busy}>MAX</button></div>
-          <input type="number" min="0" max={selectedAssetAvailable > 0 ? selectedAssetAvailable : undefined} step="any" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" aria-invalid={amountExceedsAvailable || amountInvalid}/>
-          <div className={amountExceedsAvailable || amountInvalid ? "amount-availability amount-error" : "amount-availability"}>
-            <span>Available: {number(selectedAssetAvailable)} {asset}</span>
-            {amountExceedsAvailable ? <b>Amount exceeds available balance.</b> : amountInvalid ? <b>Enter a valid amount greater than zero.</b> : null}
+    const networkOptions = networksForAsset(asset);
+    const availableForAsset = selectedAssetAvailable;
+    const selectedPrice = Number(selectedWalletAsset?.price_usd ?? (Number(selectedWalletAsset?.balance) > 0 ? Number(selectedWalletAsset?.value_usd || 0) / Number(selectedWalletAsset.balance) : 0));
+    const amountUsd = selectedPrice > 0 && Number(amount) > 0 ? Number(amount) * selectedPrice : null;
+    const destinationLooksValid = network === "bitcoin"
+      ? /^(bc1|[13])[a-zA-HJ-NP-Z0-9]{20,}$/i.test(destination.trim())
+      : /^0x[a-fA-F0-9]{40}$/.test(destination.trim());
+    return <section className="content feature-content wallet-action-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">WALLET / TRANSFER</p><h1>{active === "Withdraw" ? "Withdraw assets" : "Send assets"}</h1><p className="muted">{send ? "Review the asset, network and recipient before your connected wallet signs." : "Prepare a withdrawal request and review its destination details."}</p></div>
+        <button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button>
+      </div>
+      <div className="wallet-flow-steps" aria-label="Transfer steps">
+        <div className="wallet-flow-step is-current"><span>1</span><div><b>Details</b><small>Asset and recipient</small></div></div>
+        <div className="wallet-flow-connector"/>
+        <div className="wallet-flow-step"><span>2</span><div><b>Review</b><small>Check the network</small></div></div>
+        <div className="wallet-flow-connector"/>
+        <div className="wallet-flow-step"><span>3</span><div><b>Confirm</b><small>Approve in wallet</small></div></div>
+      </div>
+      <div className="wallet-action-layout">
+        <article className="panel wallet-form-card">
+          <div className="wallet-card-heading"><span className="wallet-action-icon">{send ? "↗" : "⇥"}</span><div><h2>{send ? "Transfer details" : "Withdrawal details"}</h2><p>Fields marked below are required before continuing.</p></div></div>
+          <label>Asset to {send ? "send" : "withdraw"}
+            <select value={asset} onChange={e => { setAsset(e.target.value); setAmount(""); setMessage(""); }}>
+              {assets.map(a => { const available = Math.max(0, Number(a.available_balance ?? a.available ?? a.balance ?? 0)); return <option key={a.symbol} value={a.symbol}>{a.symbol} · {number(available)} available</option>; })}
+            </select>
+          </label>
+          <div className="wallet-amount-box">
+            <div className="wallet-field-topline"><label htmlFor="wallet-send-amount">Amount</label><button type="button" className="amount-max" onClick={useMaxAvailable} disabled={availableForAsset <= 0 || busy}>Use MAX</button></div>
+            <div className="wallet-amount-input-row"><input id="wallet-send-amount" type="number" min="0" max={availableForAsset > 0 ? availableForAsset : undefined} step="any" value={amount} onChange={e => setAmount(e.target.value)} placeholder="0.00" aria-invalid={amountExceedsAvailable || amountInvalid}/><strong>{asset}</strong></div>
+            <div className={amountExceedsAvailable || amountInvalid ? "amount-availability amount-error" : "amount-availability"}><span>Available balance: {number(availableForAsset)} {asset}</span>{amountExceedsAvailable ? <b>Amount exceeds your available balance.</b> : amountInvalid ? <b>Enter an amount greater than zero.</b> : null}</div>
+            {amountUsd != null && <div className="wallet-estimate">Indicative value: <b>{money(amountUsd)}</b></div>}
           </div>
-        </div>
-        <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)} disabled={!networksForAsset(asset).length}>{networksForAsset(asset).length ? networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}</select></label>
-        <div className="network-safety"><b>{asset}</b><span>{networksForAsset(asset).length ? `Compatible: ${networksForAsset(asset).map(n => n.label).join(" / ")}` : "This asset is catalog-only and cannot be sent on-chain yet."}</span></div>
-        <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
-        {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
-        <button className="primary feature-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || selectedAssetAvailable <= 0 || !destination || !assets.some(item => item.symbol === asset) || !networksForAsset(asset).length || !network} onClick={()=>submit(send?"/api/v1/transfers":"/api/v1/withdrawals")}>{busy ? "Submitting…" : send ? "Review & send →" : "Request withdrawal →"}</button>
-      </article><aside className="panel feature-summary"><span className="feature-kicker">AVAILABLE BALANCE</span><strong>{money(wallet.available_balance_usd)}</strong><small>Wallet funds available</small><div className="summary-divider"/><span>Selected asset</span><b>{asset}</b><div className="security-note">✓ Live EVM mode: your connected external wallet signs and broadcasts the transaction. World Wallet AI never receives or stores your private key.</div>
-          <div className="security-note">✓ Bitcoin live mode uses a connected external Bitcoin signer when available; no private key is stored by World Wallet AI.</div></aside></div>
+          <label>{send ? "Recipient wallet address" : "Withdrawal destination"}
+            <input value={destination} onChange={e => { setDestination(e.target.value); setMessage(""); }} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"} autoComplete="off" spellCheck="false"/>
+          </label>
+          <label>Network
+            <select value={network} onChange={e => { setNetwork(e.target.value); setMessage(""); }} disabled={!networkOptions.length}>
+              {networkOptions.length ? networkOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}
+            </select>
+          </label>
+          <div className={destination ? (destinationLooksValid ? "wallet-network-check is-valid" : "wallet-network-check is-warning") : "wallet-network-check"}>
+            <span>{destination ? (destinationLooksValid ? "✓" : "!") : "i"}</span>
+            <div><b>{destination ? (destinationLooksValid ? "Address format looks valid" : "Check the destination address") : "Network compatibility matters"}</b><small>Use an address for the selected network. A valid-looking address does not prove ownership or guarantee that the destination supports this asset.</small></div>
+          </div>
+          <label>Note <span className="wallet-optional">(optional)</span><textarea value={note} onChange={e => setNote(e.target.value)} maxLength="200" placeholder="Add a note for your records"/></label>
+          {message && <div role="status" className={/accepted|broadcast|verified|reconciled/i.test(message) ? "feature-success" : "feature-error"}>{message}</div>}
+          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
+          <p className="wallet-form-footnote">You will see a wallet approval prompt for supported live transfers. Never share a recovery phrase or private key with anyone.</p>
+        </article>
+        <aside className="wallet-review-column">
+          <article className="panel wallet-review-card">
+            <span className="feature-kicker">TRANSFER SUMMARY</span>
+            <div className="wallet-summary-amount">{amount && Number(amount) > 0 ? number(amount) : "0.00"} <small>{asset}</small></div>
+            <div className="wallet-summary-row"><span>From</span><b>Active World Wallet</b></div>
+            <div className="wallet-summary-row"><span>Network</span><b>{networkOptions.find(n => n.value === network)?.label || "Not selected"}</b></div>
+            <div className="wallet-summary-row"><span>To</span><code>{destination ? destination.slice(0, 9) + "…" + destination.slice(-6) : "Recipient not entered"}</code></div>
+            <div className="wallet-summary-divider"/>
+            <div className="wallet-summary-row"><span>Available USD balance</span><b>{money(wallet.available_balance_usd)}</b></div>
+            <div className="wallet-summary-row"><span>Network fee</span><b className="wallet-fee-note">Shown by signer if available</b></div>
+          </article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Self-custody stays yours</b><p>World Wallet AI does not ask for or store your external wallet's private key. Review the address and network in your wallet before signing.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Transactions may be irreversible</b><p>Confirm the asset, chain, recipient and amount. Do not send testnet assets to a mainnet address expecting real value.</p></div></article>
+        </aside>
+      </div>
     </section>;
   }
 
   if (active === "Receive") {
-    return <section className="content feature-content">
-      <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Use a configured production blockchain address to receive assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <div className="feature-grid">
-        <article className="panel receive-panel">
-          <p className="feature-kicker">PRODUCTION DEPOSIT ADDRESSES</p>
-          <div className="receive-selected">
-            <span>Receiving asset</span><strong>{asset}</strong><small>Choose the network below only when it matches the sender's network.</small>
+    const receiveOptions = networksForAsset(asset);
+    const compatibleAddresses = addresses.filter(item =>
+      receiveOptions.some(option => option.value === item.network) &&
+      (receiveNetwork === "all" || receiveNetwork === item.network)
+    );
+    const selectedReceiveNetwork = receiveOptions.find(item => item.value === receiveNetwork);
+    return <section className="content feature-content wallet-action-page">
+      <div className="page-heading"><div><p className="eyebrow">WALLET / DEPOSIT</p><h1>Receive assets</h1><p className="muted">Choose the asset and copy a configured public address to receive funds.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="wallet-receive-layout">
+        <article className="panel wallet-form-card">
+          <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Deposit address</h2><p>Only send the selected asset using a compatible network.</p></div></div>
+          <label>Asset to receive
+            <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
+              {assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
+            </select>
+          </label>
+          <label>Network filter
+            <select value={receiveNetwork} onChange={e => setReceiveNetwork(e.target.value)}>
+              <option value="all">All compatible networks</option>
+              {receiveOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+            </select>
+          </label>
+          <div className="wallet-network-check"><span>i</span><div><b>Always match the sender's network</b><small>For example, USDT on Ethereum must be sent to your Ethereum-compatible address, not to a Bitcoin or Solana address.</small></div></div>
+          {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
+          <div className="wallet-address-list">
+            {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <code>{item.address}</code>
+              <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
+            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Connect a public address for this asset's network in Wallets. This page will list it here after it is saved." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Connect an address →</button></div>}
           </div>
-          {addresses.length ? addresses.filter(item => !networksForAsset(asset).length || networksForAsset(asset).some(n => n.value === item.network)).map(item => <div className="receive-address" key={item.network}>
-            <div><b>{item.network.toUpperCase()}</b><small>{item.label} • {asset}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button>
-          </div>) : <div className="live-chart-empty">{addressMessage || `No production ${asset} address configured for a compatible network.`}</div>}
         </article>
-        <article className="panel feature-summary">
-          <span className="feature-kicker">RECEIVE SAFETY</span>
-          <div className="receive-asset"><span className="asset-icon">{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" ? "$" : "B"}</span><div><b>{asset}</b><small>{networksForAsset(asset).map(n => n.label).join(" / ") || "Network integration not configured"}</small></div></div>
-          <div className="security-note">✓ Only use an address on the selected asset's compatible network. Sending an asset on the wrong network can permanently lose funds.</div>
-          <div className="security-note">✓ Addresses are read-only for receiving. No private key is stored by this API.</div>
+        <aside className="wallet-review-column">
+          <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{number(selectedAssetAvailable)} {asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{money(selectedWalletAsset?.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Public address only</b><p>Receiving does not require sharing a private key. Only share the public address shown for the matching network.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia and Solana Devnet addresses are for testing. Test tokens are not mainnet funds.</p></div></article>
+        </aside>
+      </div>
+    </section>;
+  }
+
+  if (active === "Swap") {
+    const swapAssets = assets.filter(item => ["BALMZ", "ETH", "USDT", "BNB", "USDC", "BTC"].includes(item.symbol));
+    const fromItem = assets.find(item => item.symbol === swapFrom);
+    const toItem = assets.find(item => item.symbol === swapTo);
+    const priceFor = item => {
+      if (!item) return 0;
+      const direct = Number(item.price_usd ?? item.current_price_usd ?? item.usd_price ?? 0);
+      if (direct > 0) return direct;
+      const balance = Number(item.balance ?? 0);
+      const value = Number(item.value_usd ?? 0);
+      return balance > 0 && value > 0 ? value / balance : 0;
+    };
+    const fromPrice = priceFor(fromItem);
+    const toPrice = priceFor(toItem);
+    const parsedSwapAmount = Number(swapAmount);
+    const swapAmountValid = swapAmount !== "" && Number.isFinite(parsedSwapAmount) && parsedSwapAmount > 0;
+    const swapAvailable = Math.max(0, Number(fromItem?.available_balance ?? fromItem?.available ?? fromItem?.balance ?? 0));
+    const estimatedReceive = swapAmountValid && fromPrice > 0 && toPrice > 0 ? parsedSwapAmount * fromPrice / toPrice : null;
+    return <section className="content feature-content wallet-action-page">
+      <div className="page-heading"><div><p className="eyebrow">WALLET / CONVERT</p><h1>Swap assets</h1><p className="muted">Select the assets to convert and review an indicative value before using a supported swap provider.</p></div><button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="wallet-swap-layout">
+        <article className="panel wallet-form-card wallet-swap-card">
+          <div className="wallet-card-heading"><span className="wallet-action-icon swap-icon">⇄</span><div><h2>Convert tokens</h2><p>Prices are indicative only; this screen does not execute a swap.</p></div></div>
+          <div className="wallet-swap-token-box">
+            <div className="wallet-field-topline"><label htmlFor="swap-amount">You pay</label><span>Available: {number(swapAvailable)} {swapFrom}</span></div>
+            <div className="wallet-swap-input-row"><input id="swap-amount" type="number" min="0" step="any" value={swapAmount} onChange={e => { setSwapAmount(e.target.value); setSwapNotice(""); }} placeholder="0.00"/><select value={swapFrom} onChange={e => { const next = e.target.value; setSwapFrom(next); if (next === swapTo) setSwapTo(swapAssets.find(item => item.symbol !== next)?.symbol || next); setSwapNotice(""); }} aria-label="Asset to swap from">{swapAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}</select></div>
+            <button type="button" className="amount-max" onClick={() => setSwapAmount(String(swapAvailable))} disabled={swapAvailable <= 0}>Use available balance</button>
+          </div>
+          <button type="button" className="wallet-swap-direction" aria-label="Switch swap assets" onClick={() => { setSwapFrom(swapTo); setSwapTo(swapFrom); setSwapNotice(""); }}>⇅</button>
+          <div className="wallet-swap-token-box">
+            <div className="wallet-field-topline"><label>Estimated receive</label><span>Indicative only</span></div>
+            <div className="wallet-swap-input-row"><div className="wallet-swap-output">{estimatedReceive == null ? "—" : number(estimatedReceive)}</div><select value={swapTo} onChange={e => { setSwapTo(e.target.value); setSwapNotice(""); }} aria-label="Asset to swap to">{swapAssets.filter(item => item.symbol !== swapFrom).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol}</option>)}</select></div>
+            {estimatedReceive != null && <small className="wallet-swap-rate">Reference rate: 1 {swapFrom} ≈ {number(fromPrice / toPrice)} {swapTo}, before fees or slippage.</small>}
+          </div>
+          {swapNotice && <div role="status" className="feature-error">{swapNotice}</div>}
+          <div className="wallet-network-check is-warning"><span>!</span><div><b>Live swap execution is not connected yet</b><small>No verified swap-quote or execution endpoint is available in the current app workflow. The estimate uses available market/holding values only and is not an executable offer.</small></div></div>
+          <button type="button" className="primary feature-submit wallet-submit" disabled>Swap provider integration required</button>
+          <p className="wallet-form-footnote">No funds are moved by this preview. Do not treat an indicative estimate as a guaranteed exchange rate.</p>
         </article>
+        <aside className="wallet-review-column">
+          <article className="panel wallet-review-card"><span className="feature-kicker">SWAP SUMMARY</span><div className="wallet-summary-row"><span>From</span><b>{swapFrom}</b></div><div className="wallet-summary-row"><span>To</span><b>{swapTo}</b></div><div className="wallet-summary-row"><span>Pay amount</span><b>{swapAmountValid ? number(parsedSwapAmount) + " " + swapFrom : "—"}</b></div><div className="wallet-summary-row"><span>Estimated output</span><b>{estimatedReceive == null ? "Price unavailable" : number(estimatedReceive) + " " + swapTo}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available USD balance</span><b>{money(wallet.available_balance_usd)}</b></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Preview only</b><p>The app does not request approval or submit a blockchain transaction from this screen.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Fees and slippage</b><p>A real swap needs a provider quote, network fee, slippage protection and an explicit wallet confirmation.</p></div></article>
+        </aside>
       </div>
     </section>;
   }
