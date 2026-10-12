@@ -263,10 +263,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 self.calls.append((query, params))
                 return FakeCursor(saved)
         fake_conn = FakeConnection()
-        with patch.object(main, "db", return_value=fake_conn), \\
-             patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "2" * 40), \\
-             patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38):
-            result = main.configured_addresses({"wallet_id": "wallet_test"})
+        with patch.object(main, "db", return_value=fake_conn):
+            with patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "2" * 40):
+                with patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38):
+                    result = main.configured_addresses({"wallet_id": "wallet_test"})
         self.assertEqual(result, [{"network": "sepolia", "address": saved[0][1], "label": "Sepolia testnet"}])
         self.assertEqual(len(fake_conn.calls), 1)
         self.assertNotIn("INSERT", fake_conn.calls[0][0].upper())
