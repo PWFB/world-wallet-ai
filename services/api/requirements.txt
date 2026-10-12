@@ -4,6 +4,6 @@ google-auth==2.41.0
 requests==2.33.0
 psycopg[binary]==3.2.10
 httpx==0.28.1
-PyJWT==2.10.1
+PyJWT==2.15.0
 pycryptodome==3.23.0
-cryptography==45.0.7
+cryptography==50.0.0
