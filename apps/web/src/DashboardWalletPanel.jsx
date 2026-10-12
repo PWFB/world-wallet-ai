@@ -2,8 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import "./DashboardWalletPanel.css";
 
 const money = value => "$" + Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const amount = value => Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 8 });
-const shorten = value => value ? value.slice(0, 8) + "…" + value.slice(-6) : "No address connected";
+const amount = value => Number.isFinite(Number(value)) ? Number(value || 0).toLocaleString("en-US", { maximumFractionDigits: 8 }) : "0";
+const txAmount = item => {
+  const raw = item?.raw_amount;
+  if (raw !== undefined && raw !== null && Number.isFinite(Number(raw))) return Number(raw);
+  const parsed = String(item?.amount ?? "0").replace(/[^0-9.+-]/g, "");
+  return Number(parsed) || 0;
+};
 
 export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets = [], activity = [], marketPrices = {}, tokenRegistry = [], onWalletSwitched, setActive }) {
   const [wallets, setWallets] = useState([]);
@@ -59,9 +64,9 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
   const balmzReserved = Number(balmzAsset?.reserved_balance ?? Math.max(0, balmzActual - balmzBalance));
   const balmzPrice = Number(balmzAsset?.price_usd || marketPrices.BALMZ?.usd || 0);
   const balmzPending = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && ["pending", "pending_review", "broadcast_pending"].includes(String(item.status || "").toLowerCase()));
-  const pendingAmount = balmzPending.reduce((total, item) => total + Math.abs(Number(item.raw_amount ?? item.amount ?? 0)), 0);
-  const totalReceived = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (String(item.type).toLowerCase() === "received" || Number(item.raw_amount ?? 0) > 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(Number(item.raw_amount ?? item.amount ?? 0)), 0);
-  const totalSent = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (["sent", "withdrawal"].includes(String(item.type).toLowerCase()) || Number(item.raw_amount ?? 0) < 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(Number(item.raw_amount ?? item.amount ?? 0)), 0);
+  const pendingAmount = balmzPending.reduce((total, item) => total + Math.abs(txAmount(item)), 0);
+  const totalReceived = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (String(item.type).toLowerCase() === "received" || txAmount(item) > 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(txAmount(item)), 0);
+  const totalSent = activity.filter(item => String(item.symbol || item.asset || "").toUpperCase() === "BALMZ" && (["sent", "withdrawal"].includes(String(item.type).toLowerCase()) || txAmount(item) < 0) && !["pending", "pending_review", "broadcast_pending", "failed", "reorged"].includes(String(item.status || "").toLowerCase())).reduce((total, item) => total + Math.abs(Number(item.raw_amount ?? item.amount ?? 0)), 0);
   const balmzRegistry = tokenRegistry.find(item => String(item.symbol).toUpperCase() === "BALMZ" && String(item.network).toLowerCase() === "ethereum");
   const contractPending = !balmzRegistry?.contract_address || balmzRegistry?.status === "pending_contract";
 
