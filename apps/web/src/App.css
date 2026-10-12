@@ -907,3 +907,27 @@
 .mobile-network-balance{display:flex;flex-direction:column;gap:6px;margin:12px 0;color:#e6edf8;font-size:15px;font-weight:700;overflow-wrap:anywhere}
 .mobile-network-balance small{color:#7e91ae;font-size:10px;font-weight:400;overflow-wrap:anywhere}
 @media(max-width:760px){.mobile-network-panel{display:block;margin-bottom:12px}.network-pill{display:none}}
+
+
+/* Sidebar scrolling and three-dot collapse/expand control */
+.sidebar{height:100vh;min-height:0;overflow:hidden;z-index:10}
+.sidebar>nav{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#263954 transparent;padding:2px 3px 14px}
+.sidebar>nav::-webkit-scrollbar{width:5px}
+.sidebar>nav::-webkit-scrollbar-thumb{background:#263954;border-radius:8px}
+.sidebar-footer{flex-shrink:0}
+.brand{min-height:42px;flex-shrink:0;gap:8px}
+.brand-copy{min-width:0;flex:1}
+.sidebar-toggle{flex-shrink:0;display:grid;place-items:center;width:30px;height:30px;border:1px solid #203451;border-radius:8px;background:#0d1a2e;color:#9fb4d1;font-size:23px;line-height:1;letter-spacing:1px;padding:0}
+.sidebar-toggle:hover{background:#132743;color:#00d4ff;border-color:#2d527d}
+.nav-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.app-shell.sidebar-collapsed .sidebar{width:76px;padding:18px 9px}
+.app-shell.sidebar-collapsed .main{margin-left:76px;width:calc(100% - 76px)}
+.app-shell.sidebar-collapsed .brand{padding:0 0 20px;flex-wrap:wrap;justify-content:center}
+.app-shell.sidebar-collapsed .brand-copy,.app-shell.sidebar-collapsed .network-pill,.app-shell.sidebar-collapsed .nav-group>small,.app-shell.sidebar-collapsed .nav-label,.app-shell.sidebar-collapsed .secure>div,.app-shell.sidebar-collapsed .profile>div,.app-shell.sidebar-collapsed .profile>span:last-child{display:none}
+.app-shell.sidebar-collapsed .sidebar-toggle{width:34px;height:28px}
+.app-shell.sidebar-collapsed .nav-group{margin-bottom:12px}
+.app-shell.sidebar-collapsed .nav-item{justify-content:center;padding:11px 5px;gap:0}
+.app-shell.sidebar-collapsed .nav-icon{width:auto;font-size:13px}
+.app-shell.sidebar-collapsed .secure{justify-content:center;padding:9px 0}
+.app-shell.sidebar-collapsed .profile{justify-content:center;padding:8px 0}
+@media(max-width:760px){.sidebar,.app-shell.sidebar-collapsed .sidebar{display:none}.main,.app-shell.sidebar-collapsed .main{margin-left:0;width:100%}}
