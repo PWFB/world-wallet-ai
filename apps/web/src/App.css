@@ -1083,3 +1083,35 @@
 @media(max-width:380px){
   .app-shell .top-actions>button:not(.top-browser-button):not(.global-back-button):not(.logout-button):not(.top-avatar){display:none}
 }
+
+
+/* Wallet navigation toggle and visible live market panel */
+.brand-home-button{padding:0;cursor:pointer;flex:0 0 34px}
+.brand-home-button:hover,.mobile-brand:hover .brand-mark{border-color:#00d4ff;color:#00d4ff}
+.mobile-brand{border:0;background:transparent;padding:0;color:inherit;cursor:pointer;text-align:left}
+.market-prices-panel{margin-bottom:12px;min-width:0}
+.market-price-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.market-price-item{display:flex;align-items:center;gap:9px;min-width:0;padding:11px;border:1px solid #172943;border-radius:9px;background:#0a1426}
+.market-price-item .asset-icon{flex:0 0 30px;width:30px;height:30px}
+.market-price-name,.market-price-value{display:flex;flex-direction:column;min-width:0;gap:4px}
+.market-price-name b{font-size:11px}
+.market-price-name small,.market-price-value small{font-size:9px;color:#71839d;overflow-wrap:anywhere}
+.market-price-value{margin-left:auto;text-align:right}
+.market-price-value b{font-size:11px;overflow-wrap:anywhere}
+.market-price-error{margin:8px 0 12px;padding:10px 12px;border:1px solid #713b48;border-radius:8px;background:#301622;color:#ffb8c0;font-size:11px;line-height:1.5;overflow-wrap:anywhere}
+.mobile-menu-scrim{display:none}
+@media(max-width:760px){
+  .app-shell .sidebar{display:flex;position:fixed;z-index:30;left:0;top:0;bottom:0;width:min(290px,84vw);min-height:100dvh;transform:translateX(-105%);transition:transform .2s ease;overflow-y:auto;box-shadow:none}
+  .app-shell.mobile-menu-open .sidebar{transform:translateX(0);box-shadow:16px 0 48px rgba(0,0,0,.45)}
+  .app-shell .mobile-menu-scrim{display:block;position:fixed;inset:0;z-index:29;width:100%;height:100%;max-width:none;border-radius:0;background:rgba(1,5,14,.72);backdrop-filter:blur(2px)}
+  .app-shell .mobile-brand{display:flex;align-items:center;gap:7px;font-family:Orbitron;font-size:9px}
+  .app-shell .mobile-brand .brand-mark{width:28px;height:28px;flex:0 0 28px}
+  .market-price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .market-price-item{padding:9px;gap:6px}
+  .market-price-item .asset-icon{width:26px;height:26px;flex-basis:26px}
+  .market-price-name small{display:none}
+}
+@media(max-width:390px){
+  .market-price-grid{grid-template-columns:minmax(0,1fr)}
+  .market-price-name small{display:block}
+}
