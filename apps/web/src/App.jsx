@@ -986,7 +986,7 @@ function App() {
   }
 
   const nav = useMemo(() => ({
-    Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
+    Main: ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Deposit", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
     Tools: ["Browser", "Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
     Support: ["Support Center", "Help & Docs"],
@@ -1340,7 +1340,8 @@ function App() {
                   ["Wallets","◈","Create and manage wallets"],
                   ["Portfolio","▥","Assets and holdings"],
                   ["Send","↗","Send crypto assets"],
-                  ["Receive","↙","Receive and deposit"],
+                  ["Receive","↙","Share a receiving address"],
+                  ["Deposit","↓","Fund wallet and check deposit steps"],
                   ["Swap","⇄","Convert supported assets"],
                   ["Staking","⌁","Staking tools"],
                   ["NFTs","◇","NFT workspace"],
@@ -1440,7 +1441,7 @@ function App() {
               <button type="button" className="dashboard-tab active" aria-current="page" onClick={() => { setActive("Dashboard"); setShowDashboardMore(false); }}>
                 <span className="dashboard-tab-icon">⌂</span><small>Home</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Receive"); setShowDashboardMore(false); }}>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Deposit"); setShowDashboardMore(false); }}>
                 <span className="dashboard-tab-icon">↓</span><small>Deposit</small>
               </button>
               <button type="button" className="dashboard-tab" onClick={() => { setActive("Withdraw"); setShowDashboardMore(false); }}>
