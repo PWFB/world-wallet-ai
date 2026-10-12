@@ -1553,7 +1553,7 @@ def sync_wallet(user: dict = Depends(current_user)):
 
 
 # Short-lived process cache for the last successful CoinGecko market response.
-# A provider outage may use this only for 15 minutes, clearly marked stale.
+# A provider outage may use a previously successful real quote for up to one hour, clearly marked stale.
 _MARKET_PRICE_CACHE = None
 
 @app.get("/api/v1/prices/market")
@@ -1584,7 +1584,7 @@ def market_prices():
         cached = _MARKET_PRICE_CACHE
         if cached is not None:
             age_seconds = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
-            if age_seconds <= 900:
+            if age_seconds <= 3600:
                 fallback = dict(cached["payload"])
                 fallback["stale"] = True
                 fallback["cache_age_seconds"] = int(age_seconds)
