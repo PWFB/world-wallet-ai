@@ -1552,6 +1552,10 @@ def sync_wallet(user: dict = Depends(current_user)):
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
 
+# Short-lived process cache for the last successful CoinGecko market response.
+# A provider outage may use this only for 15 minutes, clearly marked stale.
+_MARKET_PRICE_CACHE = None
+
 @app.get("/api/v1/prices/market")
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
@@ -1574,6 +1578,16 @@ def market_prices():
         response.raise_for_status()
         raw = response.json()
     except Exception as exc:
+        # CoinGecko can rate-limit or temporarily fail. Serve only a previously
+        # successful real quote for up to 15 minutes; never synthesize prices.
+        cached = _MARKET_PRICE_CACHE
+        if cached is not None:
+            age_seconds = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
+            if age_seconds <= 900:
+                fallback = dict(cached["payload"])
+                fallback["stale"] = True
+                fallback["cache_age_seconds"] = int(age_seconds)
+                return fallback
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
 
     prices = {}
@@ -1588,7 +1602,15 @@ def market_prices():
     # BALMZ has no verified market quote yet. Never invent a price.
     prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
     prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
-    return {"source": "CoinGecko", "updated_at": datetime.now(timezone.utc).isoformat(), "prices": prices}
+    payload = {
+        "source": "CoinGecko",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "prices": prices,
+        "stale": False,
+        "cache_age_seconds": 0,
+    }
+    _MARKET_PRICE_CACHE = {"payload": payload, "fetched_at": datetime.now(timezone.utc)}
+    return payload
 
 
 @app.post("/api/v1/prices/refresh")
