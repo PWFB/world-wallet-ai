@@ -2164,11 +2164,16 @@ def _inspect_evm_address(address, network, rpc):
         raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
         block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
         balance = int(raw_balance or "0x0", 16) / 10**18
-        native_symbol = "BNB" if network == "bnb" else "ETH"
+        native_symbol = "BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else "ETH"
+        balance_basis = (
+            "Latest Sepolia testnet balance; test ETH has no mainnet value."
+            if network == "sepolia"
+            else "Latest on-chain native balance; fees and protocol locks may apply."
+        )
         result = {
             "network": network, "address": address, "native_symbol": native_symbol,
             "on_chain_balance": balance, "available_balance": balance,
-            "balance_basis": "Latest on-chain native balance; fees and protocol locks may apply.",
+            "balance_basis": balance_basis,
             "block_number": block_number, "tokens": [],
         }
         if network in {"ethereum", "bnb"}:
