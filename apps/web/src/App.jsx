@@ -1253,7 +1253,7 @@ function App() {
                 <div><h2>Live market prices</h2><span>Spot quotes from CoinGecko · refreshed every 60 seconds</span></div>
                 <button type="button" className="text-btn" onClick={refreshMarketPrices} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing…" : "↻ Refresh prices"}</button>
               </div>
-              {marketPricesError && <div className="market-price-error" role="status">{marketPricesError}</div>}
+              {marketPricesError && <div className="market-price-error" role="status" aria-live="polite"><strong>Price data warning:</strong> {marketPricesError}{marketPricesUpdatedAt && <> Last successful quote: {marketPricesUpdatedAt.toLocaleString()}.</>}</div>}
               <div className="market-price-grid">
                 {["BTC","ETH","BNB","USDT","USDC","SOL","XRP","ADA","LTC","DOGE","BALMZ"].map(symbol => {
                   const quote = marketPrices[symbol] || {};
