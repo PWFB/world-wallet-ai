@@ -376,5 +376,27 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["networks"]["ethereum"]["chain_id"], "0x1")
         self.assertEqual(result["networks"]["bnb"]["chain_id"], "0x38")
 
+
+    def test_wallet_sync_does_not_timestamp_transaction_history_with_warnings(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        sepolia_address = "0x" + "1" * 40
+        with patch.object(main, "db") as mocked_db, \
+             patch.object(main, "wallet_network_address", side_effect=lambda _user, network: sepolia_address if network == "sepolia" else None), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "BALMZ_SEPOLIA_CONTRACT", ""), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "sync_bitcoin_transactions", return_value=[]), \
+             patch.object(main, "sync_evm_native_transactions", return_value=([], "Sepolia RPC unavailable")), \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            conn = mocked_db.return_value.__enter__.return_value
+            conn.execute.return_value.fetchall.return_value = []
+            result = main.sync_wallet(user)
+
+        self.assertEqual(result["status"], "synced_with_warnings")
+        self.assertIn("Sepolia RPC unavailable", result["warnings"])
+        self.assertIsNone(result["last_transaction_sync_at"])
+
 if __name__ == "__main__":
     unittest.main()
