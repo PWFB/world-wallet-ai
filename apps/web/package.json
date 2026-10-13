@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "prebuild": "npm install --no-save @walletconnect/ethereum-provider@^2.23.3",
     "build": "vite build",
     "preview": "vite preview",
     "test:auth": "node --test src/neon-token.test.js"
