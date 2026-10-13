@@ -1791,19 +1791,21 @@ def refresh_wallet(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/system/status")
 def system_status(user: dict = Depends(current_user)):
+    # Report the active user's saved addresses, not service-level defaults, and
+    # do not imply the API itself broadcasts transactions when signing is external.
     return {
         "status": "ok",
         "database": bool(DATABASE_URL),
         "neon_auth": bool(NEON_JWKS_CLIENT),
-        "bitcoin": bool(BTC_ADDRESS),
-        "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
-        "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
-        "sepolia": bool(EVM_WALLET_ADDRESS and SEPOLIA_RPC_URL),
-        "live_prices": True,
+        "bitcoin": bool(wallet_network_address(user, "bitcoin")),
+        "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
+        "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
+        "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
+        "live_prices": bool(COINGECKO_API_BASE_URL),
         "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
-        "transaction_broadcast": True,
-        "transaction_broadcast_mode": "external_wallet_signed",
+        "transaction_broadcast": False,
+        "transaction_broadcast_mode": "external_wallet_signed_by_client",
     }
 
 @app.get("/api/v1/assets")
