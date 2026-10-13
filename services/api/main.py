@@ -15,7 +15,11 @@ import httpx
 import jwt
 from jwt import PyJWKClient
 from Crypto.Hash import keccak
-from services.api.market_price_cache import MarketPriceCache
+try:
+    from services.api.market_price_cache import MarketPriceCache
+except ModuleNotFoundError:
+    # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
+    from market_price_cache import MarketPriceCache
 
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
