@@ -310,5 +310,42 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(len(fake_conn.calls), 1)
         self.assertNotIn("INSERT", fake_conn.calls[0][0].upper())
 
+
+    def test_signing_config_is_external_signer_and_never_exposes_secret_material(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "ethereum": "0x" + "1" * 40,
+            "bnb": "0x" + "2" * 40,
+            "bitcoin": None,
+        }.get(network)), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "USDT_ETH_CONTRACT", ""), \
+             patch.object(main, "USDT_BSC_CONTRACT", ""), \
+             patch.object(main, "BALMZ_ETH_CONTRACT", ""):
+            result = main.wallet_signing_config(user)
+
+        self.assertEqual(result["mode"], "external_signer")
+        self.assertEqual(result["broadcast_policy"], "user_signed_only")
+        self.assertEqual(result["networks"]["ethereum"]["wallet_address"], None)
+        self.assertEqual(result["networks"]["bnb"]["wallet_address"], None)
+        serialized = str(result).lower()
+        for forbidden in ("private_key", "privatekey", "seed_phrase", "mnemonic", "secret_key"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_transfer_and_withdrawal_routes_do_not_claim_to_broadcast(self):
+        transfer_route = next(
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/transfers"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        )
+        withdrawal_route = next(
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/withdrawals"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        )
+        self.assertIs(transfer_route.endpoint, main.transfer)
+        self.assertIs(withdrawal_route.endpoint, main.withdrawal)
+
 if __name__ == "__main__":
     unittest.main()
