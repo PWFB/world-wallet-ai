@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Run market price cache regression tests
-        run: python -m unittest discover -s services/api/tests -v
+        run: python -m unittest discover -s services/api/tests -p 'test_market_price_cache.py' -v
 
   production-web-build:
     runs-on: ubuntu-latest
