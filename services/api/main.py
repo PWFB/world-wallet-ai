@@ -1915,6 +1915,15 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "usdt_contract": USDT_BSC_CONTRACT or None,
                 "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
             },
+            # Sepolia is a separate test network. Do not query token metadata here:
+            # only the chain-checked sync path may call the configured Sepolia RPC.
+            "sepolia": {
+                "chain_id": "0xaa36a7",
+                "wallet_address": wallet_network_address(user, "sepolia") if SEPOLIA_RPC_URL else None,
+                "balmz_contract": BALMZ_SEPOLIA_CONTRACT or None,
+                "balmz_decimals": 18 if BALMZ_SEPOLIA_CONTRACT else None,
+                "network_type": "testnet",
+            },
         },
         "broadcast_policy": "user_signed_only",
         "bitcoin": {
