@@ -1,0 +1,42 @@
+name: Live price regression and web build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/api/main.py"
+      - "services/api/market_price_cache.py"
+      - "services/api/tests/**"
+      - "apps/web/src/App.jsx"
+      - "apps/web/package.json"
+      - ".github/workflows/price-regression.yml"
+  push:
+    branches: [main, "fix/live-price-cache-stale-warning-tests"]
+
+permissions:
+  contents: read
+
+jobs:
+  price-cache-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run market price cache regression tests
+        run: python -m unittest discover -s services/api/tests -v
+
+  production-web-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: npm install
+      - name: Build production frontend
+        working-directory: apps/web
+        run: npm run build
