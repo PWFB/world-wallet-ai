@@ -1600,7 +1600,9 @@ def sync_wallet(user: dict = Depends(current_user)):
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) else None
+    # A configured address is not proof that history synced successfully. Only publish a
+    # success timestamp when every configured transaction source completed without warnings.
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
