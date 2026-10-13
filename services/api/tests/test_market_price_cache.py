@@ -48,10 +48,14 @@ class MarketPriceCacheTests(unittest.TestCase):
     def test_successful_store_resets_stale_state_and_age(self):
         self.cache.store(self.payload, fetched_at=self.now)
         self.cache.store({"source": "CoinGecko", "prices": {"ETH": {"usd": 2600.0}}}, fetched_at=self.now + timedelta(seconds=10))
-        result = self.cache.stale_response(now=self.now + timedelta(seconds=10))
-        self.assertFalse(result["stale"])
-        self.assertEqual(result["cache_age_seconds"], 0)
-        self.assertEqual(result["prices"]["ETH"]["usd"], 2600.0)
+        # A refreshed entry is stored as fresh; stale_response is only the outage fallback.
+        self.assertFalse(self.cache._entry["payload"]["stale"])
+        self.assertEqual(self.cache._entry["payload"]["cache_age_seconds"], 0)
+        self.assertEqual(self.cache._entry["payload"]["prices"]["ETH"]["usd"], 2600.0)
+        fallback = self.cache.stale_response(now=self.now + timedelta(seconds=11))
+        self.assertTrue(fallback["stale"])
+        self.assertEqual(fallback["cache_age_seconds"], 1)
+        self.assertEqual(fallback["prices"]["ETH"]["usd"], 2600.0)
 
 
 if __name__ == "__main__":
