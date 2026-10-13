@@ -398,5 +398,31 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("Sepolia RPC unavailable", result["warnings"])
         self.assertIsNone(result["last_transaction_sync_at"])
 
+
+    def test_system_status_uses_active_wallet_and_does_not_claim_api_broadcast(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "bitcoin": None,
+            "ethereum": None,
+            "bnb": "0x" + "1" * 40,
+            "sepolia": "0x" + "2" * 40,
+        }.get(network)), \
+             patch.object(main, "DATABASE_URL", "postgresql://configured"), \
+             patch.object(main, "NEON_JWKS_CLIENT", object()), \
+             patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38), \
+             patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "3" * 40), \
+             patch.object(main, "ETH_RPC_URL", "https://eth.example"), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3"):
+            result = main.system_status(user)
+
+        self.assertFalse(result["bitcoin"])
+        self.assertFalse(result["ethereum"])
+        self.assertTrue(result["bnb"])
+        self.assertTrue(result["sepolia"])
+        self.assertFalse(result["transaction_broadcast"])
+        self.assertEqual(result["transaction_broadcast_mode"], "external_wallet_signed_by_client")
+
 if __name__ == "__main__":
     unittest.main()
