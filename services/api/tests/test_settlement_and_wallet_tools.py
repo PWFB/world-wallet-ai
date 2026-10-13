@@ -424,5 +424,19 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertFalse(result["transaction_broadcast"])
         self.assertEqual(result["transaction_broadcast_mode"], "external_wallet_signed_by_client")
 
+
+    def test_neon_jwt_decode_requires_expiry_subject_and_email(self):
+        fake_key = type("FakeSigningKey", (), {"key": object(), "algorithm_name": "RS256"})()
+        with patch.object(main, "NEON_JWKS_CLIENT") as jwks, \
+             patch.object(main.jwt, "get_unverified_header", return_value={"alg": "RS256", "kid": "test-key"}), \
+             patch.object(main.jwt, "decode", return_value={"sub": "subject-1", "email": "user@example.com", "exp": 9999999999}) as decode, \
+             patch.object(main, "get_user", return_value={"id": "user-1", "email": "user@example.com", "wallet_id": "wallet-1"}):
+            jwks.get_signing_key_from_jwt.return_value = fake_key
+            with patch.object(main, "db") as mocked_db:
+                mocked_db.return_value.__enter__.return_value.execute.return_value = None
+                main.neon_auth_user("test.jwt")
+
+        self.assertEqual(decode.call_args.kwargs["options"]["require"], ["exp", "sub", "email"])
+
 if __name__ == "__main__":
     unittest.main()
