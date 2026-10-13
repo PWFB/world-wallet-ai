@@ -1,7 +1,11 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from services.api.market_price_cache import MarketPriceCache
+try:
+    from services.api.market_price_cache import MarketPriceCache
+except ModuleNotFoundError:
+    # unittest discovery may put services/api on sys.path instead of the repository root.
+    from market_price_cache import MarketPriceCache
 
 
 class MarketPriceCacheTests(unittest.TestCase):
