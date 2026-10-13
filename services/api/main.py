@@ -380,6 +380,15 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
         if user:
             conn.execute("UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s", (name, google_subject, user["id"]))
             wallet_id = user["wallet_id"]
+            if not wallet_id:
+                # Heal legacy Neon-auth users whose profile exists but whose
+                # wallet provisioning was interrupted during an earlier login.
+                wallet_id = "wallet_" + sha(user["id"] + ":production")[:24]
+                conn.execute(
+                    "INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING",
+                    (wallet_id, user["id"], "Production Wallet"),
+                )
+                conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s AND active_wallet_id IS NULL", (wallet_id, user["id"]))
         else:
             user_id = "usr_" + sha(email.lower())[:24]
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
@@ -450,11 +459,12 @@ def neon_auth_user(token: str):
     if not subject or not email:
         raise HTTPException(status_code=401, detail="Neon Auth token has no user identity")
     issuer = str(claims.get("iss") or "").strip()
-    if issuer and NEON_AUTH_BASE_URL:
+    if NEON_AUTH_BASE_URL:
         configured_issuer = NEON_AUTH_BASE_URL.rstrip("/")
         configured_origin = configured_issuer.split("/neondb/auth", 1)[0].rstrip("/")
         allowed_issuers = {configured_issuer, configured_origin}
-        if issuer.rstrip("/") not in allowed_issuers:
+        # A signed JWT with no issuer is not accepted as a Neon session.
+        if not issuer or issuer.rstrip("/") not in allowed_issuers:
             raise HTTPException(status_code=401, detail="Invalid Neon Auth issuer")
 
     name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
@@ -1514,7 +1524,8 @@ def sync_wallet(user: dict = Depends(current_user)):
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     sepolia_address = wallet_network_address(user, "sepolia")
-    if not btc_address and not eth_address and not bnb_address and not sepolia_address:
+    solana_address = wallet_network_address(user, "solana_devnet")
+    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_address:
         raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
@@ -1527,6 +1538,16 @@ def sync_wallet(user: dict = Depends(current_user)):
                     updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
             except Exception:
                 warnings.append("Bitcoin balance service unavailable")
+        if solana_address and SOLANA_DEVNET_RPC_URL:
+            try:
+                raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
+                sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'", (sol_balance,user["wallet_id"]))
+                updates.append({"network":"solana_devnet","asset":"SOL","balance":sol_balance})
+            except Exception:
+                warnings.append("Solana Devnet balance service unavailable")
+        elif solana_address:
+            warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
         if ETH_RPC_URL and eth_address:
             try:
                 eth = evm_balance(ETH_RPC_URL, eth_address)
