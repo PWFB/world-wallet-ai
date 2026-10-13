@@ -10,6 +10,17 @@ import main
 
 
 class SettlementAndWalletToolTests(unittest.TestCase):
+    def test_wallet_sync_route_is_registered_on_sync_handler_only(self):
+        sync_routes = [
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/wallet/sync"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        ]
+        self.assertEqual(len(sync_routes), 1)
+        self.assertIs(sync_routes[0].endpoint, main.sync_wallet)
+        self.assertNotIn(main._chain_heights, [route.endpoint for route in main.app.routes])
+        self.assertNotIn(main.wallet_asset_symbol, [route.endpoint for route in main.app.routes])
+
     def test_exact_base_units_accepts_supported_precision(self):
         self.assertEqual(main.exact_base_units(Decimal("1.25"), 8), 125000000)
         self.assertEqual(main.exact_base_units(Decimal("0.000001"), 6), 1)
@@ -86,7 +97,9 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             raise AssertionError("Token logs must not be queried on the wrong chain")
 
         user = {"wallet_id": "wallet_test"}
-        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "sepolia", "address": wallet, "label": "testnet"}
+        ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_token_transactions(
                 user, "https://rpc.example", "sepolia", contract, "BALMZ-SEP",
                 decimals=18, wallet_address=wallet,
@@ -160,6 +173,32 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["state"], "pending")
         self.assertEqual(result["confirmations"], 0)
 
+
+    def test_evm_sync_rejects_address_not_saved_to_active_wallet(self):
+        user = {"wallet_id": "wallet_test"}
+        foreign_address = "0x" + "3" * 40
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "ethereum", "address": "0x" + "1" * 40, "label": "primary"}
+        ]), patch.object(main, "rpc_call") as rpc:
+            imported, warning = main.sync_evm_native_transactions(
+                user, "https://rpc.example", "ethereum", wallet_address=foreign_address
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("not saved to the active wallet", warning)
+        rpc.assert_not_called()
+
+    def test_evm_sync_does_not_accept_address_from_another_network(self):
+        user = {"wallet_id": "wallet_test"}
+        address = "0x" + "1" * 40
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "sepolia", "address": address, "label": "testnet"}
+        ]), patch.object(main, "rpc_call") as rpc:
+            imported, warning = main.sync_evm_native_transactions(
+                user, "https://rpc.example", "ethereum", wallet_address=address
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("not saved to the active wallet", warning)
+        rpc.assert_not_called()
 
     def test_sepolia_native_sync_stops_before_block_reads_on_wrong_chain(self):
         wallet = "0x" + "1" * 40
@@ -243,6 +282,161 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(main.wallet_asset_symbol("USDT", "bnb"), "USDT-BNB")
         self.assertEqual(main.wallet_asset_symbol("BALMZ-SEP", "sepolia"), "BALMZ-SEP")
 
+
+
+    def test_configured_addresses_never_inject_service_fallback_addresses(self):
+        saved = [("sepolia", "0x" + "1" * 40, "Sepolia testnet")]
+        class FakeCursor:
+            def __init__(self, rows):
+                self.rows = rows
+            def fetchall(self):
+                return self.rows
+        class FakeConnection:
+            def __init__(self):
+                self.calls = []
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+            def execute(self, query, params):
+                self.calls.append((query, params))
+                return FakeCursor(saved)
+        fake_conn = FakeConnection()
+        with patch.object(main, "db", return_value=fake_conn):
+            with patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "2" * 40):
+                with patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38):
+                    result = main.configured_addresses({"wallet_id": "wallet_test"})
+        self.assertEqual(result, [{"network": "sepolia", "address": saved[0][1], "label": "Sepolia testnet"}])
+        self.assertEqual(len(fake_conn.calls), 1)
+        self.assertNotIn("INSERT", fake_conn.calls[0][0].upper())
+
+
+    def test_signing_config_is_external_signer_and_never_exposes_secret_material(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "ethereum": "0x" + "1" * 40,
+            "bnb": "0x" + "2" * 40,
+            "bitcoin": None,
+        }.get(network)), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "USDT_ETH_CONTRACT", ""), \
+             patch.object(main, "USDT_BSC_CONTRACT", ""), \
+             patch.object(main, "BALMZ_ETH_CONTRACT", ""):
+            result = main.wallet_signing_config(user)
+
+        self.assertEqual(result["mode"], "external_signer")
+        self.assertEqual(result["broadcast_policy"], "user_signed_only")
+        self.assertEqual(result["networks"]["ethereum"]["wallet_address"], None)
+        self.assertEqual(result["networks"]["bnb"]["wallet_address"], None)
+        serialized = str(result).lower()
+        for forbidden in ("private_key", "privatekey", "seed_phrase", "mnemonic", "secret_key"):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_transfer_and_withdrawal_routes_do_not_claim_to_broadcast(self):
+        transfer_route = next(
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/transfers"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        )
+        withdrawal_route = next(
+            route for route in main.app.routes
+            if getattr(route, "path", None) == "/api/v1/withdrawals"
+            and "POST" in (getattr(route, "methods", set()) or set())
+        )
+        self.assertIs(transfer_route.endpoint, main.transfer)
+        self.assertIs(withdrawal_route.endpoint, main.withdrawal)
+
+
+    def test_signing_config_keeps_sepolia_separate_with_correct_chain_id(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        sepolia_address = "0x" + "1" * 40
+        sepolia_contract = "0x" + "2" * 40
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "ethereum": "0x" + "3" * 40,
+            "bnb": "0x" + "4" * 40,
+            "bitcoin": None,
+            "sepolia": sepolia_address,
+        }.get(network)), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "BALMZ_SEPOLIA_CONTRACT", sepolia_contract), \
+             patch.object(main, "USDT_ETH_CONTRACT", ""), \
+             patch.object(main, "USDT_BSC_CONTRACT", ""), \
+             patch.object(main, "BALMZ_ETH_CONTRACT", ""):
+            result = main.wallet_signing_config(user)
+
+        sepolia = result["networks"]["sepolia"]
+        self.assertEqual(sepolia["chain_id"], "0xaa36a7")
+        self.assertEqual(sepolia["wallet_address"], sepolia_address)
+        self.assertEqual(sepolia["balmz_contract"], sepolia_contract)
+        self.assertEqual(sepolia["balmz_decimals"], 18)
+        self.assertEqual(sepolia["network_type"], "testnet")
+        self.assertEqual(result["networks"]["ethereum"]["chain_id"], "0x1")
+        self.assertEqual(result["networks"]["bnb"]["chain_id"], "0x38")
+
+
+    def test_wallet_sync_does_not_timestamp_transaction_history_with_warnings(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        sepolia_address = "0x" + "1" * 40
+        with patch.object(main, "db") as mocked_db, \
+             patch.object(main, "wallet_network_address", side_effect=lambda _user, network: sepolia_address if network == "sepolia" else None), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "BALMZ_SEPOLIA_CONTRACT", ""), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "sync_bitcoin_transactions", return_value=[]), \
+             patch.object(main, "sync_evm_native_transactions", return_value=([], "Sepolia RPC unavailable")), \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            conn = mocked_db.return_value.__enter__.return_value
+            conn.execute.return_value.fetchall.return_value = []
+            result = main.sync_wallet(user)
+
+        self.assertEqual(result["status"], "synced_with_warnings")
+        self.assertIn("Sepolia RPC unavailable", result["warnings"])
+        self.assertIsNone(result["last_transaction_sync_at"])
+
+
+    def test_system_status_uses_active_wallet_and_does_not_claim_api_broadcast(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "bitcoin": None,
+            "ethereum": None,
+            "bnb": "0x" + "1" * 40,
+            "sepolia": "0x" + "2" * 40,
+        }.get(network)), \
+             patch.object(main, "DATABASE_URL", "postgresql://configured"), \
+             patch.object(main, "NEON_JWKS_CLIENT", object()), \
+             patch.object(main, "BTC_ADDRESS", "bc1q" + "a" * 38), \
+             patch.object(main, "EVM_WALLET_ADDRESS", "0x" + "3" * 40), \
+             patch.object(main, "ETH_RPC_URL", "https://eth.example"), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3"):
+            result = main.system_status(user)
+
+        self.assertFalse(result["bitcoin"])
+        self.assertFalse(result["ethereum"])
+        self.assertTrue(result["bnb"])
+        self.assertTrue(result["sepolia"])
+        self.assertFalse(result["transaction_broadcast"])
+        self.assertEqual(result["transaction_broadcast_mode"], "external_wallet_signed_by_client")
+
+
+    def test_neon_jwt_decode_requires_expiry_subject_and_email(self):
+        fake_key = type("FakeSigningKey", (), {"key": object(), "algorithm_name": "RS256"})()
+        with patch.object(main, "NEON_JWKS_CLIENT") as jwks, \
+             patch.object(main.jwt, "get_unverified_header", return_value={"alg": "RS256", "kid": "test-key"}), \
+             patch.object(main.jwt, "decode", return_value={"sub": "subject-1", "email": "user@example.com", "exp": 9999999999}) as decode, \
+             patch.object(main, "get_user", return_value={"id": "user-1", "email": "user@example.com", "wallet_id": "wallet-1"}):
+            jwks.get_signing_key_from_jwt.return_value = fake_key
+            with patch.object(main, "db") as mocked_db:
+                mocked_db.return_value.__enter__.return_value.execute.return_value = None
+                main.neon_auth_user("test.jwt")
+
+        self.assertEqual(decode.call_args.kwargs["options"]["require"], ["exp", "sub", "email"])
 
 if __name__ == "__main__":
     unittest.main()

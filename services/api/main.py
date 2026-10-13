@@ -429,7 +429,9 @@ def neon_auth_user(token: str):
             token,
             signing_key.key,
             algorithms=[algorithm],
-            options={"verify_aud": False},
+            # A signed token without an expiry must never become a permanent session.
+            # Neon Auth access tokens must carry expiry and user identity claims.
+            options={"verify_aud": False, "require": ["exp", "sub", "email"]},
         )
     except Exception as exc:
         # Never log the bearer token, claims, or raw exception text. The
@@ -770,32 +772,32 @@ def validate_asset_network(asset: str, network: str):
 
 
 def configured_addresses(user):
+    # Only return addresses explicitly saved to this user's active wallet.
+    # Service-level fallback addresses must never be copied into user wallets:
+    # doing so can misattribute balances/transactions and mix testnet with mainnet.
     with db() as conn:
-        rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address", (user["wallet_id"],)).fetchall()
-        saved_evm_address = next((r[1] for r in rows if r[0] in ("ethereum", "bnb") and valid_evm_address(r[1])), "")
-        evm_address = EVM_WALLET_ADDRESS if valid_evm_address(EVM_WALLET_ADDRESS) else saved_evm_address
-        existing_networks = {row[0] for row in rows}
-        changed = False
-        if evm_address:
-            # Fill only missing network slots; never overwrite a user's saved address.
-            for network in ("ethereum", "bnb"):
-                if network not in existing_networks:
-                    conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING", (user["wallet_id"], network, evm_address))
-                    changed = True
-            if "sepolia" not in existing_networks:
-                conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,'sepolia',%s,'Sepolia testnet') ON CONFLICT DO NOTHING", (user["wallet_id"], evm_address))
-                changed = True
-        if BTC_ADDRESS and valid_bitcoin_address(BTC_ADDRESS) and "bitcoin" not in existing_networks:
-            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address) VALUES(%s,'bitcoin',%s) ON CONFLICT DO NOTHING", (user["wallet_id"], BTC_ADDRESS))
-            changed = True
-        if changed:
-            conn.commit()
-            rows = conn.execute("SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address", (user["wallet_id"],)).fetchall()
-    return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
+        rows = conn.execute(
+            "SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",
+            (user["wallet_id"],),
+        ).fetchall()
+    return [{"network": r[0], "address": r[1], "label": r[2]} for r in rows]
 
 
 def wallet_network_address(user, network):
     return next((a["address"] for a in configured_addresses(user) if a["network"] == network), None)
+
+
+def wallet_owns_network_address(user, network, address):
+    """Require every chain sync address to belong to this user's active wallet."""
+    if not address:
+        return False
+    normalized_network = str(network or "").strip().lower()
+    normalized_address = str(address).strip().lower()
+    return any(
+        str(item.get("network") or "").strip().lower() == normalized_network
+        and str(item.get("address") or "").strip().lower() == normalized_address
+        for item in configured_addresses(user)
+    )
 
 
 def rpc_call(url: str, method: str, params: list):
@@ -904,6 +906,8 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
     if not url or not wallet_address:
         return [], None
+    if not wallet_owns_network_address(user, network, wallet_address):
+        return [], f"{network} wallet address is not saved to the active wallet"
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
@@ -1017,6 +1021,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
     if not url or not contract or not wallet_address:
         return [], None
+    if not wallet_owns_network_address(user, network, wallet_address):
+        return [], f"{network} wallet address is not saved to the active wallet"
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
@@ -1161,6 +1167,8 @@ def bitcoin_address_transactions(address: str):
 def sync_bitcoin_transactions(user, address=None):
     address = address or next((a["address"] for a in configured_addresses(user) if a["network"]=="bitcoin"), None)
     if not address:
+        return []
+    if not wallet_owns_network_address(user, "bitcoin", address):
         return []
     try:
         chain_txs = bitcoin_address_transactions(address)
@@ -1434,7 +1442,6 @@ def wallet_addresses(user: dict = Depends(current_user)):
     return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "No production wallet address is configured yet"}
 
 
-@app.post("/api/v1/wallet/sync")
 def _chain_heights():
     heights = {}
     try:
@@ -1496,12 +1503,12 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
     return result
 
 
-@app.post("/api/v1/wallet/sync")
 def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
     return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
 
 
+@app.post("/api/v1/wallet/sync")
 def sync_wallet(user: dict = Depends(current_user)):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
@@ -1593,7 +1600,9 @@ def sync_wallet(user: dict = Depends(current_user)):
         # An empty result can be a legitimate zero-transaction wallet; do not label it
         # as an error because the balance and transaction endpoint may still be healthy.
         pass
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) else None
+    # A configured address is not proof that history synced successfully. Only publish a
+    # success timestamp when every configured transaction source completed without warnings.
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
@@ -1782,19 +1791,21 @@ def refresh_wallet(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/system/status")
 def system_status(user: dict = Depends(current_user)):
+    # Report the active user's saved addresses, not service-level defaults, and
+    # do not imply the API itself broadcasts transactions when signing is external.
     return {
         "status": "ok",
         "database": bool(DATABASE_URL),
         "neon_auth": bool(NEON_JWKS_CLIENT),
-        "bitcoin": bool(BTC_ADDRESS),
-        "ethereum": bool(EVM_WALLET_ADDRESS and ETH_RPC_URL),
-        "bnb": bool(EVM_WALLET_ADDRESS and BSC_RPC_URL),
-        "sepolia": bool(EVM_WALLET_ADDRESS and SEPOLIA_RPC_URL),
-        "live_prices": True,
+        "bitcoin": bool(wallet_network_address(user, "bitcoin")),
+        "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
+        "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
+        "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
+        "live_prices": bool(COINGECKO_API_BASE_URL),
         "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
-        "transaction_broadcast": True,
-        "transaction_broadcast_mode": "external_wallet_signed",
+        "transaction_broadcast": False,
+        "transaction_broadcast_mode": "external_wallet_signed_by_client",
     }
 
 @app.get("/api/v1/assets")
@@ -1907,6 +1918,15 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "wallet_address": bnb_address if BSC_RPC_URL else None,
                 "usdt_contract": USDT_BSC_CONTRACT or None,
                 "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
+            },
+            # Sepolia is a separate test network. Do not query token metadata here:
+            # only the chain-checked sync path may call the configured Sepolia RPC.
+            "sepolia": {
+                "chain_id": "0xaa36a7",
+                "wallet_address": wallet_network_address(user, "sepolia") if SEPOLIA_RPC_URL else None,
+                "balmz_contract": BALMZ_SEPOLIA_CONTRACT or None,
+                "balmz_decimals": 18 if BALMZ_SEPOLIA_CONTRACT else None,
+                "network_type": "testnet",
             },
         },
         "broadcast_policy": "user_signed_only",
