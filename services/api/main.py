@@ -787,6 +787,19 @@ def wallet_network_address(user, network):
     return next((a["address"] for a in configured_addresses(user) if a["network"] == network), None)
 
 
+def wallet_owns_network_address(user, network, address):
+    """Require every chain sync address to belong to this user's active wallet."""
+    if not address:
+        return False
+    normalized_network = str(network or "").strip().lower()
+    normalized_address = str(address).strip().lower()
+    return any(
+        str(item.get("network") or "").strip().lower() == normalized_network
+        and str(item.get("address") or "").strip().lower() == normalized_address
+        for item in configured_addresses(user)
+    )
+
+
 def rpc_call(url: str, method: str, params: list):
     if not url:
         return None
@@ -893,6 +906,8 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
     if not url or not wallet_address:
         return [], None
+    if not wallet_owns_network_address(user, network, wallet_address):
+        return [], f"{network} wallet address is not saved to the active wallet"
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
@@ -1006,6 +1021,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
     if not url or not contract or not wallet_address:
         return [], None
+    if not wallet_owns_network_address(user, network, wallet_address):
+        return [], f"{network} wallet address is not saved to the active wallet"
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
@@ -1150,6 +1167,8 @@ def bitcoin_address_transactions(address: str):
 def sync_bitcoin_transactions(user, address=None):
     address = address or next((a["address"] for a in configured_addresses(user) if a["network"]=="bitcoin"), None)
     if not address:
+        return []
+    if not wallet_owns_network_address(user, "bitcoin", address):
         return []
     try:
         chain_txs = bitcoin_address_transactions(address)
