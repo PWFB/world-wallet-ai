@@ -347,5 +347,34 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIs(transfer_route.endpoint, main.transfer)
         self.assertIs(withdrawal_route.endpoint, main.withdrawal)
 
+
+    def test_signing_config_keeps_sepolia_separate_with_correct_chain_id(self):
+        user = {"id": "user_test", "wallet_id": "wallet_test"}
+        sepolia_address = "0x" + "1" * 40
+        sepolia_contract = "0x" + "2" * 40
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: {
+            "ethereum": "0x" + "3" * 40,
+            "bnb": "0x" + "4" * 40,
+            "bitcoin": None,
+            "sepolia": sepolia_address,
+        }.get(network)), \
+             patch.object(main, "ETH_RPC_URL", ""), \
+             patch.object(main, "BSC_RPC_URL", ""), \
+             patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
+             patch.object(main, "BALMZ_SEPOLIA_CONTRACT", sepolia_contract), \
+             patch.object(main, "USDT_ETH_CONTRACT", ""), \
+             patch.object(main, "USDT_BSC_CONTRACT", ""), \
+             patch.object(main, "BALMZ_ETH_CONTRACT", ""):
+            result = main.wallet_signing_config(user)
+
+        sepolia = result["networks"]["sepolia"]
+        self.assertEqual(sepolia["chain_id"], "0xaa36a7")
+        self.assertEqual(sepolia["wallet_address"], sepolia_address)
+        self.assertEqual(sepolia["balmz_contract"], sepolia_contract)
+        self.assertEqual(sepolia["balmz_decimals"], 18)
+        self.assertEqual(sepolia["network_type"], "testnet")
+        self.assertEqual(result["networks"]["ethereum"]["chain_id"], "0x1")
+        self.assertEqual(result["networks"]["bnb"]["chain_id"], "0x38")
+
 if __name__ == "__main__":
     unittest.main()
