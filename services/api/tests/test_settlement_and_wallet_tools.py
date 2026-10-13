@@ -97,7 +97,9 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             raise AssertionError("Token logs must not be queried on the wrong chain")
 
         user = {"wallet_id": "wallet_test"}
-        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "sepolia", "address": wallet, "label": "testnet"}
+        ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_token_transactions(
                 user, "https://rpc.example", "sepolia", contract, "BALMZ-SEP",
                 decimals=18, wallet_address=wallet,
@@ -171,6 +173,32 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["state"], "pending")
         self.assertEqual(result["confirmations"], 0)
 
+
+    def test_evm_sync_rejects_address_not_saved_to_active_wallet(self):
+        user = {"wallet_id": "wallet_test"}
+        foreign_address = "0x" + "3" * 40
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "ethereum", "address": "0x" + "1" * 40, "label": "primary"}
+        ]), patch.object(main, "rpc_call") as rpc:
+            imported, warning = main.sync_evm_native_transactions(
+                user, "https://rpc.example", "ethereum", wallet_address=foreign_address
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("not saved to the active wallet", warning)
+        rpc.assert_not_called()
+
+    def test_evm_sync_does_not_accept_address_from_another_network(self):
+        user = {"wallet_id": "wallet_test"}
+        address = "0x" + "1" * 40
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "sepolia", "address": address, "label": "testnet"}
+        ]), patch.object(main, "rpc_call") as rpc:
+            imported, warning = main.sync_evm_native_transactions(
+                user, "https://rpc.example", "ethereum", wallet_address=address
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("not saved to the active wallet", warning)
+        rpc.assert_not_called()
 
     def test_sepolia_native_sync_stops_before_block_reads_on_wrong_chain(self):
         wallet = "0x" + "1" * 40
