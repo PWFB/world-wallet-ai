@@ -15,6 +15,7 @@ import httpx
 import jwt
 from jwt import PyJWKClient
 from Crypto.Hash import keccak
+from services.api.market_price_cache import MarketPriceCache
 
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
@@ -1608,9 +1609,9 @@ def sync_wallet(user: dict = Depends(current_user)):
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
 
 
-# Short-lived process cache for the last successful CoinGecko market response.
-# A provider outage may use a previously successful real quote for up to one hour, clearly marked stale.
-_MARKET_PRICE_CACHE = None
+# Process-local cache of verified provider responses. Cache entries expire after 15 minutes;
+# stale responses are explicitly flagged and never fabricated from zero/default values.
+_MARKET_PRICE_CACHE = MarketPriceCache(max_age_seconds=900)
 
 @app.get("/api/v1/prices/market")
 def market_prices():
@@ -1637,14 +1638,9 @@ def market_prices():
     except Exception as exc:
         # CoinGecko can rate-limit or temporarily fail. Serve only a previously
         # successful real quote for up to 15 minutes; never synthesize prices.
-        cached = _MARKET_PRICE_CACHE
-        if cached is not None:
-            age_seconds = (datetime.now(timezone.utc) - cached["fetched_at"]).total_seconds()
-            if age_seconds <= 3600:
-                fallback = dict(cached["payload"])
-                fallback["stale"] = True
-                fallback["cache_age_seconds"] = int(age_seconds)
-                return fallback
+        fallback = _MARKET_PRICE_CACHE.stale_response()
+        if fallback is not None:
+            return fallback
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
 
     prices = {}
@@ -1666,7 +1662,7 @@ def market_prices():
         "stale": False,
         "cache_age_seconds": 0,
     }
-    _MARKET_PRICE_CACHE = {"payload": payload, "fetched_at": datetime.now(timezone.utc)}
+    _MARKET_PRICE_CACHE.store(payload)
     return payload
 
 
