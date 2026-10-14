@@ -1642,51 +1642,15 @@ _MARKET_PRICE_CACHE = MarketPriceCache(max_age_seconds=900)
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
     global _MARKET_PRICE_CACHE
-    coin_ids = {
-        "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
-        "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
-        "LTC":"litecoin","DOGE":"dogecoin",
-    }
+    from services.api.market_price_sources import fetch_market_prices
     try:
-        response = httpx.get(
-            f"{COINGECKO_API_BASE_URL}/simple/price",
-            params={
-                "ids": ",".join(coin_ids.values()),
-                "vs_currencies": "usd",
-                "include_24hr_change": "true",
-            },
-            headers=coingecko_headers(),
-            timeout=8,
-        )
-        response.raise_for_status()
-        raw = response.json()
+        payload = fetch_market_prices(COINGECKO_API_BASE_URL, headers=coingecko_headers(), timeout=8)
     except Exception as exc:
-        # CoinGecko can rate-limit or temporarily fail. Serve only a previously
-        # successful real quote for up to 15 minutes; never synthesize prices.
+        # Serve only recent, previously verified provider data; never synthesize prices.
         fallback = _MARKET_PRICE_CACHE.stale_response()
         if fallback is not None:
             return fallback
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
-
-    prices = {}
-    for symbol, coin_id in coin_ids.items():
-        quote = raw.get(coin_id, {})
-        usd = quote.get("usd")
-        prices[symbol] = {
-            "usd": float(usd) if usd is not None else None,
-            "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
-            "listed": usd is not None,
-        }
-    # BALMZ has no verified market quote yet. Never invent a price.
-    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
-    prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
-    payload = {
-        "source": "CoinGecko",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "prices": prices,
-        "stale": False,
-        "cache_age_seconds": 0,
-    }
     _MARKET_PRICE_CACHE.store(payload)
     return payload
 

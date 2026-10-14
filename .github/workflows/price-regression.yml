@@ -24,6 +24,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install market price test dependency
+        run: python -m pip install httpx
       - name: Run market price cache regression tests
         run: python -m unittest discover -s services/api/tests -p 'test_market_price_cache.py' -v
 
