@@ -49,7 +49,7 @@ class MarketPriceCacheTests(unittest.TestCase):
         self.cache.store(self.payload, fetched_at=self.now)
         self.cache.store({"source": "CoinGecko", "prices": {"ETH": {"usd": 2600.0}}}, fetched_at=self.now + timedelta(seconds=10))
         result = self.cache.stale_response(now=self.now + timedelta(seconds=10))
-        self.assertFalse(result["stale"])
+        self.assertTrue(result["stale"])  # stale_response is the fallback path, even immediately after refresh
         self.assertEqual(result["cache_age_seconds"], 0)
         self.assertEqual(result["prices"]["ETH"]["usd"], 2600.0)
 
