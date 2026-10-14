@@ -3,6 +3,7 @@ import hashlib
 import re
 import secrets
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 import psycopg
@@ -21,6 +22,7 @@ except ModuleNotFoundError:
     # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
     from market_price_cache import MarketPriceCache
 
+logger = logging.getLogger(__name__)
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
@@ -1638,6 +1640,61 @@ def sync_wallet(user: dict = Depends(current_user)):
 # stale responses are explicitly flagged and never fabricated from zero/default values.
 _MARKET_PRICE_CACHE = MarketPriceCache(max_age_seconds=900)
 
+def _coinbase_spot_price_fallback():
+    """Fetch real USD spot quotes from Coinbase when CoinGecko is unavailable.
+
+    Unsupported pairs stay unlisted; no synthetic values or 24-hour changes are added.
+    """
+    pairs = {
+        "BTC": "BTC-USD", "USDT": "USDT-USD", "ETH": "ETH-USD",
+        "USDC": "USDC-USD", "SOL": "SOL-USD", "XRP": "XRP-USD",
+        "ADA": "ADA-USD", "LTC": "LTC-USD", "DOGE": "DOGE-USD",
+        "BNB": "BNB-USD",
+    }
+    prices = {}
+    def fetch(symbol, product):
+        response = httpx.get(
+            f"https://api.coinbase.com/v2/prices/{product}/spot",
+            timeout=4,
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        amount = response.json().get("data", {}).get("amount")
+        value = float(amount) if amount is not None else None
+        if value is None or value <= 0:
+            return symbol, None
+        return symbol, {"usd": value, "usd_24h_change": None, "listed": True}
+
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        futures = {pool.submit(fetch, symbol, product): symbol for symbol, product in pairs.items()}
+        for future in as_completed(futures):
+            symbol = futures[future]
+            try:
+                key, quote = future.result()
+                prices[key] = quote or {"usd": None, "usd_24h_change": None, "listed": False}
+            except Exception as exc:
+                logger.info("Coinbase spot fallback unavailable: asset=%s error_type=%s",
+                            symbol, type(exc).__name__)
+                prices[symbol] = {"usd": None, "usd_24h_change": None, "listed": False}
+
+    prices["USDT-BNB"] = dict(prices.get("USDT", {"usd": None, "usd_24h_change": None, "listed": False}))
+    prices["BALMZ"] = {
+        "usd": None, "usd_24h_change": None, "listed": False,
+        "eth_reference_usd": prices.get("ETH", {}).get("usd"),
+    }
+    prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
+    if not any(item.get("listed") and item.get("usd") is not None for item in prices.values()):
+        return None
+    return {
+        "source": "Coinbase",
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "prices": prices,
+        "stale": False,
+        "cache_age_seconds": 0,
+        "note": "Spot prices from fallback provider; 24-hour changes are unavailable.",
+    }
+
+
 @app.get("/api/v1/prices/market")
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
@@ -1661,11 +1718,20 @@ def market_prices():
         response.raise_for_status()
         raw = response.json()
     except Exception as exc:
-        # CoinGecko can rate-limit or temporarily fail. Serve only a previously
-        # successful real quote for up to 15 minutes; never synthesize prices.
+        # Log only provider/status metadata, never request headers or API keys.
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        logger.warning("CoinGecko market-price request failed: error_type=%s status=%s",
+                       type(exc).__name__, status)
+        # Prefer a recent successful quote, then try an independent spot-price provider.
         fallback = _MARKET_PRICE_CACHE.stale_response()
         if fallback is not None:
+            logger.info("Serving cached market quotes: age_seconds=%s", fallback.get("cache_age_seconds"))
             return fallback
+        backup = _coinbase_spot_price_fallback()
+        if backup is not None:
+            _MARKET_PRICE_CACHE.store(backup)
+            logger.warning("Serving fresh spot quotes from Coinbase fallback; 24h changes are unavailable")
+            return backup
         raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
 
     prices = {}
