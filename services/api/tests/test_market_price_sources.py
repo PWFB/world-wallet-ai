@@ -1,7 +1,10 @@
 import unittest
 from unittest.mock import patch, Mock
 
-from services.api.market_price_sources import fetch_market_prices
+try:
+    from services.api.market_price_sources import fetch_market_prices
+except ModuleNotFoundError:
+    from market_price_sources import fetch_market_prices
 
 
 class MarketPriceSourcesTests(unittest.TestCase):
