@@ -242,7 +242,7 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
     def test_neon_jwt_rejects_unapproved_signing_algorithm(self):
         with (
             patch.object(main, "NEON_JWKS_CLIENT", FakeJwksClient()),
-            patch.object(main, "jwt.get_unverified_header", return_value={"alg": "HS256"}),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "HS256"}),
             patch.object(main, "jwt.decode") as decode,
         ):
             with self.assertRaises(main.HTTPException) as raised:
@@ -262,7 +262,7 @@ class NeonAuthWalletSafetyTests(unittest.TestCase):
 
         with (
             patch.object(main, "NEON_JWKS_CLIENT", MismatchedJwksClient()),
-            patch.object(main, "jwt.get_unverified_header", return_value={"alg": "EdDSA"}),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "EdDSA"}),
             patch.object(main, "jwt.decode") as decode,
         ):
             with self.assertRaises(main.HTTPException) as raised:

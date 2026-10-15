@@ -640,7 +640,7 @@ def _base58_decode(value: str):
         number = number * 58 + BASE58_ALPHABET.index(c)
     raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
     leading = len(value) - len(value.lstrip("1"))
-    return b"\\x00" * leading + raw
+    return b"\x00" * leading + raw
 
 
 def valid_bitcoin_base58(address: str) -> bool:
