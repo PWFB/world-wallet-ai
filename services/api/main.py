@@ -46,7 +46,8 @@ EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 # Alchemy credentials remain backend-only. Explicit RPC URL takes precedence; otherwise build
 # the Ethereum Mainnet endpoint from ALCHEMY_API_KEY without ever returning it to the client.
 ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "").strip()
-ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "")).strip()
+ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
+ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
@@ -819,20 +820,46 @@ def wallet_owns_network_address(user, network, address):
 
 
 def rpc_call(url: str, method: str, params: list):
+    """Call JSON-RPC, falling back to a public read-only Ethereum RPC if needed."""
     if not url:
         return None
-    response = httpx.post(url, json={"jsonrpc":"2.0","id":1,"method":method,"params":params}, timeout=10)
-    response.raise_for_status()
-    payload = response.json()
-    if payload.get("error"):
-        raise ValueError(payload["error"].get("message","RPC error"))
-    return payload.get("result")
+    candidates = [url]
+    if url == ETH_RPC_URL and ETH_PUBLIC_RPC_URL and ETH_PUBLIC_RPC_URL not in candidates:
+        candidates.append(ETH_PUBLIC_RPC_URL)
+    last_error = None
+    for candidate in candidates:
+        try:
+            response = httpx.post(
+                candidate,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                raise ValueError("RPC provider returned a JSON-RPC error")
+            if "result" not in payload:
+                raise ValueError("RPC provider returned no result")
+            return payload["result"]
+        except Exception as exc:
+            last_error = exc
+    if last_error:
+        raise last_error
+    return None
 
 
 def evm_chain_id(url: str):
     """Return the connected EVM RPC chain ID as an integer."""
     raw = rpc_call(url, "eth_chainId", [])
     return int(raw, 16) if raw else None
+
+
+def require_ethereum_mainnet_rpc(url: str):
+    """Fail closed if an Ethereum RPC endpoint is not connected to mainnet."""
+    chain_id = evm_chain_id(url)
+    if chain_id != 1:
+        raise ValueError("Ethereum RPC did not report mainnet chain ID 1")
+    return chain_id
 
 
 def require_sepolia_rpc(url: str):
@@ -1558,6 +1585,7 @@ def sync_wallet(user: dict = Depends(current_user)):
             warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
         if ETH_RPC_URL and eth_address:
             try:
+                require_ethereum_mainnet_rpc(ETH_RPC_URL)
                 eth = evm_balance(ETH_RPC_URL, eth_address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
                 updates.append({"network":"ethereum","asset":"ETH","balance":eth})
@@ -2125,6 +2153,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         if network == "ethereum":
             rpc_url, asset = ETH_RPC_URL, "ETH"
             if not rpc_url: raise HTTPException(status_code=503, detail="Ethereum Mainnet RPC is not configured")
+            require_ethereum_mainnet_rpc(rpc_url)
             balance = evm_balance(rpc_url, address)
         elif network == "sepolia":
             rpc_url, asset = SEPOLIA_RPC_URL, "ETH (Sepolia)"
@@ -2147,6 +2176,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
     except HTTPException:
         raise
     except Exception as exc:
+        logger.warning("Wallet balance lookup failed for network=%s error_type=%s", network, type(exc).__name__)
         raise HTTPException(status_code=503, detail=f"{network.replace('_', ' ').title()} balance service unavailable") from exc
     return {"wallet_id": wallet_id, "network": network, "address": address, "asset": asset,
             "balance": balance, "unit": asset, "read_only": True,
@@ -2293,6 +2323,8 @@ def _inspect_evm_address(address, network, rpc):
     try:
         if network == "sepolia":
             require_sepolia_rpc(rpc)
+        elif network == "ethereum":
+            require_ethereum_mainnet_rpc(rpc)
         raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
         block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
         balance = int(raw_balance or "0x0", 16) / 10**18
