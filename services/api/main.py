@@ -2425,6 +2425,16 @@ def revoke_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_us
             raise HTTPException(status_code=404, detail="API key not found or already revoked")
     return {"revoked": True, "id": request.key_id}
 
+@app.post("/api/v1/api-keys/activate")
+def activate_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    """Reactivate a revoked key only for its owner."""
+    with db() as conn:
+        result = conn.execute("UPDATE api_keys SET revoked_at=NULL WHERE id=%s AND owner_id=%s AND revoked_at IS NOT NULL", (request.key_id, user["id"]))
+        conn.commit()
+        if result.rowcount < 1:
+            raise HTTPException(status_code=404, detail="Revoked API key not found")
+    return {"activated": True, "id": request.key_id}
+
 
 @app.post("/api/v1/tools/address-balance")
 def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(current_user)):
