@@ -1,5 +1,6 @@
 import os
 import logging
+import base64
 import hashlib
 import re
 import secrets
@@ -17,6 +18,7 @@ import httpx
 import jwt
 from jwt import PyJWKClient
 from Crypto.Hash import keccak
+from Crypto.Cipher import AES
 try:
     from services.api.market_price_cache import MarketPriceCache
 except ModuleNotFoundError:
@@ -36,6 +38,8 @@ GEMINI_ADMIN_EMAIL = (os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv(
 GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
+COINGECKO_ADMIN_EMAIL = (os.getenv("WORLD_WALLET_COINGECKO_ADMIN_EMAIL") or GEMINI_ADMIN_EMAIL).strip().lower()
+WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
 TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
 TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
@@ -63,13 +67,67 @@ if not TRUSTED_ORIGINS:
     TRUSTED_ORIGINS = ["https://world-wallet-ai-frontend.onrender.com", "http://localhost:5173", "http://localhost:4173"]
 
 
-def coingecko_headers():
-    """Keep the CoinGecko credential server-side; support Demo and Pro API hosts."""
-    if not COINGECKO_API_KEY:
+def _coingecko_encryption_key():
+    if not WORLD_WALLET_SECRET_ENCRYPTION_KEY:
+        return None
+    return hashlib.sha256(WORLD_WALLET_SECRET_ENCRYPTION_KEY.encode("utf-8")).digest()
+
+
+def _encrypt_coingecko_key(secret):
+    key = _coingecko_encryption_key()
+    if not key:
+        raise HTTPException(status_code=503, detail="Set WORLD_WALLET_SECRET_ENCRYPTION_KEY in the backend environment before saving CoinGecko keys")
+    cipher = AES.new(key, AES.MODE_GCM)
+    encrypted, tag = cipher.encrypt_and_digest(secret.encode("utf-8"))
+    return tuple(base64.urlsafe_b64encode(part).decode("ascii") for part in (cipher.nonce, tag, encrypted))
+
+
+def _decrypt_coingecko_key(nonce, tag, encrypted):
+    key = _coingecko_encryption_key()
+    if not key:
+        return None
+    try:
+        cipher = AES.new(key, AES.MODE_GCM, nonce=base64.urlsafe_b64decode(nonce))
+        return cipher.decrypt_and_verify(base64.urlsafe_b64decode(encrypted), base64.urlsafe_b64decode(tag)).decode("utf-8")
+    except Exception:
+        logger.error("CoinGecko key decryption failed; check WORLD_WALLET_SECRET_ENCRYPTION_KEY")
+        return None
+
+
+def _active_coingecko_config():
+    if DATABASE_URL:
+        try:
+            with db() as conn:
+                row = conn.execute("""SELECT key_nonce,key_tag,key_ciphertext,base_url FROM coingecko_api_keys
+                    WHERE active=TRUE AND revoked_at IS NULL ORDER BY created_at DESC LIMIT 1""").fetchone()
+            if row:
+                key = _decrypt_coingecko_key(row[0], row[1], row[2])
+                if key:
+                    return key, str(row[3] or COINGECKO_API_BASE_URL).rstrip("/")
+        except Exception as exc:
+            logger.warning("CoinGecko encrypted-key lookup failed: error_type=%s", type(exc).__name__)
+    return COINGECKO_API_KEY, COINGECKO_API_BASE_URL
+
+
+def coingecko_headers(api_key=None, base_url=None):
+    """Keep CoinGecko credentials server-side; support Demo and Pro API hosts."""
+    key, base = (api_key, base_url) if api_key is not None else _active_coingecko_config()
+    if not key:
         return {}
-    if "pro-api.coingecko.com" in COINGECKO_API_BASE_URL:
-        return {"x-cg-pro-api-key": COINGECKO_API_KEY}
-    return {"x-cg-demo-api-key": COINGECKO_API_KEY}
+    if "pro-api.coingecko.com" in (base or ""):
+        return {"x-cg-pro-api-key": key}
+    return {"x-cg-demo-api-key": key}
+
+
+def require_coingecko_admin(user):
+    email = str(user.get("email") or "").strip().lower()
+    if not COINGECKO_ADMIN_EMAIL or email != COINGECKO_ADMIN_EMAIL:
+        raise HTTPException(status_code=403, detail="Only the configured World Wallet AI administrator can manage CoinGecko keys")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="CoinGecko key management requires PostgreSQL")
+    if not _coingecko_encryption_key():
+        raise HTTPException(status_code=503, detail="Set WORLD_WALLET_SECRET_ENCRYPTION_KEY in the backend environment before saving CoinGecko keys")
+    return email
 
 
 app.add_middleware(
@@ -189,6 +247,12 @@ class ApiKeyRevokeRequest(BaseModel):
     key_id: str = Field(min_length=4, max_length=100)
 
 
+class CoinGeckoKeyCreateRequest(BaseModel):
+    name: str = Field(default="CoinGecko API key", min_length=1, max_length=80)
+    api_key: str = Field(min_length=8, max_length=300)
+    base_url: str = Field(default="https://api.coingecko.com/api/v3", min_length=12, max_length=200)
+
+
 class ApiKeyImportRequest(BaseModel):
     name: str = Field(default="Imported API key", min_length=1, max_length=80)
     api_key: str = Field(min_length=30, max_length=300)
@@ -226,6 +290,13 @@ def init_db():
           revoked_at TIMESTAMPTZ
         );
         CREATE INDEX IF NOT EXISTS api_keys_owner_created_idx ON api_keys(owner_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS coingecko_api_keys(
+          id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), name TEXT NOT NULL,
+          key_prefix TEXT NOT NULL, key_nonce TEXT NOT NULL, key_tag TEXT NOT NULL, key_ciphertext TEXT NOT NULL,
+          base_url TEXT NOT NULL DEFAULT 'https://api.coingecko.com/api/v3', active BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS coingecko_api_keys_status_idx ON coingecko_api_keys(active,revoked_at,created_at DESC);
         CREATE TABLE IF NOT EXISTS phone_otp_requests(
           id BIGSERIAL PRIMARY KEY,
           phone_number TEXT NOT NULL,
@@ -1735,7 +1806,7 @@ def market_prices():
     }
     try:
         response = httpx.get(
-            f"{COINGECKO_API_BASE_URL}/simple/price",
+            f"{_active_coingecko_config()[1]}/simple/price",
             params={
                 "ids": ",".join(coin_ids.values()),
                 "vs_currencies": "usd",
@@ -1796,7 +1867,7 @@ def market_price_history(symbol: str, days: int = 1):
     if days not in (1, 7, 14, 30):
         raise HTTPException(status_code=400, detail="Supported chart ranges are 1, 7, 14, or 30 days")
     try:
-        response = httpx.get(f"{COINGECKO_API_BASE_URL}/coins/{coin_ids[key]}/market_chart", params={"vs_currency":"usd","days":days}, headers=coingecko_headers(), timeout=12)
+        response = httpx.get(f"{_active_coingecko_config()[1]}/coins/{coin_ids[key]}/market_chart", params={"vs_currency":"usd","days":days}, headers=coingecko_headers(), timeout=12)
         response.raise_for_status()
         raw = response.json()
     except Exception as exc:
@@ -1816,7 +1887,7 @@ def refresh_prices(user: dict = Depends(current_user)):
     }
     try:
         response = httpx.get(
-            f"{COINGECKO_API_BASE_URL}/simple/price",
+            f"{_active_coingecko_config()[1]}/simple/price",
             params={"ids":",".join(coin_ids.values()),"vs_currencies":"usd"},
             headers=coingecko_headers(),
             timeout=8,
@@ -1917,7 +1988,7 @@ def system_status(user: dict = Depends(current_user)):
         "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
         "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
         "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
-        "live_prices": bool(COINGECKO_API_BASE_URL),
+        "live_prices": bool(_active_coingecko_config()[0]),
         "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
         "transaction_broadcast": False,
@@ -2370,11 +2441,11 @@ def _inspect_evm_address(address, network, rpc):
 @app.get("/api/v1/api-request/key-balance")
 def api_request_key_balance(user: dict = Depends(current_user)):
     """Return CoinGecko API-key usage without ever exposing the configured secret."""
-    if not COINGECKO_API_KEY:
+    if not _active_coingecko_config()[0]:
         raise HTTPException(status_code=503, detail="CoinGecko API key is not configured on the server")
     try:
         response = httpx.get(
-            COINGECKO_API_BASE_URL + "/key",
+            _active_coingecko_config()[1] + "/key",
             headers=coingecko_headers(),
             timeout=8,
         )
@@ -2457,6 +2528,68 @@ def revoke_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_us
             raise HTTPException(status_code=404, detail="API key not found or already revoked")
     return {"revoked": True, "id": request.key_id}
 
+@app.post("/api/v1/api-keys/activate")
+def activate_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    """Reactivate a revoked key only for its owner."""
+    with db() as conn:
+        result = conn.execute("UPDATE api_keys SET revoked_at=NULL WHERE id=%s AND owner_id=%s AND revoked_at IS NOT NULL", (request.key_id, user["id"]))
+        conn.commit()
+        if result.rowcount < 1:
+            raise HTTPException(status_code=404, detail="Revoked API key not found")
+    return {"activated": True, "id": request.key_id}
+
+
+@app.get("/api/v1/coingecko-keys")
+def list_coingecko_keys(user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        rows = conn.execute("""SELECT id,name,key_prefix,base_url,active,created_at,revoked_at
+            FROM coingecko_api_keys ORDER BY created_at DESC LIMIT 100""").fetchall()
+    return {"keys": [{"id":r[0],"name":r[1],"prefix":r[2],"base_url":r[3],"active":bool(r[4]),
+        "created_at":r[5].isoformat() if r[5] else None,"revoked":bool(r[6])} for r in rows]}
+
+
+@app.post("/api/v1/coingecko-keys")
+def create_coingecko_key(request: CoinGeckoKeyCreateRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    base_url = request.base_url.strip().rstrip("/")
+    if base_url not in {"https://api.coingecko.com/api/v3","https://pro-api.coingecko.com/api/v3"}:
+        raise HTTPException(status_code=400, detail="Choose the official CoinGecko Demo or Pro API URL")
+    api_key = request.api_key.strip()
+    nonce, tag, ciphertext = _encrypt_coingecko_key(api_key)
+    key_id = "cgkey_" + secrets.token_hex(12)
+    with db() as conn:
+        conn.execute("UPDATE coingecko_api_keys SET active=FALSE WHERE active=TRUE AND revoked_at IS NULL")
+        conn.execute("""INSERT INTO coingecko_api_keys(id,owner_id,name,key_prefix,key_nonce,key_tag,key_ciphertext,base_url,active)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,TRUE)""",
+            (key_id,user["id"],request.name.strip(),api_key[:8],nonce,tag,ciphertext,base_url))
+        conn.commit()
+    return {"id":key_id,"created":True,"active":True,"message":"CoinGecko key saved encrypted on the server and activated."}
+
+
+@app.post("/api/v1/coingecko-keys/activate")
+def activate_coingecko_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        row = conn.execute("SELECT id FROM coingecko_api_keys WHERE id=%s", (request.key_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="CoinGecko key not found")
+        conn.execute("UPDATE coingecko_api_keys SET active=FALSE WHERE active=TRUE")
+        conn.execute("UPDATE coingecko_api_keys SET active=TRUE,revoked_at=NULL WHERE id=%s", (request.key_id,))
+        conn.commit()
+    return {"activated":True,"id":request.key_id}
+
+
+@app.post("/api/v1/coingecko-keys/revoke")
+def revoke_coingecko_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        result = conn.execute("UPDATE coingecko_api_keys SET revoked_at=NOW(),active=FALSE WHERE id=%s AND revoked_at IS NULL", (request.key_id,))
+        conn.commit()
+        if result.rowcount < 1:
+            raise HTTPException(status_code=404, detail="CoinGecko key not found or already revoked")
+    return {"revoked":True,"id":request.key_id}
+
 
 @app.post("/api/v1/tools/address-balance")
 def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(current_user)):
@@ -2501,7 +2634,7 @@ def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(
         result["testnet"] = True
         try:
             price_response = httpx.get(
-                COINGECKO_API_BASE_URL + "/simple/price",
+                _active_coingecko_config()[1] + "/simple/price",
                 params={"ids": "ethereum", "vs_currencies": "usd"},
                 headers=coingecko_headers(), timeout=6,
             )
