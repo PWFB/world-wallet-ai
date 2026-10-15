@@ -1778,7 +1778,7 @@ def market_prices():
     }
     try:
         response = httpx.get(
-            f"{COINGECKO_API_BASE_URL}/simple/price",
+            f"{_active_coingecko_config()[1]}/simple/price",
             params={
                 "ids": ",".join(coin_ids.values()),
                 "vs_currencies": "usd",
@@ -1839,7 +1839,7 @@ def market_price_history(symbol: str, days: int = 1):
     if days not in (1, 7, 14, 30):
         raise HTTPException(status_code=400, detail="Supported chart ranges are 1, 7, 14, or 30 days")
     try:
-        response = httpx.get(f"{COINGECKO_API_BASE_URL}/coins/{coin_ids[key]}/market_chart", params={"vs_currency":"usd","days":days}, headers=coingecko_headers(), timeout=12)
+        response = httpx.get(f"{_active_coingecko_config()[1]}/coins/{coin_ids[key]}/market_chart", params={"vs_currency":"usd","days":days}, headers=coingecko_headers(), timeout=12)
         response.raise_for_status()
         raw = response.json()
     except Exception as exc:
@@ -1859,7 +1859,7 @@ def refresh_prices(user: dict = Depends(current_user)):
     }
     try:
         response = httpx.get(
-            f"{COINGECKO_API_BASE_URL}/simple/price",
+            f"{_active_coingecko_config()[1]}/simple/price",
             params={"ids":",".join(coin_ids.values()),"vs_currencies":"usd"},
             headers=coingecko_headers(),
             timeout=8,
@@ -1960,7 +1960,7 @@ def system_status(user: dict = Depends(current_user)):
         "ethereum": bool(wallet_network_address(user, "ethereum") and ETH_RPC_URL),
         "bnb": bool(wallet_network_address(user, "bnb") and BSC_RPC_URL),
         "sepolia": bool(wallet_network_address(user, "sepolia") and SEPOLIA_RPC_URL),
-        "live_prices": bool(COINGECKO_API_BASE_URL),
+        "live_prices": bool(_active_coingecko_config()[0]),
         "price_assets": ["BALMZ","BALMZ-SEP","BTC","ETH","USDT","BNB","USDC","SOL","XRP","ADA","LTC","DOGE"],
         "read_only_chain_sync": True,
         "transaction_broadcast": False,
@@ -2409,11 +2409,11 @@ def _inspect_evm_address(address, network, rpc):
 @app.get("/api/v1/api-request/key-balance")
 def api_request_key_balance(user: dict = Depends(current_user)):
     """Return CoinGecko API-key usage without ever exposing the configured secret."""
-    if not COINGECKO_API_KEY:
+    if not _active_coingecko_config()[0]:
         raise HTTPException(status_code=503, detail="CoinGecko API key is not configured on the server")
     try:
         response = httpx.get(
-            COINGECKO_API_BASE_URL + "/key",
+            _active_coingecko_config()[1] + "/key",
             headers=coingecko_headers(),
             timeout=8,
         )
@@ -2602,7 +2602,7 @@ def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(
         result["testnet"] = True
         try:
             price_response = httpx.get(
-                COINGECKO_API_BASE_URL + "/simple/price",
+                _active_coingecko_config()[1] + "/simple/price",
                 params={"ids": "ethereum", "vs_currencies": "usd"},
                 headers=coingecko_headers(), timeout=6,
             )
