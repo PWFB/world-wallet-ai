@@ -45,6 +45,7 @@ const networksForAsset = symbol => ({
   BNB: [{ value: "bnb", label: "BNB Chain" }],
   USDT: [{ value: "ethereum", label: "Ethereum" }, { value: "bnb", label: "BNB Chain" }],
   BALMZ: [{ value: "ethereum", label: "Ethereum" }],
+  "BALMZ-SEP": [{ value: "sepolia", label: "Ethereum Sepolia (testnet)" }],
 }[symbol] || []);
 
 function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
@@ -243,7 +244,171 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
-export default function FeaturePage({ selectedAsset, focusedTransaction, setFocusedTransaction, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+
+function CoinMarketCapIntegration({ accessToken, apiBaseUrl, setActive }) {
+  const [status, setStatus] = useState(null);
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [messageKind, setMessageKind] = useState("success");
+
+  const request = async (path, options = {}) => {
+    const response = await fetch(apiBaseUrl + path, {
+      ...options,
+      headers: {
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        Authorization: "Bearer " + accessToken,
+        ...(options.headers || {}),
+      },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.detail || "CoinMarketCap request failed.");
+    }
+    return data;
+  };
+
+  const refreshStatus = async () => {
+    const data = await request(
+      "/api/v1/admin/integrations/coinmarketcap"
+    );
+    setStatus(data);
+  };
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const data = await request(
+          "/api/v1/admin/integrations/coinmarketcap"
+        );
+        if (active) setStatus(data);
+      } catch (error) {
+        if (active) {
+          setMessage(error.message || "Unable to load integration status.");
+          setMessageKind("error");
+        }
+      }
+    })();
+    return () => { active = false; };
+  }, [apiBaseUrl, accessToken]);
+
+  const saveKey = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await request("/api/v1/admin/integrations/coinmarketcap", {
+        method: "PUT",
+        body: JSON.stringify({ api_key: apiKey.trim() }),
+      });
+      setApiKey("");
+      await refreshStatus();
+      setMessage("API key saved securely. The saved secret is never displayed.");
+      setMessageKind("success");
+    } catch (error) {
+      setMessage(error.message || "Unable to save CoinMarketCap key.");
+      setMessageKind("error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const testKey = async () => {
+    setBusy(true);
+    setMessage("");
+    try {
+      const data = await request(
+        "/api/v1/admin/integrations/coinmarketcap/test",
+        { method: "POST" }
+      );
+      setMessage(data.message || "Connection test succeeded.");
+      setMessageKind("success");
+      await refreshStatus();
+    } catch (error) {
+      setMessage(error.message || "Connection test failed.");
+      setMessageKind("error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return <section className="content feature-content">
+    <div className="page-heading">
+      <div>
+        <p className="eyebrow">ADMINISTRATION</p>
+        <h1>API Integrations</h1>
+        <p className="muted">Configure external market-data providers securely.</p>
+      </div>
+      <button className="secondary" onClick={() => setActive("Dashboard")}>← Dashboard</button>
+    </div>
+    <article className="panel action-panel">
+      <div className="panel-head">
+        <div>
+          <h2>CoinMarketCap DEX API</h2>
+          <span>DEX token prices and market data</span>
+        </div>
+        <span className={status?.configured ? "ww-key-active" : "ww-key-revoked"}>
+          {status?.configured ? "Configured" : "Not configured"}
+        </span>
+      </div>
+      <p className="muted">
+        The provider key is encrypted before being saved to the backend database.
+        It is never returned to this page or stored in browser storage.
+      </p>
+      <label>
+        CoinMarketCap API key
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={apiKey}
+          maxLength={300}
+          onChange={event => setApiKey(event.target.value)}
+          placeholder="Enter a new key to save or replace the current key"
+        />
+      </label>
+      <div className="tool-row">
+        <button className="primary" disabled={busy || apiKey.trim().length < 20} onClick={saveKey}>
+          {busy ? "Working…" : "Save API key"}
+        </button>
+        <button className="secondary" disabled={busy || !status?.configured} onClick={testKey}>
+          {busy ? "Working…" : "Test connection"}
+        </button>
+        <button className="secondary" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            await refreshStatus();
+            setMessage("Integration status refreshed.");
+            setMessageKind("success");
+          } catch (error) {
+            setMessage(error.message || "Unable to refresh status.");
+            setMessageKind("error");
+          } finally {
+            setBusy(false);
+          }
+        }}>Refresh status</button>
+      </div>
+      {message && <div className={messageKind === "error" ? "feature-error" : "feature-success"} role="status">{message}</div>}
+      {status && <div className="feature-grid">
+        <div className="stat-card"><span>Credential storage</span><strong>{status.storage || "Unknown"}</strong></div>
+        <div className="stat-card"><span>Database key saved</span><strong>{status.database_key_configured ? "Yes" : "No"}</strong></div>
+        <div className="stat-card"><span>Environment fallback</span><strong>{status.environment_fallback_configured ? "Available" : "Not set"}</strong></div>
+        <div className="stat-card"><span>Encryption configuration</span><strong>{status.encryption_ready ? "Present" : "Required for saving"}</strong></div>
+      </div>}
+      <div className="security-note">
+        Configure WORLD_WALLET_ADMIN_EMAILS and WORLD_WALLET_SECRETS_ENCRYPTION_KEY
+        in the backend service environment before saving keys. Keep the encryption
+        key backed up securely; losing it prevents decrypting stored provider keys.
+      </div>
+      <div className="ct-links">
+        <a href="https://coinmarketcap.com/api/" target="_blank" rel="noreferrer">Get a CoinMarketCap API key ↗</a>
+        <a href="https://coinmarketcap.com/api/documentation/v1/" target="_blank" rel="noreferrer">API documentation ↗</a>
+      </div>
+    </article>
+  </section>;
+}
+
+
+export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedTransaction, setFocusedTransaction, active, wallet, assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -922,6 +1087,7 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     </section>;
   }
 
+  if (active === "API Integrations") return <CoinMarketCapIntegration accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
   if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
@@ -952,18 +1118,24 @@ export default function FeaturePage({ selectedAsset, focusedTransaction, setFocu
     </section>;
   }
 
+  const compatibleReceiveAddresses = addresses.filter(item => networksForAsset(asset).some(n => n.value === String(item.network || "").toLowerCase()));
+
   if (active === "Receive") {
     return <section className="content feature-content">
-      <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive</h1><p className="muted">Use a configured production blockchain address to receive assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+      <div className="page-heading"><div><p className="eyebrow">WALLET ACTION</p><h1>Receive / Deposit</h1><p className="muted">Choose an asset to view addresses configured for its compatible network.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid">
         <article className="panel receive-panel">
-          <p className="feature-kicker">PRODUCTION DEPOSIT ADDRESSES</p>
+          <p className="feature-kicker">CONFIGURED DEPOSIT ADDRESSES</p>
           <div className="receive-selected">
-            <span>Receiving asset</span><strong>{asset}</strong><small>Choose the network below only when it matches the sender's network.</small>
+            <label htmlFor="receive-asset-select">Receiving asset</label>
+            <select id="receive-asset-select" className="receive-asset-select" value={asset} onChange={event => { setAsset(event.target.value); setAddressMessage(""); }}>
+              {(assetCatalog.length ? assetCatalog : assets).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} — {item.name || item.symbol}{item.status ? ` (${item.status})` : ""}</option>)}
+            </select>
+            <small>Choose only a network that matches the sender's network. Testnet assets are not mainnet assets.</small>
           </div>
-          {addresses.length ? addresses.filter(item => !networksForAsset(asset).length || networksForAsset(asset).some(n => n.value === item.network)).map(item => <div className="receive-address" key={item.network}>
+          {compatibleReceiveAddresses.length ? compatibleReceiveAddresses.map(item => <div className="receive-address" key={item.network}>
             <div><b>{item.network.toUpperCase()}</b><small>{item.label} • {asset}</small></div><code>{item.address}</code><button className="secondary" onClick={async ()=>{try{await navigator.clipboard?.writeText(item.address);setCopiedAddress(item.address);setTimeout(()=>setCopiedAddress(""),1800)}catch{setAddressMessage("Copy is unavailable on this device.")}}}>{copiedAddress===item.address?"Copied":"Copy"}</button>
-          </div>) : <div className="live-chart-empty">{addressMessage || `No production ${asset} address configured for a compatible network.`}</div>}
+          </div>) : <div className="live-chart-empty">{addressMessage || (networksForAsset(asset).length ? `No ${asset} receiving address is configured for its compatible network.` : `Receiving-network integration is not configured for ${asset}.`)}</div>}
         </article>
         <article className="panel feature-summary">
           <span className="feature-kicker">RECEIVE SAFETY</span>

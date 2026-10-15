@@ -899,3 +899,303 @@
 .ww-register-social button{width:100%;padding:11px 12px;border:1px solid #263a56;border-radius:8px;background:#0a1729;color:#dbe7f5;font-size:11px;font-weight:700}
 .ww-register-social button:hover{border-color:#00bde8;background:#10213a}
 .ww-register-social button:disabled{opacity:.6}
+
+/* WORLD_WALLET_AI_ORANGE_REFRESH_V1
+   Visual-only refresh. Preserve existing app and business logic. */
+:root {
+  --ww-accent: #ff7417;
+  --ww-accent-bright: #ff8a32;
+  --ww-accent-soft: rgba(255, 116, 23, .12);
+  --ww-border: #20334d;
+  --ww-surface: #0a1628;
+  --ww-muted: #8a9bb2;
+}
+
+html {
+  background: #030b18;
+  scroll-behavior: smooth;
+}
+
+body {
+  background: #030b18;
+  color: #edf3fb;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: Inter, system-ui, sans-serif;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--ww-accent);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  background:
+    radial-gradient(ellipse at 75% -15%, rgba(255,116,23,.075), transparent 34%),
+    #030b18;
+}
+
+.sidebar {
+  background: rgba(5, 15, 29, .97);
+  border-right-color: #1a2b41;
+}
+
+.brand-mark,
+.login-mark {
+  border-color: var(--ww-accent);
+  color: var(--ww-accent);
+  background: rgba(255,116,23,.08);
+  box-shadow: 0 0 24px rgba(255,116,23,.055);
+}
+
+.brand span,
+.eyebrow,
+.text-btn,
+.nav-item.active .nav-icon,
+.login-brand-row span,
+.login-copy h1 em,
+.login-home:hover,
+.secondary:hover,
+.coin-toolbar input:focus,
+.back-btn:hover {
+  color: var(--ww-accent);
+}
+
+.nav-item {
+  min-height: 38px;
+  border-radius: 9px;
+  transition: background .18s ease, color .18s ease;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: linear-gradient(90deg, rgba(255,116,23,.13), rgba(255,116,23,.025));
+  color: #fff;
+}
+
+.nav-item.active {
+  box-shadow: inset 3px 0 var(--ww-accent);
+}
+
+.network-pill,
+.panel,
+.stat-card,
+.hero-card,
+.live-wallet-panel,
+.quick-grid button {
+  border-color: var(--ww-border);
+}
+
+.hero-card {
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(255,116,23,.10), transparent 50%),
+    linear-gradient(145deg, #102039, #091426);
+}
+
+.panel,
+.stat-card {
+  background: linear-gradient(145deg, #0c192c, #081322);
+}
+
+.panel,
+.stat-card,
+.hero-card,
+.quick-grid button,
+.live-wallet-panel,
+.login-card {
+  border-radius: 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.10);
+}
+
+.primary,
+.login-submit,
+.landing-primary {
+  background: linear-gradient(135deg, #ff8a32, #f45a08);
+  color: #fff;
+  box-shadow: 0 8px 24px rgba(255,116,23,.16);
+  transition: filter .18s ease, transform .18s ease;
+}
+
+.primary:hover,
+.login-submit:hover:not(:disabled),
+.landing-primary:hover {
+  filter: brightness(1.08);
+  transform: translateY(-1px);
+}
+
+.secondary {
+  border-color: #2a3d55;
+  background: #0b192b;
+}
+
+.secondary:hover {
+  border-color: var(--ww-accent);
+  background: var(--ww-accent-soft);
+}
+
+.hero-balance {
+  letter-spacing: -.7px;
+}
+
+.card-actions button,
+.ranges button,
+.coin-tabs button {
+  transition: border-color .18s ease, background .18s ease, color .18s ease;
+}
+
+.card-actions button:hover,
+.quick-grid button:hover {
+  border-color: rgba(255,116,23,.65);
+}
+
+.ranges .selected,
+.coin-tabs button.active {
+  color: var(--ww-accent-bright);
+  background: var(--ww-accent-soft);
+}
+
+.mini-bars,
+.mini-line,
+.profit-line {
+  color: var(--ww-accent);
+}
+
+.mini-bars i {
+  background: var(--ww-accent);
+}
+
+.ai-panel {
+  border-color: #493522;
+  background:
+    radial-gradient(circle at 90% 5%, rgba(255,116,23,.11), transparent 42%),
+    #0a1627;
+}
+
+.ai-orb {
+  color: var(--ww-accent);
+  background: var(--ww-accent-soft);
+  border-color: rgba(255,116,23,.55);
+}
+
+.ai-message {
+  border-left-color: var(--ww-accent);
+}
+
+.ai-actions button:hover,
+.tool-row .secondary:hover {
+  border-color: var(--ww-accent);
+}
+
+.login-shell {
+  background:
+    radial-gradient(circle at 15% 15%, rgba(255,116,23,.11), transparent 31%),
+    radial-gradient(circle at 85% 85%, rgba(35,104,151,.12), transparent 30%),
+    #030b18;
+}
+
+.login-input-wrap:focus-within {
+  border-color: var(--ww-accent);
+  box-shadow: 0 0 0 3px rgba(255,116,23,.08);
+}
+
+.login-submit {
+  border: 0;
+}
+
+.feature-icon {
+  color: var(--ww-accent);
+  background: var(--ww-accent-soft);
+  border-color: rgba(255,116,23,.30);
+}
+
+.feature-submit {
+  min-height: 42px;
+}
+
+.asset-row,
+.activity-row,
+.transaction-row {
+  border-color: #192a40;
+}
+
+.asset-row-button:hover,
+.quick-grid button:hover {
+  background: #101d30;
+}
+
+.live-wallet-panel {
+  background:
+    radial-gradient(ellipse at 100% 0%, rgba(255,116,23,.07), transparent 45%),
+    linear-gradient(135deg, #0b192d, #081322);
+}
+
+.live-wallet-address b,
+.coin-toolbar input:focus,
+.receive-selected strong {
+  color: var(--ww-accent-bright);
+}
+
+.transaction-meta a {
+  color: var(--ww-accent-bright);
+}
+
+.ww-globe {
+  border-color: var(--ww-accent);
+  color: var(--ww-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    background: rgba(4,12,24,.96);
+    border-bottom-color: #1a2b41;
+  }
+
+  .content {
+    padding-top: 18px;
+  }
+
+  .page-heading {
+    gap: 12px;
+  }
+
+  .hero-card,
+  .stat-card,
+  .panel {
+    border-radius: 12px;
+  }
+
+  .quick-grid button {
+    min-width: 0;
+  }
+}
+/* END WORLD_WALLET_AI_ORANGE_REFRESH_V1 */
+
+/* Receive / Deposit asset selector */
+.receive-selected{flex-wrap:wrap;text-align:left;align-items:center}
+.receive-selected label{display:block;flex:0 0 100%;font-size:8px;color:#8da0ba;text-transform:uppercase;letter-spacing:1px}
+.receive-selected .receive-asset-select{display:block;flex:1 1 100%;width:100%;min-width:0;margin-top:4px;background:#091426;color:#fff;border:1px solid #1d3451;border-radius:8px;padding:12px;font:500 12px Inter;outline:0}
+.receive-selected .receive-asset-select:focus{border-color:#00bde8}
+.receive-selected .receive-asset-select option{background:#091426;color:#fff}
