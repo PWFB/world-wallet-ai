@@ -54,6 +54,27 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("sepolia", result["excluded_networks"])
         self.assertEqual(result["warnings"], [])
 
+    def test_ethereum_mainnet_rpc_requires_chain_id_one(self):
+        with patch.object(main, "evm_chain_id", return_value=1):
+            self.assertEqual(main.require_ethereum_mainnet_rpc("https://rpc.example"), 1)
+        with patch.object(main, "evm_chain_id", return_value=11155111):
+            with self.assertRaisesRegex(ValueError, "mainnet chain ID 1"):
+                main.require_ethereum_mainnet_rpc("https://rpc.example")
+
+    def test_ethereum_rpc_falls_back_when_primary_provider_fails(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {"jsonrpc": "2.0", "id": 1, "result": "0x1"}
+
+        with patch.object(main, "ETH_RPC_URL", "https://primary.example"), \
+             patch.object(main, "ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com"), \
+             patch.object(main.httpx, "post", side_effect=[main.httpx.ConnectError("offline"), Response()]) as post:
+            self.assertEqual(main.rpc_call(main.ETH_RPC_URL, "eth_chainId", []), "0x1")
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(post.call_args_list[1].args[0], "https://ethereum-rpc.publicnode.com")
+
     def test_sepolia_rpc_requires_expected_chain_id(self):
         with patch.object(main, "rpc_call", return_value=hex(11155111)):
             main.require_sepolia_rpc("https://rpc.example")
