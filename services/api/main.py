@@ -2539,11 +2539,11 @@ def create_coingecko_key(request: CoinGeckoKeyCreateRequest, user: dict = Depend
 def activate_coingecko_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
     require_coingecko_admin(user)
     with db() as conn:
-        row = conn.execute("SELECT id FROM coingecko_api_keys WHERE id=%s AND revoked_at IS NULL", (request.key_id,)).fetchone()
+        row = conn.execute("SELECT id FROM coingecko_api_keys WHERE id=%s", (request.key_id,)).fetchone()
         if not row:
-            raise HTTPException(status_code=404, detail="CoinGecko key not found or revoked")
+            raise HTTPException(status_code=404, detail="CoinGecko key not found")
         conn.execute("UPDATE coingecko_api_keys SET active=FALSE WHERE active=TRUE")
-        conn.execute("UPDATE coingecko_api_keys SET active=TRUE WHERE id=%s AND revoked_at IS NULL", (request.key_id,))
+        conn.execute("UPDATE coingecko_api_keys SET active=TRUE,revoked_at=NULL WHERE id=%s", (request.key_id,))
         conn.commit()
     return {"activated":True,"id":request.key_id}
 
