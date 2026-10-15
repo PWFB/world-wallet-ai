@@ -869,25 +869,39 @@ function App() {
 
   async function handlePasswordSignIn() {
     setLoginError("");
+    setAuthMessage("");
     setAuthBusy(true);
     try {
       const email = loginEmail.trim().toLowerCase();
       if (!email) throw new Error("Enter your email address.");
       if (!loginPassword) throw new Error("Enter your password.");
 
-      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password: loginPassword }),
+      // Sign in directly through Neon Auth in the browser. The browser owns
+      // the Neon Auth session cookie; a server-side relay cannot reliably
+      // recreate that cross-origin cookie session for the /token exchange.
+      const result = await authClient.signIn.email({
+        email,
+        password: loginPassword,
       });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || "Unable to sign in with password.");
-      if (!data.access_token) throw new Error("Secure wallet token was not returned.");
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      setUser(data.user || null);
-      setAccessToken(data.access_token);
+      if (result?.error) {
+        throw new Error(authErrorMessage(result.error, "Unable to sign in with password."));
+      }
+
+      // Only enter the wallet after retrieving a real Neon JWT. The API still
+      // verifies its signature, issuer, identity, and expiry on every request.
+      const token = await getWalletTokenWithRetry();
+      if (!token) {
+        throw new Error("Neon Auth accepted the sign-in, but the secure wallet token could not be retrieved. Please retry.");
+      }
+
+      const signedInUser = result?.data?.user || result?.user || null;
+      localStorage.setItem(TOKEN_KEY, token);
+      setUser(signedInUser);
+      setAccessToken(token);
       setLoginPassword("");
       setPasswordMode(false);
+      setShowLogin(false);
+      setAuthMessage("");
     } catch (error) {
       setLoginError(error.message || "Unable to sign in with password");
     } finally {
