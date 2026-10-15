@@ -2507,6 +2507,58 @@ def activate_api_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_
     return {"activated": True, "id": request.key_id}
 
 
+@app.get("/api/v1/coingecko-keys")
+def list_coingecko_keys(user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        rows = conn.execute("""SELECT id,name,key_prefix,base_url,active,created_at,revoked_at
+            FROM coingecko_api_keys ORDER BY created_at DESC LIMIT 100""").fetchall()
+    return {"keys": [{"id":r[0],"name":r[1],"prefix":r[2],"base_url":r[3],"active":bool(r[4]),
+        "created_at":r[5].isoformat() if r[5] else None,"revoked":bool(r[6])} for r in rows]}
+
+
+@app.post("/api/v1/coingecko-keys")
+def create_coingecko_key(request: CoinGeckoKeyCreateRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    base_url = request.base_url.strip().rstrip("/")
+    if base_url not in {"https://api.coingecko.com/api/v3","https://pro-api.coingecko.com/api/v3"}:
+        raise HTTPException(status_code=400, detail="Choose the official CoinGecko Demo or Pro API URL")
+    api_key = request.api_key.strip()
+    nonce, tag, ciphertext = _encrypt_coingecko_key(api_key)
+    key_id = "cgkey_" + secrets.token_hex(12)
+    with db() as conn:
+        conn.execute("UPDATE coingecko_api_keys SET active=FALSE WHERE active=TRUE AND revoked_at IS NULL")
+        conn.execute("""INSERT INTO coingecko_api_keys(id,owner_id,name,key_prefix,key_nonce,key_tag,key_ciphertext,base_url,active)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,TRUE)""",
+            (key_id,user["id"],request.name.strip(),api_key[:8],nonce,tag,ciphertext,base_url))
+        conn.commit()
+    return {"id":key_id,"created":True,"active":True,"message":"CoinGecko key saved encrypted on the server and activated."}
+
+
+@app.post("/api/v1/coingecko-keys/activate")
+def activate_coingecko_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        row = conn.execute("SELECT id FROM coingecko_api_keys WHERE id=%s AND revoked_at IS NULL", (request.key_id,)).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="CoinGecko key not found or revoked")
+        conn.execute("UPDATE coingecko_api_keys SET active=FALSE WHERE active=TRUE")
+        conn.execute("UPDATE coingecko_api_keys SET active=TRUE WHERE id=%s AND revoked_at IS NULL", (request.key_id,))
+        conn.commit()
+    return {"activated":True,"id":request.key_id}
+
+
+@app.post("/api/v1/coingecko-keys/revoke")
+def revoke_coingecko_key(request: ApiKeyRevokeRequest, user: dict = Depends(current_user)):
+    require_coingecko_admin(user)
+    with db() as conn:
+        result = conn.execute("UPDATE coingecko_api_keys SET revoked_at=NOW(),active=FALSE WHERE id=%s AND revoked_at IS NULL", (request.key_id,))
+        conn.commit()
+        if result.rowcount < 1:
+            raise HTTPException(status_code=404, detail="CoinGecko key not found or already revoked")
+    return {"revoked":True,"id":request.key_id}
+
+
 @app.post("/api/v1/tools/address-balance")
 def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(current_user)):
     network = request.network.strip().lower()
