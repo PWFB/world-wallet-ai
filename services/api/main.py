@@ -1369,10 +1369,13 @@ def wallet_snapshot(user):
             "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
         ):
             actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
+            price_available = p > 0
             assets.append({"symbol":symbol,"name":name,"balance":float(available),"available_balance":float(available),
                 "actual_balance":float(actual),"reserved_balance":float(reserved),"price_usd":float(p),
-                "live_price_usd":float(p),"value_usd":float(available*p),
-                "actual_value_usd":float(actual*p),"change_24h":0})
+                "price_available":price_available,
+                "live_price_usd":float(p) if price_available else None,
+                "value_usd":float(available*p) if price_available else None,
+                "actual_value_usd":float(actual*p) if price_available else None,"change_24h":None})
         txs=[]
         for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
