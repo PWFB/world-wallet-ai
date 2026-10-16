@@ -488,12 +488,12 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       provider.on("accountsChanged", accounts => {
         const address = accounts?.[0] || "";
         setWcAccount(address);
-        const connection = address ? { address, chainId: Number(provider.chainId) || null, connectedAt: new Date().toISOString() } : null;
+        const connection = address ? { address, chainId: parseExternalChainId(provider.chainId), connectedAt: new Date().toISOString() } : null;
         try { if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); else localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
       });
       provider.on("chainChanged", chain => {
-        setWcChainId(Number(chain));
+        setWcChainId(parseExternalChainId(chain));
         try {
           const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
           if (previous?.address) {
@@ -511,11 +511,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       await provider.connect();
       const accounts = await provider.request({ method: "eth_accounts" });
       setWcAccount(accounts?.[0] || "");
-      setWcChainId(Number(provider.chainId) || null);
+      setWcChainId(parseExternalChainId(provider.chainId));
       setWcProvider(provider);
       setWcProviderKind("walletconnect");
       if (accounts?.[0]) {
-        const connection = { address: accounts[0], chainId: Number(provider.chainId) || null, provider: "walletconnect", connectedAt: new Date().toISOString() };
+        const connection = { address: accounts[0], chainId: parseExternalChainId(provider.chainId), provider: "walletconnect", connectedAt: new Date().toISOString() };
         try { localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); } catch {}
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
       }
