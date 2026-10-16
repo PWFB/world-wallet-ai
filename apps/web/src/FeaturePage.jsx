@@ -350,6 +350,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [wcError, setWcError] = useState("");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
+  const [historyTransactions, setHistoryTransactions] = useState([]);
+  const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
   const [toolItems, setToolItems] = useState([]);
   const [chainResult, setChainResult] = useState(null);
@@ -606,6 +610,37 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     await disconnectWalletConnect();
     await connectWalletConnect();
   }
+
+  async function loadTransactionHistory({ offset = 0, append = false } = {}) {
+    if (!accessToken || historyBusy) return;
+    setHistoryBusy(true);
+    setHistoryError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/transactions?limit=50&offset=" + offset, {
+        headers: await walletAuthHeaders(accessToken),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not load transaction history.");
+      const rows = Array.isArray(data.transactions) ? data.transactions.map(item => ({
+        ...item,
+        raw_amount: item.raw_amount ?? item.amount,
+        time: item.time ? new Date(item.time).toLocaleString() : "Time unavailable",
+      })) : [];
+      setHistoryTransactions(previous => append ? [...previous, ...rows.filter(row => !previous.some(old => String(old.id) === String(row.id)))] : rows);
+      setHistoryPagination(data.pagination || { limit: 50, offset: 0, total: rows.length, has_more: false, next_offset: null });
+    } catch (error) {
+      setHistoryError(error.message || "Could not load transaction history.");
+    } finally {
+      setHistoryBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (active !== "Transactions" || !accessToken) return;
+    setHistoryTransactions([]);
+    setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+    loadTransactionHistory({ offset: 0, append: false });
+  }, [active, accessToken, apiBaseUrl]);
 
   const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
@@ -1446,9 +1481,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <div className="page-actions"><button className="secondary" onClick={syncTransactions} disabled={syncBusy}>{syncBusy ? "Syncing live wallet…" : "↻ Sync live wallet"}</button><button className="primary" onClick={()=>setActive("Send")}>+ Send funds</button></div>
       </div>
       {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
+      {historyError && <div role="status" className="feature-error">{historyError} <button className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
       <article className="panel transaction-panel">
-        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{activity.length} transaction{activity.length===1?"":"s"}</small></div>
-        {activity.length ? activity.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
+        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{historyTransactions.length} of {historyPagination.total} transaction{historyPagination.total===1?"":"s"}</small></div>
+        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : historyTransactions.length ? historyTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
           <span className="activity-icon">{a.type[0].toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
@@ -1461,7 +1497,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={event => { event.stopPropagation(); settleTransaction(a); }} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
-        </div>) : <div className="live-chart-empty">No real wallet transactions recorded yet.</div>}
+        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : "No real wallet transactions recorded yet."}</div>}
+        {historyPagination.has_more && <div className="transaction-filter-bar"><span>More saved transactions are available.</span><button className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more transactions"}</button></div>}
       </article>
     </section>;
   }
