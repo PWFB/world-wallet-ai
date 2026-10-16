@@ -62,6 +62,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
   const [walletAddresses, setWalletAddresses] = useState([]);
+  const [addressesLoadedForWallet, setAddressesLoadedForWallet] = useState("");
+  const externalAttachRef = useRef(new Set());
   const [network, setNetwork] = useState("ethereum");
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("primary");
@@ -79,7 +81,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
       setWalletAddresses(response.ok ? (data.addresses || []) : []);
-    } catch { setWalletAddresses([]); }
+      setAddressesLoadedForWallet(response.ok ? id : "");
+    } catch { setWalletAddresses([]); setAddressesLoadedForWallet(""); }
   };
 
   const loadWallets = async () => {
@@ -98,6 +101,51 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   useEffect(() => { loadWallets(); }, [accessToken]);
+
+  // When a user has connected an external EVM wallet, attach its public address
+  // to the active server wallet when the Wallets screen loads. Private keys never
+  // enter this flow. Unsupported chains are left unmodified rather than mislabeled.
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId) return;
+    let connection;
+    try { connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return; }
+    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return;
+    const chainId = Number(connection.chainId);
+    const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
+    const externalNetwork = networkByChain[chainId];
+    if (!externalNetwork) return;
+    if (walletAddresses.some(item => item.network === externalNetwork && String(item.address || "").toLowerCase() === connection.address.toLowerCase())) return;
+    const attachKey = walletId + ":" + externalNetwork + ":" + connection.address.toLowerCase();
+    if (externalAttachRef.current.has(attachKey)) return;
+    externalAttachRef.current.add(attachKey);
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+          method: "POST",
+          headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+          body: JSON.stringify({ network: externalNetwork, address: connection.address, label: "external wallet" }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "External wallet connected, but its address could not be attached.");
+        if (cancelled) return;
+        await loadAddresses(walletId);
+        const refreshedResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
+        const refreshed = await refreshedResponse.json();
+        if (refreshedResponse.ok) {
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
+          onTransactionsUpdated?.(refreshed.transactions || []);
+          setMessage("External wallet address attached to the active wallet. Live data refreshed; verify the network and source warnings.");
+        } else {
+          setMessage("External wallet address attached. Wallet refresh needs a retry: " + (refreshed.detail || "refresh unavailable."));
+        }
+      } catch (error) {
+        externalAttachRef.current.delete(attachKey);
+        if (!cancelled) setMessage(error?.message || "Could not attach the connected external wallet address.");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [walletId, addressesLoadedForWallet, walletAddresses, accessToken, apiBaseUrl]);
 
   const refreshActiveWallet = async () => {
     const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
