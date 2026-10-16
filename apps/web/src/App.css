@@ -1470,3 +1470,14 @@
  .ww-hero-copy h1{font-size:clamp(38px,11vw,56px)!important}
 }
 @media(max-width:380px){.app-shell .balance-grid{grid-template-columns:minmax(0,1fr)!important}}
+
+/* World Wallet AI branded globe logo */
+.ww-world-logo{display:block;width:48px;height:48px;flex:0 0 auto;filter:drop-shadow(0 0 9px rgba(0,190,255,.2))}
+.ww-world-logo-compact{width:44px;height:44px}
+.ww-public-brand{display:flex!important;align-items:center!important;gap:12px!important}
+.ww-public-brand .ww-world-logo{width:52px;height:52px}
+.app-shell .brand{display:flex;align-items:center;gap:10px}
+.app-shell .brand-mark{display:flex!important;align-items:center;justify-content:center;padding:0!important;background:transparent!important;border:0!important;box-shadow:none!important;min-width:46px}
+.app-shell .brand-mark .ww-world-logo{width:46px;height:46px}
+.app-shell.sidebar-collapsed .brand-mark .ww-world-logo{width:40px;height:40px}
+@media(max-width:680px){.ww-public-brand .ww-world-logo{width:43px;height:43px}.app-shell .brand-mark .ww-world-logo{width:40px;height:40px}}
