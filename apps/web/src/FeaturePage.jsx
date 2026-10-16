@@ -3,6 +3,7 @@ import { EthereumProvider } from "@walletconnect/ethereum-provider";
 import WalletVault from "./WalletVault.jsx";
 import ContractTools from "./ContractTools.jsx";
 import { getNeonAccessToken } from "./auth-client.js";
+import { isUsableNeonAccessToken } from "./neon-token.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -12,7 +13,7 @@ const number = value => Number(value || 0).toLocaleString("en-US", { minimumFrac
 
 async function walletAuthHeaders(accessToken, extra = {}) {
   const freshToken = await getNeonAccessToken({ forceRefresh: true });
-  const token = freshToken || accessToken || "";
+  const token = freshToken || (isUsableNeonAccessToken(accessToken) ? accessToken : "");
   return { ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) };
 }
 
