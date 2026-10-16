@@ -22,6 +22,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [generated, setGenerated] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [unlocked, setUnlocked] = useState(null);
+  const [keyRevealPassword, setKeyRevealPassword] = useState("");
+  const [revealedPrivateKey, setRevealedPrivateKey] = useState("");
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
   const [verifyAddressInput, setVerifyAddressInput] = useState("");
@@ -36,7 +38,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [tokenRecipient, setTokenRecipient] = useState("");
   const [tokenAmount, setTokenAmount] = useState("");
   const [tokenTxHash, setTokenTxHash] = useState("");
-  const [contracts, setContracts] = useState([]);
   const [deployedContracts, setDeployedContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -159,7 +160,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         if (!addressResponse.ok) {
           setMessage("Wallet keys generated and saved locally, but the server could not link the public address: " + addressWarning + " You can connect it again later.");
         } else {
-          setMessage("Wallet generated. Public key and address are saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
+          setMessage("Wallet generated. Your public wallet address is saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
@@ -186,6 +187,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
       setUnlocked(signer);
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
       setGenerated(null);
       if (entry.network === "sepolia") {
         const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
@@ -197,6 +200,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage("Wallet unlocked in this browser session. The decrypted key is not sent to the API.");
     } catch {
       setUnlocked(null);
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
       setMessage("Could not unlock this wallet. Check the password; the vault cannot recover a lost password.");
     } finally {
       setBusy(false);
@@ -361,14 +366,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     if (selectedId === walletId) {
       setSelectedId(next[0]?.walletId || "");
       setUnlocked(null);
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
     }
     setGenerated(null);
     setMessage("Encrypted wallet copy removed from this browser only. This does not delete the server wallet profile or recover a forgotten password.");
   }
 
   const selected = entries.find(item => item.walletId === selectedId);
-  const balmzContract = contracts.find(item => item.symbol === "BALMZ" && item.network === "ethereum")?.contract_address;
-  const sepoliaContract = contracts.find(item => item.symbol === "BALMZ-SEP" && item.network === "sepolia")?.contract_address;
   const shown = generated || (unlocked ? {
     walletId: selected?.walletId,
     name: selected?.name,
@@ -400,7 +405,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <div><small>Wallet ID</small><code>{shown.walletId}</code></div>
         <div><small>Network</small><b>{shown.network === "sepolia" ? "Ethereum Sepolia" : shown.network === "bnb" ? "BNB Chain" : "Ethereum"}</b></div>
         <div><small>Wallet address</small><code>{shown.address}</code></div>
-        <div><small>Public key</small><code>{shown.publicKey}</code></div>
       </div>
       {generated && <div className="wallet-secret-warning">
         {generated.secretsHidden ? <>
@@ -415,33 +419,46 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         </>}
       </div>}
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
-      <div className="security-note">BALMZ Ethereum contract: <code>{balmzContract || "Not configured / not deployed"}</code></div>
-      <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
-      {deployedContracts.length > 0 && <article className="panel action-panel">
-        <p className="feature-kicker">CONTRACTS DEPLOYED FROM WORLD WALLET AI</p>
-        <h3>Created token contracts</h3>
-        {deployedContracts.map((item,index) => <div className="tool-row" key={item.address + item.network + index}>
-          <div><b>{item.name} ({item.symbol})</b><small>{item.network === "sepolia" ? "Ethereum Sepolia" : item.network === "ethereum" ? "Ethereum Mainnet" : item.network} · {item.status || "saved locally"}</small><small>Supply: {item.supply} · Decimals: {item.decimals}</small></div>
-          <code>{item.address}</code>
-          <div><button className="secondary" onClick={() => navigator.clipboard?.writeText(item.address)}>Copy address</button> <button className="secondary" onClick={() => { setTokenContractAddress(item.address); if (item.network === "sepolia" || item.network === "ethereum") setNetwork(item.network); setMessage("Selected " + item.symbol + " on " + item.network + ". Verify the network before interacting."); }}>Use token</button> <a href={item.explorerUrl} target="_blank" rel="noreferrer">Explorer ↗</a></div>
-        </div>)}
-      </article>}
-      <div className="security-note">BALMZ Sepolia contract: <code>{sepoliaContract || "Not configured / not deployed"}</code></div>
-      <div className="security-note">A wallet address is not a token contract address. Do not substitute one for the other.</div>
+      <div className="security-note">Smart-contract addresses are managed separately. This panel shows your wallet address, not a token contract address.</div>
+      <a className="secondary" href={shown.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + shown.address : shown.network === "bnb" ? "https://bscscan.com/address/" + shown.address : shown.network === "ethereum" ? "https://etherscan.io/address/" + shown.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
       <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.address)}>Copy wallet address</button>
-      <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.publicKey)}>Copy public key</button>
-      {generated && !generated.secretsHidden && <button className="secondary" onClick={() => navigator.clipboard?.writeText(generated.privateKey)}>Copy private key</button>}
     </article>}
 
     <article className="panel action-panel">
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select value={selectedId} onChange={event => { setSelectedId(event.target.value); setUnlocked(null); setGenerated(null); setSignature(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div><div><small>Public key</small><code>{selected.publicKey}</code></div></div>}
+      <label>Wallet<select value={selectedId} onChange={event => { setSelectedId(event.target.value); setUnlocked(null); setGenerated(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
+      {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
       {unlocked && <div className="wallet-message-signing">
+        <h3>Private key security</h3>
+        <p className="muted">The private key is the wallet's secret signing key. Reveal it only on a trusted device. It stays in this browser and is never sent to World Wallet AI.</p>
+        {!revealedPrivateKey ? <>
+          <label>Confirm vault password to reveal private key<input type="password" value={keyRevealPassword} onChange={event => setKeyRevealPassword(event.target.value)} autoComplete="current-password" placeholder="Re-enter vault password" /></label>
+          <button className="secondary" disabled={busy || !keyRevealPassword} onClick={async () => {
+            setBusy(true);
+            try {
+              const checked = await Wallet.fromEncryptedJson(selected.encryptedJson, keyRevealPassword);
+              if (checked.address.toLowerCase() !== unlocked.address.toLowerCase()) throw new Error("Wallet address does not match.");
+              setRevealedPrivateKey(checked.privateKey);
+              setKeyRevealPassword("");
+              setMessage("Private key revealed locally. Hide it when finished.");
+            } catch {
+              setMessage("Private key not revealed. The vault password was incorrect.");
+            } finally { setBusy(false); }
+          }}>Reveal private key</button>
+        </> : <>
+          <label>Private key<textarea readOnly rows="2" value={revealedPrivateKey} /></label>
+          <button className="secondary" onClick={() => navigator.clipboard?.writeText(revealedPrivateKey)}>Copy private key</button>
+          <button className="secondary" onClick={() => { setRevealedPrivateKey(""); setKeyRevealPassword(""); }}>Hide and clear private key</button>
+        </>}
+        <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
+      </div>}
+      {unlocked && <div className="wallet-message-signing">
+        <button className="secondary" onClick={() => { setUnlocked(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setMessage("Wallet locked in this browser session."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => setSignMessage(event.target.value)} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
@@ -463,6 +480,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
           <div className="security-note">Testnet only. Requires Sepolia ETH for gas. The private key signs in this browser and is never uploaded; this direct transfer is not recorded in the app's internal transaction ledger.</div>
           <div className="wallet-message-signing">
             <h3>Send Sepolia ERC-20 token</h3>
+            {deployedContracts.some(item => item.network === "sepolia" && /^0x[a-fA-F0-9]{40}$/.test(String(item.address || ""))) && <label>Choose saved deployed token<select value={deployedContracts.some(item => item.network === "sepolia" && item.address === tokenContractAddress) ? tokenContractAddress : ""} onChange={event => setTokenContractAddress(event.target.value)}><option value="">Choose a saved token contract</option>{deployedContracts.filter(item => item.network === "sepolia" && /^0x[a-fA-F0-9]{40}$/.test(String(item.address || ""))).map((item,index) => <option key={item.address + index} value={item.address}>{item.name || item.symbol || "Token"} ({item.symbol || "ERC-20"})</option>)}</select></label>}
             <label>Token contract address<input value={tokenContractAddress} onChange={event => setTokenContractAddress(event.target.value)} placeholder="0x… deployed token contract" autoComplete="off" /></label>
             <label>Recipient address<input value={tokenRecipient} onChange={event => setTokenRecipient(event.target.value)} placeholder="0x…" autoComplete="off" /></label>
             <label>Token amount<input inputMode="decimal" value={tokenAmount} onChange={event => setTokenAmount(event.target.value)} placeholder="1.0" /></label>
