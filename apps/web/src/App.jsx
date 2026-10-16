@@ -1267,12 +1267,7 @@ function App() {
             <DashboardWalletPanel
               accessToken={accessToken}
               apiBaseUrl={API_BASE_URL}
-              assets={assets}
-              activity={activity}
-              marketPrices={marketPrices}
-              tokenRegistry={tokenRegistry}
-              setActive={setActive}
-              onWalletSwitched={async () => { await syncWallet(); await loadDashboardAddresses(); }}
+              onWalletSwitched={async () => { await syncWallet(); }}
             />
 
             <div className="balance-grid">
