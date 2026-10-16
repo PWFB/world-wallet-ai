@@ -1512,3 +1512,16 @@
   .app-shell.mobile-menu-open .sidebar{visibility:visible;transform:translateX(0)!important;}
   .app-shell .mobile-menu-scrim{z-index:1000;}
 }
+
+/* Readability: show public wallet and smart-contract addresses in white. */
+.wallet-address-card>code,
+.live-wallet-address code,
+.tool-row>code,
+.tool-row div>code,
+.tool-row small code,
+.transaction-detail-wide code,
+.security-note code,
+.panel-head code,
+.token-explorer-row code {
+  color:#ffffff!important;
+}
