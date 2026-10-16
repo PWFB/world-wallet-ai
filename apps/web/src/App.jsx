@@ -1214,7 +1214,7 @@ function App() {
               <div className="coin-trading-metrics">
                 <div><small>Spot price</small><b>{price > 0 ? money(price) : "Not listed"}</b><span>{price > 0 ? "USD per " + selectedCoin : "No verified market quote"}</span></div>
                 <div><small>24-hour movement</small><b className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "—" : (Number(change) >= 0 ? "+" : "") + Number(change).toFixed(2) + "%"}</b><span>Market-data provider quote</span></div>
-                <div><small>Available balance</small><b>{number(balance)} {selectedCoin}</b><span>{money(value)} reported value</span></div>
+                <div><small>Available balance</small><b>{number(balance)} {selectedCoin}</b><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} reported value`}</span></div>
                 <div><small>Network / execution</small><b>{coin?.status || "Network not configured"}</b><span>Review network and fee before signing</span></div>
               </div>
               <div className="coin-history-chart-panel" aria-label={selectedCoin + " 24-hour price chart"}>
