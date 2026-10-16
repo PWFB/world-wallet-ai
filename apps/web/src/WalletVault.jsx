@@ -185,6 +185,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setTxHash("");
     setTokenTxHash("");
     setNativeBalance("");
+    setVerifyResult(null);
+    setSignMessage("");
+    setVerifyAddressInput("");
+    setVerifyMessageInput("");
+    setVerifySignatureInput("");
     try {
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
