@@ -4,6 +4,18 @@ const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import BrowserPage from "./BrowserPage.jsx";
 
+function WorldGlobeLogo({ compact = false }) {
+  return <svg className={compact ? "ww-world-logo ww-world-logo-compact" : "ww-world-logo"} viewBox="0 0 64 64" role="img" aria-label="World Wallet AI globe logo">
+    <defs><linearGradient id="wwGlobeBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#18e4ff"/><stop offset="1" stopColor="#0874e8"/></linearGradient><linearGradient id="wwGlobeGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#ffd35c"/><stop offset="1" stopColor="#ff831c"/></linearGradient></defs>
+    <circle cx="32" cy="30" r="25" fill="#041a32" stroke="url(#wwGlobeBlue)" strokeWidth="3"/>
+    <ellipse cx="32" cy="30" rx="11" ry="25" fill="none" stroke="#18cafa" strokeWidth="1.8"/>
+    <ellipse cx="32" cy="30" rx="24" ry="9" fill="none" stroke="#18cafa" strokeWidth="1.8"/>
+    <path d="M8 30H56M32 5V55M14 13Q32 22 50 13M14 47Q32 38 50 47" fill="none" stroke="#168de6" strokeWidth="1.5"/>
+    <path d="M12 43A25 25 0 0 0 29 54L20 61L8 53Z" fill="url(#wwGlobeGold)"/><path d="M9 44L21 49L16 56L5 51Z" fill="#ff9b21"/>
+    <path d="M20 6A25 25 0 0 1 51 15" fill="none" stroke="#39e6ff" strokeWidth="2.5" strokeLinecap="round"/>
+  </svg>;
+}
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://world-wallet-ai-backend.onrender.com").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
 
@@ -1018,7 +1030,7 @@ function App() {
       <div className="ww-public-shell">
         <header className="ww-public-nav">
           <button className="ww-public-brand" type="button" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })} aria-label="World Wallet AI home">
-            <span className="ww-globe">◎</span>
+            <WorldGlobeLogo />
             <span><b>WORLD WALLET <em>AI</em></b><small>YOUR INTELLIGENT DIGITAL WALLET</small></span>
           </button>
           <nav aria-label="Main navigation">
@@ -1116,7 +1128,7 @@ function App() {
       {mobileMenuOpen && <button type="button" className="mobile-menu-scrim" aria-label="Close wallet navigation" onClick={() => setMobileMenuOpen(false)} />}
       <aside className={"sidebar" + (sidebarCollapsed ? " sidebar-is-collapsed" : "")}>
         <div className="brand">
-          <button type="button" className="brand-mark brand-home-button" aria-label="World Wallet AI home and wallet navigation" title="Open wallet navigation" onClick={() => { setActive("Dashboard"); setSelectedCoin(null); if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(current => !current); else setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; }); }}>W</button>
+          <button type="button" className="brand-mark brand-home-button" aria-label="World Wallet AI home and wallet navigation" title="Open wallet navigation" onClick={() => { setActive("Dashboard"); setSelectedCoin(null); if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(current => !current); else setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; }); }}><WorldGlobeLogo compact /></button>
           <div className="brand-copy"><strong>WORLD WALLET</strong><span>AI</span></div>
           <button type="button" className="sidebar-toggle" onClick={() => setSidebarCollapsed(current => { const next = !current; try { localStorage.setItem("ww_sidebar_collapsed", String(next)); } catch {} return next; })} aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"} title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}><span aria-hidden="true">⋯</span></button>
         </div>
