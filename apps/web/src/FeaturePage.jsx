@@ -267,6 +267,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [swapNotice, setSwapNotice] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
   const [wcProvider, setWcProvider] = useState(null);
+  const [wcProviderKind, setWcProviderKind] = useState("");
   const [wcAccount, setWcAccount] = useState("");
   const [wcChainId, setWcChainId] = useState(null);
   const [wcBusy, setWcBusy] = useState(false);
@@ -345,6 +346,79 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+  function persistExternalConnection(connection) {
+    try {
+      if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+      else localStorage.removeItem("world_wallet_external_connection_v1");
+    } catch {}
+    window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+  }
+
+  function parseExternalChainId(value) {
+    if (typeof value === "number") return value;
+    const text = String(value || "");
+    if (!text) return null;
+    const parsed = text.startsWith("0x") ? Number.parseInt(text, 16) : Number.parseInt(text, 10);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  async function connectInjectedWallet(kind) {
+    setWcBusy(true);
+    setWcError("");
+    try {
+      const candidates = [
+        ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
+        ...(window.ethereum ? [window.ethereum] : []),
+        ...(window.coinbaseWalletExtension ? [window.coinbaseWalletExtension] : []),
+      ].filter((provider, index, all) => provider && typeof provider.request === "function" && all.indexOf(provider) === index);
+      const provider = kind === "coinbase"
+        ? candidates.find(item => item.isCoinbaseWallet) || null
+        : candidates.find(item => item.isMetaMask && !item.isCoinbaseWallet) || null;
+      if (!provider) {
+        throw new Error(kind === "coinbase"
+          ? "Coinbase Wallet extension was not detected. Open World Wallet AI in Coinbase Wallet's browser, or use WalletConnect."
+          : "MetaMask was not detected. Open World Wallet AI in MetaMask's browser, install the extension, or use WalletConnect.");
+      }
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const address = Array.isArray(accounts) ? accounts[0] : "";
+      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("The wallet did not provide a valid EVM address.");
+      const rawChain = await provider.request({ method: "eth_chainId" });
+      const chainId = parseExternalChainId(rawChain);
+      const connection = { address, chainId, provider: kind, connectedAt: new Date().toISOString() };
+      setWcProvider(provider);
+      setWcProviderKind(kind);
+      setWcAccount(address);
+      setWcChainId(chainId);
+      persistExternalConnection(connection);
+      if (typeof provider.on === "function") {
+        provider.on("accountsChanged", accountsChanged => {
+          const nextAddress = Array.isArray(accountsChanged) ? accountsChanged[0] || "" : "";
+          setWcAccount(nextAddress);
+          persistExternalConnection(nextAddress ? { address: nextAddress, chainId: parseExternalChainId(provider.chainId) || chainId, provider: kind, connectedAt: new Date().toISOString() } : null);
+        });
+        provider.on("chainChanged", nextChain => {
+          const nextChainId = parseExternalChainId(nextChain);
+          setWcChainId(nextChainId);
+          try {
+            const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
+            if (previous?.address) persistExternalConnection({ ...previous, chainId: nextChainId });
+          } catch {}
+        });
+        provider.on("disconnect", () => {
+          setWcAccount("");
+          setWcChainId(null);
+          setWcProvider(null);
+          setWcProviderKind("");
+          persistExternalConnection(null);
+        });
+      }
+    } catch (error) {
+      setWcError(error?.message || "External wallet connection failed.");
+    } finally {
+      setWcBusy(false);
+    }
+  }
+
   async function connectWalletConnect() {
     setWcBusy(true);
     setWcError("");
@@ -382,7 +456,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         } catch {}
       });
       provider.on("disconnect", () => {
-        setWcAccount(""); setWcChainId(null); setWcProvider(null);
+        setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
         try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
       });
@@ -391,8 +465,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       setWcAccount(accounts?.[0] || "");
       setWcChainId(Number(provider.chainId) || null);
       setWcProvider(provider);
+      setWcProviderKind("walletconnect");
       if (accounts?.[0]) {
-        const connection = { address: accounts[0], chainId: Number(provider.chainId) || null, connectedAt: new Date().toISOString() };
+        const connection = { address: accounts[0], chainId: Number(provider.chainId) || null, provider: "walletconnect", connectedAt: new Date().toISOString() };
         try { localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); } catch {}
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
       }
@@ -409,13 +484,14 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     setWcError("");
     try {
       if (wcProvider) {
-        await wcProvider.disconnect();
-        wcProvider.removeAllListeners?.();
+        if (wcProviderKind === "walletconnect" && typeof wcProvider.disconnect === "function") await wcProvider.disconnect();
+        if (typeof wcProvider.removeAllListeners === "function") wcProvider.removeAllListeners();
       }
     } catch (error) {
       setWcError(error?.message || "Could not disconnect the wallet session cleanly.");
     } finally {
       setWcProvider(null);
+      setWcProviderKind("");
       setWcAccount("");
       setWcChainId(null);
       try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
@@ -1328,18 +1404,24 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <div className="security-note">Google sign-in connects your Google account to World Wallet AI, but Google Wallet is not itself a standard EVM Web3 wallet provider for signing Ethereum or BNB Chain transactions. For blockchain signing, use a WalletConnect-compatible crypto wallet. Never enter Google account credentials or wallet recovery phrases here.</div>
       <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <article className="panel tool-panel">
-        <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "WalletConnect v2 ready"}</b></div>
-        <p className="muted">Project ID configured. Supported networks: Ethereum, Sepolia testnet, and BNB Smart Chain.</p>
+        <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "Choose an external wallet"}</b></div>
+        <p className="muted">Connect an existing wallet. World Wallet AI receives the public address and asks the wallet itself to approve signatures and transactions; it never receives the private key.</p>
         {wcAccount ? <>
-          <div className="tool-row"><div><b>Connected address</b><small>Read from your external wallet</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy</button></div>
-          <div className="tool-row"><div><b>Network</b><small>Current wallet chain</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown")}</strong></div>
+          <div className="tool-row"><div><b>Wallet address</b><small>{wcProviderKind === "walletconnect" ? "Connected through WalletConnect" : wcProviderKind === "coinbase" ? "Connected through Coinbase Wallet" : "Connected through MetaMask"}</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy address</button></div>
+          <div className="tool-row"><div><b>Network</b><small>Detected from connected wallet</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown network")}</strong></div>
+          <div className="security-note">Use Explorer to inspect the public address. This connection screen does not display or request a private key or contract address.</div>
           <div className="wallet-connection-actions">
-            <button className="primary" disabled={wcBusy} onClick={changeWalletConnect}>{wcBusy ? "Opening wallet picker…" : "⇄ Change wallet"}</button>
-            <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>Disconnect wallet</button>
+            <button className="primary" disabled={wcBusy} onClick={changeWalletConnect}>{wcBusy ? "Opening wallet picker…" : "⇄ Change wallet (WalletConnect)"}</button>
+            <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>Disconnect from World Wallet AI</button>
           </div>
-        </> : <button className="primary feature-submit" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet connection…" : "Connect external wallet →"}</button>}
+        </> : <div className="wallet-connection-actions">
+          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("metamask")}>{wcBusy ? "Connecting…" : "Connect MetaMask"}</button>
+          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("coinbase")}>{wcBusy ? "Connecting…" : "Connect Coinbase Wallet"}</button>
+          <button className="secondary" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet picker…" : "Connect with WalletConnect"}</button>
+        </div>}
         {wcError && <div className="feature-error" role="alert">{wcError}</div>}
-        <div className="security-note">Never enter a recovery phrase or private key into this site. Review the network and every transaction inside your wallet before approving.</div>
+        <div className="security-note">MetaMask and Coinbase direct connections require their provider or in-app browser to be available. WalletConnect offers a QR/mobile linking path for compatible wallets. If a provider is not installed or supported, the screen reports that instead of pretending the wallet connected.</div>
+        <div className="security-note">Google sign-in is separate from crypto-wallet connection. Never enter a Google password, wallet private key, or recovery phrase into this site.</div>
       </article>
       <article className="panel tool-panel">
         <h2>Configured production addresses</h2>
