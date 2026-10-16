@@ -1481,3 +1481,25 @@
 .app-shell .brand-mark .ww-world-logo{width:46px;height:46px}
 .app-shell.sidebar-collapsed .brand-mark .ww-world-logo{width:40px;height:40px}
 @media(max-width:680px){.ww-public-brand .ww-world-logo{width:43px;height:43px}.app-shell .brand-mark .ww-world-logo{width:40px;height:40px}}
+
+
+/* Mobile globe brand and dashboard performance roundel */
+.mobile-brand-logo{display:inline-flex;align-items:center;justify-content:center;flex:0 0 34px;width:34px;height:34px;border-radius:50%;overflow:hidden;background:radial-gradient(circle at 35% 25%,#103b63,#06152b 72%);border:1px solid rgba(24,202,250,.5);box-shadow:0 0 12px rgba(0,190,255,.14)}
+.mobile-brand-logo .ww-world-logo{width:32px;height:32px}
+.dashboard-performance-logo{display:flex;align-items:center;gap:12px;width:max-content;max-width:calc(100% - 28px);margin:16px 28px 0;padding:9px 15px 9px 9px;border:1px solid rgba(24,202,250,.24);border-radius:999px;background:linear-gradient(110deg,rgba(10,29,54,.96),rgba(7,17,34,.9));box-shadow:0 8px 24px rgba(0,0,0,.14)}
+.dashboard-performance-orbit{display:flex;align-items:center;justify-content:center;width:48px;height:48px;flex:0 0 48px;border-radius:50%;background:radial-gradient(circle at 35% 25%,#17456d,#061329 70%);border:1px solid rgba(24,202,250,.65);box-shadow:0 0 0 3px rgba(24,202,250,.07),0 0 18px rgba(0,190,255,.18);overflow:hidden}
+.dashboard-performance-orbit .ww-world-logo{width:45px;height:45px}
+.dashboard-performance-copy{display:flex;flex-direction:column;gap:4px}
+.dashboard-performance-copy strong{font-size:11px;letter-spacing:1.4px;color:#eaf7ff}
+.dashboard-performance-copy em{font-style:normal;color:#ffb44a}
+.dashboard-performance-copy small{font-size:8px;letter-spacing:2px;color:#78a5c9}
+@media(max-width:760px){
+ .mobile-brand{display:flex!important;align-items:center;gap:8px!important}
+ .mobile-brand-logo{width:32px;height:32px;flex-basis:32px}
+ .mobile-brand-logo .ww-world-logo{width:30px;height:30px}
+ .dashboard-performance-logo{margin:12px 14px 0;padding:7px 12px 7px 7px;gap:9px}
+ .dashboard-performance-orbit{width:42px;height:42px;flex-basis:42px}
+ .dashboard-performance-orbit .ww-world-logo{width:40px;height:40px}
+ .dashboard-performance-copy strong{font-size:10px}
+ .dashboard-performance-copy small{font-size:7px;letter-spacing:1.5px}
+}
