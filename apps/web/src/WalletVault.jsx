@@ -39,6 +39,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [tokenAmount, setTokenAmount] = useState("");
   const [tokenTxHash, setTokenTxHash] = useState("");
   const [deployedContracts, setDeployedContracts] = useState([]);
+  const [contracts, setContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -421,14 +422,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
       <div className="security-note">Smart-contract addresses are managed separately. This panel shows your wallet address, not a token contract address.</div>
       <a className="secondary" href={shown.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + shown.address : shown.network === "bnb" ? "https://bscscan.com/address/" + shown.address : shown.network === "ethereum" ? "https://etherscan.io/address/" + shown.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
-      <button className="secondary" onClick={() => navigator.clipboard?.writeText(shown.address)}>Copy wallet address</button>
+      <button className="secondary" onClick={async () => { try { if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable"); await navigator.clipboard.writeText(shown.address); setMessage("Wallet address copied."); } catch { setMessage("Could not access clipboard. Select and copy the wallet address above manually."); } }}>Copy wallet address</button>
     </article>}
 
     <article className="panel action-panel">
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select value={selectedId} onChange={event => { setSelectedId(event.target.value); setUnlocked(null); setGenerated(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
+      <label>Wallet<select value={selectedId} onChange={event => { setSelectedId(event.target.value); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
       {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
@@ -452,13 +453,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
           }}>Reveal private key</button>
         </> : <>
           <label>Private key<textarea readOnly rows="2" value={revealedPrivateKey} /></label>
-          <button className="secondary" onClick={() => navigator.clipboard?.writeText(revealedPrivateKey)}>Copy private key</button>
+          <button className="secondary" onClick={async () => { try { if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable"); await navigator.clipboard.writeText(revealedPrivateKey); setMessage("Private key copied. Keep it secret and clear your clipboard when finished."); } catch { setMessage("Clipboard unavailable. Do not paste your private key into chat or support; copy it manually only in a trusted private environment."); } }}>Copy private key</button>
           <button className="secondary" onClick={() => { setRevealedPrivateKey(""); setKeyRevealPassword(""); }}>Hide and clear private key</button>
         </>}
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setMessage("Wallet locked in this browser session."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setMessage("Wallet locked in this browser session. Balance and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => setSignMessage(event.target.value)} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
