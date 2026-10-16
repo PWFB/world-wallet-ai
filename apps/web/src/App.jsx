@@ -1493,7 +1493,7 @@ function App() {
               <button type="button" className="dashboard-tab" onClick={() => { setActive("Swap"); setShowDashboardMore(false); }}>
                 <span className="dashboard-tab-icon">⇄</span><small>Convert</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Wallets"); setShowDashboardMore(false); }}>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Profile"); setShowDashboardMore(false); }}>
                 <span className="dashboard-tab-icon">◎</span><small>Profile</small>
               </button>
               <button type="button" className={"dashboard-tab" + (showDashboardMore ? " selected" : "")} aria-expanded={showDashboardMore} onClick={() => setShowDashboardMore(value => !value)}>
