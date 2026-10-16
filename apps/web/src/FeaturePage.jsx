@@ -497,7 +497,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         try {
           const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
           if (previous?.address) {
-            const connection = { ...previous, chainId: Number(chain) };
+            const connection = { ...previous, chainId: parseExternalChainId(chain) };
             localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
             window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
           }
@@ -776,7 +776,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           </div>)}</div> : <div className="live-chart-empty">No locally recorded contracts. Create and deploy a contract from Contract Generator first.</div>}
         </div>
         <div className="security-note">Important: this is not an audited proof of reserves. It shows on-chain assets at connected addresses only; it does not verify ownership, platform-wide customer liabilities, off-chain assets, or solvency. Sepolia test funds are excluded.</div>
-        {proofData && <button className="secondary" onClick={()=>navigator.clipboard?.writeText(JSON.stringify(proofData,null,2))}>Copy snapshot data</button>}
+        {proofData && <button className="secondary" onClick={async()=>{try{if(!navigator.clipboard?.writeText)throw new Error("Clipboard unavailable");await navigator.clipboard.writeText(JSON.stringify(proofData,null,2));setMessage("Proof-of-reserves snapshot copied.");}catch{setMessage("Clipboard unavailable. You can review the snapshot values above.");}}}>Copy snapshot data</button>}
       </article>
     </section>;
   }
@@ -1073,14 +1073,14 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return <section className="content feature-content">
       <div className="page-heading"><div><p className="eyebrow">SMART CONTRACT TOOLS</p><h1>Contract Converter</h1><p className="muted">Inspect a contract address and resolve token metadata where supported.</p></div><button className="secondary" onClick={()=>setActive("Verify Contract")}>Verify bytecode →</button></div>
       <article className="panel action-panel">
-        <label>Network<select value={contractNetwork} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Sepolia testnet</option></select></label>
+        <label>Network<select value={contractNetwork} onChange={e=>{setContractNetwork(e.target.value);setChainResult(null);setMessage("");}}><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Sepolia testnet</option></select></label>
         <label>Contract address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>
         {message && <div className={/failed|unable|invalid|no deployed/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
         <button className="primary feature-submit" disabled={toolBusy||destination.trim().length!==42} onClick={inspectContract}>{toolBusy?"Inspecting contract…":"Resolve contract →"}</button>
         {chainResult && <div className="feature-summary">
           <div className="tool-status"><span className="status-dot"></span><b>{chainResult.is_contract ? "Deployed contract" : "No contract bytecode"}</b></div>
           <div className="tool-row"><div><b>Network</b></div><strong>{chainResult.network}</strong></div>
-          <div className="tool-row"><div><b>Contract address</b></div><code>{chainResult.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(chainResult.address)}>Copy</button></div>
+          <div className="tool-row"><div><b>Contract address</b></div><code>{chainResult.address}</code><button className="secondary" onClick={async()=>{try{if(!navigator.clipboard?.writeText)throw new Error("Clipboard unavailable");await navigator.clipboard.writeText(chainResult.address);setMessage("Contract address copied.");}catch{setMessage("Clipboard unavailable. Select the contract address and copy it manually.");}}}>Copy</button></div>
           <div className="tool-row"><div><b>Token name</b></div><strong>{chainResult.name || "Not exposed"}</strong></div>
           <div className="tool-row"><div><b>Symbol</b></div><strong>{chainResult.symbol || "Not exposed"}</strong></div>
           <div className="tool-row"><div><b>Decimals</b></div><strong>{chainResult.decimals ?? "Not exposed"}</strong></div>
