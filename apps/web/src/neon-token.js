@@ -2,6 +2,7 @@ const TOKEN_EXPIRY_SKEW_SECONDS = 30;
 
 export function extractNeonToken(result) {
   if (typeof result === "string") return result;
+  if (!result || typeof result !== "object") return "";
   for (const candidate of [
     result.token,
     result.data?.token,
