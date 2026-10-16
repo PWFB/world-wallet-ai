@@ -21,7 +21,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://world-wallet
 const TOKEN_KEY = "world_wallet_access_token";
 
 const fallbackAssets = [];
-const fallbackWallet = { available_balance_usd: 0, actual_balance_usd: 0, reserved_balance_usd: 0, total_received_usd: 0, total_sent_usd: 0, profit_usd: 0, change_24h: 0 };
+const fallbackWallet = { available_balance_usd: null, actual_balance_usd: null, reserved_balance_usd: null, total_received_usd: null, total_sent_usd: null, profit_usd: null, change_24h: null, valuation_complete: false };
 const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
@@ -1315,7 +1315,7 @@ function App() {
 
               <article className="panel ai-panel">
                 <div className="ai-title"><div className="ai-orb">✦</div><div><h2>BALMZ AI</h2><span>Your intelligent wallet assistant</span></div><b>LIVE</b></div>
-                <div className="ai-message">{assets.length === 0 ? "No wallet assets are available yet. Sync a configured production wallet to let BALMZ AI analyze live data." : Number(wallet.available_balance_usd || 0) > 0 ? <>Your current available balance is <strong>{money(wallet.available_balance_usd)}</strong>. BALMZ AI can analyze the live asset mix and recent activity.</> : "Your wallet is authenticated, but no funded asset balance is currently recorded."}</div>
+                <div className="ai-message">{assets.length === 0 ? "No wallet assets are available yet. Sync a configured production wallet to let BALMZ AI analyze live data." : wallet.available_balance_usd == null || wallet.valuation_complete === false ? "Wallet valuation is unavailable until all held assets have verified live prices." : Number(wallet.available_balance_usd) > 0 ? <>Your current available balance is <strong>{money(wallet.available_balance_usd)}</strong>. BALMZ AI can analyze the live asset mix and recent activity.</> : "Your wallet is authenticated, but no funded asset balance is currently recorded."}</div>
                 <div className="ai-actions"><button>Run portfolio scan</button><button>Ask BALMZ AI</button></div>
                 <div className="ai-input">Ask anything about your wallet... <span>↗</span></div>
               </article>
