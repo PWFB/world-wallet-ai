@@ -306,7 +306,26 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       if (!bytecode || bytecode === "0x" || bytecode === "0x0") {
         setCheckResult({ kind: "bad", title: "No contract bytecode found", detail: "This address has no deployed contract code on " + selectedNetwork.label + ". Confirm the network and address." });
       } else {
-        setCheckResult({ kind: "good", title: "Contract bytecode found", detail: "Deployed bytecode was returned by the selected chain RPC. This does not prove the source code is verified, safe, or audited." });
+        const record = {
+          name: "Verified contract reference",
+          symbol: "",
+          address: cleanAddress,
+          network,
+          chainId: network === "sepolia" ? "11155111" : network === "ethereum" ? "1" : "56",
+          txHash: "",
+          deployer: "",
+          explorerUrl: selectedNetwork.explorer + "/address/" + cleanAddress,
+          deployedAt: new Date().toISOString(),
+          status: "bytecode_confirmed"
+        };
+        const next = [record, ...readDeployedContracts().filter(item =>
+          !(String(item.address || "").toLowerCase() === cleanAddress.toLowerCase() && item.network === network)
+        )];
+        localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
+        setDeployedContracts(next);
+        setDeployedAddress(cleanAddress);
+        try { window.dispatchEvent(new Event("world-wallet-contracts-updated")); } catch {}
+        setCheckResult({ kind: "good", title: "Contract found and saved", detail: "Deployed bytecode was returned by the selected chain RPC. The address is now saved in this browser and should appear in Saved contract addresses. This does not prove source code is verified, safe, or audited." });
       }
     } catch (error) {
       setCheckResult({ kind: "bad", title: "Contract check failed", detail: error.message || "Unable to query the selected RPC endpoint." });
