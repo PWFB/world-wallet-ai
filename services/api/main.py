@@ -1906,8 +1906,15 @@ def refresh_prices(user: dict = Depends(current_user)):
     with db() as conn:
         market_prices = {}
         for symbol, coin_id in coin_ids.items():
-            market_prices[symbol] = float(raw.get(coin_id, {}).get("usd", 0))
-        # BALMZ has no deployed contract or verified market price yet.
+            quote = raw.get(coin_id, {}).get("usd") if isinstance(raw, dict) else None
+            # A missing quote is not a zero-dollar price. Reject the incomplete
+            # provider response before writing any values, preserving the last
+            # known prices rather than replacing them with fabricated zeros.
+            if not isinstance(quote, (int, float)) or isinstance(quote, bool) or quote <= 0:
+                raise HTTPException(status_code=503, detail="Live market price response is missing a valid quote for one or more supported assets")
+            market_prices[symbol] = float(quote)
+        # BALMZ has no verified market quote; zero is retained only as the
+        # existing internal placeholder, and the frontend labels it Not listed.
         market_prices["BALMZ"] = 0.0
         market_prices["BALMZ-SEP"] = 0.0
         for symbol, price in market_prices.items():
