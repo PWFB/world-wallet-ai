@@ -1,11 +1,9 @@
 import { createAuthClient } from "@neondatabase/auth";
 import { BetterAuthReactAdapter } from "@neondatabase/auth/react/adapters";
+import { extractNeonToken, isUsableNeonAccessToken } from "./neon-token.js";
 
 const authUrl = import.meta.env.VITE_NEON_AUTH_URL || "";
 
-// The Neon Auth service is hosted on a different origin from the Render SPA.
-// Explicitly include credentials so the browser can send/receive the Neon Auth
-// session cookie during sign-in, OTP, session restoration, and JWT exchange.
 export const authClient = createAuthClient(authUrl, {
   adapter: BetterAuthReactAdapter({
     fetchOptions: {
@@ -14,59 +12,52 @@ export const authClient = createAuthClient(authUrl, {
   }),
 });
 
-function isJwt(value) {
-  // A Neon API key or opaque session identifier is not a bearer JWT.
-  // Only forward the compact three-part JWT format to the wallet API.
-  return typeof value === "string" && value.split(".").length === 3 && value.split(".").every(Boolean);
-}
-
-function extractJwt(value) {
-  if (isJwt(value)) return value;
-  if (!value || typeof value !== "object") return "";
-  // Neon Auth SDK response envelopes can differ between beta releases.
-  // Accept only a compact JWT; never pass an opaque session ID/API key onward.
-  for (const candidate of [
-    value.token,
-    value.data?.token,
-    value.data?.data?.token,
-    value.session?.token,
-    value.data?.session?.token,
-  ]) {
-    if (isJwt(candidate)) return candidate;
+async function requestTokenEndpoint() {
+  // Neon Auth's Better Auth JWT plugin exposes /token and the SDK's
+  // jwtClient plugin exposes the same endpoint as authClient.token().
+  // Prefer the SDK method so its configured fetch/cookie behavior is retained.
+  if (typeof authClient.token === "function") {
+    try {
+      const result = await authClient.token();
+      const token = extractNeonToken(result);
+      if (isUsableNeonAccessToken(token)) return token;
+    } catch {
+      // Try the documented endpoint directly as a compatibility fallback.
+    }
   }
+
+  try {
+    const response = await fetch(authUrl.replace(/\/$/, "") + "/token", {
+      method: "GET",
+      credentials: "include",
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.ok) {
+      const data = await response.json();
+      const token = extractNeonToken(data);
+      if (isUsableNeonAccessToken(token)) return token;
+    }
+  } catch {
+    // The caller can keep the UI stable and ask the user to sign in again.
+  }
+
   return "";
 }
 
-export async function getNeonAccessToken() {
+export async function getNeonAccessToken({ forceRefresh = false } = {}) {
   if (!authUrl) return "";
 
-  // Session restoration can finish just after the page mounts. Make a few
-  // short attempts before declaring the wallet API unauthenticated.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const token = extractJwt(await authClient.getJWTToken());
-      if (token) return token;
-    } catch {
-      // Fall through to the credentialed token endpoint.
-    }
+  // A forced refresh must hit the JWT endpoint; getJWTToken() can return the
+  // token held in the SDK's current session state rather than force a new JWT.
+  if (forceRefresh) return requestTokenEndpoint();
 
-    try {
-      const response = await fetch(authUrl.replace(/\/$/, "") + "/token", {
-        method: "GET",
-        credentials: "include",
-        headers: { Accept: "application/json" },
-        cache: "no-store",
-      });
-      if (response.ok) {
-        const token = extractJwt(await response.json());
-        if (token) return token;
-      }
-    } catch {
-      // Retry while the browser restores the Neon Auth session cookie.
-    }
-
-    if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+  try {
+    const token = extractNeonToken(await authClient.getJWTToken());
+    if (isUsableNeonAccessToken(token)) return token;
+  } catch {
+    // Fall through to the JWT endpoint during session restoration.
   }
 
-  return "";
+  return requestTokenEndpoint();
 }
