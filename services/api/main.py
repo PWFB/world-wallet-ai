@@ -2015,9 +2015,41 @@ def performance(user: dict = Depends(current_user)):
 
 
 @app.get("/api/v1/transactions")
-def transactions(user: dict = Depends(current_user)):
-    _,tx,_ = wallet_snapshot(user)
-    return {"transactions":tx}
+def transactions(user: dict = Depends(current_user), limit: int = 50, offset: int = 0):
+    # Keep history scoped to the authenticated user's active wallet. A bounded page
+    # avoids silently truncating history at the old fixed 100-row snapshot limit.
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Transaction history limit must be between 1 and 100")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Transaction history offset cannot be negative")
+    wallet_id = user["wallet_id"]
+    with db() as conn:
+        total_row = conn.execute(
+            "SELECT COUNT(*) FROM transactions WHERE wallet_id=%s",
+            (wallet_id,),
+        ).fetchone()
+        total = int(total_row[0] or 0) if total_row else 0
+        rows = conn.execute(
+            "SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at "
+            "FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s",
+            (wallet_id, limit, offset),
+        ).fetchall()
+    txs = [{
+        "id": row[0], "type": row[1], "asset": row[2], "description": row[3],
+        "amount": float(row[4]), "status": row[5], "tx_hash": row[6],
+        "confirmations": int(row[7] or 0), "block_height": row[8], "network": row[9],
+        "block_hash": row[10], "log_index": row[11],
+        "time": row[12].isoformat() if row[12] else None,
+    } for row in rows]
+    next_offset = offset + len(txs)
+    return {
+        "transactions": txs,
+        "pagination": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": next_offset < total,
+            "next_offset": next_offset if next_offset < total else None,
+        },
+    }
 
 @app.post("/api/v1/transactions/sync")
 def sync_transactions(user: dict = Depends(current_user)):
