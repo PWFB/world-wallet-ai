@@ -1456,6 +1456,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <p className="muted">Connect an existing wallet. World Wallet AI receives the public address and asks the wallet itself to approve signatures and transactions; it never receives the private key.</p>
         {wcAccount ? <>
           <div className="tool-row"><div><b>Wallet address</b><small>{wcProviderKind === "walletconnect" ? "Connected through WalletConnect" : wcProviderKind === "coinbase" ? "Connected through Coinbase Wallet" : "Connected through MetaMask"}</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy address</button></div>
+          <a className="secondary" href={wcChainId === 11155111 ? "https://sepolia.etherscan.io/address/" + wcAccount : wcChainId === 56 ? "https://bscscan.com/address/" + wcAccount : wcChainId === 1 ? "https://etherscan.io/address/" + wcAccount : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
           <div className="tool-row"><div><b>Network</b><small>Detected from connected wallet</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown network")}</strong></div>
           <div className="security-note">Use Explorer to inspect the public address. This connection screen does not display or request a private key or contract address.</div>
           <div className="wallet-connection-actions">
