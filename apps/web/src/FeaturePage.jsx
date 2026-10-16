@@ -2,12 +2,19 @@ import { useEffect, useRef, useState } from "react";
 import { EthereumProvider } from "@walletconnect/ethereum-provider";
 import WalletVault from "./WalletVault.jsx";
 import ContractTools from "./ContractTools.jsx";
+import { getNeonAccessToken } from "./auth-client.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
 
 const money = value => `$${Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
+
+async function walletAuthHeaders(accessToken, extra = {}) {
+  const freshToken = await getNeonAccessToken({ forceRefresh: true });
+  const token = freshToken || accessToken || "";
+  return { ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) };
+}
 
 function transactionExplorerUrl(transaction) {
   const hash = String(transaction?.tx_hash || transaction?.transaction_hash || "").trim();
@@ -68,7 +75,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const loadAddresses = async id => {
     if (!id) return;
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
       setWalletAddresses(response.ok ? (data.addresses || []) : []);
     } catch { setWalletAddresses([]); }
@@ -77,7 +84,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const loadWallets = async () => {
     setBusy(true);
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: { Authorization: "Bearer " + accessToken } });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to load wallets.");
       setWallets(data.wallets || []);
@@ -92,7 +99,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   useEffect(() => { loadWallets(); }, [accessToken]);
 
   const refreshActiveWallet = async () => {
-    const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: { Authorization: "Bearer " + accessToken } });
+    const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
     onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
@@ -106,7 +113,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({ name }),
       });
       const data = await response.json();
@@ -125,7 +132,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/active", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({ wallet_id: id }),
       });
       const data = await response.json();
@@ -147,7 +154,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + walletId + "/addresses", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
         body: JSON.stringify({ network, address: value, label: label.trim() || "primary" }),
       });
       const data = await response.json();
@@ -158,7 +165,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       // configured chain sources can update balances and import verifiable activity.
       const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
         method: "POST",
-        headers: { Authorization: "Bearer " + accessToken },
+        headers: await walletAuthHeaders(accessToken),
       });
       const refreshData = await refreshResponse.json();
       if (!refreshResponse.ok) {
@@ -181,7 +188,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const query = new URLSearchParams({ network: item.network, address: item.address });
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), {
-        headers: { Authorization: "Bearer " + accessToken },
+        headers: await walletAuthHeaders(accessToken),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
