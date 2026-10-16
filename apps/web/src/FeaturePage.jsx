@@ -207,6 +207,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   const switchWallet = async id => {
     if (!id) return;
+    // Address balance results are scoped to the wallet being viewed. Clear them
+    // immediately so a repeated address in another wallet cannot show stale UI.
+    setAddressBalances({});
     setBusy(true); setMessage("");
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/active", {
