@@ -227,7 +227,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
     setGeneratorMessage("Solidity source download prepared. Compile and test before deploying.");
   }
 
-  function importTermuxManifest() {
+  async function importTermuxManifest() {
     setTermuxImportMessage("");
     try {
       const manifest = JSON.parse(termuxManifestJson);
@@ -238,6 +238,20 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       const expectedChainId = importedNetwork === "sepolia" ? "11155111" : importedNetwork === "ethereum" ? "1" : "56";
       if (manifest.chainId && String(manifest.chainId) !== expectedChainId) throw new Error("Manifest chain ID does not match its selected network.");
       const config = NETWORKS[importedNetwork];
+      const rpcCall = async (method, params) => {
+        const response = await fetch(config.rpc, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error?.message || "Could not verify the contract against the selected network RPC.");
+        return data.result;
+      };
+      const chainId = String(await rpcCall("eth_chainId", [])).toLowerCase();
+      if (BigInt(chainId) !== BigInt(expectedChainId)) throw new Error("The configured RPC does not match the manifest network.");
+      const bytecode = await rpcCall("eth_getCode", [importedAddress, "latest"]);
+      if (!bytecode || bytecode === "0x") throw new Error("No contract bytecode exists at this address on " + config.label + ". Nothing was imported.");
       const record = {
         name: String(manifest.name || manifest.symbol || "Imported contract").slice(0, 80),
         symbol: String(manifest.symbol || "").slice(0, 20),
@@ -248,7 +262,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
         deployer: /^0x[a-fA-F0-9]{40}$/.test(String(manifest.deployer || "")) ? manifest.deployer : "",
         explorerUrl: config.explorer + "/address/" + importedAddress,
         deployedAt: manifest.deployedAt || new Date().toISOString(),
-        status: manifest.status === "confirmed" ? "confirmed" : "imported"
+        status: "bytecode_confirmed"
       };
       const next = [record, ...readDeployedContracts().filter(item => !(String(item.address || "").toLowerCase() === importedAddress.toLowerCase() && item.network === importedNetwork))];
       localStorage.setItem(DEPLOYED_CONTRACTS_KEY, JSON.stringify(next));
@@ -258,7 +272,7 @@ contract ${symbol.replace(/[^A-Za-z0-9_]/g, "") || "MyToken"} {
       setLoadAddress(importedAddress);
       setNetwork(importedNetwork);
       setRpcUrl(config.rpc);
-      setTermuxImportMessage("Contract reference imported. Confirm its transaction on the explorer before using it.");
+      setTermuxImportMessage("Contract reference imported after chain-ID and deployed-bytecode checks. Source code and transaction history are not independently verified.");
       try { window.dispatchEvent(new Event("world-wallet-contracts-updated")); } catch {}
     } catch (error) {
       setTermuxImportMessage(error?.message || "Could not import this deployment JSON.");
