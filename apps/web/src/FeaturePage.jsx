@@ -138,7 +138,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     let connection;
     try { connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return; }
     if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return;
-    const chainId = Number(connection.chainId);
+    const rawChainId = connection.chainId;
+    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
+      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
     const externalNetwork = networkByChain[chainId];
     if (!externalNetwork) return;
