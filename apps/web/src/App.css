@@ -1503,3 +1503,12 @@
  .dashboard-performance-copy strong{font-size:10px}
  .dashboard-performance-copy small{font-size:7px;letter-spacing:1.5px}
 }
+
+/* Mobile sidebar visibility repair: make the menu trigger unmistakable and keep the drawer above page content. */
+@media(max-width:760px){
+  .app-shell .topbar .mobile-brand{display:flex!important;align-items:center;gap:9px;min-width:0;padding:7px 10px 7px 8px;border:1px solid #29415f;border-radius:10px;background:#0d1b30;color:#f3f8ff;min-height:42px;flex:0 0 auto;}
+  .app-shell .mobile-menu-glyph{display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border-radius:7px;background:#12304b;border:1px solid #2a5576;color:#45dcff;font-family:Arial,sans-serif;font-size:19px;line-height:1;font-weight:700;}
+  .app-shell .sidebar{display:flex!important;visibility:visible;z-index:1001;}
+  .app-shell.mobile-menu-open .sidebar{visibility:visible;transform:translateX(0)!important;}
+  .app-shell .mobile-menu-scrim{z-index:1000;}
+}
