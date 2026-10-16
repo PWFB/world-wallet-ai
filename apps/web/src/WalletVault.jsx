@@ -191,14 +191,19 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setKeyRevealPassword("");
       setRevealedPrivateKey("");
       setGenerated(null);
-      if (entry.network === "sepolia") {
-        const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
-        const networkInfo = await provider.getNetwork();
-        if (networkInfo.chainId !== 11155111n) throw new Error("Configured RPC is not Ethereum Sepolia.");
-        const balance = await provider.getBalance(signer.address);
-        setNativeBalance(formatEther(balance));
-      }
       setMessage("Wallet unlocked in this browser session. The decrypted key is not sent to the API.");
+      if (entry.network === "sepolia") {
+        try {
+          const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
+          const networkInfo = await provider.getNetwork();
+          if (networkInfo.chainId !== 11155111n) throw new Error("Configured RPC is not Ethereum Sepolia.");
+          const balance = await provider.getBalance(signer.address);
+          setNativeBalance(formatEther(balance));
+        } catch (rpcError) {
+          setNativeBalance("");
+          setMessage("Wallet unlocked locally, but the Sepolia balance could not be checked: " + (rpcError?.shortMessage || rpcError?.message || "RPC unavailable") + ". Your key remains local; retry the balance check later.");
+        }
+      }
     } catch {
       setUnlocked(null);
       setKeyRevealPassword("");
@@ -279,12 +284,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setBusy(true);
     setMessage("");
     setTxHash("");
+    let broadcastHash = "";
     try {
       const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
       const networkInfo = await provider.getNetwork();
       if (networkInfo.chainId !== 11155111n) throw new Error("The configured RPC did not identify itself as Ethereum Sepolia.");
       const signer = unlocked.connect(provider);
       const tx = await signer.sendTransaction({ to: recipient.trim(), value });
+      broadcastHash = tx.hash;
       setTxHash(tx.hash);
       setMessage("Sepolia transaction submitted. Waiting for confirmation…");
       const receipt = await tx.wait(1);
@@ -293,7 +300,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage("Sepolia transaction confirmed. This testnet transaction is not a production wallet ledger entry.");
       setSendAmount("");
     } catch (error) {
-      setMessage(error?.shortMessage || error?.message || "Sepolia transaction failed.");
+      const detail = error?.shortMessage || error?.message || "Unknown RPC error";
+      setMessage(broadcastHash
+        ? "Sepolia transaction was broadcast (hash shown below), but confirmation or the balance refresh failed: " + detail + ". Check the transaction on Sepolia Etherscan before retrying."
+        : "Sepolia transaction was not confirmed as broadcast: " + detail);
     } finally {
       setBusy(false);
     }
@@ -319,6 +329,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setBusy(true);
     setMessage("");
     setTokenTxHash("");
+    let tokenBroadcastHash = "";
     try {
       const provider = new JsonRpcProvider(SEPOLIA_RPC, 11155111);
       const networkInfo = await provider.getNetwork();
@@ -347,6 +358,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       if (value <= 0n) throw new Error("Enter a token amount greater than zero.");
       if (!window.confirm("Send " + tokenAmount.trim() + " " + symbol + " from " + unlocked.address + " to " + tokenRecipient.trim() + "? Verify the contract address before approving.")) return;
       const tx = await token.transfer(tokenRecipient.trim(), value);
+      tokenBroadcastHash = tx.hash;
       setTokenTxHash(tx.hash);
       setMessage(symbol + " transfer submitted on Sepolia. Waiting for confirmation…");
       const receipt = await tx.wait(1);
@@ -355,7 +367,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       setMessage(symbol + " transfer confirmed on Ethereum Sepolia.");
       setTokenAmount("");
     } catch (error) {
-      setMessage(error?.shortMessage || error?.message || "Sepolia token transfer failed.");
+      const detail = error?.shortMessage || error?.message || "Unknown RPC error";
+      setMessage(tokenBroadcastHash
+        ? "Token transfer was broadcast (hash shown below), but confirmation or the balance refresh failed: " + detail + ". Check the transaction on Sepolia Etherscan before retrying."
+        : "Token transfer was not confirmed as broadcast: " + detail);
     } finally {
       setBusy(false);
     }
