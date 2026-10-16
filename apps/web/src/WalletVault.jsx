@@ -38,7 +38,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [tokenRecipient, setTokenRecipient] = useState("");
   const [tokenAmount, setTokenAmount] = useState("");
   const [tokenTxHash, setTokenTxHash] = useState("");
-  const [contracts, setContracts] = useState([]);
   const [deployedContracts, setDeployedContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -367,14 +366,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     if (selectedId === walletId) {
       setSelectedId(next[0]?.walletId || "");
       setUnlocked(null);
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
     }
     setGenerated(null);
     setMessage("Encrypted wallet copy removed from this browser only. This does not delete the server wallet profile or recover a forgotten password.");
   }
 
   const selected = entries.find(item => item.walletId === selectedId);
-  const balmzContract = contracts.find(item => item.symbol === "BALMZ" && item.network === "ethereum")?.contract_address;
-  const sepoliaContract = contracts.find(item => item.symbol === "BALMZ-SEP" && item.network === "sepolia")?.contract_address;
   const shown = generated || (unlocked ? {
     walletId: selected?.walletId,
     name: selected?.name,
@@ -406,7 +405,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <div><small>Wallet ID</small><code>{shown.walletId}</code></div>
         <div><small>Network</small><b>{shown.network === "sepolia" ? "Ethereum Sepolia" : shown.network === "bnb" ? "BNB Chain" : "Ethereum"}</b></div>
         <div><small>Wallet address</small><code>{shown.address}</code></div>
-        <div><small>Public key</small><code>{shown.publicKey}</code></div>
       </div>
       {generated && <div className="wallet-secret-warning">
         {generated.secretsHidden ? <>
@@ -459,6 +457,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
+        <button className="secondary" onClick={() => { setUnlocked(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setMessage("Wallet locked in this browser session."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => setSignMessage(event.target.value)} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
