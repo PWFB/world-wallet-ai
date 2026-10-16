@@ -1361,3 +1361,112 @@
 @media(prefers-reduced-motion:reduce){
   .app-shell *, .ww-public-shell *, .ww-auth-shell *{scroll-behavior:auto!important;transition:none!important}
 }
+
+
+/* World Wallet AI — reference-inspired redesign v2 */
+:root{
+  --ww-v2-bg:#020d1c;--ww-v2-panel:#041a32;--ww-v2-panel-2:#062341;
+  --ww-v2-line:rgba(33,178,230,.24);--ww-v2-cyan:#08c8f4;
+  --ww-v2-blue:#087dd2;--ww-v2-orange:#ff8b24;--ww-v2-gold:#ffc34d;
+}
+.app-shell{
+  background:radial-gradient(ellipse at 72% -12%,rgba(0,155,228,.14),transparent 36%),var(--ww-v2-bg)!important;
+  color:#f4f8ff!important;
+}
+.app-shell .sidebar{
+  background:linear-gradient(180deg,#04172c 0%,#031226 100%)!important;
+  border-right:1px solid var(--ww-v2-line)!important;
+  box-shadow:8px 0 34px rgba(0,0,0,.15);
+}
+.app-shell .brand{padding:22px 18px!important;border-bottom:1px solid rgba(45,181,230,.14)}
+.app-shell .brand strong,.app-shell .brand h1{letter-spacing:-.035em}
+.app-shell .sidebar button,.app-shell .sidebar a{border-radius:10px!important;transition:background .18s ease,transform .18s ease}
+.app-shell .sidebar button.active,.app-shell .sidebar a.active,
+.app-shell .sidebar button[aria-current="page"]{
+  background:linear-gradient(100deg,#087fbe,#05b9de)!important;color:#fff!important;
+  box-shadow:0 8px 24px rgba(0,174,225,.18);
+}
+.app-shell .topbar{
+  min-height:68px!important;background:rgba(2,15,31,.92)!important;
+  border-bottom:1px solid var(--ww-v2-line)!important;backdrop-filter:blur(18px);
+}
+.app-shell .content{max-width:1700px;margin:0 auto;padding:24px clamp(14px,2vw,30px) 90px!important}
+.app-shell .page-heading{margin-bottom:20px!important}
+.app-shell .page-heading h1,.app-shell .page-heading h2{font-size:clamp(25px,2.2vw,34px)!important;letter-spacing:-.045em}
+.app-shell .balance-grid{
+  display:grid!important;grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:14px!important;
+}
+.app-shell .hero-card{
+  grid-column:1/-1!important;min-height:190px!important;position:relative;overflow:hidden;
+  display:flex!important;align-items:center!important;justify-content:space-between!important;gap:24px;
+  padding:clamp(22px,3vw,38px)!important;border:1px solid rgba(0,191,244,.32)!important;
+  border-radius:22px!important;
+  background:radial-gradient(circle at 76% 50%,rgba(0,194,244,.22),transparent 28%),
+    linear-gradient(115deg,#06203b 0%,#03152a 55%,#041e39 100%)!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.04),0 18px 46px rgba(0,0,0,.2);
+}
+.app-shell .hero-card:after{
+  content:"";position:absolute;width:220px;height:220px;right:9%;top:-80px;border:1px solid rgba(0,202,255,.3);
+  border-radius:50%;box-shadow:0 0 0 20px rgba(0,202,255,.035),0 0 0 42px rgba(0,202,255,.025);pointer-events:none;
+}
+.app-shell .hero-card h1,.app-shell .hero-card h2{font-size:clamp(26px,3vw,38px)!important;letter-spacing:-.05em}
+.app-shell .hero-card p{max-width:620px;color:#b6cbe0!important;line-height:1.65}
+.app-shell .stat-card,.app-shell .balance-card,.app-shell .metric-card{
+  min-height:112px!important;padding:20px!important;border-radius:15px!important;
+  background:linear-gradient(145deg,rgba(5,37,68,.98),rgba(3,23,44,.98))!important;
+  border:1px solid rgba(21,155,218,.26)!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.035),0 12px 26px rgba(0,0,0,.13);
+}
+.app-shell .stat-card strong,.app-shell .stat-card .value{font-size:clamp(21px,2vw,29px)!important;letter-spacing:-.04em}
+.app-shell .dashboard-grid{display:grid!important;grid-template-columns:minmax(0,1.25fr) minmax(280px,.9fr) minmax(300px,1fr)!important;gap:16px!important;align-items:stretch}
+.app-shell .panel,.app-shell .action-panel,.app-shell .chart-panel{
+  background:linear-gradient(160deg,rgba(4,27,51,.98),rgba(2,18,36,.98))!important;
+  border:1px solid rgba(24,157,219,.25)!important;border-radius:17px!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.035),0 16px 32px rgba(0,0,0,.12)!important;
+  padding:20px!important;
+}
+.app-shell .panel h2,.app-shell .panel h3{font-size:16px!important;letter-spacing:-.02em}
+.app-shell .panel button.primary,.app-shell button.primary,.app-shell .feature-submit{
+  background:linear-gradient(110deg,#ff7a1a,#ffad31)!important;color:#101727!important;
+  border:0!important;border-radius:10px!important;font-weight:800!important;
+  box-shadow:0 7px 22px rgba(255,133,30,.16);
+}
+.app-shell .panel button.secondary,.app-shell button.secondary{
+  border:1px solid rgba(0,193,240,.35)!important;background:rgba(0,133,193,.1)!important;color:#dff8ff!important;border-radius:10px!important;
+}
+.app-shell input,.app-shell select,.app-shell textarea{
+  background:#03162a!important;border:1px solid rgba(29,160,215,.34)!important;color:#f5fbff!important;border-radius:10px!important;
+}
+.app-shell table{border-collapse:separate!important;border-spacing:0 5px!important}
+.app-shell th{color:#8fb5d3!important;font-size:11px!important;text-transform:uppercase;letter-spacing:.08em}
+.app-shell td{background:rgba(4,34,62,.72)!important;border-top:1px solid rgba(20,139,196,.12)!important;border-bottom:1px solid rgba(20,139,196,.12)!important}
+.app-shell .dashboard-bottom-nav{background:rgba(2,16,32,.96)!important;border-top:1px solid var(--ww-v2-line)!important;backdrop-filter:blur(18px)}
+.ww-public-shell{
+  background:radial-gradient(ellipse at 75% 25%,rgba(0,177,239,.19),transparent 30%),linear-gradient(145deg,#020b18,#031a31 60%,#020c19)!important;
+}
+.ww-public-nav{border-bottom:1px solid rgba(23,172,224,.22)!important}
+.ww-landing-hero{max-width:1400px!important;min-height:590px!important;padding-top:72px!important;padding-bottom:66px!important}
+.ww-hero-copy h1{font-size:clamp(42px,5.8vw,76px)!important;line-height:1.02!important;letter-spacing:-.065em!important}
+.ww-hero-copy h1 span,.ww-hero-copy h1 strong{color:var(--ww-v2-cyan)!important}
+.ww-hero-copy p{max-width:590px!important;color:#b8cde0!important;font-size:17px!important;line-height:1.75!important}
+.ww-public-shell .ww-cta,.ww-public-shell .primary,.ww-auth-shell .primary{
+  background:linear-gradient(110deg,#ff7b1a,#ffad32)!important;color:#101727!important;border:0!important;border-radius:12px!important;font-weight:800!important;
+}
+.ww-auth-layout{background:radial-gradient(ellipse at 20% 20%,rgba(0,178,236,.12),transparent 40%)}
+.ww-auth-card{background:linear-gradient(150deg,#062341,#031529)!important;border:1px solid rgba(0,190,239,.3)!important;border-radius:22px!important;box-shadow:0 24px 70px rgba(0,0,0,.28)!important}
+@media(max-width:1100px){
+ .app-shell .dashboard-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+ .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:680px){
+ .app-shell .content{padding:16px 12px 96px!important}
+ .app-shell .hero-card{grid-column:1/-1!important;min-height:0!important;align-items:flex-start!important;flex-direction:column!important;padding:23px!important}
+ .app-shell .hero-card:after{right:-75px;top:-55px}
+ .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}
+ .app-shell .stat-card{padding:14px!important;min-height:100px!important}
+ .app-shell .dashboard-grid{grid-template-columns:minmax(0,1fr)!important;gap:12px!important}
+ .app-shell .panel{padding:16px!important}
+ .ww-landing-hero{min-height:auto!important;padding:46px 18px!important}
+ .ww-hero-copy h1{font-size:clamp(38px,11vw,56px)!important}
+}
+@media(max-width:380px){.app-shell .balance-grid{grid-template-columns:minmax(0,1fr)!important}}
