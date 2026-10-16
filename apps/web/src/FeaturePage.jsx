@@ -803,7 +803,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <div className="page-heading"><div><p className="eyebrow">TESTNET TOOLS</p><h1>Sepolia Converter</h1><p className="muted">Inspect Sepolia ETH and calculate a hypothetical mainnet-price reference.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Attach address →</button></div>
       <div className="security-note">Sepolia ETH is testnet-only. It cannot be converted into real ETH or cash by changing an address. Any USD figure is only a reference based on the ETH mainnet market price.</div>
       <article className="panel action-panel">
-        <label>Sepolia public address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>
+        <label>Sepolia public address<input value={destination} onChange={e=>{setDestination(e.target.value);setChainResult(null);setMessage("");}} placeholder="0x…"/></label>
         {message && <div className={/failed|unable|invalid|enter|check/i.test(message)?"feature-error":"feature-success"}>{message}</div>}
         <button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={inspectSepolia}>{toolBusy?"Reading Sepolia…":"Read Sepolia balance →"}</button>
         {chainResult && <div className="feature-summary">
