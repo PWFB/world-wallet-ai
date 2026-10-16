@@ -1153,3 +1153,211 @@
 .coin-history-chart-heading h3{margin:0;font-size:13px}.coin-history-chart-heading p{margin:5px 0 0;color:var(--muted,#9aa8c2);font-size:10px}.coin-history-chart-heading>span{font-size:11px;font-weight:700;white-space:nowrap}
 .coin-history-chart{display:block;width:100%;height:180px;margin-top:12px;overflow:visible}.coin-history-chart line{stroke:var(--border,#26334d);stroke-dasharray:3 5;stroke-width:1}.coin-history-chart path{fill:none;stroke:#22c55e;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round;vector-effect:non-scaling-stroke}.coin-history-chart.trend-down path{stroke:#f87171}.coin-history-chart-footer{color:var(--muted,#9aa8c2);font-size:10px}.coin-history-chart-empty{display:grid;place-items:center;min-height:130px;text-align:center;color:var(--muted,#9aa8c2);font-size:12px;line-height:1.6;padding:18px}
 @media(max-width:760px){.asset-row{align-items:flex-start}.asset-balance{min-width:86px;max-width:44%;text-align:right;overflow-wrap:anywhere}.asset-balance b{font-size:9px}.asset-balance small{font-size:7px}.asset-network{display:none}.coin-history-chart{height:140px}.coin-history-chart-panel{padding:12px}}
+
+
+/* World Wallet AI V5 — responsive visual system refresh.
+   Presentation-only overrides: preserve existing authentication and wallet behavior. */
+:root{
+  --ww-bg:#060c19;
+  --ww-surface:#0c1729;
+  --ww-surface-raised:#101f35;
+  --ww-border:#20334f;
+  --ww-muted:#91a1b9;
+  --ww-cyan:#35d7f4;
+  --ww-gold:#d8b65b;
+  --ww-orange:#ff7518;
+}
+.app-shell{
+  background:
+    radial-gradient(ellipse at 76% -14%,rgba(35,94,158,.18),transparent 34%),
+    var(--ww-bg);
+  color:#f1f6ff;
+}
+.app-shell .sidebar{
+  background:linear-gradient(180deg,#091426 0%,#07101f 100%);
+  border-right-color:#1b2a42;
+  box-shadow:10px 0 36px rgba(0,0,0,.12);
+}
+.app-shell .brand{padding-bottom:26px}
+.app-shell .brand-mark{
+  border-color:rgba(216,182,91,.7);
+  background:linear-gradient(145deg,rgba(216,182,91,.14),rgba(53,215,244,.05));
+  box-shadow:inset 0 0 16px rgba(216,182,91,.04);
+}
+.app-shell .network-pill{
+  border-color:#243854;
+  background:linear-gradient(120deg,#0f1e32,#0a1527);
+  border-radius:12px;
+}
+.app-shell .main{min-width:0}
+.app-shell .topbar{
+  border-bottom-color:rgba(43,62,91,.72);
+  background:rgba(6,12,25,.88);
+  padding-left:clamp(14px,2.4vw,32px);
+  padding-right:clamp(14px,2.4vw,32px);
+}
+.app-shell .content{
+  width:100%;
+  max-width:1600px;
+  padding:clamp(18px,2.2vw,34px) clamp(14px,2.4vw,34px) 48px;
+}
+.app-shell .page-heading{
+  gap:18px;
+  margin-bottom:22px;
+}
+.app-shell .page-heading h1{
+  letter-spacing:-.035em;
+  font-size:clamp(22px,2.2vw,30px);
+}
+.app-shell .page-heading .muted{
+  line-height:1.65;
+  max-width:720px;
+}
+.app-shell .primary{
+  border-radius:10px;
+  background:linear-gradient(115deg,#27c9e8,#00a9d2);
+  box-shadow:0 8px 22px rgba(0,190,224,.14);
+  transition:transform .16s ease,filter .16s ease;
+}
+.app-shell .primary:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.app-shell .balance-grid{
+  grid-template-columns:minmax(260px,1.65fr) repeat(3,minmax(130px,1fr));
+  gap:14px;
+  align-items:stretch;
+}
+.app-shell .hero-card,
+.app-shell .stat-card,
+.app-shell .panel{
+  border-color:var(--ww-border);
+  border-radius:15px;
+  box-shadow:0 10px 30px rgba(0,0,0,.12);
+}
+.app-shell .hero-card{
+  padding:clamp(18px,2vw,26px);
+  background:
+    radial-gradient(ellipse at 100% 0%,rgba(53,215,244,.12),transparent 45%),
+    linear-gradient(140deg,#112643,#0b172a 76%);
+  border-color:#2c4a6a;
+  position:relative;
+  overflow:hidden;
+}
+.app-shell .hero-card:after{
+  content:"";
+  position:absolute;
+  width:160px;height:160px;
+  right:-92px;bottom:-105px;
+  border:1px solid rgba(216,182,91,.22);
+  border-radius:50%;
+  box-shadow:0 0 0 20px rgba(216,182,91,.025),0 0 0 42px rgba(53,215,244,.02);
+  pointer-events:none;
+}
+.app-shell .hero-balance{
+  font-size:clamp(25px,2.5vw,36px);
+  letter-spacing:-.04em;
+  line-height:1.3;
+  overflow-wrap:anywhere;
+}
+.app-shell .card-actions{position:relative;z-index:1;gap:8px;flex-wrap:wrap}
+.app-shell .card-actions button{
+  border:1px solid #294866;
+  border-radius:9px;
+  padding:9px 12px;
+  background:rgba(6,17,32,.68);
+  transition:border-color .15s ease,background .15s ease;
+}
+.app-shell .card-actions button:hover{border-color:var(--ww-cyan);background:#102b40}
+.app-shell .stat-card{
+  min-width:0;
+  padding:clamp(15px,1.5vw,21px);
+  background:linear-gradient(150deg,#101d31,#0a1424);
+}
+.app-shell .stat-card>span{
+  color:#9eacc2;
+  letter-spacing:.02em;
+  line-height:1.5;
+}
+.app-shell .stat-card strong{
+  font-size:clamp(15px,1.3vw,20px);
+  overflow-wrap:anywhere;
+}
+.app-shell .stat-source{line-height:1.55;overflow-wrap:anywhere}
+.app-shell .dashboard-grid{gap:14px}
+.app-shell .panel{
+  padding:clamp(14px,1.7vw,22px);
+  background:linear-gradient(150deg,#0e1a2d,#091425);
+}
+.app-shell .panel-head h2{font-size:14px;letter-spacing:-.015em}
+.app-shell .panel-head span{line-height:1.6}
+.app-shell .asset-row,
+.app-shell .transaction-row,
+.app-shell .activity-row{
+  border-color:rgba(42,62,91,.75);
+}
+.app-shell .sidebar a,
+.app-shell .sidebar button{transition:background .15s ease,border-color .15s ease,color .15s ease}
+.app-shell .sidebar a:hover,
+.app-shell .sidebar button:hover{border-radius:9px}
+.app-shell button:focus-visible,
+.app-shell a:focus-visible,
+.app-shell input:focus-visible,
+.app-shell select:focus-visible{
+  outline:2px solid var(--ww-cyan);
+  outline-offset:3px;
+}
+.ww-public-shell{
+  background:
+    radial-gradient(ellipse at 84% 8%,rgba(255,117,24,.10),transparent 32%),
+    radial-gradient(ellipse at 12% 45%,rgba(0,178,225,.08),transparent 34%),
+    #030b19;
+}
+.ww-public-nav{border-bottom-color:rgba(40,61,88,.72)}
+.ww-landing-hero{min-height:clamp(570px,76vh,760px)}
+.ww-hero-copy h1,.ww-auth-copy h1{line-height:1.08}
+.ww-auth-card{backdrop-filter:blur(16px)}
+@media(max-width:1120px){
+  .app-shell .balance-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .app-shell .hero-card{grid-column:span 3}
+  .app-shell .stat-card{min-height:130px}
+}
+@media(max-width:760px){
+  .app-shell .content{padding:17px 13px 30px}
+  .app-shell .topbar{gap:8px}
+  .app-shell .top-actions{gap:5px;align-items:center}
+  .app-shell .top-actions button{min-width:33px}
+  .app-shell .page-heading{align-items:flex-start;flex-wrap:wrap;margin-bottom:16px}
+  .app-shell .page-heading>div{min-width:0;flex:1 1 100%}
+  .app-shell .page-heading h1{font-size:23px;margin-bottom:5px}
+  .app-shell .page-heading .muted{display:block;font-size:11px}
+  .app-shell .balance-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+  .app-shell .hero-card{grid-column:1/-1}
+  .app-shell .stat-card{min-height:118px;padding:13px}
+  .app-shell .dashboard-grid{grid-template-columns:minmax(0,1fr);gap:10px}
+  .app-shell .panel{padding:14px}
+  .app-shell .panel-head{gap:10px;flex-wrap:wrap}
+  .app-shell .hero-balance{font-size:clamp(24px,7vw,32px)}
+  .app-shell .card-actions button{flex:1 1 auto}
+  .ww-public-nav{height:64px;padding:0 16px}
+  .ww-public-nav nav{display:none}
+  .ww-landing-hero{min-height:auto;padding:55px 18px 42px;grid-template-columns:minmax(0,1fr);gap:30px}
+  .ww-hero-copy h1,.ww-auth-copy h1{font-size:clamp(36px,10vw,54px);letter-spacing:-1.8px}
+  .ww-hero-features{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+  .ww-feature-section,.ww-security-section{padding:48px 18px}
+  .ww-feature-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ww-auth-layout{padding:28px 16px 44px;grid-template-columns:minmax(0,1fr);gap:28px}
+  .ww-auth-copy h1{margin:18px 0 12px}
+  .ww-auth-points{margin-top:22px}
+  .ww-auth-card{justify-self:stretch;max-width:none;padding:22px}
+}
+@media(max-width:420px){
+  .app-shell .top-actions .top-browser-button span{display:none}
+  .app-shell .balance-grid{grid-template-columns:minmax(0,1fr)}
+  .app-shell .hero-card{grid-column:auto}
+  .app-shell .stat-card{min-height:0}
+  .app-shell .top-actions button{height:32px}
+  .ww-feature-grid{grid-template-columns:minmax(0,1fr)}
+  .ww-market-strip div{padding:10px 8px}
+  .ww-market-strip strong{font-size:13px}
+}
+@media(prefers-reduced-motion:reduce){
+  .app-shell *, .ww-public-shell *, .ww-auth-shell *{scroll-behavior:auto!important;transition:none!important}
+}
