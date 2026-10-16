@@ -1161,12 +1161,14 @@ function App() {
 
       <main className="main">
         <header className="topbar">
-          <button type="button" className="mobile-brand" aria-label={mobileMenuOpen ? "Close wallet navigation" : "Open wallet navigation"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(current => !current)}><span className="brand-mark">W</span><b>WORLD WALLET <span>AI</span></b></button>
+          <button type="button" className="mobile-brand" aria-label={mobileMenuOpen ? "Close wallet navigation" : "Open wallet navigation"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(current => !current)}><span className="mobile-brand-logo"><WorldGlobeLogo compact /></span><b>WORLD WALLET <span>AI</span></b></button>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
+
+        {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
         {active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
