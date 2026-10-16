@@ -1267,8 +1267,8 @@ function App() {
             <div className="balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
-                <div className="hero-balance">{showBalance ? money(wallet.available_balance_usd) : "••••••••"} <small>USD</small></div>
-                <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USD available</span><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}% <small>24h</small></b></div>
+                <div className="hero-balance">{showBalance ? (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)) : "••••••••"} <small>USD</small></div>
+                <div className="balance-meta"><span>{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Portfolio valuation unavailable" : "≈ " + number(wallet.available_balance_usd) + " USD available"}</span><b className="neutral">{wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
                 {Number(wallet.reserved_balance_usd || 0) > 0 && <div className="reserved-note">Reserved for pending requests: {money(wallet.reserved_balance_usd)}</div>}
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>

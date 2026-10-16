@@ -1380,10 +1380,25 @@ def wallet_snapshot(user):
         for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
     prices={x["symbol"]:x["price_usd"] for x in assets}
-    return assets,txs,{"available_balance_usd":sum(x["value_usd"] for x in assets),"actual_balance_usd":sum(x["actual_value_usd"] for x in assets),
-        "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets),
-        "total_received_usd":sum(abs(x["amount"])*prices.get(x["asset"],0) for x in txs if x["type"]=="received"),
-        "total_sent_usd":sum(abs(x["amount"])*prices.get(x["asset"],0) for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0),"profit_usd":0,"change_24h":0}
+    available_valuation_complete=all(
+        (x["balance"] <= 0 and x["reserved_balance"] <= 0) or x["price_available"] for x in assets
+    )
+    actual_valuation_complete=all(
+        x["actual_balance"] <= 0 or x["price_available"] for x in assets
+    )
+    received_txs=[x for x in txs if x["type"]=="received"]
+    sent_txs=[x for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0]
+    received_valuation_complete=all(prices.get(x["asset"],0)>0 for x in received_txs)
+    sent_valuation_complete=all(prices.get(x["asset"],0)>0 for x in sent_txs)
+    return assets,txs,{
+        "available_balance_usd":sum((x["value_usd"] or 0) for x in assets) if available_valuation_complete else None,
+        "actual_balance_usd":sum((x["actual_value_usd"] or 0) for x in assets) if actual_valuation_complete else None,
+        "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets) if available_valuation_complete else None,
+        "valuation_complete":available_valuation_complete and actual_valuation_complete,
+        "total_received_usd":sum(abs(x["amount"])*prices[x["asset"]] for x in received_txs) if received_valuation_complete else None,
+        "total_sent_usd":sum(abs(x["amount"])*prices[x["asset"]] for x in sent_txs) if sent_valuation_complete else None,
+        "profit_usd":None,"change_24h":None
+    }
 
 
 
