@@ -1174,7 +1174,7 @@ function App() {
         {active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const balance = live?.balance || 0;
+          const balance = live?.balance;
           const value = live?.value_usd;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
           const change = live?.change_24h ?? marketPrices[selectedCoin]?.usd_24h_change;
@@ -1195,7 +1195,7 @@ function App() {
             <div className="coin-detail-grid">
               <article className="hero-card coin-detail-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><span className={`asset-icon coin-icon coin-${selectedCoin.toLowerCase()}`}>{coin?.icon}</span></div>
-                <div className="hero-balance">{number(balance)} <small>{selectedCoin}</small></div>
+                <div className="hero-balance">{live ? number(balance) : "No wallet balance record"} {live && <small>{selectedCoin}</small>}</div>
                 <div className="balance-meta"><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : "Live price unavailable"}</b></div>
               </article>
               <article className="panel coin-stats">
@@ -1337,7 +1337,7 @@ function App() {
                   .filter(c => coinFilter === "all" || Number((assets.find(a => a.symbol === c.symbol) || {}).balance || 0) !== 0)
                   .map(c => {
                     const live = assets.find(a => a.symbol === c.symbol);
-                    const balance = live ? live.balance : 0;
+                    const balance = live?.balance;
                     const value = live?.value_usd;
                     const price = Number(live?.price_usd || c.price_usd || marketPrices[c.symbol]?.usd || 0);
                     const hasMarketPrice = price > 0;
@@ -1345,7 +1345,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
+                      <div className="asset-balance"><b>{live ? `${number(balance)} ${c.symbol}` : "No wallet balance record"}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
