@@ -410,6 +410,25 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [asset]);
 
   useEffect(() => {
+    const syncLocalExternalAddress = () => {
+      const localAddresses = getLocalExternalReceiveAddress();
+      setAddresses(previous => {
+        const serverAddresses = previous.filter(item => !item.local);
+        return [...serverAddresses, ...localAddresses].filter((item, index, all) =>
+          item?.address && item?.network &&
+          all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
+        );
+      });
+    };
+    window.addEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
+    window.addEventListener("storage", syncLocalExternalAddress);
+    return () => {
+      window.removeEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
+      window.removeEventListener("storage", syncLocalExternalAddress);
+    };
+  }, []);
+
+  useEffect(() => {
     if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
     fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
