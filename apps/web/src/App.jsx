@@ -3,6 +3,7 @@ import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import BrowserPage from "./BrowserPage.jsx";
+import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 
 function WorldGlobeLogo({ compact = false }) {
   return <svg className={compact ? "ww-world-logo ww-world-logo-compact" : "ww-world-logo"} viewBox="0 0 64 64" role="img" aria-label="World Wallet AI globe logo">
@@ -1261,6 +1262,18 @@ function App() {
                 <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
               </div>
             </div>
+
+            
+            <DashboardWalletPanel
+              accessToken={accessToken}
+              apiBaseUrl={API_BASE_URL}
+              assets={assets}
+              activity={activity}
+              marketPrices={marketPrices}
+              tokenRegistry={tokenRegistry}
+              setActive={setActive}
+              onWalletSwitched={async () => { await syncWallet(); await loadDashboardAddresses(); }}
+            />
 
             <div className="balance-grid">
               <article className="hero-card">
