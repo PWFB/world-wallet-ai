@@ -70,6 +70,14 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
   const balmzRegistry = tokenRegistry.find(item => String(item.symbol).toUpperCase() === "BALMZ" && String(item.network).toLowerCase() === "ethereum");
   const contractPending = !balmzRegistry?.contract_address || balmzRegistry?.status === "pending_contract";
 
+  const coinCatalog = [
+    ["BALMZ", "BALMZ Token"], ["BALMZ-SEP", "BALMZ Token (Sepolia)"],
+    ["BTC", "Bitcoin"], ["ETH", "Ethereum"], ["USDT", "Tether USD"],
+    ["BNB", "BNB"], ["USDC", "USD Coin"], ["SOL", "Solana"],
+    ["XRP", "XRP"], ["ADA", "Cardano"], ["LTC", "Litecoin"], ["DOGE", "Dogecoin"],
+  ];
+
+
   async function switchWallet(nextId) {
     if (!nextId || nextId === activeWalletId) return;
     setSaving(true); setError(""); setNotice("");
@@ -182,6 +190,34 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, assets =
         <article><span>Coin price</span><strong>{balmzPrice > 0 ? money(balmzPrice) : "Not listed"}</strong><small>{balmzPrice > 0 ? "Current quote source" : contractPending ? "Waiting for deployed contract / verified market quote" : "No verified market quote available"}</small></article>
       </div>
       <div className="dashboard-balmz-footer"><span>Wallet value</span><strong>{balmzPrice > 0 ? money(balmzBalance * balmzPrice) : "—"}</strong><span className="dashboard-balmz-note">No price or balance is invented. BALMZ testnet and Ethereum Mainnet are kept separate.</span></div>
+    </div>
+
+    <div className="dashboard-wallet-assets">
+      <div className="dashboard-balmz-title">
+        <div><p className="feature-kicker">WALLET ASSET CATALOG</p><h2>Coins included automatically</h2>
+          <span>Every saved wallet displays the World Wallet AI coin catalog. Balances and network addresses appear only when genuinely connected and verified.</span>
+        </div>
+        <span className="dashboard-balmz-status">{coinCatalog.length} listed assets</span>
+      </div>
+      <div className="dashboard-wallet-coin-grid">
+        {coinCatalog.map(([symbol, name]) => {
+          const record = assets.find(item => String(item.symbol || "").toUpperCase() === symbol);
+          const registry = tokenRegistry.find(item => String(item.symbol || "").toUpperCase() === symbol && item.wallet_network_connected);
+          const quote = marketPrices[symbol] || {};
+          const balance = Number(record?.available_balance ?? record?.balance ?? 0);
+          const price = Number(record?.price_usd ?? quote.usd ?? 0);
+          const status = symbol === "BALMZ" && (!registry?.contract_address || registry?.status === "pending_contract")
+            ? "Contract pending"
+            : registry ? "Network connected"
+            : record ? "Wallet record available"
+            : "Catalog added · connect network";
+          return <article className="dashboard-wallet-coin" key={symbol}>
+            <div><strong>{symbol}</strong><small>{name}</small></div>
+            <div className="dashboard-wallet-coin-value"><strong>{amount(balance)} {symbol}</strong><small>{price > 0 ? money(price) + " / coin" : "Price unavailable"}</small></div>
+            <span>{status}</span>
+          </article>;
+        })}
+      </div>
     </div>
   </section>;
 }
