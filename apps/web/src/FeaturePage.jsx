@@ -98,6 +98,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [addressBalances, setAddressBalances] = useState({});
+  const balanceRequestGeneration = useRef(0);
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [localEntries, setLocalEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
 
@@ -209,6 +210,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     if (!id) return;
     // Address balance results are scoped to the wallet being viewed. Clear them
     // immediately so a repeated address in another wallet cannot show stale UI.
+    balanceRequestGeneration.current += 1;
     setAddressBalances({});
     setBusy(true); setMessage("");
     try {
@@ -265,17 +267,21 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   const checkAddressBalance = async item => {
     if (!walletId || item.local) return;
+    const requestGeneration = balanceRequestGeneration.current;
+    const requestedWalletId = walletId;
     const key = item.network + ":" + item.address;
     setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: true, error: "" } }));
     try {
       const query = new URLSearchParams({ network: item.network, address: item.address });
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(requestedWalletId) + "/addresses/balance?" + query.toString(), {
         headers: await walletAuthHeaders(accessToken),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
+      if (requestGeneration !== balanceRequestGeneration.current) return;
       setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance || 0), asset: data.asset || item.network, syncedAt: data.synced_at, error: "" } }));
     } catch (error) {
+      if (requestGeneration !== balanceRequestGeneration.current) return;
       setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: false, error: error.message || "Balance check failed." } }));
     }
   };
