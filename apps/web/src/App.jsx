@@ -1264,15 +1264,9 @@ function App() {
             </div>
 
             
-            <DashboardWalletPanel
-              accessToken={accessToken}
-              apiBaseUrl={API_BASE_URL}
-              onWalletSwitched={async () => { await syncWallet(); }}
-            />
-
             <div className="balance-grid">
               <article className="hero-card">
-                <div className="card-top"><span>AVAILABLE BALANCE</span><button onClick={() => setShowBalance(!showBalance)}>{showBalance ? "◉" : "◎"}</button></div>
+                <div className="card-top"><span>AVAILABLE BALANCE</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? money(wallet.available_balance_usd) : "••••••••"} <small>USD</small></div>
                 <div className="balance-meta"><span>≈ {number(wallet.available_balance_usd)} USD available</span><b className={Number(wallet.change_24h) >= 0 ? "positive" : "negative"}>{Number(wallet.change_24h || 0).toFixed(2)}% <small>24h</small></b></div>
                 {Number(wallet.reserved_balance_usd || 0) > 0 && <div className="reserved-note">Reserved for pending requests: {money(wallet.reserved_balance_usd)}</div>}

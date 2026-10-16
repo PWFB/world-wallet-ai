@@ -53,7 +53,7 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
 
   const activeWallet = wallets.find(item => String(item.id) === String(activeWalletId)) || wallets.find(item => item.active) || null;
 
-  return <section className="panel dashboard-active-wallet" aria-label="Active wallet selector">
+  return <div className="dashboard-active-wallet" aria-label="Active wallet selector">
     <label className="dashboard-active-wallet-label" htmlFor="dashboard-active-wallet-select">Active wallet</label>
     <div className="dashboard-active-wallet-row">
       <select id="dashboard-active-wallet-select" value={activeWalletId} disabled={loading || saving || !wallets.length}
@@ -64,5 +64,5 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
       <span className="dashboard-active-wallet-status">{saving ? "Switching…" : activeWallet ? (activeWallet.name || "Production Wallet") + " · Active" : loading ? "Loading wallet…" : "No active wallet"}</span>
     </div>
     {error && <p className="dashboard-active-wallet-error" role="alert">{error}</p>}
-  </section>;
+  </div>;
 }
