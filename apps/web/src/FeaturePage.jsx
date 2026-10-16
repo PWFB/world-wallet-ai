@@ -48,14 +48,42 @@ function tokenExplorerUrl(transaction) {
   return "";
 }
 
+const RECEIVE_ASSET_OPTIONS = [
+  { symbol: "BTC", name: "Bitcoin" },
+  { symbol: "ETH", name: "Ethereum" },
+  { symbol: "BNB", name: "BNB" },
+  { symbol: "USDT", name: "Tether USD" },
+  { symbol: "USDC", name: "USD Coin" },
+  { symbol: "USDT-BNB", name: "Tether USD (BNB Chain)" },
+  { symbol: "BALMZ", name: "BALMZ" },
+  { symbol: "BALMZ-SEP", name: "BALMZ (Sepolia testnet)" },
+];
+
 const networksForAsset = symbol => ({
   BTC: [{ value: "bitcoin", label: "Bitcoin" }],
-  ETH: [{ value: "ethereum", label: "Ethereum" }],
+  ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
-  USDT: [{ value: "ethereum", label: "Ethereum" }, { value: "bnb", label: "BNB Chain" }],
+  USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
+  USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
-  BALMZ: [{ value: "ethereum", label: "Ethereum" }],
+  BALMZ: [{ value: "ethereum", label: "Ethereum Mainnet" }],
+  "BALMZ-SEP": [{ value: "sepolia", label: "Ethereum Sepolia (testnet)" }],
 }[symbol] || []);
+
+function getLocalExternalReceiveAddress() {
+  try {
+    const connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
+    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return [];
+    const rawChainId = connection.chainId;
+    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
+      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
+    if (!network) return [];
+    return [{ network, address: connection.address, label: "Connected external wallet", local: true }];
+  } catch {
+    return [];
+  }
+}
 
 function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [wallets, setWallets] = useState([]);
@@ -307,7 +335,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState([]);
+  const [addresses, setAddresses] = useState(() => getLocalExternalReceiveAddress());
   const [receiveNetwork, setReceiveNetwork] = useState("all");
   const [swapFrom, setSwapFrom] = useState("ETH");
   const [swapTo, setSwapTo] = useState("USDT");
@@ -388,8 +416,14 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       .then(async r => ({ ok: r.ok, data: await r.json() }))
       .then(({ ok, data }) => {
         if (cancelled) return;
-        setAddresses(ok ? (data.addresses || []) : []);
-        setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load wallet addresses."));
+        const serverAddresses = ok && Array.isArray(data.addresses) ? data.addresses : [];
+        const localExternalAddresses = getLocalExternalReceiveAddress();
+        const combined = [...serverAddresses, ...localExternalAddresses].filter((item, index, all) =>
+          item?.address && item?.network &&
+          all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
+        );
+        setAddresses(combined);
+        setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
       })
       .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
     return () => { cancelled = true; };
@@ -1215,7 +1249,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Receiving address</h2><p>Copy the public address to share with the person sending you funds.</p></div></div>
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
-              {assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
+              {[...RECEIVE_ASSET_OPTIONS, ...assets].filter((item, index, all) =>
+                item?.symbol && all.findIndex(other => other.symbol === item.symbol) === index
+              ).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
             </select>
           </label>
           <label>Network filter
@@ -1230,6 +1266,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
               <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
+              {item.local && <small className="muted">Shown from this browser's connected wallet. Server attachment and balance verification may still be pending.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Connect a public address for this asset's network in Wallets. This page will list it here after it is saved." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Connect an address →</button></div>}
           </div>
