@@ -160,7 +160,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         if (!addressResponse.ok) {
           setMessage("Wallet keys generated and saved locally, but the server could not link the public address: " + addressWarning + " You can connect it again later.");
         } else {
-          setMessage("Wallet generated. Public key and address are saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
+          setMessage("Wallet generated. Your public wallet address is saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
@@ -429,7 +429,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
       <label>Wallet<select value={selectedId} onChange={event => { setSelectedId(event.target.value); setUnlocked(null); setGenerated(null); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div><div><small>Public key</small><code>{selected.publicKey}</code></div></div>}
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
+      {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
       {unlocked && <div className="wallet-message-signing">
