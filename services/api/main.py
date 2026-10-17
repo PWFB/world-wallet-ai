@@ -58,7 +58,9 @@ ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
-SOLANA_DEVNET_RPC_URL = os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL", "").strip()
+SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
+BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+BALMZ_SOLANA_DEVNET_DECIMALS = 9
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
@@ -950,6 +952,37 @@ def rpc_call(url: str, method: str, params: list):
     return None
 
 
+
+def solana_spl_token_balance(owner_address: str, mint_address: str = BALMZ_SOLANA_DEVNET_MINT, decimals: int = BALMZ_SOLANA_DEVNET_DECIMALS):
+    """Read the confirmed SPL token balance from Solana Devnet without signing."""
+    if not valid_solana_address(owner_address) or not valid_solana_address(mint_address):
+        raise ValueError("Invalid Solana owner or mint address")
+    if int(decimals) != BALMZ_SOLANA_DEVNET_DECIMALS:
+        raise ValueError("Unexpected BALMZ Solana Devnet decimals")
+    response = rpc_call(
+        SOLANA_DEVNET_RPC_URL,
+        "getTokenAccountsByOwner",
+        [owner_address, {"mint": mint_address},
+         {"encoding": "jsonParsed", "commitment": "confirmed"}],
+    )
+    if not isinstance(response, dict) or not isinstance(response.get("value"), list):
+        raise ValueError("Solana Devnet returned an invalid token-account response")
+    raw_total = 0
+    for item in response["value"]:
+        try:
+            info = item["account"]["data"]["parsed"]["info"]
+            amount = info["tokenAmount"]
+            if info.get("mint") != mint_address or int(amount.get("decimals")) != int(decimals):
+                raise ValueError("Solana token account mint or decimals mismatch")
+            raw_amount = amount.get("amount")
+            if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+                raise ValueError("Solana token account returned an invalid raw amount")
+            raw_total += int(raw_amount)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Solana Devnet returned malformed token-account data") from exc
+    return float(Decimal(raw_total) / (Decimal(10) ** int(decimals)))
+
+
 def evm_chain_id(url: str):
     """Return the connected EVM RPC chain ID as an integer."""
     raw = rpc_call(url, "eth_chainId", [])
@@ -1791,6 +1824,23 @@ def sync_wallet(user: dict = Depends(current_user)):
                 warnings.append("Solana Devnet balance service unavailable")
         elif solana_address:
             warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
+        if solana_address:
+            try:
+                balmz_balance = solana_spl_token_balance(solana_address)
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"], "BALMZ-SOL-DEVNET", "BALMZ Token (Solana Devnet)", balmz_balance),
+                )
+                updates.append({
+                    "network": "solana-devnet",
+                    "asset": "BALMZ-SOL-DEVNET",
+                    "balance": balmz_balance,
+                    "contract_address": BALMZ_SOLANA_DEVNET_MINT,
+                    "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+                })
+            except Exception:
+                warnings.append("BALMZ Solana Devnet token balance service unavailable")
         if ETH_RPC_URL and eth_address:
             try:
                 require_ethereum_mainnet_rpc(ETH_RPC_URL)
