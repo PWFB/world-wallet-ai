@@ -1220,13 +1220,13 @@ function App() {
               <div className="coin-history-chart-panel" aria-label={selectedCoin + " 24-hour price chart"}>
                 <div className="coin-history-chart-heading"><div><h3>24-hour price movement</h3><p>Verified market history · USD</p></div><span className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "No movement data" : (Number(change) >= 0 ? "▲ " : "▼ ") + Math.abs(Number(change)).toFixed(2) + "% over 24h"}</span></div>
                 {coinPriceHistoryLoading ? <div className="coin-history-chart-empty">Loading verified price history…</div>
-                  : coinPriceHistory.length > 1 ? (() => {
-                    const values = coinPriceHistory.map(point => Number(point.price)).filter(value => Number.isFinite(value));
+                  : coinPriceHistory.length > 1 && coinPriceHistory.every(point => Number.isFinite(Number(point.price)) && Number(point.price) > 0) ? (() => {
+                    const values = coinPriceHistory.map(point => Number(point.price));
                     const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
                     const coords = values.map((value, index) => ({ x: 4 + index * 392 / Math.max(values.length - 1, 1), y: 112 - ((value - min) / span) * 96 }));
                     const path = coords.map((point, index) => (index ? "L" : "M") + point.x.toFixed(2) + " " + point.y.toFixed(2)).join(" ");
                     const first = values[0], last = values[values.length - 1], trendUp = last >= first;
-                    return <><svg className={"coin-history-chart " + (trendUp ? "trend-up" : "trend-down")} viewBox="0 0 400 120" role="img" aria-label={selectedCoin + " price " + (trendUp ? "trending up" : "trending down") + " over 24 hours"}><line x1="4" y1="16" x2="396" y2="16"/><line x1="4" y1="64" x2="396" y2="64"/><line x1="4" y1="112" x2="396" y2="112"/><path d={path}/></svg><div className="coin-history-chart-footer"><span>24h low {money(min)}</span><b className={trendUp ? "positive" : "negative"}>{trendUp ? "▲" : "▼"} {first ? ((last-first)/first*100).toFixed(2) : "0.00"}%</b><span>24h high {money(max)}</span></div></>;
+                    return <><svg className={"coin-history-chart " + (trendUp ? "trend-up" : "trend-down")} viewBox="0 0 400 120" role="img" aria-label={selectedCoin + " price " + (trendUp ? "trending up" : "trending down") + " over 24 hours"}><line x1="4" y1="16" x2="396" y2="16"/><line x1="4" y1="64" x2="396" y2="64"/><line x1="4" y1="112" x2="396" y2="112"/><path d={path}/></svg><div className="coin-history-chart-footer"><span>24h low {money(min)}</span><b className={trendUp ? "positive" : "negative"}>{trendUp ? "▲" : "▼"} {first > 0 && Number.isFinite((last-first)/first*100) ? ((last-first)/first*100).toFixed(2) : "—"}{first > 0 ? "%" : ""}</b><span>24h high {money(max)}</span></div></>;
                   })()
                   : <div className="coin-history-chart-empty">{selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP" ? "No verified market chart exists for this token yet. Sepolia is a test network and does not imply a USD market price." : coinPriceHistoryError || "No verified price history is available right now."}</div>}
               </div>
