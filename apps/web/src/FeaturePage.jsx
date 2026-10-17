@@ -20,13 +20,16 @@ const ASSET_LOGO_URLS = {
   ADA: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/ada.png",
   LTC: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/ltc.png",
   DOGE: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/doge.png",
+  // Network-qualified symbols use the same underlying token logo.
+  "USDT-BNB": "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/usdt.png",
 };
 const BALMZ_LOGO_URL = "https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png";
 
 function AssetIcon({ symbol, fallback = "•" }) {
-  const logoUrl = String(symbol || "").startsWith("BALMZ")
+  const normalizedSymbol = String(symbol || "").trim().toUpperCase();
+  const logoUrl = normalizedSymbol.startsWith("BALMZ")
     ? BALMZ_LOGO_URL
-    : ASSET_LOGO_URLS[String(symbol || "").toUpperCase()];
+    : ASSET_LOGO_URLS[normalizedSymbol];
   return <span className={"asset-icon coin-icon coin-" + String(symbol || "").toLowerCase()}>
     {logoUrl ? <><img src={logoUrl} alt="" width="28" height="28" loading="lazy" style={{ objectFit: "contain", borderRadius: "50%" }} onError={event => { event.currentTarget.style.display = "none"; if (event.currentTarget.nextElementSibling) event.currentTarget.nextElementSibling.style.display = "grid"; }} /><span aria-hidden="true" style={{ display: "none" }}>{fallback}</span></> : fallback}
   </span>;
