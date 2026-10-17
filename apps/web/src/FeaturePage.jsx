@@ -273,23 +273,29 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
       setAddress("");
+      // Confirm the saved address independently of live balance refresh. A missing
+      // RPC configuration must not make a successful address attachment look failed.
       await loadAddresses(walletId);
-      // Attaching an address is only the first step; refresh the active wallet so
-      // configured chain sources can update balances and import verifiable activity.
-      const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
-        method: "POST",
-        headers: await walletAuthHeaders(accessToken),
-      });
-      const refreshData = await refreshResponse.json();
-      if (!refreshResponse.ok) {
-        throw new Error(refreshData.detail || "Address was attached, but wallet refresh failed. Use Refresh to retry.");
+      setMessage("Public address saved to the selected wallet.");
+      try {
+        const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+          method: "POST",
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const refreshData = await refreshResponse.json();
+        if (!refreshResponse.ok) {
+          setMessage("Public address saved. Live balance refresh failed: " + (refreshData.detail || "Use Refresh to retry."));
+          return;
+        }
+        onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
+        onTransactionsUpdated?.(refreshData.transactions || []);
+        const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
+        setMessage(warnings.length
+          ? "Public address saved. Live balance refresh has warnings: " + warnings.join(" • ")
+          : "Public address saved. Wallet refresh completed; verify the selected network and balance before relying on it.");
+      } catch (refreshError) {
+        setMessage("Public address saved. Live balance refresh failed: " + (refreshError?.message || "Use Refresh to retry."));
       }
-      onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
-      onTransactionsUpdated?.(refreshData.transactions || []);
-      const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
-      setMessage(warnings.length
-        ? "Address attached. Wallet data refreshed with warnings: " + warnings.join(" • ")
-        : "Address attached. Wallet refresh completed; verify the selected network and balance before relying on it.");
     } catch (error) { setMessage(error.message || "Unable to connect address."); }
     finally { setBusy(false); }
   };
