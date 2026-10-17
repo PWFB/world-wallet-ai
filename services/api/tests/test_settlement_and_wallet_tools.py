@@ -454,14 +454,16 @@ class SettlementAndWalletToolTests(unittest.TestCase):
     def test_neon_auth_repairs_existing_user_without_wallet(self):
         fake_key = type("FakeSigningKey", (), {"key": object(), "algorithm_name": "RS256"})()
         healed_user = {"id": "user-1", "email": "user@example.com", "wallet_id": "wallet-repaired"}
-        with patch.object(main, "NEON_JWKS_CLIENT") as jwks, \
-             patch.object(main, "NEON_AUTH_BASE_URL", ""), \
-             patch.object(main.jwt, "get_unverified_header", return_value={"alg": "RS256", "kid": "test-key"}), \
-             patch.object(main.jwt, "decode", return_value={
-                 "sub": "subject-1", "email": "user@example.com", "name": "Wallet Owner", "exp": 9999999999
-             }), \
-             patch.object(main, "get_user", return_value={"id": "user-1", "email": "user@example.com", "wallet_id": None}), \
-             patch.object(main, "provision_identity", return_value=healed_user) as provision:
+        with (
+            patch.object(main, "NEON_JWKS_CLIENT") as jwks,
+            patch.object(main, "NEON_AUTH_BASE_URL", ""),
+            patch.object(main.jwt, "get_unverified_header", return_value={"alg": "RS256", "kid": "test-key"}),
+            patch.object(main.jwt, "decode", return_value={
+                "sub": "subject-1", "email": "user@example.com", "name": "Wallet Owner", "exp": 9999999999
+            }),
+            patch.object(main, "get_user", return_value={"id": "user-1", "email": "user@example.com", "wallet_id": None}),
+            patch.object(main, "provision_identity", return_value=healed_user) as provision,
+        ):
             jwks.get_signing_key_from_jwt.return_value = fake_key
             result = main.neon_auth_user("test.jwt")
 
