@@ -235,6 +235,7 @@ function App() {
   const [showBalance, setShowBalance] = useState(true);
   const [wallet, setWallet] = useState(fallbackWallet);
   const [assets, setAssets] = useState(fallbackAssets);
+  const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
   const [marketPricesError, setMarketPricesError] = useState("");
@@ -548,6 +549,9 @@ function App() {
           ...asset,
           icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
+        setSyncedBalanceAssets([...new Set((Array.isArray(data.updates) ? data.updates : [])
+          .map(item => String(item?.asset || "").trim().toUpperCase())
+          .filter(Boolean))]);
         setActivity((data.transactions || []).map(tx => ({
           id: tx.id,
           type: tx.type,
@@ -577,7 +581,7 @@ function App() {
           if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
         }
       } catch (error) {
-        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
+        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setSyncedBalanceAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
       }
     }
 
@@ -1512,7 +1516,7 @@ function App() {
               <article className="panel action-panel"><h2>Security & session</h2><p className="security-note">Your sign-in session is handled by Neon Auth. Private keys and recovery phrases are never shown in this profile or uploaded to the server. Signing out ends the app session on this device.</p><button className="ww-profile-logout" type="button" onClick={handleLogout}>↪ Log out of World Wallet AI</button></article>
             </div>
           </section> : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
-          <FeaturePage selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) setWallet(data.wallet); if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             asset: tx.asset || tx.symbol || "",
