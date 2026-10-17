@@ -1828,6 +1828,9 @@ def sync_wallet(user: dict = Depends(current_user)):
                     "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
                     (user["wallet_id"], "SOL-DEVNET", "Solana Devnet SOL", sol_balance),
                 )
+                # This sync path previously stored Devnet SOL in the production SOL row.
+                # Clear that legacy value only after a confirmed live Devnet balance was read.
+                conn.execute("UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'", (user["wallet_id"],))
                 updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
             except Exception:
                 warnings.append("Solana Devnet balance service unavailable")
