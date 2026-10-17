@@ -1117,6 +1117,56 @@ function App() {
     );
   }
 
+  const walletUnpricedAssets = Array.isArray(wallet.unpriced_assets) ? wallet.unpriced_assets : [];
+  const walletHasCompleteValuation = wallet.valuation_complete !== false && wallet.available_balance_usd != null;
+  const walletPartialValue = wallet.partial_available_balance_usd;
+  const walletCanShowPartialValue = !walletHasCompleteValuation
+    && walletPartialValue != null
+    && Number.isFinite(Number(walletPartialValue))
+    && (Number(walletPartialValue) > 0 || walletUnpricedAssets.length === 0);
+  const walletBalanceText = walletHasCompleteValuation
+    ? money(wallet.available_balance_usd)
+    : walletCanShowPartialValue ? money(walletPartialValue) : "Valuation unavailable";
+  const walletBalanceCaption = walletHasCompleteValuation
+    ? "≈ " + number(wallet.available_balance_usd) + " USD available"
+    : walletCanShowPartialValue
+      ? "Partial value of priced assets" + (walletUnpricedAssets.length ? " · unpriced: " + walletUnpricedAssets.join(", ") : "")
+      : walletUnpricedAssets.length
+        ? "No verified USD quote for: " + walletUnpricedAssets.join(", ")
+        : "Portfolio valuation unavailable";
+
+  const walletUnpricedReceivedAssets = Array.isArray(wallet.unpriced_received_assets) ? wallet.unpriced_received_assets : [];
+  const walletPartialReceived = wallet.partial_total_received_usd;
+  const walletCanShowPartialReceived = wallet.total_received_usd == null
+    && walletPartialReceived != null
+    && Number.isFinite(Number(walletPartialReceived))
+    && (Number(walletPartialReceived) > 0 || walletUnpricedReceivedAssets.length === 0);
+  const walletReceivedText = wallet.total_received_usd != null
+    ? money(wallet.total_received_usd)
+    : walletCanShowPartialReceived ? money(walletPartialReceived) : "Valuation unavailable";
+  const walletReceivedStatus = wallet.total_received_usd != null
+    ? "Current quote valuation"
+    : walletCanShowPartialReceived ? "Partial valuation" : "Valuation incomplete";
+  const walletReceivedSource = walletUnpricedReceivedAssets.length
+    ? "Excludes unpriced receipts: " + walletUnpricedReceivedAssets.join(", ")
+    : "Current quotes applied to recorded wallet receipts";
+
+  const walletUnpricedSentAssets = Array.isArray(wallet.unpriced_sent_assets) ? wallet.unpriced_sent_assets : [];
+  const walletPartialSent = wallet.partial_total_sent_usd;
+  const walletCanShowPartialSent = wallet.total_sent_usd == null
+    && walletPartialSent != null
+    && Number.isFinite(Number(walletPartialSent))
+    && (Number(walletPartialSent) > 0 || walletUnpricedSentAssets.length === 0);
+  const walletSentText = wallet.total_sent_usd != null
+    ? money(wallet.total_sent_usd)
+    : walletCanShowPartialSent ? money(walletPartialSent) : "Valuation unavailable";
+  const walletSentStatus = wallet.total_sent_usd != null
+    ? "Current quote valuation"
+    : walletCanShowPartialSent ? "Partial valuation" : "Valuation incomplete";
+  const walletSentSource = walletUnpricedSentAssets.length
+    ? "Excludes unpriced sends: " + walletUnpricedSentAssets.join(", ")
+    : "Current quotes applied to recorded wallet sends";
+
   if (!accessToken && showLogin) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
       <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><span className="ww-globe">◎</span><b>WORLD WALLET <em>AI</em></b></div><button className="ww-auth-home" type="button" onClick={() => { setShowLogin(false); setLoginError(""); setAuthMessage(""); }}>← Back to home</button></header>
@@ -1276,13 +1326,13 @@ function App() {
             <div className="balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
-                <div className="hero-balance">{showBalance ? (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)) : "••••••••"} <small>USD</small></div>
-                <div className="balance-meta"><span>{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Portfolio valuation unavailable" : "≈ " + number(wallet.available_balance_usd) + " USD available"}</span><b className="neutral">{wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
-                {wallet.reserved_balance_usd == null && wallet.valuation_complete === false ? <div className="reserved-note">Reserved USD valuation unavailable</div> : Number(wallet.reserved_balance_usd) > 0 && <div className="reserved-note">Reserved for pending requests: {money(wallet.reserved_balance_usd)}</div>}
+                <div className="hero-balance">{showBalance ? walletBalanceText : "••••••••"} <small>USD</small></div>
+                <div className="balance-meta"><span>{showBalance ? walletBalanceCaption : "Balance hidden"}</span><b className="neutral">{wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
+                {wallet.reserved_balance_usd == null && wallet.reserved_valuation_complete !== true ? <div className="reserved-note">Reserved USD valuation unavailable{Array.isArray(wallet.unpriced_reserved_assets) && wallet.unpriced_reserved_assets.length ? " · unpriced: " + wallet.unpriced_reserved_assets.join(", ") : ""}</div> : Number(wallet.reserved_balance_usd) > 0 && <div className="reserved-note">Reserved for pending requests: {money(wallet.reserved_balance_usd)} USD</div>}
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
-              <article className="stat-card"><span>Total received</span><strong>{wallet.total_received_usd == null ? "Valuation unavailable" : money(wallet.total_received_usd)}</strong><b className="neutral">Live wallet data</b><div className="stat-source">Live value from authenticated wallet</div></article>
-              <article className="stat-card"><span>Total sent</span><strong>{wallet.total_sent_usd == null ? "Valuation unavailable" : money(wallet.total_sent_usd)}</strong><b className="neutral">{activity.length} transactions</b><div className="stat-source">Verified wallet transaction records</div></article>
+              <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
+              <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
               <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.find(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase()))?.balance || 0)} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Wallet data unavailable" : assets.some(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase())) ? "Wallet token balance" : "No balance recorded"}</b><div className="stat-source">Shows recorded BALMZ holdings only</div></article>
             </div>
 

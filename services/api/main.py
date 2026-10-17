@@ -1362,6 +1362,99 @@ def sync_bitcoin_transactions(user, address=None):
         conn.commit()
     return imported
 
+def wallet_valuation_summary(assets, transactions):
+    """Summarize wallet exposure using verified current prices.
+
+    Partial totals include only assets/transactions with a positive known quote.
+    The corresponding unpriced-symbol lists make omissions explicit.
+    """
+    prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
+    available_valuation_complete = all(
+        (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
+        or bool(item.get("price_available"))
+        for item in assets
+    )
+    actual_valuation_complete = all(
+        float(item["actual_balance"] or 0) <= 0 or bool(item.get("price_available"))
+        for item in assets
+    )
+    reserved_valuation_complete = all(
+        float(item["reserved_balance"] or 0) <= 0 or bool(item.get("price_available"))
+        for item in assets
+    )
+
+    unpriced_assets = sorted({
+        str(item["symbol"]) for item in assets
+        if (float(item["balance"] or 0) > 0 or float(item["reserved_balance"] or 0) > 0)
+        and not bool(item.get("price_available"))
+    })
+    unpriced_actual_assets = sorted({
+        str(item["symbol"]) for item in assets
+        if float(item["actual_balance"] or 0) > 0 and not bool(item.get("price_available"))
+    })
+    unpriced_reserved_assets = sorted({
+        str(item["symbol"]) for item in assets
+        if float(item["reserved_balance"] or 0) > 0 and not bool(item.get("price_available"))
+    })
+
+    received_txs = [item for item in transactions if item["type"] == "received"]
+    sent_txs = [
+        item for item in transactions
+        if item["type"] in ("sent", "withdrawal") and float(item["amount"] or 0) > 0
+    ]
+    unpriced_received_assets = sorted({
+        str(item["asset"]) for item in received_txs
+        if prices.get(str(item["asset"]), 0) <= 0 and float(item["amount"] or 0) > 0
+    })
+    unpriced_sent_assets = sorted({
+        str(item["asset"]) for item in sent_txs
+        if prices.get(str(item["asset"]), 0) <= 0 and float(item["amount"] or 0) > 0
+    })
+    partial_available = sum(
+        float(item["value_usd"]) for item in assets if item.get("value_usd") is not None
+    )
+    partial_actual = sum(
+        float(item["actual_value_usd"]) for item in assets if item.get("actual_value_usd") is not None
+    )
+    partial_reserved = sum(
+        float(item["reserved_balance"] or 0) * prices.get(str(item["symbol"]), 0)
+        for item in assets if bool(item.get("price_available"))
+    )
+    partial_received = sum(
+        float(item["amount"] or 0) * prices[str(item["asset"])]
+        for item in received_txs if prices.get(str(item["asset"]), 0) > 0
+    )
+    partial_sent = sum(
+        float(item["amount"] or 0) * prices[str(item["asset"])]
+        for item in sent_txs if prices.get(str(item["asset"]), 0) > 0
+    )
+    received_valuation_complete = not unpriced_received_assets
+    sent_valuation_complete = not unpriced_sent_assets
+
+    return {
+        "available_balance_usd": partial_available if available_valuation_complete else None,
+        "partial_available_balance_usd": partial_available,
+        "actual_balance_usd": partial_actual if actual_valuation_complete else None,
+        "partial_actual_balance_usd": partial_actual,
+        "reserved_balance_usd": partial_reserved if reserved_valuation_complete else None,
+        "partial_reserved_balance_usd": partial_reserved,
+        "valuation_complete": available_valuation_complete and actual_valuation_complete,
+        "reserved_valuation_complete": reserved_valuation_complete,
+        "unpriced_assets": unpriced_assets,
+        "unpriced_actual_assets": unpriced_actual_assets,
+        "unpriced_reserved_assets": unpriced_reserved_assets,
+        "total_received_usd": partial_received if received_valuation_complete else None,
+        "partial_total_received_usd": partial_received,
+        "unpriced_received_assets": unpriced_received_assets,
+        "total_sent_usd": partial_sent if sent_valuation_complete else None,
+        "partial_total_sent_usd": partial_sent,
+        "unpriced_sent_assets": unpriced_sent_assets,
+        "profit_usd": None,
+        "change_24h": None,
+        "valuation_basis": "current_verified_market_quotes",
+    }
+
+
 def wallet_snapshot(user):
     with db() as conn:
         assets=[]
@@ -1379,27 +1472,18 @@ def wallet_snapshot(user):
         txs=[]
         for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
             txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
-    prices={x["symbol"]:x["price_usd"] for x in assets}
-    available_valuation_complete=all(
-        (x["balance"] <= 0 and x["reserved_balance"] <= 0) or x["price_available"] for x in assets
-    )
-    actual_valuation_complete=all(
-        x["actual_balance"] <= 0 or x["price_available"] for x in assets
-    )
-    received_txs=[x for x in txs if x["type"]=="received"]
-    sent_txs=[x for x in txs if x["type"] in ("sent","withdrawal") and x["amount"]<0]
-    received_valuation_complete=all(prices.get(x["asset"],0)>0 for x in received_txs)
-    sent_valuation_complete=all(prices.get(x["asset"],0)>0 for x in sent_txs)
-    return assets,txs,{
-        "available_balance_usd":sum((x["value_usd"] or 0) for x in assets) if available_valuation_complete else None,
-        "actual_balance_usd":sum((x["actual_value_usd"] or 0) for x in assets) if actual_valuation_complete else None,
-        "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets) if available_valuation_complete else None,
-        "valuation_complete":available_valuation_complete and actual_valuation_complete,
-        "total_received_usd":sum(abs(x["amount"])*prices[x["asset"]] for x in received_txs) if received_valuation_complete else None,
-        "total_sent_usd":sum(abs(x["amount"])*prices[x["asset"]] for x in sent_txs) if sent_valuation_complete else None,
-        "profit_usd":None,"change_24h":None
-    }
-
+        # Dashboard activity remains capped at 100 records, but the received/sent
+        # valuation summaries must cover all recorded rows, not only that page.
+        transaction_totals=[]
+        for row in conn.execute("""
+            SELECT type,asset,SUM(ABS(amount))
+            FROM transactions
+            WHERE wallet_id=%s
+              AND (type='received' OR (type IN ('sent','withdrawal') AND amount < 0))
+            GROUP BY type,asset
+        """,(user["wallet_id"],)):
+            transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0)})
+    return assets,txs,wallet_valuation_summary(assets,transaction_totals)
 
 
 @app.on_event("startup")
