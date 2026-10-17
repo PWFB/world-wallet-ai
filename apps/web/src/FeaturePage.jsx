@@ -1518,7 +1518,48 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     if (!accessToken || syncBusy) return;
     setSyncBusy(true);
     setSyncMessage("");
+    let addressNotice = "";
     try {
+      // A browser-connected public address can be saved locally before it is
+      // attached to this server wallet. Attach it here too, so Portfolio refresh
+      // works without requiring the user to visit Wallets first.
+      try {
+        let connection = null;
+        try { connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch {}
+        const candidateAddress = String(connection?.address || "").trim();
+        const rawChainId = connection?.chainId;
+        const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
+          ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+        const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
+        const externalNetwork = networkByChain[chainId];
+        const activeWalletId = wallet?.wallet_id || wallet?.id;
+        if (activeWalletId && /^0x[a-fA-F0-9]{40}$/.test(candidateAddress) && externalNetwork) {
+          const addressHeaders = await walletAuthHeaders(accessToken);
+          const savedResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(activeWalletId) + "/addresses", {
+            headers: addressHeaders,
+          });
+          const savedData = await savedResponse.json();
+          if (!savedResponse.ok) throw new Error(savedData.detail || "Could not check addresses on the active wallet.");
+          const savedAddresses = Array.isArray(savedData.addresses) ? savedData.addresses : [];
+          const existingForNetwork = savedAddresses.filter(item => String(item?.network || "").toLowerCase() === externalNetwork);
+          const sameAddress = existingForNetwork.some(item => String(item?.address || "").toLowerCase() === candidateAddress.toLowerCase());
+          if (!sameAddress && existingForNetwork.length === 0) {
+            const attachResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(activeWalletId) + "/addresses", {
+              method: "POST",
+              headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+              body: JSON.stringify({ network: externalNetwork, address: candidateAddress, label: "external wallet" }),
+            });
+            const attachData = await attachResponse.json();
+            if (!attachResponse.ok) throw new Error(attachData.detail || "Could not attach the connected public address.");
+            addressNotice = "Connected " + externalNetwork + " public address attached to the active wallet. ";
+          } else if (!sameAddress && existingForNetwork.length > 0) {
+            addressNotice = "A different " + externalNetwork + " address is already configured; it was left unchanged. ";
+          }
+        }
+      } catch (addressError) {
+        addressNotice = "External address auto-attach was skipped: " + (addressError?.message || "address check unavailable") + ". ";
+      }
+
       const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
         method: "POST",
         headers: await walletAuthHeaders(accessToken),
@@ -1528,11 +1569,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
       onTransactionsUpdated?.(data.transactions || []);
       const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
-      setSyncMessage(warnings.length
+      setSyncMessage(addressNotice + (warnings.length
         ? "Balance sync completed with warnings: " + warnings.join(" • ")
-        : "Wallet balances refreshed from configured on-chain addresses.");
+        : "Wallet balances refreshed from configured on-chain addresses."));
     } catch (error) {
-      setSyncMessage(error?.message || "Wallet balance sync failed.");
+      setSyncMessage(addressNotice + (error?.message || "Wallet balance sync failed."));
     } finally {
       setSyncBusy(false);
     }
