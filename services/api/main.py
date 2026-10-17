@@ -40,6 +40,9 @@ EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 ETH_RPC_URL = os.getenv("WORLD_WALLET_ETH_RPC_URL", "").strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 SOLANA_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
+SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
+BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+BALMZ_SOLANA_DEVNET_DECIMALS = 9
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
@@ -306,6 +309,24 @@ def init_db():
           PRIMARY KEY(wallet_id,source)
         );
         """)
+        conn.execute(
+            "INSERT INTO token_registry "
+            "(id,symbol,name,network,contract_address,decimals,coingecko_id,status) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s) "
+            "ON CONFLICT(symbol,network) DO UPDATE SET "
+            "name=EXCLUDED.name,contract_address=EXCLUDED.contract_address,"
+            "decimals=EXCLUDED.decimals,coingecko_id=NULL,status='catalog_only'",
+            (
+                "token-balmz-sol-devnet",
+                "BALMZ-SOL-DEVNET",
+                "BALMZ Token (Solana Devnet)",
+                "solana-devnet",
+                BALMZ_SOLANA_DEVNET_MINT,
+                BALMZ_SOLANA_DEVNET_DECIMALS,
+                None,
+                "catalog_only",
+            ),
+        )
         if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
             conn.execute(
                 "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
@@ -816,6 +837,56 @@ def solana_balance(address: str, rpc_url: str = SOLANA_RPC_URL):
         raise ValueError("Solana RPC balance lookup failed")
     result = payload.get("result") or {}
     return int(result.get("value", 0)) / 1_000_000_000
+
+
+def solana_spl_token_balance(
+    owner_address: str,
+    mint_address: str,
+    decimals: int,
+    rpc_url: str = SOLANA_DEVNET_RPC_URL,
+):
+    """Read confirmed SPL token balances without signing or submitting transactions."""
+    if not valid_solana_address(owner_address):
+        raise ValueError("Invalid Solana owner address")
+    if not valid_solana_address(mint_address):
+        raise ValueError("Invalid SPL token mint address")
+    if not rpc_url:
+        raise ValueError("Solana Devnet RPC URL is not configured")
+    if int(decimals) < 0 or int(decimals) > 36:
+        raise ValueError("Invalid SPL token decimals")
+
+    result = rpc_call(
+        rpc_url,
+        "getTokenAccountsByOwner",
+        [
+            owner_address,
+            {"mint": mint_address},
+            {"encoding": "jsonParsed", "commitment": "confirmed"},
+        ],
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("value"), list):
+        raise ValueError("Solana Devnet returned an invalid token-account response")
+
+    total_raw = 0
+    for entry in result["value"]:
+        try:
+            info = entry["account"]["data"]["parsed"]["info"]
+            token_amount = info["tokenAmount"]
+            account_mint = info["mint"]
+            raw_amount = token_amount["amount"]
+            account_decimals = int(token_amount["decimals"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Malformed SPL token-account response") from exc
+
+        if account_mint != mint_address:
+            raise ValueError("SPL token-account mint does not match the requested mint")
+        if account_decimals != int(decimals):
+            raise ValueError("SPL token decimals do not match the token registry")
+        if not str(raw_amount).isdigit():
+            raise ValueError("Invalid raw SPL token amount")
+        total_raw += int(raw_amount)
+
+    return total_raw / (10 ** int(decimals))
 
 
 def btc_balance(address: str):
@@ -1464,8 +1535,6 @@ def sync_wallet(user: dict = Depends(current_user)):
         raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
-    if solana_devnet_address:
-        warnings.append("Solana Devnet address is saved separately; Devnet balances and SPL tokens are not included in production portfolio totals.")
     with db() as conn:
         if btc_address:
             try:
@@ -1496,6 +1565,35 @@ def sync_wallet(user: dict = Depends(current_user)):
                 updates.append({"network":"solana","asset":"SOL","balance":sol})
             except Exception:
                 warnings.append("Solana balance service unavailable")
+
+        if solana_devnet_address:
+            try:
+                balmz_devnet_balance = solana_spl_token_balance(
+                    solana_devnet_address,
+                    BALMZ_SOLANA_DEVNET_MINT,
+                    BALMZ_SOLANA_DEVNET_DECIMALS,
+                    SOLANA_DEVNET_RPC_URL,
+                )
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) "
+                    "VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance",
+                    (
+                        user["wallet_id"],
+                        "BALMZ-SOL-DEVNET",
+                        "BALMZ Token (Solana Devnet)",
+                        balmz_devnet_balance,
+                    ),
+                )
+                updates.append({
+                    "network": "solana-devnet",
+                    "asset": "BALMZ-SOL-DEVNET",
+                    "balance": balmz_devnet_balance,
+                    "contract_address": BALMZ_SOLANA_DEVNET_MINT,
+                    "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+                })
+            except Exception:
+                warnings.append("Solana Devnet BALMZ token balance service unavailable")
 
         token_rows = conn.execute(
             "SELECT symbol,name,network,contract_address,decimals,status "
@@ -1830,7 +1928,7 @@ def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user
     wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
     with db() as conn:
         conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
-        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BALMZ-SOL-DEVNET","BALMZ Token (Solana Devnet)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
         conn.commit()
