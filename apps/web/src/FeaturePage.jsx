@@ -164,7 +164,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const refreshedResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
         const refreshed = await refreshedResponse.json();
         if (refreshedResponse.ok) {
-          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
           onTransactionsUpdated?.(refreshed.transactions || []);
           setMessage("External wallet address attached to the active wallet. Live data refreshed; verify the network and source warnings.");
         } else {
@@ -178,11 +178,35 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     return () => { cancelled = true; };
   }, [walletId, addressesLoadedForWallet, walletAddresses, accessToken, apiBaseUrl]);
 
+  const refreshPortfolioBalances = async () => {
+    if (!accessToken || syncBusy) return;
+    setSyncBusy(true);
+    setSyncMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+        method: "POST",
+        headers: await walletAuthHeaders(accessToken),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
+      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
+      onTransactionsUpdated?.(data.transactions || []);
+      const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
+      setSyncMessage(warnings.length
+        ? "Balance sync completed with warnings: " + warnings.join(" • ")
+        : "Wallet balances refreshed from configured on-chain addresses.");
+    } catch (error) {
+      setSyncMessage(error?.message || "Wallet balance sync failed.");
+    } finally {
+      setSyncBusy(false);
+    }
+  };
+
   const refreshActiveWallet = async () => {
     const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
     const data = await response.json();
     if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
-    onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [] });
+    onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
     onTransactionsUpdated?.(data.transactions || []);
   };
 
@@ -255,7 +279,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       if (!refreshResponse.ok) {
         throw new Error(refreshData.detail || "Address was attached, but wallet refresh failed. Use Refresh to retry.");
       }
-      onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [] });
+      onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
       onTransactionsUpdated?.(refreshData.transactions || []);
       const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
       setMessage(warnings.length
@@ -818,7 +842,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const refreshed = await refresh.json();
         if (refresh.ok) {
           onTransactionsUpdated(refreshed.transactions || []);
-          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [] });
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
         } else {
           const transactionResponse = await fetch(apiBaseUrl + "/api/v1/transactions", { headers: { Authorization:"Bearer "+accessToken } });
           if (transactionResponse.ok) {
@@ -1443,7 +1467,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const refreshedData = await refreshed.json();
         if (refreshed.ok) {
           onTransactionsUpdated?.(refreshedData.transactions || []);
-          onWalletUpdated?.({ wallet: refreshedData.wallet, assets: refreshedData.assets || [] });
+          onWalletUpdated?.({ wallet: refreshedData.wallet, assets: refreshedData.assets || [], updates: refreshedData.updates || [] });
         }
         setSyncMessage(data.status === "broadcast_pending"
           ? "Broadcast recorded. Waiting for blockchain confirmation."
@@ -1515,17 +1539,17 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Portfolio") return <section className="content feature-content portfolio-page">
-    <div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT / LIVE MARKET</p><h1>Portfolio</h1><p className="muted">Open any coin to view its individual trading card, quote, wallet balance and supported actions.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+    <div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT / LIVE MARKET</p><h1>Portfolio</h1><p className="muted">Open any coin to view its individual trading card, quote, wallet balance and supported actions.</p></div><div className="page-actions"><button className="secondary" onClick={refreshPortfolioBalances} disabled={syncBusy}>{syncBusy ? "Syncing balances…" : "↻ Refresh wallet data"}</button><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div></div>
     <div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{walletBalanceText || (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd))} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div>
     {(walletBalanceCaption || unpricedAssets.length > 0) && <p className="coin-catalog-note portfolio-valuation-note" role="status">{walletBalanceCaption || ("No verified USD quote for: " + unpricedAssets.join(", "))}</p>}
-    {walletRefreshMessage && walletRefreshMessage !== "Wallet data refreshed." && <div className="market-price-error" role="status">{walletRefreshMessage}</div>}
+    {(syncMessage || (walletRefreshMessage && walletRefreshMessage !== "Wallet data refreshed.")) && <div className="market-price-error" role="status">{syncMessage || walletRefreshMessage}</div>}
     <article className="panel market-prices-panel portfolio-market-panel"><div className="panel-head"><div><h2>Live market prices</h2><span>Live quotes for supported coins · refreshed automatically</span></div><button type="button" className="text-btn" onClick={refreshMarketPrices} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing…" : "↻ Refresh prices"}</button></div>
       {marketPricesError && <div className="market-price-error" role="status">{marketPricesError}</div>}
       <div className="market-price-grid">{(walletCoinCatalog || []).map(c=>{const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;return <button type="button" className="market-price-item portfolio-market-coin" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><span className={"asset-icon coin-icon coin-"+c.symbol.toLowerCase()}>{c.icon||"•"}</span><span className="market-price-name"><b>{c.symbol}</b><small>{c.name}</small></span><span className="market-price-value"><b>{hasPrice?money(Number(q.usd)):((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"Not listed":"Unavailable")}</b><small className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"No verified quote":"24h change unavailable"):(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"% · 24h"}</small></span></button>})}</div>
       <p className="coin-catalog-note">{marketPricesUpdatedAt ? "Last updated " + new Date(marketPricesUpdatedAt).toLocaleTimeString() : "Waiting for the first successful market response."} · BALMZ remains unpriced until a verifiable market quote exists.</p>
     </article>
     <article className="panel assets-panel portfolio-assets-panel"><div className="panel-head"><div><h2>Coin trading cards</h2><span>{(walletCoinCatalog||[]).length} supported catalog entries · select a card to open its trading details</span></div></div>
-      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const balanceKnown=balanceSynced||heldBalance>0||Number(held?.reserved_balance||0)>0;return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><span className={"asset-icon coin-icon coin-"+c.symbol.toLowerCase()}>{c.icon||"•"}</span><span className="portfolio-coin-network">{c.status||"Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceKnown ? number(heldBalance) + " " + c.symbol : "Not synced"}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
+      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const hasStoredBalance=heldBalance>0||Number(held?.reserved_balance||0)>0;const balanceLabel=balanceSynced?number(heldBalance)+" "+c.symbol:hasStoredBalance?number(heldBalance)+" "+c.symbol+" · recorded, not synced":"Not synced";return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><span className={"asset-icon coin-icon coin-"+c.symbol.toLowerCase()}>{c.icon||"•"}</span><span className="portfolio-coin-network">{c.status||"Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceLabel}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
     </article>
   </section>;
   if (active === "Staking" || active === "NFTs") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT</p><h1>{active}</h1><p className="muted">Manage your digital assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div><article className="panel assets-panel"><div className="panel-head"><div><h2>{active} assets</h2><span>Current wallet holdings</span></div></div><div className="asset-list">{assets.map(a=><div className="asset-row" key={a.symbol}><span className="asset-icon">{a.icon}</span><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{a.price_available === false || a.value_usd == null ? "Price unavailable" : money(a.value_usd)}</small></div><small className="neutral">24h change unavailable</small></div>)}</div></article></section>;
