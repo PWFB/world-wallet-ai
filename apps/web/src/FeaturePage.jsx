@@ -178,30 +178,6 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     return () => { cancelled = true; };
   }, [walletId, addressesLoadedForWallet, walletAddresses, accessToken, apiBaseUrl]);
 
-  const refreshPortfolioBalances = async () => {
-    if (!accessToken || syncBusy) return;
-    setSyncBusy(true);
-    setSyncMessage("");
-    try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
-        method: "POST",
-        headers: await walletAuthHeaders(accessToken),
-      });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
-      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
-      onTransactionsUpdated?.(data.transactions || []);
-      const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
-      setSyncMessage(warnings.length
-        ? "Balance sync completed with warnings: " + warnings.join(" • ")
-        : "Wallet balances refreshed from configured on-chain addresses.");
-    } catch (error) {
-      setSyncMessage(error?.message || "Wallet balance sync failed.");
-    } finally {
-      setSyncBusy(false);
-    }
-  };
-
   const refreshActiveWallet = async () => {
     const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
     const data = await response.json();
@@ -1537,6 +1513,30 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       </article>
     </section>;
   }
+
+  const refreshPortfolioBalances = async () => {
+    if (!accessToken || syncBusy) return;
+    setSyncBusy(true);
+    setSyncMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+        method: "POST",
+        headers: await walletAuthHeaders(accessToken),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
+      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
+      onTransactionsUpdated?.(data.transactions || []);
+      const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
+      setSyncMessage(warnings.length
+        ? "Balance sync completed with warnings: " + warnings.join(" • ")
+        : "Wallet balances refreshed from configured on-chain addresses.");
+    } catch (error) {
+      setSyncMessage(error?.message || "Wallet balance sync failed.");
+    } finally {
+      setSyncBusy(false);
+    }
+  };
 
   if (active === "Portfolio") return <section className="content feature-content portfolio-page">
     <div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT / LIVE MARKET</p><h1>Portfolio</h1><p className="muted">Open any coin to view its individual trading card, quote, wallet balance and supported actions.</p></div><div className="page-actions"><button className="secondary" onClick={refreshPortfolioBalances} disabled={syncBusy}>{syncBusy ? "Syncing balances…" : "↻ Refresh wallet data"}</button><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div></div>
