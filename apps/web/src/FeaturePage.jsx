@@ -84,6 +84,7 @@ const RECEIVE_ASSET_OPTIONS = [
   { symbol: "USDT-BNB", name: "Tether USD (BNB Chain)" },
   { symbol: "BALMZ", name: "BALMZ" },
   { symbol: "BALMZ-SEP", name: "BALMZ (Sepolia testnet)" },
+  { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ (Solana Devnet testnet)" },
 ];
 
 const networksForAsset = symbol => ({
@@ -95,6 +96,7 @@ const networksForAsset = symbol => ({
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
   BALMZ: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   "BALMZ-SEP": [{ value: "sepolia", label: "Ethereum Sepolia (testnet)" }],
+  "BALMZ-SOL-DEVNET": [{ value: "solana_devnet", label: "Solana Devnet (testnet)" }],
 }[symbol] || []);
 
 function getLocalExternalReceiveAddress() {
