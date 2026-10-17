@@ -1430,6 +1430,8 @@ def wallet_valuation_summary(assets, transactions):
     )
     received_valuation_complete = not unpriced_received_assets
     sent_valuation_complete = not unpriced_sent_assets
+    received_transaction_count = sum(int(item.get("count", 1)) for item in received_txs)
+    sent_transaction_count = sum(int(item.get("count", 1)) for item in sent_txs)
 
     return {
         "available_balance_usd": partial_available if available_valuation_complete else None,
@@ -1445,9 +1447,11 @@ def wallet_valuation_summary(assets, transactions):
         "unpriced_reserved_assets": unpriced_reserved_assets,
         "total_received_usd": partial_received if received_valuation_complete else None,
         "partial_total_received_usd": partial_received,
+        "received_transaction_count": received_transaction_count,
         "unpriced_received_assets": unpriced_received_assets,
         "total_sent_usd": partial_sent if sent_valuation_complete else None,
         "partial_total_sent_usd": partial_sent,
+        "sent_transaction_count": sent_transaction_count,
         "unpriced_sent_assets": unpriced_sent_assets,
         "profit_usd": None,
         "change_24h": None,
@@ -1476,13 +1480,13 @@ def wallet_snapshot(user):
         # valuation summaries must cover all recorded rows, not only that page.
         transaction_totals=[]
         for row in conn.execute("""
-            SELECT type,asset,SUM(ABS(amount))
+            SELECT type,asset,SUM(ABS(amount)),COUNT(*)
             FROM transactions
             WHERE wallet_id=%s
               AND (type='received' OR (type IN ('sent','withdrawal') AND amount < 0))
             GROUP BY type,asset
         """,(user["wallet_id"],)):
-            transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0)})
+            transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0),"count":int(row[3] or 0)})
     return assets,txs,wallet_valuation_summary(assets,transaction_totals)
 
 
