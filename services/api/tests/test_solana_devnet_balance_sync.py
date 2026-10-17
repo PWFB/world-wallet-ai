@@ -107,6 +107,62 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         }, result["updates"])
         self.assertTrue(connection.committed)
 
+    def test_devnet_assets_do_not_affect_production_portfolio_valuation(self):
+        assets = [
+            {
+                "symbol": "ETH", "balance": 1.0, "actual_balance": 1.0,
+                "reserved_balance": 0.0, "price_usd": 2000.0,
+                "price_available": True, "value_usd": 2000.0,
+                "actual_value_usd": 2000.0,
+            },
+            {
+                "symbol": "BALMZ-SOL-DEVNET", "balance": 500.0, "actual_balance": 500.0,
+                "reserved_balance": 0.0, "price_usd": 0.0,
+                "price_available": False, "value_usd": None,
+                "actual_value_usd": None,
+            },
+            {
+                "symbol": "SOL-DEVNET", "balance": 2.0, "actual_balance": 2.0,
+                "reserved_balance": 0.0, "price_usd": 0.0,
+                "price_available": False, "value_usd": None,
+                "actual_value_usd": None,
+            },
+        ]
+        summary = main.wallet_valuation_summary(assets, [])
+
+        self.assertEqual(summary["available_balance_usd"], 2000.0)
+        self.assertEqual(summary["actual_balance_usd"], 2000.0)
+        self.assertTrue(summary["valuation_complete"])
+        self.assertEqual(summary["unpriced_assets"], [])
+
+    def test_native_devnet_sol_is_stored_separately_from_mainnet_sol(self):
+        connection = FakeConnection()
+        user = {"id": "test-user", "wallet_id": "test-wallet"}
+        with (
+            patch.object(main, "wallet_network_address",
+                         side_effect=lambda u, n: OWNER if n == "solana_devnet" else None),
+            patch.object(main, "db", return_value=FakeDB(connection)),
+            patch.object(main, "rpc_call", return_value={"value": 1000000000}),
+            patch.object(main, "solana_spl_token_balance", return_value=0.0),
+            patch.object(main, "sync_bitcoin_transactions", return_value=[]),
+            patch.object(main, "wallet_snapshot",
+                         return_value=([], [], {"available_balance_usd": 0})),
+            patch.object(main, "_network_sync_status", return_value={}),
+        ):
+            main.sync_wallet(user)
+
+        devnet_writes = [
+            (query, params) for query, params in connection.queries
+            if "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)" in query
+            and params and params[1] == "SOL-DEVNET"
+        ]
+        self.assertEqual(len(devnet_writes), 1)
+        self.assertEqual(devnet_writes[0][1][3], 1.0)
+        self.assertFalse(any(
+            "UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'" in query
+            for query, _ in connection.queries
+        ))
+
     def test_rpc_failure_warns_and_does_not_write_fake_balance(self):
         connection = FakeConnection()
         user = {"id": "test-user", "wallet_id": "test-wallet"}
