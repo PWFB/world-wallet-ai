@@ -480,3 +480,50 @@ if __name__ == "__main__":
         self.assertEqual(imported, [])
         self.assertIn("transaction service unavailable", warning)
         self.assertEqual(calls, ["eth_chainId"])
+
+
+class WalletValuationSummaryTests(unittest.TestCase):
+    def test_partial_valuation_preserves_known_values_and_names_unpriced_assets(self):
+        assets = [
+            {
+                "symbol": "ETH", "balance": 1.5, "actual_balance": 1.5,
+                "reserved_balance": 0, "price_usd": 2000, "price_available": True,
+                "value_usd": 3000, "actual_value_usd": 3000,
+            },
+            {
+                "symbol": "BALMZ", "balance": 10, "actual_balance": 10,
+                "reserved_balance": 0, "price_usd": 0, "price_available": False,
+                "value_usd": None, "actual_value_usd": None,
+            },
+        ]
+        transactions = [
+            {"type": "received", "asset": "ETH", "amount": 1.0},
+            {"type": "received", "asset": "BALMZ", "amount": 2.0},
+            {"type": "sent", "asset": "ETH", "amount": 0.25},
+            {"type": "withdrawal", "asset": "BALMZ", "amount": 1.0},
+        ]
+
+        summary = main.wallet_valuation_summary(assets, transactions)
+
+        self.assertFalse(summary["valuation_complete"])
+        self.assertIsNone(summary["available_balance_usd"])
+        self.assertEqual(summary["partial_available_balance_usd"], 3000)
+        self.assertEqual(summary["unpriced_assets"], ["BALMZ"])
+        self.assertEqual(summary["partial_total_received_usd"], 2000)
+        self.assertIsNone(summary["total_received_usd"])
+        self.assertEqual(summary["unpriced_received_assets"], ["BALMZ"])
+        self.assertEqual(summary["partial_total_sent_usd"], 500)
+        self.assertIsNone(summary["total_sent_usd"])
+        self.assertEqual(summary["unpriced_sent_assets"], ["BALMZ"])
+        self.assertTrue(summary["reserved_valuation_complete"])
+        self.assertEqual(summary["reserved_balance_usd"], 0)
+        self.assertEqual(summary["valuation_basis"], "current_verified_market_quotes")
+
+    def test_empty_wallet_returns_real_zero_when_nothing_is_unpriced(self):
+        summary = main.wallet_valuation_summary([], [])
+
+        self.assertTrue(summary["valuation_complete"])
+        self.assertEqual(summary["available_balance_usd"], 0)
+        self.assertEqual(summary["partial_available_balance_usd"], 0)
+        self.assertEqual(summary["total_received_usd"], 0)
+        self.assertEqual(summary["total_sent_usd"], 0)
