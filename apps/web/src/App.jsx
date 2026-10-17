@@ -592,7 +592,12 @@ function App() {
           if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
         }
       } catch (error) {
-        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setSyncedBalanceAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
+        if (!cancelled) {
+          setApiStatus("error");
+          setSyncMessage(error.message || "Wallet refresh failed.");
+          // Keep the last verified wallet and transaction state during transient
+          // API/database failures instead of replacing it with an empty fallback.
+        }
       }
     }
 
