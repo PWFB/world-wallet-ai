@@ -506,9 +506,12 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   useEffect(() => {
     if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
-    fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: await walletAuthHeaders(accessToken) })
-      .then(async r => ({ ok: r.ok, data: await r.json() }))
-      .then(({ ok, data }) => {
+    const loadAddresses = async () => {
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", {
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const { ok, data } = { ok: response.ok, data: await response.json() };
         if (cancelled) return;
         const serverAddresses = ok && Array.isArray(data.addresses) ? data.addresses : [];
         const localExternalAddresses = getLocalExternalReceiveAddress();
@@ -518,8 +521,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         );
         setAddresses(combined);
         setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
-      })
-      .catch(() => { if (!cancelled) { const localExternalAddresses = getLocalExternalReceiveAddress(); setAddresses(previous => { const serverAddresses = previous.filter(item => !item.local); return [...serverAddresses, ...localExternalAddresses]; }); setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address."); } });
+      } catch {
+        if (!cancelled) {
+          const localExternalAddresses = getLocalExternalReceiveAddress();
+          setAddresses(previous => {
+            const serverAddresses = previous.filter(item => !item.local);
+            return [...serverAddresses, ...localExternalAddresses];
+          });
+          setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address.");
+        }
+      }
+    };
+    loadAddresses();
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
   function persistExternalConnection(connection) {
