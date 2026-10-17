@@ -1220,8 +1220,8 @@ function App() {
               <div className="coin-history-chart-panel" aria-label={selectedCoin + " 24-hour price chart"}>
                 <div className="coin-history-chart-heading"><div><h3>24-hour price movement</h3><p>Verified market history · USD</p></div><span className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "No movement data" : (Number(change) >= 0 ? "▲ " : "▼ ") + Math.abs(Number(change)).toFixed(2) + "% over 24h"}</span></div>
                 {coinPriceHistoryLoading ? <div className="coin-history-chart-empty">Loading verified price history…</div>
-                  : coinPriceHistory.length > 1 ? (() => {
-                    const values = coinPriceHistory.map(point => Number(point.price)).filter(value => Number.isFinite(value));
+                  : coinPriceHistory.filter(point => Number.isFinite(Number(point.price)) && Number(point.price) > 0).length > 1 ? (() => {
+                    const values = coinPriceHistory.map(point => Number(point.price)).filter(value => Number.isFinite(value) && value > 0);
                     const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
                     const coords = values.map((value, index) => ({ x: 4 + index * 392 / Math.max(values.length - 1, 1), y: 112 - ((value - min) / span) * 96 }));
                     const path = coords.map((point, index) => (index ? "L" : "M") + point.x.toFixed(2) + " " + point.y.toFixed(2)).join(" ");
