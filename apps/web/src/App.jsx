@@ -27,6 +27,7 @@ const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
+  { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum", icon: "Ξ", status: "Ethereum" },
   { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum / BNB Chain" },
@@ -254,7 +255,7 @@ function App() {
     return {
       ...coin,
       registry: liveRecord || records[0] || null,
-      connected: Boolean(liveRecord),
+      connected: Boolean(liveRecord && coin.symbol !== "BALMZ-SOL-DEVNET"),
       price_usd: quote.usd == null ? null : Number(quote.usd),
       price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
       price_listed: quote.listed === true,
@@ -1443,7 +1444,7 @@ function App() {
                     const hasMarketPrice = price > 0;
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
-                      <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.icon}</span>
+                      <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{c.registry?.logo_url ? <img src={c.registry.logo_url} alt="" width="28" height="28" loading="lazy" style={{ objectFit: "contain", borderRadius: "50%" }} /> : c.icon}</span>
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>

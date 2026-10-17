@@ -339,6 +339,8 @@ def init_db():
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           UNIQUE(symbol,network)
         );
+        ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS metadata_url TEXT;
+        ALTER TABLE token_registry ADD COLUMN IF NOT EXISTS logo_url TEXT;
 
         CREATE TABLE IF NOT EXISTS assets(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), symbol TEXT NOT NULL, name TEXT NOT NULL,
@@ -355,6 +357,11 @@ def init_db():
         ON CONFLICT(symbol,network) DO UPDATE SET
           name=EXCLUDED.name,
           status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
+        INSERT INTO token_registry(id,symbol,name,network,contract_address,decimals,coingecko_id,status,metadata_url,logo_url)
+        VALUES ('token-balmz-solana-devnet','BALMZ-SOL-DEVNET','BALMZ Token (Solana Devnet)','solana-devnet','HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF',9,NULL,'catalog_only','https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-token-metadata.json','https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png')
+        ON CONFLICT(symbol,network) DO UPDATE SET
+          name=EXCLUDED.name, contract_address=EXCLUDED.contract_address, decimals=EXCLUDED.decimals,
+          coingecko_id=NULL, status='catalog_only', metadata_url=EXCLUDED.metadata_url, logo_url=EXCLUDED.logo_url;
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
@@ -2297,11 +2304,11 @@ def wallet_signing_config(user: dict = Depends(current_user)):
 def list_token_registry(user: dict = Depends(current_user)):
     networks = {a["network"] for a in configured_addresses(user)}
     with db() as conn:
-        rows=conn.execute("SELECT symbol,name,network,contract_address,decimals,coingecko_id,status FROM token_registry ORDER BY symbol,network").fetchall()
+        rows=conn.execute("SELECT symbol,name,network,contract_address,decimals,coingecko_id,status,metadata_url,logo_url FROM token_registry ORDER BY symbol,network").fetchall()
     tokens=[]
     for r in rows:
         supported = r[2] in networks
-        tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"wallet_network_connected":supported})
+        tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
