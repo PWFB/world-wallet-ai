@@ -74,7 +74,7 @@ function App() {
     return {
       ...coin,
       registry: liveRecord || records[0] || null,
-      connected: Boolean(liveRecord),
+      connected: Boolean(liveRecord && coin.symbol !== "BALMZ-SOL-DEVNET"),
       price_usd: quote.usd == null ? null : Number(quote.usd),
       price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
       price_listed: quote.listed === true,
