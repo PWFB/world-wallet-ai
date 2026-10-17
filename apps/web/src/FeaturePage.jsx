@@ -459,7 +459,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         setAddresses(combined);
         setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
       })
-      .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
+      .catch(() => { if (!cancelled) { const localExternalAddresses = getLocalExternalReceiveAddress(); setAddresses(previous => { const serverAddresses = previous.filter(item => !item.local); return [...serverAddresses, ...localExternalAddresses]; }); setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address."); } });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
   function persistExternalConnection(connection) {
@@ -1315,7 +1315,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
               {[...RECEIVE_ASSET_OPTIONS, ...assets].filter((item, index, all) =>
-                item?.symbol && all.findIndex(other => other.symbol === item.symbol) === index
+                item?.symbol && networksForAsset(item.symbol).length > 0 && all.findIndex(other => other.symbol === item.symbol) === index
               ).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
             </select>
           </label>
