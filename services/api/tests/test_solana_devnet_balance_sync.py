@@ -92,8 +92,11 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         ):
             result = main.sync_wallet(user)
 
+        # Sync writes both native Devnet SOL and the BALMZ SPL token as
+        # separate assets. Assert specifically on the BALMZ token upsert.
         writes = [(query, params) for query, params in connection.queries
-                  if "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)" in query]
+                  if "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)" in query
+                  and params and params[1] == "BALMZ-SOL-DEVNET"]
         self.assertEqual(len(writes), 1)
         query, params = writes[0]
         self.assertIn("ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name", query)
