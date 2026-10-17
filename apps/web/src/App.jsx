@@ -1117,9 +1117,24 @@ function App() {
     );
   }
 
-  const walletUnpricedAssets = Array.isArray(wallet.unpriced_assets) ? wallet.unpriced_assets : [];
+  const assetDerivedUnpriced = assets
+    .filter(asset => (Number(asset.balance || 0) > 0 || Number(asset.reserved_balance || 0) > 0)
+      && !(Number(asset.price_usd ?? asset.live_price_usd ?? 0) > 0))
+    .map(asset => String(asset.symbol || "").trim())
+    .filter(Boolean);
+  const walletUnpricedAssets = [...new Set([
+    ...(Array.isArray(wallet.unpriced_assets) ? wallet.unpriced_assets : []),
+    ...assetDerivedUnpriced,
+  ])];
   const walletHasCompleteValuation = wallet.valuation_complete !== false && wallet.available_balance_usd != null;
-  const walletPartialValue = wallet.partial_available_balance_usd;
+  const walletPartialValue = wallet.partial_available_balance_usd != null
+    ? wallet.partial_available_balance_usd
+    : assets.reduce((total, asset) => {
+      if (asset.value_usd != null && Number.isFinite(Number(asset.value_usd))) return total + Number(asset.value_usd);
+      const price = Number(asset.price_usd ?? asset.live_price_usd ?? 0);
+      const balance = Number(asset.balance || 0);
+      return price > 0 && Number.isFinite(price) && Number.isFinite(balance) ? total + price * balance : total;
+    }, 0);
   const walletCanShowPartialValue = !walletHasCompleteValuation
     && walletPartialValue != null
     && Number.isFinite(Number(walletPartialValue))
@@ -1141,15 +1156,18 @@ function App() {
     && walletPartialReceived != null
     && Number.isFinite(Number(walletPartialReceived))
     && (Number(walletPartialReceived) > 0 || walletUnpricedReceivedAssets.length === 0);
+  const noRecordedReceipts = wallet.received_transaction_count === 0;
   const walletReceivedText = wallet.total_received_usd != null
     ? money(wallet.total_received_usd)
-    : walletCanShowPartialReceived ? money(walletPartialReceived) : "Valuation unavailable";
+    : noRecordedReceipts ? money(0) : walletCanShowPartialReceived ? money(walletPartialReceived) : "Valuation unavailable";
   const walletReceivedStatus = wallet.total_received_usd != null
     ? "Current quote valuation"
-    : walletCanShowPartialReceived ? "Partial valuation" : "Valuation incomplete";
-  const walletReceivedSource = walletUnpricedReceivedAssets.length
-    ? "Excludes unpriced receipts: " + walletUnpricedReceivedAssets.join(", ")
-    : "Current quotes applied to recorded wallet receipts";
+    : noRecordedReceipts ? "No recorded receipts" : walletCanShowPartialReceived ? "Partial valuation" : "Valuation incomplete";
+  const walletReceivedSource = noRecordedReceipts
+    ? "No received transactions recorded for this wallet"
+    : walletUnpricedReceivedAssets.length
+      ? "Excludes unpriced receipts: " + walletUnpricedReceivedAssets.join(", ")
+      : "Current quotes applied to recorded wallet receipts";
 
   const walletUnpricedSentAssets = Array.isArray(wallet.unpriced_sent_assets) ? wallet.unpriced_sent_assets : [];
   const walletPartialSent = wallet.partial_total_sent_usd;
@@ -1157,15 +1175,18 @@ function App() {
     && walletPartialSent != null
     && Number.isFinite(Number(walletPartialSent))
     && (Number(walletPartialSent) > 0 || walletUnpricedSentAssets.length === 0);
+  const noRecordedSends = wallet.sent_transaction_count === 0;
   const walletSentText = wallet.total_sent_usd != null
     ? money(wallet.total_sent_usd)
-    : walletCanShowPartialSent ? money(walletPartialSent) : "Valuation unavailable";
+    : noRecordedSends ? money(0) : walletCanShowPartialSent ? money(walletPartialSent) : "Valuation unavailable";
   const walletSentStatus = wallet.total_sent_usd != null
     ? "Current quote valuation"
-    : walletCanShowPartialSent ? "Partial valuation" : "Valuation incomplete";
-  const walletSentSource = walletUnpricedSentAssets.length
-    ? "Excludes unpriced sends: " + walletUnpricedSentAssets.join(", ")
-    : "Current quotes applied to recorded wallet sends";
+    : noRecordedSends ? "No recorded sends" : walletCanShowPartialSent ? "Partial valuation" : "Valuation incomplete";
+  const walletSentSource = noRecordedSends
+    ? "No sent or withdrawal transactions recorded for this wallet"
+    : walletUnpricedSentAssets.length
+      ? "Excludes unpriced sends: " + walletUnpricedSentAssets.join(", ")
+      : "Current quotes applied to recorded wallet sends";
 
   if (!accessToken && showLogin) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
