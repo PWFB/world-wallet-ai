@@ -1287,7 +1287,7 @@ function App() {
               <div className="market-price-grid">
                 {["BTC","ETH","BNB","USDT","USDC","SOL","XRP","ADA","LTC","DOGE","BALMZ"].map(symbol => {
                   const quote = marketPrices[symbol] || {};
-                  const hasPrice = quote.usd != null && Number.isFinite(Number(quote.usd));
+                  const hasPrice = quote.usd != null && Number.isFinite(Number(quote.usd)) && Number(quote.usd) > 0;
                   const change = quote.usd_24h_change == null ? null : Number(quote.usd_24h_change);
                   const coin = walletCoinCatalog.find(item => item.symbol === symbol) || {};
                   return <div className="market-price-item" key={symbol}>
