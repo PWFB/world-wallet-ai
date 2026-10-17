@@ -446,6 +446,28 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["transaction_broadcast_mode"], "external_wallet_signed_by_client")
 
 
+    def test_custom_cors_origins_keep_production_frontend_allowed(self):
+        origins = main._build_trusted_origins("https://admin.example")
+        self.assertIn("https://admin.example", origins)
+        self.assertIn("https://world-wallet-ai-frontend.onrender.com", origins)
+
+    def test_neon_auth_repairs_existing_user_without_wallet(self):
+        fake_key = type("FakeSigningKey", (), {"key": object(), "algorithm_name": "RS256"})()
+        healed_user = {"id": "user-1", "email": "user@example.com", "wallet_id": "wallet-repaired"}
+        with patch.object(main, "NEON_JWKS_CLIENT") as jwks, \\
+             patch.object(main, "NEON_AUTH_BASE_URL", ""), \\
+             patch.object(main.jwt, "get_unverified_header", return_value={"alg": "RS256", "kid": "test-key"}), \\
+             patch.object(main.jwt, "decode", return_value={
+                 "sub": "subject-1", "email": "user@example.com", "name": "Wallet Owner", "exp": 9999999999
+             }), \\
+             patch.object(main, "get_user", return_value={"id": "user-1", "email": "user@example.com", "wallet_id": None}), \\
+             patch.object(main, "provision_identity", return_value=healed_user) as provision:
+            jwks.get_signing_key_from_jwt.return_value = fake_key
+            result = main.neon_auth_user("test.jwt")
+
+        provision.assert_called_once_with("user@example.com", name="Wallet Owner", google_subject="subject-1")
+        self.assertEqual(result["wallet_id"], "wallet-repaired")
+
     def test_neon_jwt_decode_requires_expiry_subject_and_email(self):
         fake_key = type("FakeSigningKey", (), {"key": object(), "algorithm_name": "RS256"})()
         with patch.object(main, "NEON_JWKS_CLIENT") as jwks, \
