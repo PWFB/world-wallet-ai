@@ -158,9 +158,10 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         ]
         self.assertEqual(len(devnet_writes), 1)
         self.assertEqual(devnet_writes[0][1][3], 1.0)
-        self.assertFalse(any(
-            "UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'" in query
-            for query, _ in connection.queries
+        self.assertTrue(any(
+            "UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'" in query
+            and params == (user["wallet_id"],)
+            for query, params in connection.queries
         ))
 
     def test_rpc_failure_warns_and_does_not_write_fake_balance(self):
