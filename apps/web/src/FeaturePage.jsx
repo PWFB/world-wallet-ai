@@ -261,37 +261,68 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   const addAddress = async () => {
     const value = address.trim();
+    const cleanLabel = label.trim() || "primary";
     if (!value) return setMessage("Enter a public wallet address.");
     if (!walletId) return setMessage("Select a wallet first.");
     setBusy(true); setMessage("");
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + walletId + "/addresses", {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
         headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ network, address: value, label: label.trim() || "primary" }),
+        body: JSON.stringify({ network, address: value, label: cleanLabel }),
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Unable to connect address.");
-      setAddress("");
-      await loadAddresses(walletId);
-      // Attaching an address is only the first step; refresh the active wallet so
-      // configured chain sources can update balances and import verifiable activity.
-      const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
-        method: "POST",
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "The server rejected this address. Check the network and public address, then try again.");
+
+      // Confirm persistence from the server before telling the user the address is connected.
+      const listResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         headers: await walletAuthHeaders(accessToken),
       });
-      const refreshData = await refreshResponse.json();
-      if (!refreshResponse.ok) {
-        throw new Error(refreshData.detail || "Address was attached, but wallet refresh failed. Use Refresh to retry.");
+      const listData = await listResponse.json().catch(() => ({}));
+      if (!listResponse.ok) {
+        throw new Error("The server accepted the address, but verification failed. Refresh the Wallets page before submitting it again.");
       }
-      onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
-      onTransactionsUpdated?.(refreshData.transactions || []);
-      const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
-      setMessage(warnings.length
-        ? "Address attached. Wallet data refreshed with warnings: " + warnings.join(" • ")
-        : "Address attached. Wallet refresh completed; verify the selected network and balance before relying on it.");
-    } catch (error) { setMessage(error.message || "Unable to connect address."); }
-    finally { setBusy(false); }
+      const saved = (Array.isArray(listData.addresses) ? listData.addresses : []).some(item =>
+        item.network === network &&
+        (["ethereum", "sepolia", "bnb"].includes(network)
+          ? String(item.address || "").toLowerCase() === value.toLowerCase()
+          : String(item.address || "") === value)
+      );
+      if (!saved) {
+        throw new Error("The server accepted the request but the address was not found in the saved address list. Please retry.");
+      }
+
+      setWalletAddresses(listData.addresses);
+      setAddressesLoadedForWallet(walletId);
+      setAddress("");
+      setMessage("Public address saved and verified for " + network + ". Checking live wallet data…");
+
+      // Address persistence is independent of chain refresh. A missing RPC or
+      // unavailable indexer must not make a successfully saved address look unsaved.
+      try {
+        const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+          method: "POST",
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const refreshData = await refreshResponse.json().catch(() => ({}));
+        if (!refreshResponse.ok) {
+          setMessage("Address saved and verified. Live data refresh is unavailable: " + (refreshData.detail || "use Refresh to retry."));
+          return;
+        }
+        onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
+        onTransactionsUpdated?.(refreshData.transactions || []);
+        const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
+        setMessage(warnings.length
+          ? "Address saved and verified. Live refresh completed with warnings: " + warnings.join(" • ")
+          : "Address saved and verified. Wallet refresh completed; confirm the displayed network and on-chain balance.");
+      } catch (refreshError) {
+        setMessage("Address saved and verified. Live data refresh failed: " + (refreshError?.message || "use Refresh to retry."));
+      }
+    } catch (error) {
+      setMessage(error.message || "Unable to connect address.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const checkAddressBalance = async item => {
