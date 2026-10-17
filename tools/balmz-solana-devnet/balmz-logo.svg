@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#FFE9A3"/>
+      <stop offset="45%" stop-color="#FFB52E"/>
+      <stop offset="100%" stop-color="#FF7A18"/>
+    </linearGradient>
+    <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#25211D"/>
+      <stop offset="100%" stop-color="#090909"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#dark)"/>
+  <circle cx="512" cy="430" r="292" fill="url(#gold)" stroke="#FFF0BD" stroke-width="18"/>
+  <circle cx="512" cy="430" r="260" fill="none" stroke="#A85A0B" stroke-opacity=".55" stroke-width="8"/>
+  <path d="M350 365 Q410 320 470 365" fill="none" stroke="#4B2B0A" stroke-width="22" stroke-linecap="round"/>
+  <path d="M554 365 Q614 320 674 365" fill="none" stroke="#4B2B0A" stroke-width="22" stroke-linecap="round"/>
+  <g fill="#171717" stroke="#171717" stroke-linejoin="round">
+    <path d="M322 382 Q385 344 462 380 L450 455 Q386 475 337 438 Z"/>
+    <path d="M562 380 Q639 344 702 382 L687 438 Q638 475 574 455 Z"/>
+    <path d="M462 395 L562 395 L550 423 L474 423 Z"/>
+  </g>
+  <path d="M375 399 L424 390 M598 390 L650 399" stroke="#FFFFFF" stroke-opacity=".75" stroke-width="9" stroke-linecap="round"/>
+  <path d="M405 510 Q512 610 619 510 Q600 650 512 650 Q424 650 405 510Z" fill="#6E310B"/>
+  <path d="M430 523 Q512 574 594 523 Q570 612 512 612 Q454 612 430 523Z" fill="#FFF7E8"/>
+  <path d="M448 559 Q512 580 576 559" fill="none" stroke="#FFB52E" stroke-width="10" stroke-linecap="round"/>
+  <path d="M262 300 L284 345 M740 300 L762 345" stroke="#FFF0BD" stroke-width="12" stroke-linecap="round"/>
+  <text x="512" y="815" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="112" font-weight="900" letter-spacing="8" fill="url(#gold)">BALMZ</text>
+  <text x="512" y="875" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" letter-spacing="8" fill="#F7E7C7">YOUR CRYPTO • YOUR FREEDOM</text>
+</svg>
