@@ -517,8 +517,8 @@ function App() {
 
     async function loadWallet() {
       if (!accessToken) return;
-      const authHeaders = { Authorization: `Bearer ${accessToken}` };
-      loadTokenRegistry(authHeaders);
+      let authHeaders = { Authorization: `Bearer ${accessToken}` };
+      let refreshedToken = "";
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
           method: "POST",
@@ -527,22 +527,33 @@ function App() {
         if (response.status === 401) {
           const freshToken = await getNeonAccessToken({ forceRefresh: true });
           if (freshToken && freshToken !== accessToken && !cancelled) {
-            try { localStorage.setItem(TOKEN_KEY, freshToken); } catch {}
-            setAccessToken(freshToken);
+            refreshedToken = freshToken;
+            authHeaders = { Authorization: `Bearer ${freshToken}` };
+            // Replay the wallet request immediately with the fresh JWT rather than
+            // leaving the dashboard on its fallback wallet until a later refresh.
+            response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
+              method: "POST",
+              headers: authHeaders,
+            });
+          }
+          // Keep the dashboard visible; only report an auth error if one retry
+          // with a refreshed JWT was not possible or was still rejected.
+          if (response.status === 401) {
+            if (!cancelled) {
+              setApiStatus("error");
+              setSyncMessage("Wallet API rejected the current session token after refresh. Your sign-in was kept; please retry the wallet refresh.");
+            }
             return;
           }
-          // A single wallet API 401 must not forcibly redirect a user who still
-          // has a Neon Auth session. Keep the dashboard visible and surface the
-          // API authentication failure so it can be diagnosed without a login loop.
-          if (!cancelled) {
-            setApiStatus("error");
-            setSyncMessage("Wallet API rejected the current session token. Your sign-in was kept; please retry after the session token is refreshed.");
-          }
-          return;
         }
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || `Wallet refresh returned ${response.status}`);
         if (cancelled) return;
+        if (refreshedToken) {
+          try { localStorage.setItem(TOKEN_KEY, refreshedToken); } catch {}
+          setAccessToken(refreshedToken);
+        }
+        loadTokenRegistry(authHeaders);
         setUser(data.user || neonSessionUser || null);
         setWallet(data.wallet || fallbackWallet);
         setAssets((data.assets || fallbackAssets).map(asset => ({
@@ -581,7 +592,12 @@ function App() {
           if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
         }
       } catch (error) {
-        if (!cancelled) { setApiStatus("error"); setWallet(fallbackWallet); setAssets([]); setSyncedBalanceAssets([]); setActivity([]); setSyncMessage(error.message || "Wallet refresh failed."); }
+        if (!cancelled) {
+          setApiStatus("error");
+          setSyncMessage(error.message || "Wallet refresh failed.");
+          // Keep the last verified wallet and transaction state during transient
+          // API/database failures instead of replacing it with an empty fallback.
+        }
       }
     }
 

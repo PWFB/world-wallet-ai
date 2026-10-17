@@ -65,9 +65,24 @@ USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
 BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
 
-TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
-if not TRUSTED_ORIGINS:
-    TRUSTED_ORIGINS = ["https://world-wallet-ai-frontend.onrender.com", "http://localhost:5173", "http://localhost:4173"]
+DEFAULT_TRUSTED_ORIGINS = [
+    "https://world-wallet-ai-frontend.onrender.com",
+    "http://localhost:5173",
+    "http://localhost:4173",
+]
+
+
+def _build_trusted_origins(configured_value: str | None = None):
+    """Honor explicit origins while always retaining the production app origin."""
+    raw = os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "") if configured_value is None else configured_value
+    configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not configured:
+        return DEFAULT_TRUSTED_ORIGINS.copy()
+    # Do not silently broaden a production allowlist to localhost origins.
+    return list(dict.fromkeys([*configured, "https://world-wallet-ai-frontend.onrender.com"]))
+
+
+TRUSTED_ORIGINS = _build_trusted_origins()
 
 
 def _coingecko_encryption_key():
@@ -556,7 +571,9 @@ def neon_auth_user(token: str):
 
     name = str(claims.get("name") or "World Wallet User").strip() or "World Wallet User"
     user = get_user(email)
-    if not user:
+    if not user or not user.get("wallet_id"):
+        # Heal existing Neon-auth profiles when their wallet row or active-wallet link
+        # is missing. provision_identity is idempotent and ensures the catalog exists.
         user = provision_identity(email, name=name, google_subject=subject)
     else:
         with db() as conn:
