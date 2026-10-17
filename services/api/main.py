@@ -73,10 +73,13 @@ DEFAULT_TRUSTED_ORIGINS = [
 
 
 def _build_trusted_origins(configured_value: str | None = None):
-    """Honor extra configured origins while always retaining the production app origin."""
+    """Honor explicit origins while always retaining the production app origin."""
     raw = os.getenv("WORLD_WALLET_ALLOWED_ORIGINS", "") if configured_value is None else configured_value
     configured = [origin.strip() for origin in raw.split(",") if origin.strip()]
-    return list(dict.fromkeys([*configured, *DEFAULT_TRUSTED_ORIGINS]))
+    if not configured:
+        return DEFAULT_TRUSTED_ORIGINS.copy()
+    # Do not silently broaden a production allowlist to localhost origins.
+    return list(dict.fromkeys([*configured, "https://world-wallet-ai-frontend.onrender.com"]))
 
 
 TRUSTED_ORIGINS = _build_trusted_origins()
