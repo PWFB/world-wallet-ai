@@ -506,7 +506,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   useEffect(() => {
     if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
-    fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
+    fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: await walletAuthHeaders(accessToken) })
       .then(async r => ({ ok: r.ok, data: await r.json() }))
       .then(({ ok, data }) => {
         if (cancelled) return;
