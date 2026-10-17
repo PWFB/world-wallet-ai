@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
+import { isUsableNeonAccessToken } from "./neon-token.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 
@@ -431,13 +432,21 @@ function App() {
         // Storage can be unavailable in restricted browser modes.
       }
 
-      if (persistedToken) {
+      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
         if (!accessToken && !cancelled) setAccessToken(persistedToken);
         if (!cancelled) setAuthRestoring(false);
         return;
       }
 
-      if (!socialReturn) {
+      // Do not restore an expired cached JWT into the app state. That can
+      // leave the dashboard signed in visually while every authenticated API
+      // request is rejected by the backend. Try obtaining a fresh Neon token
+      // whenever a Neon session exists, even without an OAuth callback marker.
+      if (persistedToken) {
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+      }
+
+      if (!socialReturn && !neonSessionUser) {
         if (!cancelled) setAuthRestoring(false);
         return;
       }
