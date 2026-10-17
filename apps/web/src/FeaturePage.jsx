@@ -1612,6 +1612,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <article className="panel tool-panel">
         <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "Choose an external wallet"}</b></div>
+        <div className="security-note"><b>Need Solana Devnet?</b> This external-wallet picker currently supports EVM chains only. Solana Devnet addresses are attached separately as public addresses; no WalletConnect EVM session is needed.</div>
+        <button className="primary feature-submit" onClick={() => setActive("Wallets")}>Attach a Solana Devnet address →</button>
         <p className="muted">Connect an existing wallet. World Wallet AI receives the public address and asks the wallet itself to approve signatures and transactions; it never receives the private key.</p>
         {wcAccount ? <>
           <div className="tool-row"><div><b>Wallet address</b><small>{wcProviderKind === "walletconnect" ? "Connected through WalletConnect" : wcProviderKind === "coinbase" ? "Connected through Coinbase Wallet" : "Connected through MetaMask"}</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy address</button></div>
