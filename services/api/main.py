@@ -1425,6 +1425,11 @@ def wallet_valuation_summary(assets, transactions):
     Partial totals include only assets/transactions with a positive known quote.
     The corresponding unpriced-symbol lists make omissions explicit.
     """
+    # Devnet assets remain visible in the wallet asset list, but must never
+    # affect production portfolio valuation or mark production holdings as unpriced.
+    devnet_symbols = {"BALMZ-SOL-DEVNET", "SOL-DEVNET"}
+    assets = [item for item in assets if str(item.get("symbol", "")) not in devnet_symbols]
+    transactions = [item for item in transactions if str(item.get("asset", "")) not in devnet_symbols]
     prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
     available_valuation_complete = all(
         (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
@@ -1818,8 +1823,12 @@ def sync_wallet(user: dict = Depends(current_user)):
             try:
                 raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
                 sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'", (sol_balance,user["wallet_id"]))
-                updates.append({"network":"solana_devnet","asset":"SOL","balance":sol_balance})
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"], "SOL-DEVNET", "Solana Devnet SOL", sol_balance),
+                )
+                updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
             except Exception:
                 warnings.append("Solana Devnet balance service unavailable")
         elif solana_address:
