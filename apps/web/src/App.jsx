@@ -42,6 +42,30 @@ const walletCoinCatalog = [
 
 
 
+
+const ASSET_LOGO_URLS = {
+  BTC: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/btc.png",
+  ETH: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/eth.png",
+  BNB: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/bnb.png",
+  USDT: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/usdt.png",
+  USDC: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/usdc.png",
+  SOL: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/sol.png",
+  XRP: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/xrp.png",
+  ADA: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/ada.png",
+  LTC: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/ltc.png",
+  DOGE: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/doge.png",
+};
+const BALMZ_LOGO_URL = "https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png";
+
+function AssetIcon({ symbol, fallback = "•" }) {
+  const logoUrl = String(symbol || "").startsWith("BALMZ")
+    ? BALMZ_LOGO_URL
+    : ASSET_LOGO_URLS[String(symbol || "").toUpperCase()];
+  return <span className={"asset-icon coin-icon coin-" + String(symbol || "").toLowerCase()}>
+    {logoUrl ? <><img src={logoUrl} alt="" width="28" height="28" loading="lazy" style={{ objectFit: "contain", borderRadius: "50%" }} onError={event => { event.currentTarget.style.display = "none"; if (event.currentTarget.nextElementSibling) event.currentTarget.nextElementSibling.style.display = "grid"; }} /><span aria-hidden="true" style={{ display: "none" }}>{fallback}</span></> : fallback}
+  </span>;
+}
+
 const money = value => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "Unavailable" : `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
@@ -1295,7 +1319,7 @@ function App() {
             </div>
             <div className="coin-detail-grid">
               <article className="hero-card coin-detail-card">
-                <div className="card-top"><span>AVAILABLE BALANCE</span><span className={`asset-icon coin-icon coin-${selectedCoin.toLowerCase()}`}>{coin?.icon}</span></div>
+                <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} /></div>
                 <div className="hero-balance">{number(balance)} <small>{selectedCoin}</small></div>
                 <div className="balance-meta"><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : "Live price unavailable"}</b></div>
               </article>
@@ -1392,7 +1416,7 @@ function App() {
                   const change = quote.usd_24h_change == null ? null : Number(quote.usd_24h_change);
                   const coin = walletCoinCatalog.find(item => item.symbol === symbol) || {};
                   return <div className="market-price-item" key={symbol}>
-                    <span className={"asset-icon coin-icon coin-" + symbol.toLowerCase()}>{coin.icon || "•"}</span>
+                    <AssetIcon symbol={symbol} fallback={coin.icon || "•"} />
                     <div className="market-price-name"><b>{symbol}</b><small>{symbol === "BALMZ" ? "World Wallet token" : coin.name || symbol}</small></div>
                     <div className="market-price-value"><b>{hasPrice ? money(Number(quote.usd)) : symbol === "BALMZ" ? "Not listed" : marketPricesLoading && !marketPricesUpdatedAt ? "Loading…" : "Unavailable"}</b><small className={change == null ? "neutral" : change >= 0 ? "positive" : "negative"}>{change == null ? (symbol === "BALMZ" ? "No verified quote" : "24h change unavailable") : (change >= 0 ? "+" : "") + change.toFixed(2) + "% · 24h"}</small></div>
                   </div>;
@@ -1444,7 +1468,7 @@ function App() {
                     const hasMarketPrice = price > 0;
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
-                      <span className={`asset-icon coin-icon coin-${c.symbol.toLowerCase()}`}>{(c.registry?.logo_url || (c.symbol === "BALMZ-SOL-DEVNET" ? "https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png" : null)) ? <img src={c.registry?.logo_url || "https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png"} alt="" width="28" height="28" loading="lazy" style={{ objectFit: "contain", borderRadius: "50%" }} onError={(event) => { event.currentTarget.style.display = "none"; }} /> : c.icon}</span>
+                      <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} />
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
