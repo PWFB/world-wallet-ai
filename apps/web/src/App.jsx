@@ -304,6 +304,7 @@ function App() {
     } catch { return "ethereum"; }
   });
   const balanceRequestInFlight = useRef(false);
+  const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
@@ -774,7 +775,7 @@ function App() {
     try { localStorage.setItem("world_wallet_selected_network_v1", selectedNetwork); } catch {}
   }, [selectedNetwork]);
 
-  async function refreshSelectedNetworkBalance() {
+  async function refreshSelectedNetworkBalance(forceAddressRefresh = false) {
     if (balanceRequestInFlight.current) return;
     if (!accessToken) {
       setSelectedNetworkBalanceMessage("Sign in to check a wallet balance.");
@@ -782,7 +783,8 @@ function App() {
     }
     balanceRequestInFlight.current = true;
     setSelectedNetworkBalanceBusy(true);
-    setSelectedNetworkBalanceMessage("Refreshing " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + " balance…");
+    setSelectedNetworkBalanceMessage("");
+    let token = accessToken;
     const normalizeNetwork = value => {
       const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
       if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
@@ -791,45 +793,57 @@ function App() {
       if (["bnb", "bsc", "binance_smart_chain"].includes(network)) return "bnb";
       return network;
     };
-    try {
-      const refreshedToken = await getNeonAccessToken({ forceRefresh: true });
-      const token = refreshedToken || accessToken;
-      const headers = { Authorization: "Bearer " + token };
-      // Resolve the canonical active server wallet first. The dashboard's portfolio
-      // snapshot may not have loaded yet, so it is not a reliable wallet-ID source.
-      const walletsResponse = await fetch(API_BASE_URL + "/api/v1/wallets", { headers, cache: "no-store" });
-      const walletsData = await walletsResponse.json().catch(() => ({}));
-      if (!walletsResponse.ok) throw new Error(walletsData.detail || ("Unable to load active wallet (HTTP " + walletsResponse.status + ")."));
-      const walletId = wallet?.wallet_id || wallet?.id || walletsData.active_wallet_id || walletsData.wallets?.find(item => item.active)?.id || user?.wallet_id;
-      if (!walletId) {
-        setSelectedNetworkBalance(null);
-        setSelectedNetworkBalanceMessage("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
-        return;
+    const authorizedFetch = async (url, options = {}) => {
+      const makeRequest = currentToken => fetch(url, {
+        ...options,
+        headers: { ...(options.headers || {}), Authorization: "Bearer " + currentToken },
+        cache: "no-store",
+      });
+      let response = await makeRequest(token);
+      if (response.status === 401) {
+        const refreshed = await getNeonAccessToken({ forceRefresh: true });
+        if (refreshed && refreshed !== token) {
+          token = refreshed;
+          response = await makeRequest(token);
+        }
       }
-      const addressResponse = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", { headers, cache: "no-store" });
-      const addressData = await addressResponse.json().catch(() => ({}));
-      if (!addressResponse.ok) throw new Error(addressData.detail || ("Unable to load attached addresses (HTTP " + addressResponse.status + ")."));
-      const currentAddresses = Array.isArray(addressData.addresses) ? addressData.addresses : [];
-      setDashboardAddresses(currentAddresses);
+      return response;
+    };
+    try {
       const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
+      let walletId = forceAddressRefresh ? "" : (balanceWalletIdRef.current || wallet?.wallet_id || wallet?.id || user?.wallet_id);
+      let currentAddresses = dashboardAddresses;
+      const hasCachedAddress = !forceAddressRefresh && currentAddresses.some(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
+      if (!walletId || !hasCachedAddress) {
+        if (!walletId) {
+          const walletsResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallets");
+          const walletsData = await walletsResponse.json().catch(() => ({}));
+          if (!walletsResponse.ok) throw new Error(walletsData.detail || ("Unable to load active wallet (HTTP " + walletsResponse.status + ")."));
+          walletId = walletsData.active_wallet_id || walletsData.wallets?.find(item => item.active)?.id;
+          if (walletId) balanceWalletIdRef.current = walletId;
+        }
+        if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
+        const addressResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/addresses");
+        const addressData = await addressResponse.json().catch(() => ({}));
+        if (!addressResponse.ok) throw new Error(addressData.detail || ("Unable to load attached addresses (HTTP " + addressResponse.status + ")."));
+        currentAddresses = Array.isArray(addressData.addresses) ? addressData.addresses : [];
+        setDashboardAddresses(currentAddresses);
+      }
+      if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
       const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
       const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
-      if (!chosen) {
-        setSelectedNetworkBalance(null);
-        setSelectedNetworkBalanceMessage("No address is attached for " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + ". Open Wallets to inspect its existing public address.");
-        return;
-      }
+      if (!chosen) throw new Error("No address is attached for " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + ". Open Wallets to inspect its existing public address.");
       if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
       const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
-      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), { headers, cache: "no-store" });
+      const response = await authorizedFetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString());
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || ("Balance request failed (HTTP " + response.status + ")."));
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
-      setSelectedNetworkBalance({ balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
+      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
       setSelectedNetworkBalanceMessage("Balance updated.");
     } catch (error) {
-      setSelectedNetworkBalance(null);
+      // Keep the last confirmed balance visible if a refresh fails.
       setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
     } finally {
       balanceRequestInFlight.current = false;
@@ -839,8 +853,8 @@ function App() {
 
   useEffect(() => {
     refreshSelectedNetworkBalance();
-  }, [selectedNetwork, selectedNetworkAddress, dashboardAddresses, accessToken, wallet?.wallet_id, wallet?.id, user?.wallet_id]);
-  async function syncWallet() {
+  }, [selectedNetwork, accessToken, wallet?.wallet_id, wallet?.id, user?.wallet_id]);
+    async function syncWallet() {
     if (!accessToken || syncBusy) return;
     setSyncBusy(true);
     setSyncMessage("");
@@ -1330,9 +1344,7 @@ function App() {
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
-        {(selectedNetworkBalanceBusy || selectedNetworkBalance || selectedNetworkBalanceMessage) && <div className={selectedNetworkBalanceMessage ? "network-balance-feedback network-balance-error" : "network-balance-feedback"} role="status" aria-live="polite">
-          {selectedNetworkBalanceBusy ? "Checking " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + " balance…" : selectedNetworkBalance ? (selectedNetworkBalance.asset + ": " + Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " · " + selectedNetworkBalance.address.slice(0, 6) + "…" + selectedNetworkBalance.address.slice(-4)) : selectedNetworkBalanceMessage}
-        </div>}
+        {(!selectedNetworkBalanceBusy && !selectedNetworkBalance && selectedNetworkBalanceMessage && selectedNetworkBalanceMessage !== "Balance updated.") && <div className="network-balance-feedback network-balance-error" role="status" aria-live="polite">{selectedNetworkBalanceMessage}</div>}
 
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
@@ -1431,7 +1443,7 @@ function App() {
             
             <div className="balance-grid">
               <article className="hero-card">
-                <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM BALANCE") : "AVAILABLE BALANCE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
+                <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM BALANCE") : "AVAILABLE BALANCE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalanceBusy && !selectedNetworkBalance ? "Checking…" : selectedNetworkBalance ? number(selectedNetworkBalance.balance) : selectedNetworkBalanceMessage ? "Unavailable" : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
                 <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceBusy ? "Checking selected network balance…" : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
 
@@ -1439,7 +1451,7 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.find(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase()))?.balance || 0)} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Wallet data unavailable" : assets.some(asset => ["BALMZ", "BALMZ-SEP"].includes(String(asset.symbol || "").toUpperCase())) ? "Wallet token balance" : "No balance recorded"}</b><div className="stat-source">Shows recorded BALMZ holdings only</div></article>
+              <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.find(asset => ["BALMZ", "BALMZ-SEP", "BALMZ-SOL-DEVNET"].includes(String(asset.symbol || "").toUpperCase()))?.balance || 0)} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Wallet data unavailable" : assets.some(asset => ["BALMZ", "BALMZ-SEP", "BALMZ-SOL-DEVNET"].includes(String(asset.symbol || "").toUpperCase())) ? "Recorded BALMZ holdings across supported networks" : "No balance recorded"}</b><div className="stat-source">Solana Devnet BALMZ is read from the verified SPL mint; testnet tokens have no USD valuation</div></article>
             </div>
 
 
