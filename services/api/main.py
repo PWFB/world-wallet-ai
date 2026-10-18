@@ -1998,6 +1998,12 @@ def _coinbase_spot_price_fallback():
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
     global _MARKET_PRICE_CACHE
+    # Reuse the last verified quote for one minute. The frontend refreshes at a
+    # similar cadence, so this avoids duplicate provider calls from multiple
+    # dashboard panels while still exposing a fresh timestamp and cache age.
+    cached = _MARKET_PRICE_CACHE.fresh_response(max_age_seconds=60)
+    if cached is not None:
+        return cached
     coin_ids = {
         "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
         "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
