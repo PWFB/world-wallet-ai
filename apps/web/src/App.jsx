@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
@@ -297,7 +297,13 @@ function App() {
   const [dashboardAddressLabel, setDashboardAddressLabel] = useState("Main Ethereum wallet");
   const [dashboardAddressBusy, setDashboardAddressBusy] = useState(false);
   const [dashboardAddressMessage, setDashboardAddressMessage] = useState("");
-  const [selectedNetwork, setSelectedNetwork] = useState("ethereum");
+  const [selectedNetwork, setSelectedNetwork] = useState(() => {
+    try {
+      const saved = String(localStorage.getItem("world_wallet_selected_network_v1") || "").trim().toLowerCase();
+      return ["ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"].includes(saved) ? saved : "ethereum";
+    } catch { return "ethereum"; }
+  });
+  const balanceRequestInFlight = useRef(false);
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
@@ -764,82 +770,76 @@ function App() {
     if (active === "Dashboard" && accessToken) loadDashboardAddresses();
   }, [active, accessToken]);
 
+  useEffect(() => {
+    try { localStorage.setItem("world_wallet_selected_network_v1", selectedNetwork); } catch {}
+  }, [selectedNetwork]);
+
   async function refreshSelectedNetworkBalance() {
+    if (balanceRequestInFlight.current) return;
     if (!accessToken) {
       setSelectedNetworkBalanceMessage("Sign in to check a wallet balance.");
       return;
     }
+    balanceRequestInFlight.current = true;
+    setSelectedNetworkBalanceBusy(true);
+    setSelectedNetworkBalanceMessage("Refreshing " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + " balance…");
     const normalizeNetwork = value => {
-      const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      const network = String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
       if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
       if (["ethereum", "eth", "mainnet", "ethereum_mainnet"].includes(network)) return "ethereum";
       if (["sepolia", "ethereum_sepolia"].includes(network)) return "sepolia";
       if (["bnb", "bsc", "binance_smart_chain"].includes(network)) return "bnb";
       return network;
     };
-    // Fetch the server-side address list for this balance check instead of trusting
-    // potentially stale dashboard state. Receive/Wallets can refresh the auth token
-    // independently, and the dashboard must use the same current active-wallet records.
-    let currentAddresses = dashboardAddresses;
     try {
       const refreshedToken = await getNeonAccessToken({ forceRefresh: true });
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", {
-        headers: { Authorization: "Bearer " + (refreshedToken || accessToken) },
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data.detail || ("Unable to load attached addresses (HTTP " + response.status + ")."));
+      const token = refreshedToken || accessToken;
+      const headers = { Authorization: "Bearer " + token };
+      // Resolve the canonical active server wallet first. The dashboard's portfolio
+      // snapshot may not have loaded yet, so it is not a reliable wallet-ID source.
+      const walletsResponse = await fetch(API_BASE_URL + "/api/v1/wallets", { headers, cache: "no-store" });
+      const walletsData = await walletsResponse.json().catch(() => ({}));
+      if (!walletsResponse.ok) throw new Error(walletsData.detail || ("Unable to load active wallet (HTTP " + walletsResponse.status + ")."));
+      const walletId = wallet?.wallet_id || wallet?.id || walletsData.active_wallet_id || walletsData.wallets?.find(item => item.active)?.id || user?.wallet_id;
+      if (!walletId) {
+        setSelectedNetworkBalance(null);
+        setSelectedNetworkBalanceMessage("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
+        return;
       }
-      currentAddresses = Array.isArray(data.addresses) ? data.addresses : [];
+      const addressResponse = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", { headers, cache: "no-store" });
+      const addressData = await addressResponse.json().catch(() => ({}));
+      if (!addressResponse.ok) throw new Error(addressData.detail || ("Unable to load attached addresses (HTTP " + addressResponse.status + ")."));
+      const currentAddresses = Array.isArray(addressData.addresses) ? addressData.addresses : [];
       setDashboardAddresses(currentAddresses);
-    } catch (error) {
-      setSelectedNetworkBalance(null);
-      setSelectedNetworkBalanceMessage(error.message || "Unable to refresh attached wallet addresses.");
-      return;
-    }
-    const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
-    const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
-    const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
-    if (!chosen) {
-      setSelectedNetworkBalance(null);
-      setSelectedNetworkBalanceMessage("No address is attached for " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + ". Open Wallets and attach the public address first.");
-      return;
-    }
-    if (selectedNetworkAddress !== chosen.address) {
-      setSelectedNetworkAddress(chosen.address);
-      return;
-    }
-    const walletId = wallet?.wallet_id || user?.wallet_id;
-    if (!walletId) {
-      setSelectedNetworkBalance(null);
-      setSelectedNetworkBalanceMessage("Select a wallet before checking balances.");
-      return;
-    }
-    setSelectedNetworkBalanceBusy(true);
-    setSelectedNetworkBalanceMessage("");
-    try {
-      const query = new URLSearchParams({ network: selectedNetwork, address: chosen.address });
-      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), {
-        headers: { Authorization: "Bearer " + accessToken },
-      });
+      const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
+      const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
+      const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
+      if (!chosen) {
+        setSelectedNetworkBalance(null);
+        setSelectedNetworkBalanceMessage("No address is attached for " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + ". Open Wallets to inspect its existing public address.");
+        return;
+      }
+      if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
+      const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
+      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), { headers, cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || ("Balance request failed (HTTP " + response.status + ")."));
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
-      setSelectedNetworkBalance({ balance, asset: data.asset || selectedNetwork, address: chosen.address, syncedAt: data.synced_at });
-      setSelectedNetworkBalanceMessage("");
+      setSelectedNetworkBalance({ balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
+      setSelectedNetworkBalanceMessage("Balance updated.");
     } catch (error) {
       setSelectedNetworkBalance(null);
       setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
     } finally {
+      balanceRequestInFlight.current = false;
       setSelectedNetworkBalanceBusy(false);
     }
   }
 
   useEffect(() => {
     refreshSelectedNetworkBalance();
-  }, [selectedNetwork, selectedNetworkAddress, dashboardAddresses, accessToken, wallet?.wallet_id, user?.wallet_id]);
-
+  }, [selectedNetwork, selectedNetworkAddress, dashboardAddresses, accessToken, wallet?.wallet_id, wallet?.id, user?.wallet_id]);
   async function syncWallet() {
     if (!accessToken || syncBusy) return;
     setSyncBusy(true);
