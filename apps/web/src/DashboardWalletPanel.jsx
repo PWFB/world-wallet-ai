@@ -17,10 +17,19 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
       const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: authHeaders });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Unable to load wallet profiles.");
-      const nextWallets = data.wallets || [];
-      setWallets(nextWallets);
-      setActiveWalletId(data.active_wallet_id || nextWallets.find(item => item.active)?.id || "");
+      const nextWallets = Array.isArray(data.wallets) ? data.wallets : [];
+      // A successful but temporarily empty response must not erase a wallet list
+      // the user already had on screen (especially immediately after switching).
+      if (nextWallets.length) {
+        setWallets(nextWallets);
+        const serverActiveId = data.active_wallet_id || nextWallets.find(item => item.active)?.id || "";
+        if (serverActiveId) setActiveWalletId(serverActiveId);
+      } else {
+        setWallets(current => current);
+        setActiveWalletId(current => current);
+      }
     } catch (err) {
+      // Keep the last known wallet selection visible if a transient request fails.
       setError(err.message || "Wallet data could not be loaded.");
     } finally {
       setLoading(false);
@@ -41,7 +50,11 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Wallet switch failed.");
-      setActiveWalletId(data.active_wallet_id || nextId);
+      const confirmedActiveId = data.active_wallet_id || nextId;
+      // Switch the visible selection immediately; do not wait for a second list
+      // request that can briefly return an empty/stale result.
+      setActiveWalletId(confirmedActiveId);
+      setWallets(current => current.map(item => ({ ...item, active: String(item.id) === String(confirmedActiveId) })));
       await loadWallets();
       if (onWalletSwitched) await onWalletSwitched();
     } catch (err) {
