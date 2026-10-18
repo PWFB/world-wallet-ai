@@ -1032,6 +1032,8 @@
 .app-shell,.app-shell .main,.app-shell .content{min-width:0;max-width:100%;overflow-x:clip}
 .app-shell .top-actions{min-width:0;flex-wrap:nowrap}
 .app-shell .top-browser-button{display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.app-shell .network-balance-feedback{margin:0 20px 8px;padding:8px 12px;border:1px solid #1d665e;border-radius:9px;background:#092b2a;color:#a8f3df;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
+.app-shell .network-balance-error{border-color:#76502d;background:#2b2115;color:#ffd3a2}
 .app-shell .top-network-switch{display:flex;align-items:center;gap:4px;min-width:0;padding:3px;border:1px solid #263c58;border-radius:10px;background:#0b1729}
 .app-shell .top-network-switch select{width:100px;max-width:28vw;min-width:0;height:31px;padding:0 5px;border:0;border-radius:7px;background:#102039;color:#dce9fa;font:600 10px Inter,system-ui,sans-serif}
 .app-shell .top-network-refresh{display:grid;place-items:center;flex:0 0 30px;width:30px;height:31px!important;min-width:30px!important;padding:0!important;border:0!important;border-radius:7px!important;background:#123047!important;color:#6ee7f9!important;font-size:15px!important}

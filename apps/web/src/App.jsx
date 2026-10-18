@@ -765,12 +765,23 @@ function App() {
   }, [active, accessToken]);
 
   async function refreshSelectedNetworkBalance() {
-    if (!accessToken) return;
-    const matches = dashboardAddresses.filter(item => String(item.network || "").toLowerCase() === selectedNetwork);
+    if (!accessToken) {
+      setSelectedNetworkBalanceMessage("Sign in to check a wallet balance.");
+      return;
+    }
+    const normalizeNetwork = value => {
+      const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+      if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
+      if (["ethereum", "eth", "mainnet", "ethereum_mainnet"].includes(network)) return "ethereum";
+      if (["sepolia", "ethereum_sepolia"].includes(network)) return "sepolia";
+      if (["bnb", "bsc", "binance_smart_chain"].includes(network)) return "bnb";
+      return network;
+    };
+    const matches = dashboardAddresses.filter(item => normalizeNetwork(item.network) === selectedNetwork);
     const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
     if (!chosen) {
       setSelectedNetworkBalance(null);
-      setSelectedNetworkBalanceMessage("Attach a public address for this network.");
+      setSelectedNetworkBalanceMessage("No address is attached for " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + ". Open Wallets and attach the public address first.");
       return;
     }
     if (selectedNetworkAddress !== chosen.address) {
@@ -790,9 +801,11 @@ function App() {
       const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString(), {
         headers: { Authorization: "Bearer " + accessToken },
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Selected network balance is unavailable.");
-      setSelectedNetworkBalance({ balance: Number(data.balance || 0), asset: data.asset || selectedNetwork, address: chosen.address, syncedAt: data.synced_at });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || ("Balance request failed (HTTP " + response.status + ")."));
+      const balance = Number(data.balance);
+      if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
+      setSelectedNetworkBalance({ balance, asset: data.asset || selectedNetwork, address: chosen.address, syncedAt: data.synced_at });
       setSelectedNetworkBalanceMessage("");
     } catch (error) {
       setSelectedNetworkBalance(null);
@@ -1296,6 +1309,9 @@ function App() {
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
+        {(selectedNetworkBalanceBusy || selectedNetworkBalance || selectedNetworkBalanceMessage) && <div className={selectedNetworkBalanceMessage ? "network-balance-feedback network-balance-error" : "network-balance-feedback"} role="status" aria-live="polite">
+          {selectedNetworkBalanceBusy ? "Checking " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + " balance…" : selectedNetworkBalance ? (selectedNetworkBalance.asset + ": " + Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " · " + selectedNetworkBalance.address.slice(0, 6) + "…" + selectedNetworkBalance.address.slice(-4)) : selectedNetworkBalanceMessage}
+        </div>}
 
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
@@ -1397,7 +1413,7 @@ function App() {
                 <div className="card-top"><span>AVAILABLE BALANCE</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? walletBalanceText : "••••••••"} <small>USD</small></div>
                 <div className="balance-meta"><span>{showBalance ? walletBalanceCaption : "Balance hidden"}</span><b className="neutral">{wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
-                {wallet.reserved_balance_usd == null && wallet.reserved_valuation_complete !== true ? <div className="reserved-note">Reserved USD valuation unavailable{Array.isArray(wallet.unpriced_reserved_assets) && wallet.unpriced_reserved_assets.length ? " · unpriced: " + wallet.unpriced_reserved_assets.join(", ") : ""}</div> : Number(wallet.reserved_balance_usd) > 0 && <div className="reserved-note">Reserved for pending requests: {money(wallet.reserved_balance_usd)} USD</div>}
+
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
