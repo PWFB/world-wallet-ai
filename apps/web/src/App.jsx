@@ -1390,7 +1390,7 @@ function App() {
               <article className="hero-card coin-detail-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} /></div>
                 <div className="hero-balance">{number(balance)} <small>{selectedCoin}</small></div>
-                <div className="balance-meta"><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : "Live price unavailable"}</b></div>
+                <div className="balance-meta"><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : selectedCoin === "BALMZ-SOL-DEVNET" && solReferencePrice > 0 ? "$" + money(solReferencePrice) + " SOL reference" : "Live price unavailable"}</b></div>
               </article>
               <article className="panel coin-stats">
                 <div><small>24h change</small><b>{change == null ? "—" : `${Number(change).toFixed(2)}%`}</b></div>
