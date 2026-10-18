@@ -278,10 +278,14 @@ function App() {
   const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
     const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
     const liveRecord = records.find(t => t.wallet_network_connected);
+    const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
     const quote = marketPrices[coin.symbol] || {};
     return {
       ...coin,
-      registry: liveRecord || records[0] || null,
+      status: coin.symbol === "BALMZ"
+        ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
+        : coin.status,
+      registry: liveRecord || mainnetContract || records[0] || null,
       connected: Boolean(liveRecord),
       price_usd: quote.usd == null ? null : Number(quote.usd),
       price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -428,13 +432,16 @@ function App() {
     async function loadCoinPriceHistory() {
       setCoinPriceHistory([]);
       setCoinPriceHistoryError("");
-      if (!selectedCoin || selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP" || selectedCoin === "BALMZ-SOL-DEVNET") {
+      // Devnet BALMZ has no verified token market. Show SOL history only as an
+      // explicitly labelled reference chart, never as BALMZ price history.
+      if (!selectedCoin || selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP") {
         setCoinPriceHistoryLoading(false);
         return;
       }
+      const historySymbol = selectedCoin === "BALMZ-SOL-DEVNET" ? "SOL" : selectedCoin;
       setCoinPriceHistoryLoading(true);
       try {
-        const response = await fetch(API_BASE_URL + "/api/v1/prices/history/" + encodeURIComponent(selectedCoin) + "?days=1", { cache: "no-store" });
+        const response = await fetch(API_BASE_URL + "/api/v1/prices/history/" + encodeURIComponent(historySymbol) + "?days=1", { cache: "no-store" });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Price history is currently unavailable.");
         if (!Array.isArray(data.points) || data.points.length < 2) throw new Error("Not enough verified market history is available yet.");
@@ -1365,13 +1372,17 @@ function App() {
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
         {active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
-          const coin = walletCoinCatalog.find(c => c.symbol === selectedCoin);
+          const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const balance = live?.balance || 0;
+          const balanceKnown = Boolean(live && (selectedCoin !== "BALMZ" || coin?.registry?.contract_address));
+          const balance = balanceKnown ? Number(live?.balance || 0) : null;
           const value = live?.value_usd;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
           const solReferencePrice = selectedCoin === "BALMZ-SOL-DEVNET" ? Number(marketPrices.SOL?.usd || 0) : 0;
-          const change = live?.change_24h ?? marketPrices[selectedCoin]?.usd_24h_change;
+          const isSolanaDevnetBalmz = selectedCoin === "BALMZ-SOL-DEVNET";
+          const change = isSolanaDevnetBalmz
+            ? marketPrices.SOL?.usd_24h_change
+            : live?.change_24h ?? marketPrices[selectedCoin]?.usd_24h_change;
           const rows = activity.filter(item => item.asset === selectedCoin || item.symbol === selectedCoin);
           return <section className="content coin-detail-page">
             <div className="page-heading">
@@ -1389,11 +1400,11 @@ function App() {
             <div className="coin-detail-grid">
               <article className="hero-card coin-detail-card">
                 <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} /></div>
-                <div className="hero-balance">{number(balance)} <small>{selectedCoin}</small></div>
-                <div className="balance-meta"><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : selectedCoin === "BALMZ-SOL-DEVNET" && solReferencePrice > 0 ? "$" + money(solReferencePrice) + " SOL reference" : "Live price unavailable"}</b></div>
+                <div className="hero-balance">{balanceKnown ? number(balance) : "Unavailable"} <small>{selectedCoin}</small></div>
+                <div className="balance-meta"><span>{selectedCoin === "BALMZ" && !coin?.registry?.contract_address ? "Contract deployment pending; balance not yet verifiable" : live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : selectedCoin === "BALMZ-SOL-DEVNET" && solReferencePrice > 0 ? "$" + money(solReferencePrice) + " SOL reference" : "Live price unavailable"}</b></div>
               </article>
               <article className="panel coin-stats">
-                <div><small>24h change</small><b>{change == null ? "—" : `${Number(change).toFixed(2)}%`}</b></div>
+                <div><small>{isSolanaDevnetBalmz ? "SOL reference 24h change" : "24h change"}</small><b>{change == null ? "—" : `${Number(change).toFixed(2)}%`}</b></div>
                 <div><small>Wallet status</small><b>{live ? "Connected" : "Catalog only"}</b></div>
                 <div><small>Network</small><b>{coin?.status || "—"}</b></div>
               </article>
@@ -1408,12 +1419,12 @@ function App() {
               <div className="coin-trading-metrics">
                 <div><small>Spot price</small><b>{price > 0 ? money(price) : "Not listed"}</b><span>{price > 0 ? "USD per " + selectedCoin : "No verified market quote"}</span></div>
                 {selectedCoin === "BALMZ-SOL-DEVNET" && <div><small>SOL reference price</small><b>{solReferencePrice > 0 ? "$" + money(solReferencePrice) : "Unavailable"}</b><span>Live SOL/USD benchmark only; not a BALMZ market quote</span></div>}
-                <div><small>24-hour movement</small><b className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "—" : (Number(change) >= 0 ? "+" : "") + Number(change).toFixed(2) + "%"}</b><span>Market-data provider quote</span></div>
-                <div><small>Available balance</small><b>{number(balance)} {selectedCoin}</b><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} reported value`}</span></div>
+                <div><small>{isSolanaDevnetBalmz ? "SOL reference 24-hour movement" : "24-hour movement"}</small><b className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "—" : (Number(change) >= 0 ? "+" : "") + Number(change).toFixed(2) + "%"}</b><span>{isSolanaDevnetBalmz ? "SOL market movement only; not BALMZ movement" : "Market-data provider quote"}</span></div>
+                <div><small>Available balance</small><b>{balanceKnown ? number(balance) + " " + selectedCoin : "Unavailable"}</b><span>{selectedCoin === "BALMZ" && !coin?.registry?.contract_address ? "Contract deployment pending; no on-chain balance can be read yet" : live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} reported value`}</span></div>
                 <div><small>Network / execution</small><b>{coin?.status || "Network not configured"}</b><span>Review network and fee before signing</span></div>
               </div>
               <div className="coin-history-chart-panel" aria-label={selectedCoin + " 24-hour price chart"}>
-                <div className="coin-history-chart-heading"><div><h3>24-hour price movement</h3><p>Verified market history · USD</p></div><span className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "No movement data" : (Number(change) >= 0 ? "▲ " : "▼ ") + Math.abs(Number(change)).toFixed(2) + "% over 24h"}</span></div>
+                <div className="coin-history-chart-heading"><div><h3>{isSolanaDevnetBalmz ? "SOL reference price movement" : "24-hour price movement"}</h3><p>{isSolanaDevnetBalmz ? "Verified SOL market history · USD · not a BALMZ quote" : "Verified market history · USD"}</p></div><span className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "No movement data" : (Number(change) >= 0 ? "▲ " : "▼ ") + Math.abs(Number(change)).toFixed(2) + "% over 24h"}</span></div>
                 {coinPriceHistoryLoading ? <div className="coin-history-chart-empty">Loading verified price history…</div>
                   : coinPriceHistory.length > 1 && coinPriceHistory.every(point => Number.isFinite(Number(point.price)) && Number(point.price) > 0) ? (() => {
                     const values = coinPriceHistory.map(point => Number(point.price));
@@ -1423,7 +1434,7 @@ function App() {
                     const first = values[0], last = values[values.length - 1], trendUp = last >= first;
                     return <><svg className={"coin-history-chart " + (trendUp ? "trend-up" : "trend-down")} viewBox="0 0 400 120" role="img" aria-label={selectedCoin + " price " + (trendUp ? "trending up" : "trending down") + " over 24 hours"}><line x1="4" y1="16" x2="396" y2="16"/><line x1="4" y1="64" x2="396" y2="64"/><line x1="4" y1="112" x2="396" y2="112"/><path d={path}/></svg><div className="coin-history-chart-footer"><span>24h low {money(min)}</span><b className={trendUp ? "positive" : "negative"}>{trendUp ? "▲" : "▼"} {first > 0 && Number.isFinite((last-first)/first*100) ? ((last-first)/first*100).toFixed(2) : "—"}{first > 0 ? "%" : ""}</b><span>24h high {money(max)}</span></div></>;
                   })()
-                  : <div className="coin-history-chart-empty">{selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP" ? "No verified market chart exists for this token yet. Sepolia is a test network and does not imply a USD market price." : coinPriceHistoryError || "No verified price history is available right now."}</div>}
+                  : <div className="coin-history-chart-empty">{selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP" ? "No verified market chart exists for this token yet. Sepolia is a test network and does not imply a USD market price." : isSolanaDevnetBalmz ? (coinPriceHistoryError || "Verified SOL reference history is currently unavailable; no BALMZ market history is implied.") : coinPriceHistoryError || "No verified price history is available right now."}</div>}
               </div>
               {selectedCoin === "BALMZ" && Number(marketPrices.ETH?.usd) > 0 && <div className="balmz-eth-reference"><b>ETH reference price: {money(Number(marketPrices.ETH.usd))}</b><span>This is the current ETH market price for reference only. It is not a BALMZ token price or valuation.</span></div>}
               <div className="coin-trading-actions">
