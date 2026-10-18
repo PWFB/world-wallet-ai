@@ -784,7 +784,7 @@ function App() {
     setSelectedNetworkBalanceBusy(true);
     setSelectedNetworkBalanceMessage("Refreshing " + (selectedNetwork === "solana_devnet" ? "Solana Devnet" : selectedNetwork) + " balance…");
     const normalizeNetwork = value => {
-      const network = String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+      const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
       if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
       if (["ethereum", "eth", "mainnet", "ethereum_mainnet"].includes(network)) return "ethereum";
       if (["sepolia", "ethereum_sepolia"].includes(network)) return "sepolia";
