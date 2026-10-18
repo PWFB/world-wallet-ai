@@ -23,7 +23,7 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
       if (nextWallets.length) {
         setWallets(nextWallets);
         const serverActiveId = data.active_wallet_id || nextWallets.find(item => item.active)?.id || "";
-        setActiveWalletId(serverActiveId || activeWalletId);
+        if (serverActiveId) setActiveWalletId(serverActiveId);
       } else {
         setWallets(current => current);
         setActiveWalletId(current => current);
@@ -34,7 +34,7 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
     } finally {
       setLoading(false);
     }
-  }, [accessToken, apiBaseUrl, authHeaders, activeWalletId]);
+  }, [accessToken, apiBaseUrl, authHeaders]);
 
   useEffect(() => { loadWallets(); }, [loadWallets]);
 
