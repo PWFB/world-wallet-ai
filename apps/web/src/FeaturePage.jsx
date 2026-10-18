@@ -922,7 +922,20 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const response = await fetch(apiBaseUrl + "/api/v1/wallet/proof-of-reserves", { headers: { Authorization: "Bearer " + accessToken } });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Unable to read on-chain reserves.");
-        setProofData(data);
+        // The SOL quote is a visual benchmark only; it is never applied to BALMZ
+        // balances or included in production reserve figures.
+        let solReferenceUsd = null;
+        try {
+          const marketResponse = await fetch(apiBaseUrl + "/api/v1/prices/market", { cache: "no-store" });
+          if (marketResponse.ok) {
+            const marketData = await marketResponse.json();
+            const quote = Number(marketData?.prices?.SOL?.usd);
+            if (Number.isFinite(quote) && quote > 0) solReferenceUsd = quote;
+          }
+        } catch {
+          // A market-data outage must not discard the independently loaded chain snapshot.
+        }
+        setProofData({ ...data, sol_reference_usd: solReferenceUsd });
         setMessage(data.warnings?.length ? "Snapshot loaded with warnings; review unavailable networks." : "On-chain snapshot refreshed.");
       } catch (error) { setMessage(error.message || "Reserve snapshot unavailable."); }
       finally { setToolBusy(false); }
@@ -945,7 +958,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         {proofData?.token_supplies?.length ? <div className="panel action-panel">
           <p className="feature-kicker">ON-CHAIN TOKEN SUPPLY · TESTNET</p>
           <h2>BALMZ total minted supply</h2>
-          <p className="muted">Read directly from the Solana Devnet mint. Total supply is not the same as the amount held by this wallet.</p>
+          <p className="muted">Read directly from the Solana Devnet mint. Total supply is not the same as the amount held by this wallet. SOL reference price: {proofData?.sol_reference_usd > 0 ? "$" + Number(proofData.sol_reference_usd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Unavailable"}. This is a SOL market benchmark only, not a BALMZ price, and it is excluded from reserve valuation.</p>
           <div className="tool-list">{proofData.token_supplies.map(item=><div className="tool-row" key={item.mint_address}><div><b>{item.symbol} total supply</b><small>{item.source} · {item.decimals} decimals</small><small>Mint: {item.mint_address}</small></div><strong>{item.total_supply == null ? "Unavailable" : number(item.total_supply)+" "+item.symbol}</strong><a href={"https://explorer.solana.com/address/"+encodeURIComponent(item.mint_address)+"?cluster=devnet"} target="_blank" rel="noreferrer">Verify mint ↗</a></div>)}</div>
         </div> : null}
         {proofData?.warnings?.map((warning,index)=><div className="security-note" key={index}>Warning: {warning}</div>)}
