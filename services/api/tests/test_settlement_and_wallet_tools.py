@@ -483,6 +483,41 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         self.assertEqual(decode.call_args.kwargs["options"]["require"], ["exp", "sub", "email"])
 
+    def test_solana_devnet_proof_includes_wallet_holdings_and_live_mint_supply(self):
+        address = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        mint = main.BALMZ_SOLANA_DEVNET_MINT
+
+        def fake_rpc(_url, method, _params):
+            if method == "getBalance":
+                return {"value": 5_000_000_000}
+            if method == "getTokenSupply":
+                return {"value": {
+                    "amount": "1000000000000000000",
+                    "decimals": 9,
+                    "uiAmountString": "1000000000",
+                }}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "solana_devnet", "address": address, "label": "BALMZ wallet"},
+            ]),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+            patch.object(main, "solana_spl_token_balance", return_value=321.5),
+        ):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["reserves"], [])
+        self.assertEqual(result["testnet_assets"][0]["asset"], "SOL-DEVNET")
+        balmz = next(item for item in result["testnet_assets"] if item["asset"] == "BALMZ-SOL-DEVNET")
+        self.assertEqual(balmz["balance"], 321.5)
+        supply = result["token_supplies"][0]
+        self.assertEqual(supply["mint_address"], mint)
+        self.assertEqual(supply["total_supply"], 1_000_000_000)
+        self.assertEqual(supply["raw_amount"], "1000000000000000000")
+        self.assertFalse(result["audited"])
+        self.assertFalse(result["liabilities_included"])
+
 if __name__ == "__main__":
     unittest.main()
 
