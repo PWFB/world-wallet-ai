@@ -1,0 +1,45 @@
+name: BALMZ Contract Compile
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "contracts/contracts/**"
+      - "contracts/scripts/**"
+      - "contracts/hardhat.config.js"
+      - "contracts/package.json"
+      - "contracts/package-lock.json"
+      - ".github/workflows/balmz-contract-ci.yml"
+  pull_request:
+    paths:
+      - "contracts/contracts/**"
+      - "contracts/scripts/**"
+      - "contracts/hardhat.config.js"
+      - "contracts/package.json"
+      - "contracts/package-lock.json"
+      - ".github/workflows/balmz-contract-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          package-manager-cache: false
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Compile BALMZ
+        run: npm run compile

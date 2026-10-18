@@ -1,4 +1,4 @@
-require("@nomicfoundation/hardhat-toolbox");
+require("@nomicfoundation/hardhat-ethers");
 require("dotenv").config();
 
 const PRIVATE_KEY = process.env.DEPLOYER_PRIVATE_KEY || "";

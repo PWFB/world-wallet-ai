@@ -1,6 +1,13 @@
 const hre = require("hardhat");
 
 async function main() {
+  const network = await hre.ethers.provider.getNetwork();
+  if (network.chainId !== 11155111n) {
+    throw new Error(
+      "Deployment blocked: expected Ethereum Sepolia (11155111), got " +
+      network.chainId.toString()
+    );
+  }
   const [deployer] = await hre.ethers.getSigners();
   if (!deployer) {
     throw new Error("No deployer configured. Set DEPLOYER_PRIVATE_KEY locally; never commit it.");
