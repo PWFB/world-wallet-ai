@@ -1799,8 +1799,7 @@ def wallet_asset_symbol(symbol: str, network: str) -> str:
     return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
 
 
-@app.post("/api/v1/wallet/sync")
-def sync_wallet(user: dict = Depends(current_user)):
+def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
@@ -1900,28 +1899,30 @@ def sync_wallet(user: dict = Depends(current_user)):
             except Exception:
                 warnings.append(f"{network} {symbol} token balance service unavailable")
         conn.commit()
-    imported_transactions = sync_bitcoin_transactions(user, btc_address)
+    imported_transactions = []
     evm_transactions = []
-    evm_warnings = []
-    for rpc_url, network, contract, token_symbol, network_address in (
-        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
-        (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
-    ):
-        if rpc_url and network_address:
-            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
-            evm_transactions.extend(native_imported)
-            if native_warning:
-                evm_warnings.append(native_warning)
-            if contract:
-                imported, warning = sync_evm_token_transactions(
-                    user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
-                    decimals=18 if network == "sepolia" else 6,
-                )
-                evm_transactions.extend(imported)
-                if warning:
-                    evm_warnings.append(warning)
-    warnings.extend(evm_warnings)
+    if include_transactions:
+        imported_transactions = sync_bitcoin_transactions(user, btc_address)
+        evm_warnings = []
+        for rpc_url, network, contract, token_symbol, network_address in (
+            (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
+            (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
+            (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
+        ):
+            if rpc_url and network_address:
+                native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
+                evm_transactions.extend(native_imported)
+                if native_warning:
+                    evm_warnings.append(native_warning)
+                if contract:
+                    imported, warning = sync_evm_token_transactions(
+                        user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                        decimals=18 if network == "sepolia" else 6,
+                    )
+                    evm_transactions.extend(imported)
+                    if warning:
+                        evm_warnings.append(warning)
+        warnings.extend(evm_warnings)
     assets, all_transactions, summary = wallet_snapshot(user)
     if btc_address and not imported_transactions:
         # An empty result can be a legitimate zero-transaction wallet; do not label it
@@ -1929,10 +1930,16 @@ def sync_wallet(user: dict = Depends(current_user)):
         pass
     # A configured address is not proof that history synced successfully. Only publish a
     # success timestamp when every configured transaction source completed without warnings.
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
+
+
+@app.post("/api/v1/wallet/sync")
+def sync_wallet(user: dict = Depends(current_user)):
+    # Keep the public sync endpoint's existing behavior: balances plus transaction history.
+    return _sync_wallet_impl(user, include_transactions=True)
 
 
 # Process-local cache of verified provider responses. Cache entries expire after 15 minutes;
@@ -2133,7 +2140,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
     bitcoin_transactions = []
 
     try:
-        sync_result = sync_wallet(user)
+        sync_result = _sync_wallet_impl(user, include_transactions=False)
         updates = sync_result.get("updates", [])
         bitcoin_transactions = sync_result.get("bitcoin_transactions", [])
         sync_error = " • ".join(sync_result.get("warnings", [])) or None
