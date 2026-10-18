@@ -2415,7 +2415,9 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
 def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
-    network=request.network.strip().lower(); address=request.address.strip()
+    network=request.network.strip().lower().replace("-", "_")
+    network = {"solana":"solana_devnet","devnet":"solana_devnet","solana_devnet":"solana_devnet","mainnet":"ethereum","eth":"ethereum","ethereum_mainnet":"ethereum","bsc":"bnb","binance_smart_chain":"bnb"}.get(network, network)
+    address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
     if network=="solana_devnet" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
@@ -2437,7 +2439,8 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
 @app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
 def read_wallet_address_balance(wallet_id: str, network: str, address: str, user: dict = Depends(current_user)):
     """Read the balance for one attached public address without mutating portfolio assets."""
-    network = network.strip().lower()
+    network = network.strip().lower().replace("-", "_")
+    network = {"solana":"solana_devnet","devnet":"solana_devnet","mainnet":"ethereum","eth":"ethereum","ethereum_mainnet":"ethereum","bsc":"bnb","binance_smart_chain":"bnb"}.get(network, network)
     address = address.strip()
     if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"}:
         raise HTTPException(status_code=400, detail="Unsupported wallet network")
