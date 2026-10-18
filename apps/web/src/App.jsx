@@ -304,6 +304,7 @@ function App() {
     } catch { return "ethereum"; }
   });
   const balanceRequestInFlight = useRef(false);
+  const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
@@ -810,7 +811,7 @@ function App() {
     };
     try {
       const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
-      let walletId = wallet?.wallet_id || wallet?.id || user?.wallet_id;
+      let walletId = forceAddressRefresh ? "" : (balanceWalletIdRef.current || wallet?.wallet_id || wallet?.id || user?.wallet_id);
       let currentAddresses = dashboardAddresses;
       const hasCachedAddress = !forceAddressRefresh && currentAddresses.some(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
       if (!walletId || !hasCachedAddress) {
@@ -819,6 +820,7 @@ function App() {
           const walletsData = await walletsResponse.json().catch(() => ({}));
           if (!walletsResponse.ok) throw new Error(walletsData.detail || ("Unable to load active wallet (HTTP " + walletsResponse.status + ")."));
           walletId = walletsData.active_wallet_id || walletsData.wallets?.find(item => item.active)?.id;
+          if (walletId) balanceWalletIdRef.current = walletId;
         }
         if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
         const addressResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/addresses");
