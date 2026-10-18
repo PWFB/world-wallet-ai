@@ -785,7 +785,7 @@ function App() {
     setSelectedNetworkBalanceMessage("");
     let token = accessToken;
     const normalizeNetwork = value => {
-      const network = String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+      const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
       if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
       if (["ethereum", "eth", "mainnet", "ethereum_mainnet"].includes(network)) return "ethereum";
       if (["sepolia", "ethereum_sepolia"].includes(network)) return "sepolia";
