@@ -273,7 +273,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_refresh_does_not_claim_transaction_sync_succeeded_with_warnings(self):
         user = {"id": "user_test", "wallet_id": "wallet_test"}
-        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+        with patch.object(main, "_sync_wallet_impl", return_value={"updates": [], "warnings": []}), \
              patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": ["Ethereum RPC unavailable"]}), \
              patch.object(main, "refresh_prices", return_value={"source": "test"}), \
              patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
@@ -286,7 +286,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_refresh_reports_transaction_sync_time_after_clean_sync(self):
         user = {"id": "user_test", "wallet_id": "wallet_test"}
-        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+        with patch.object(main, "_sync_wallet_impl", return_value={"updates": [], "warnings": []}), \
              patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": []}), \
              patch.object(main, "refresh_prices", return_value={"source": "test"}), \
              patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
