@@ -282,7 +282,7 @@ function App() {
     return {
       ...coin,
       registry: liveRecord || records[0] || null,
-      connected: Boolean(liveRecord && coin.symbol !== "BALMZ-SOL-DEVNET"),
+      connected: Boolean(liveRecord),
       price_usd: quote.usd == null ? null : Number(quote.usd),
       price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
       price_listed: quote.listed === true,
@@ -554,6 +554,22 @@ function App() {
       if (!accessToken) return;
       let authHeaders = { Authorization: `Bearer ${accessToken}` };
       let refreshedToken = "";
+      // Show the last saved wallet snapshot first while live RPC sync continues.
+      try {
+        const cachedResponse = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
+        if (cachedResponse.ok) {
+          const cached = await cachedResponse.json();
+          if (!cancelled) {
+            if (cached.wallet) setWallet(cached.wallet);
+            if (Array.isArray(cached.assets)) setAssets(cached.assets.map(asset => ({
+              ...asset,
+              icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+            })));
+          }
+        }
+      } catch {
+        // Cached data is an optimization only; still attempt live refresh.
+      }
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
           method: "POST",
