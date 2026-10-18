@@ -428,7 +428,7 @@ function App() {
     async function loadCoinPriceHistory() {
       setCoinPriceHistory([]);
       setCoinPriceHistoryError("");
-      if (!selectedCoin || selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP") {
+      if (!selectedCoin || selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP" || selectedCoin === "BALMZ-SOL-DEVNET") {
         setCoinPriceHistoryLoading(false);
         return;
       }
@@ -1370,6 +1370,7 @@ function App() {
           const balance = live?.balance || 0;
           const value = live?.value_usd;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
+          const solReferencePrice = selectedCoin === "BALMZ-SOL-DEVNET" ? Number(marketPrices.SOL?.usd || 0) : 0;
           const change = live?.change_24h ?? marketPrices[selectedCoin]?.usd_24h_change;
           const rows = activity.filter(item => item.asset === selectedCoin || item.symbol === selectedCoin);
           return <section className="content coin-detail-page">
@@ -1406,6 +1407,7 @@ function App() {
               <div className="panel-head"><div><h2>{selectedCoin} trading card</h2><span>Asset-specific market and execution details</span></div><span className="coin-trading-status">{price > 0 ? "Quote available" : "Quote unavailable"}</span></div>
               <div className="coin-trading-metrics">
                 <div><small>Spot price</small><b>{price > 0 ? money(price) : "Not listed"}</b><span>{price > 0 ? "USD per " + selectedCoin : "No verified market quote"}</span></div>
+                {selectedCoin === "BALMZ-SOL-DEVNET" && <div><small>SOL reference price</small><b>{solReferencePrice > 0 ? "$" + money(solReferencePrice) : "Unavailable"}</b><span>Live SOL/USD benchmark only; not a BALMZ market quote</span></div>}
                 <div><small>24-hour movement</small><b className={change == null ? "neutral" : Number(change) >= 0 ? "positive" : "negative"}>{change == null ? "—" : (Number(change) >= 0 ? "+" : "") + Number(change).toFixed(2) + "%"}</b><span>Market-data provider quote</span></div>
                 <div><small>Available balance</small><b>{number(balance)} {selectedCoin}</b><span>{live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} reported value`}</span></div>
                 <div><small>Network / execution</small><b>{coin?.status || "Network not configured"}</b><span>Review network and fee before signing</span></div>
@@ -1538,7 +1540,7 @@ function App() {
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} />
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
+                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol === "BALMZ-SOL-DEVNET" ? `BALMZ market: Not listed • SOL reference: ${Number(marketPrices.SOL?.usd) > 0 ? "$" + money(marketPrices.SOL.usd) : "Unavailable"} • Wallet value: —` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
                   })}
