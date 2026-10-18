@@ -777,7 +777,28 @@ function App() {
       if (["bnb", "bsc", "binance_smart_chain"].includes(network)) return "bnb";
       return network;
     };
-    const matches = dashboardAddresses.filter(item => normalizeNetwork(item.network) === selectedNetwork);
+    // Fetch the server-side address list for this balance check instead of trusting
+    // potentially stale dashboard state. Receive/Wallets can refresh the auth token
+    // independently, and the dashboard must use the same current active-wallet records.
+    let currentAddresses = dashboardAddresses;
+    try {
+      const refreshedToken = await getNeonAccessToken({ forceRefresh: true });
+      const response = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", {
+        headers: { Authorization: "Bearer " + (refreshedToken || accessToken) },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.detail || ("Unable to load attached addresses (HTTP " + response.status + ")."));
+      }
+      currentAddresses = Array.isArray(data.addresses) ? data.addresses : [];
+      setDashboardAddresses(currentAddresses);
+    } catch (error) {
+      setSelectedNetworkBalance(null);
+      setSelectedNetworkBalanceMessage(error.message || "Unable to refresh attached wallet addresses.");
+      return;
+    }
+    const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
+    const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
     const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
     if (!chosen) {
       setSelectedNetworkBalance(null);
