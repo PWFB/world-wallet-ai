@@ -2136,17 +2136,13 @@ def refresh_wallet(user: dict = Depends(current_user)):
     except Exception:
         sync_error = "Wallet chain synchronization failed"
 
-    # The dashboard's Refresh button must import transactions too, not only
-    # update balances/prices. Keep this independent so one failing source does
-    # not prevent price refresh or return an otherwise useful wallet snapshot.
+    # Keep transaction history verification separate from balance reads so one
+    # failing transaction source does not discard a valid balance snapshot.
     try:
         transaction_result = sync_transactions(user)
         bitcoin_transactions = transaction_result.get("imported", bitcoin_transactions)
         tx_warnings = transaction_result.get("warnings", [])
         transaction_sync_error = " • ".join(tx_warnings) or None
-        # Only publish a successful sync timestamp when every configured source
-        # completed without warnings; otherwise the UI could imply stale history
-        # was freshly verified.
         if transaction_sync_error is None:
             last_transaction_sync_at = datetime.now(timezone.utc).isoformat()
     except HTTPException as exc:
@@ -2154,17 +2150,10 @@ def refresh_wallet(user: dict = Depends(current_user)):
     except Exception:
         transaction_sync_error = "Wallet transaction synchronization failed"
 
-    try:
-        price_result = refresh_prices(user)
-    except HTTPException as exc:
-        price_result = {}
-        price_error = str(exc.detail)
-    except Exception:
-        price_result = {}
-        price_error = "Live market price refresh failed"
-
+    # Market quotes are fetched separately by /api/v1/prices/market. Avoid a
+    # second synchronous provider request here so the wallet response is faster.
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
-    warnings = [x for x in (sync_error, transaction_sync_error, price_error) if x]
+    warnings = [x for x in (sync_error, transaction_sync_error) if x]
     network_status = sync_result.get("network_status") or _network_sync_status(user, warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
@@ -2173,7 +2162,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         "transactions": transactions_now,
         "updates": updates,
         "bitcoin_transactions": bitcoin_transactions,
-        "price_source": price_result.get("source"),
+        "price_source": None,
         "warnings": warnings,
         "network_status": network_status,
         "last_balance_sync_at": sync_result.get("last_balance_sync_at"),
@@ -2364,12 +2353,14 @@ def wallet_signing_config(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/tokens")
 def list_token_registry(user: dict = Depends(current_user)):
-    networks = {a["network"] for a in configured_addresses(user)}
+    # Registry rows historically use both hyphenated and underscored network IDs.
+    networks = {str(a["network"]).strip().lower().replace("-", "_") for a in configured_addresses(user)}
     with db() as conn:
         rows=conn.execute("SELECT symbol,name,network,contract_address,decimals,coingecko_id,status,metadata_url,logo_url FROM token_registry ORDER BY symbol,network").fetchall()
     tokens=[]
     for r in rows:
-        supported = r[2] in networks
+        registry_network = str(r[2]).strip().lower().replace("-", "_")
+        supported = registry_network in networks
         tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
@@ -2898,11 +2889,51 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     if not addresses:
         raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
     reserves = []
+    testnet_assets = []
+    token_supplies = []
     warnings = []
     excluded_networks = []
     for item in addresses:
-        network = item["network"]
+        network = str(item["network"]).strip().lower().replace("-", "_")
         address = item["address"]
+        if network == "solana_devnet":
+            # Keep testnet holdings separate from production reserve figures.
+            solana_rpc = SOLANA_DEVNET_RPC_URL or "https://api.devnet.solana.com"
+            try:
+                native_result = rpc_call(solana_rpc, "getBalance", [address, {"commitment": "confirmed"}])
+                testnet_assets.append({
+                    "network": "solana-devnet", "address": address, "asset": "SOL-DEVNET",
+                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
+                    "block_number": None, "source": "Solana Devnet getBalance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-devnet: native SOL balance unavailable")
+            try:
+                token_balance = solana_spl_token_balance(address)
+                testnet_assets.append({
+                    "network": "solana-devnet", "address": address, "asset": "BALMZ-SOL-DEVNET",
+                    "balance": token_balance, "contract_address": BALMZ_SOLANA_DEVNET_MINT,
+                    "block_number": None, "source": "Solana Devnet SPL token account balance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-devnet BALMZ: wallet token balance unavailable")
+            try:
+                supply_response = rpc_call(solana_rpc, "getTokenSupply", [BALMZ_SOLANA_DEVNET_MINT, {"commitment": "confirmed"}])
+                supply = (supply_response or {}).get("value") or {}
+                supply_decimals = int(supply.get("decimals", -1))
+                raw_supply = str(supply.get("amount", ""))
+                if supply_decimals != BALMZ_SOLANA_DEVNET_DECIMALS or not raw_supply.isdigit():
+                    raise ValueError("Unexpected BALMZ mint supply response")
+                total_supply = float(supply.get("uiAmountString") or (int(raw_supply) / (10 ** supply_decimals)))
+                token_supplies.append({
+                    "symbol": "BALMZ-SOL-DEVNET", "network": "solana-devnet",
+                    "mint_address": BALMZ_SOLANA_DEVNET_MINT, "decimals": supply_decimals,
+                    "total_supply": total_supply, "raw_amount": raw_supply,
+                    "source": "Solana Devnet getTokenSupply (confirmed)", "commitment": "confirmed",
+                })
+            except Exception:
+                warnings.append("solana-devnet BALMZ: on-chain total supply unavailable")
+            continue
         if network == "sepolia":
             excluded_networks.append("sepolia")
             continue
@@ -2947,7 +2978,8 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
         "status": "partial" if warnings else "snapshot",
         "scope": "Connected public addresses for this authenticated wallet only",
         "as_of": datetime.now(timezone.utc).isoformat(),
-        "reserves": reserves, "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
+        "reserves": reserves, "testnet_assets": testnet_assets, "token_supplies": token_supplies,
+        "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
         "audited": False, "liabilities_included": False,
         "note": "This is an on-chain asset snapshot, not an audited proof of reserves or solvency attestation. It excludes platform-wide customer liabilities, off-chain assets, and ownership proof.",
     }
