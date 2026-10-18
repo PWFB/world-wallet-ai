@@ -2136,14 +2136,24 @@ def refresh_wallet(user: dict = Depends(current_user)):
     except Exception:
         sync_error = "Wallet chain synchronization failed"
 
-    # sync_wallet already reads supported balances and imports transaction sources.
-    # Repeating sync_transactions doubled RPC work and delayed the dashboard.
-    # Market quotes are fetched independently; retain last known DB valuations here.
-    if sync_result.get("last_transaction_sync_at"):
-        last_transaction_sync_at = sync_result["last_transaction_sync_at"]
+    # Keep transaction history verification separate from balance reads so one
+    # failing transaction source does not discard a valid balance snapshot.
+    try:
+        transaction_result = sync_transactions(user)
+        bitcoin_transactions = transaction_result.get("imported", bitcoin_transactions)
+        tx_warnings = transaction_result.get("warnings", [])
+        transaction_sync_error = " • ".join(tx_warnings) or None
+        if transaction_sync_error is None:
+            last_transaction_sync_at = datetime.now(timezone.utc).isoformat()
+    except HTTPException as exc:
+        transaction_sync_error = str(exc.detail)
+    except Exception:
+        transaction_sync_error = "Wallet transaction synchronization failed"
 
+    # Market quotes are fetched separately by /api/v1/prices/market. Avoid a
+    # second synchronous provider request here so the wallet response is faster.
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
-    warnings = [x for x in (sync_error,) if x]
+    warnings = [x for x in (sync_error, transaction_sync_error) if x]
     network_status = sync_result.get("network_status") or _network_sync_status(user, warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
