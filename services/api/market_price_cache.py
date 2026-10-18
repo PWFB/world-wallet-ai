@@ -18,6 +18,21 @@ class MarketPriceCache:
         saved["cache_age_seconds"] = 0
         self._entry = {"payload": saved, "fetched_at": fetched_at}
 
+    def fresh_response(self, now=None, max_age_seconds=60):
+        """Return a copy of a recent quote without marking it stale."""
+        if self._entry is None:
+            return None
+        now = now or datetime.now(timezone.utc)
+        age = max(0, int((now - self._entry["fetched_at"]).total_seconds()))
+        if age > max_age_seconds:
+            return None
+        payload = dict(self._entry["payload"])
+        payload["prices"] = {key: dict(value) if isinstance(value, dict) else value
+                             for key, value in payload.get("prices", {}).items()}
+        payload["stale"] = False
+        payload["cache_age_seconds"] = age
+        return payload
+
     def stale_response(self, now=None):
         if self._entry is None:
             return None
