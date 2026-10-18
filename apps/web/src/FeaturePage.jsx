@@ -936,6 +936,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
         {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        {proofData?.testnet_assets?.length ? <div className="panel action-panel">
+          <p className="feature-kicker">TESTNET HOLDINGS · NOT PRODUCTION RESERVES</p>
+          <h2>Solana Devnet assets</h2>
+          <p className="muted">These test-network balances are shown separately from production reserve figures.</p>
+          <div className="tool-list">{proofData.testnet_assets.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · SOLANA DEVNET</b><small>{item.source}</small>{item.contract_address && <small>Mint: {item.contract_address}</small>}</div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div>
+        </div> : null}
+        {proofData?.token_supplies?.length ? <div className="panel action-panel">
+          <p className="feature-kicker">ON-CHAIN TOKEN SUPPLY · TESTNET</p>
+          <h2>BALMZ total minted supply</h2>
+          <p className="muted">Read directly from the Solana Devnet mint. Total supply is not the same as the amount held by this wallet.</p>
+          <div className="tool-list">{proofData.token_supplies.map(item=><div className="tool-row" key={item.mint_address}><div><b>{item.symbol} total supply</b><small>{item.source} · {item.decimals} decimals</small><small>Mint: {item.mint_address}</small></div><strong>{item.total_supply == null ? "Unavailable" : number(item.total_supply)+" "+item.symbol}</strong><a href={"https://explorer.solana.com/address/"+encodeURIComponent(item.mint_address)+"?cluster=devnet"} target="_blank" rel="noreferrer">Verify mint ↗</a></div>)}</div>
+        </div> : null}
         {proofData?.warnings?.map((warning,index)=><div className="security-note" key={index}>Warning: {warning}</div>)}
         <div className="panel action-panel">
           <p className="feature-kicker">DEPLOYED TOKEN CONTRACT REGISTER · READ ONLY</p>
