@@ -84,6 +84,8 @@ try {
   if (actualNetwork.chainId !== network.chainId) fail("RPC chain ID mismatch. Expected Sepolia 11155111; received " + actualNetwork.chainId + ".");
   const wallet = new Wallet(privateKey, provider);
   const deployer = await wallet.getAddress();
+  const outputPath = path.resolve("world-wallet-deployment.json");
+  if (fs.existsSync(outputPath)) fail("Refusing to deploy because a manifest already exists at " + outputPath + ". Back it up and move it aside before retrying.");
   const balance = await provider.getBalance(deployer);
   const factory = new ContractFactory(artifact.abi, "0x" + artifact.evm.bytecode.object, wallet);
   const deployTx = await factory.getDeployTransaction();
@@ -151,7 +153,6 @@ try {
       deployedAt: new Date().toISOString(),
       status: "confirmed"
     };
-    const outputPath = path.resolve("world-wallet-deployment.json");
     fs.writeFileSync(outputPath, JSON.stringify(manifest, null, 2) + "\n", { mode: 0o600, flag: "wx" });
     console.log("\nDEPLOYMENT CONFIRMED AND TOKEN METADATA VERIFIED");
     console.log("Contract address: " + address);
