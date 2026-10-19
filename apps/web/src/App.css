@@ -1563,3 +1563,54 @@
   border: 0;
   background: transparent;
 }
+
+
+/* Mobile header hardening: keep controls in a single scrollable row without overlap. */
+@media (max-width: 760px) {
+  .topbar {
+    display: flex;
+    gap: 10px;
+    min-width: 0;
+    overflow: hidden;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .mobile-brand {
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 54%;
+    gap: 6px;
+    white-space: nowrap;
+  }
+  .mobile-brand > b {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .top-actions {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    justify-content: flex-end;
+    gap: 6px;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  .top-actions::-webkit-scrollbar { display: none; }
+  .top-actions button {
+    flex: 0 0 35px;
+    min-width: 35px;
+    width: 35px;
+    height: 35px;
+    white-space: nowrap;
+  }
+  .top-actions button:first-child { flex: 0 0 auto; width: auto; }
+  .top-actions .top-avatar { flex: 0 0 35px; }
+}
+@media (max-width: 380px) {
+  .mobile-brand { max-width: 48%; }
+  .mobile-brand .brand-mark { width: 26px; height: 26px; flex: 0 0 26px; }
+  .topbar { gap: 7px; }
+}
