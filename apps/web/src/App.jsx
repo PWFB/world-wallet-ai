@@ -376,6 +376,7 @@ function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [activity, setActivity] = useState(fallbackActivity);
   const [performance, setPerformance] = useState({ points: [] });
+  const [performancePeriod, setPerformancePeriod] = useState("1M");
   const sessionState = authClient.useSession();
   const neonSessionUser = sessionState.data?.user || null;
 
@@ -693,21 +694,47 @@ function App() {
       ? null
       : window.setInterval(syncLiveTransactions, Number(refreshInterval));
 
-    async function loadPerformance() {
-      try {
-        const response = await fetch(API_BASE_URL + "/api/v1/portfolio/performance", { headers: authHeaders });
-        if (!response.ok) throw new Error("Performance API unavailable");
-        const data = await response.json();
-        if (!cancelled) setPerformance(data);
-      } catch { if (!cancelled) setPerformance({ points: [] }); }
-    }
-    loadPerformance();
     return () => {
       cancelled = true;
       if (walletRefreshTimer) window.clearInterval(walletRefreshTimer);
       if (liveTransactionTimer) window.clearInterval(liveTransactionTimer);
     };
   }, [accessToken, refreshInterval]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setPerformance({ points: [], period: performancePeriod });
+      return;
+    }
+    let cancelled = false;
+    const authHeaders = { Authorization: "Bearer " + accessToken };
+    async function loadPerformance(recordSnapshot = false) {
+      try {
+        if (recordSnapshot) {
+          // Snapshot creation records only a complete, verified portfolio USD valuation.
+          await fetch(API_BASE_URL + "/api/v1/portfolio/performance/snapshot", {
+            method: "POST",
+            headers: authHeaders,
+          });
+        }
+        const response = await fetch(
+          API_BASE_URL + "/api/v1/portfolio/performance?period=" + encodeURIComponent(performancePeriod),
+          { headers: authHeaders, cache: "no-store" },
+        );
+        if (!response.ok) throw new Error("Performance API unavailable");
+        const data = await response.json();
+        if (!cancelled) setPerformance(data);
+      } catch {
+        if (!cancelled) setPerformance({ points: [], period: performancePeriod, unavailable: true });
+      }
+    }
+    loadPerformance(true);
+    const timer = window.setInterval(() => loadPerformance(true), 5 * 60 * 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [accessToken, performancePeriod]);
 
   async function loadDashboardAddresses() {
     if (!accessToken) return;
@@ -1524,15 +1551,44 @@ function App() {
 
             <div className="dashboard-grid">
               <article className="panel chart-panel">
-                <div className="panel-head"><div><h2>Portfolio performance</h2><span>Asset value over time</span></div><div className="ranges"><button>1D</button><button>1W</button><button className="selected">1M</button><button>1Y</button></div></div>
+                <div className="panel-head">
+                  <div><h2>Portfolio performance</h2><span>Recorded portfolio value over time</span></div>
+                  <div className="ranges" role="group" aria-label="Portfolio performance period">
+                    {["1D", "1W", "1M", "1Y"].map(period => <button key={period} type="button" className={performancePeriod === period ? "selected" : ""} aria-pressed={performancePeriod === period} onClick={() => setPerformancePeriod(period)}>{period}</button>)}
+                  </div>
+                </div>
                 <div className="chart">
-                  {performance.points.length > 1 ? (
-                    <div className="live-chart-note">Live performance history available.</div>
+                  {performance.unavailable ? (
+                    <div className="live-chart-empty">Portfolio performance history could not be loaded. Try again shortly.</div>
+                  ) : performance.points.length > 1 ? (() => {
+                    const values = performance.points.map(point => Number(point.value_usd)).filter(Number.isFinite);
+                    if (values.length < 2) return <div className="live-chart-empty">Not enough verified snapshots to draw this period yet.</div>;
+                    const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
+                    const coords = values.map((value, index) => ({ x: 20 + index * 560 / Math.max(values.length - 1, 1), y: 148 - ((value - min) / span) * 112 }));
+                    const path = coords.map((point, index) => (index ? "L" : "M") + point.x.toFixed(2) + " " + point.y.toFixed(2)).join(" ");
+                    const first = values[0], last = values[values.length - 1];
+                    const change = first > 0 ? ((last - first) / first) * 100 : null;
+                    return <div className="portfolio-performance-plot">
+                      <svg className="portfolio-performance-svg" viewBox="0 0 600 170" role="img" aria-label={"Verified portfolio value history for " + performancePeriod}>
+                        <line x1="20" y1="36" x2="580" y2="36" />
+                        <line x1="20" y1="92" x2="580" y2="92" />
+                        <line x1="20" y1="148" x2="580" y2="148" />
+                        <path d={path} />
+                        {coords.map((point, index) => <circle key={index} cx={point.x} cy={point.y} r={index === coords.length - 1 ? 4 : 2} />)}
+                      </svg>
+                      <div className="portfolio-performance-summary">
+                        <span>Start <b>{money(first)}</b></span>
+                        <span>End <b>{money(last)}</b></span>
+                        <b className={change == null ? "neutral" : change >= 0 ? "positive" : "negative"}>{change == null ? "—" : (change >= 0 ? "+" : "") + change.toFixed(2) + "%"}</b>
+                      </div>
+                    </div>;
+                  })() : performance.points.length === 1 ? (
+                    <div className="live-chart-empty">First verified snapshot recorded at {performance.points[0].label || "the latest check"}. More snapshots are collected at 5-minute intervals while the dashboard is open.</div>
                   ) : (
-                    <div className="live-chart-empty">No portfolio performance history recorded yet.</div>
+                    <div className="live-chart-empty">No complete verified USD valuation is available for this period yet. History starts when a full valuation can be verified.</div>
                   )}
                 </div>
-                <div className="chart-foot"><span>Source: wallet database</span><span>{performance.points.length} recorded point{performance.points.length === 1 ? "" : "s"}</span></div>
+                <div className="chart-foot"><span>Source: timestamped wallet snapshots</span><span>{performance.points.length} recorded point{performance.points.length === 1 ? "" : "s"}</span></div>
               </article>
 
               <article className="panel ai-panel">
