@@ -371,6 +371,14 @@ def init_db():
         -- Upgrade legacy one-address-per-network wallets without removing saved addresses.
         ALTER TABLE wallet_addresses DROP CONSTRAINT IF EXISTS wallet_addresses_pkey;
         CREATE UNIQUE INDEX IF NOT EXISTS wallet_addresses_unique_address_idx ON wallet_addresses(wallet_id,network,address);
+        CREATE TABLE IF NOT EXISTS portfolio_performance_snapshots(
+          id BIGSERIAL PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          value_usd NUMERIC(36,18) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS portfolio_performance_wallet_time_idx
+          ON portfolio_performance_snapshots(wallet_id, created_at DESC);
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
@@ -2209,10 +2217,65 @@ def assets(user: dict = Depends(current_user)):
     return {"assets":a}
 
 
+@app.post("/api/v1/portfolio/performance/snapshot")
+def record_portfolio_performance_snapshot(user: dict = Depends(current_user)):
+    """Record a timestamped portfolio value only when the full USD valuation is verified."""
+    _, _, summary = wallet_snapshot(user)
+    value = summary.get("available_balance_usd")
+    if value is None or summary.get("valuation_complete") is not True:
+        return {"recorded": False, "reason": "A complete verified USD valuation is not available yet."}
+    with db() as conn:
+        # Avoid duplicate points from repeated reloads; keep at most one sample per 5 minutes.
+        inserted = conn.execute(
+            """
+            INSERT INTO portfolio_performance_snapshots(wallet_id, value_usd)
+            SELECT %s, %s
+            WHERE NOT EXISTS (
+              SELECT 1 FROM portfolio_performance_snapshots
+              WHERE wallet_id=%s AND created_at > NOW() - INTERVAL '5 minutes'
+            )
+            RETURNING created_at
+            """,
+            (user["wallet_id"], Decimal(str(value)), user["wallet_id"]),
+        ).fetchone()
+        latest = inserted[0] if inserted else conn.execute(
+            "SELECT created_at FROM portfolio_performance_snapshots WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 1",
+            (user["wallet_id"],),
+        ).fetchone()
+    return {"recorded": bool(inserted), "timestamp": latest[0].isoformat() if latest and latest[0] else None,
+            "value_usd": float(value), "currency": "USD"}
+
+
 @app.get("/api/v1/portfolio/performance")
-def performance(user: dict = Depends(current_user)):
-    _,_,summary = wallet_snapshot(user)
-    return {"currency":"USD","period":"all","change_percent":summary["change_24h"],"points":[{"label":"Current","value_usd":summary["available_balance_usd"]}]}
+def performance(period: str = "1M", user: dict = Depends(current_user)):
+    period = str(period or "1M").strip().upper()
+    windows = {"1D": "1 day", "1W": "7 days", "1M": "30 days", "1Y": "365 days"}
+    if period not in windows:
+        raise HTTPException(status_code=400, detail="Period must be one of 1D, 1W, 1M, or 1Y")
+    interval = windows[period]
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT created_at, value_usd
+            FROM portfolio_performance_snapshots
+            WHERE wallet_id=%s AND created_at >= NOW() - (%s)::interval
+            ORDER BY created_at ASC
+            """,
+            (user["wallet_id"], interval),
+        ).fetchall()
+    points = [
+        {
+            "timestamp": row[0].isoformat() if row[0] else None,
+            "label": row[0].astimezone(timezone.utc).strftime("%b %d %H:%M") if row[0] else "",
+            "value_usd": float(row[1]),
+        }
+        for row in rows
+    ]
+    first = points[0]["value_usd"] if points else None
+    last = points[-1]["value_usd"] if points else None
+    change_percent = ((last - first) / first * 100) if first not in (None, 0) and last is not None else None
+    return {"currency": "USD", "period": period, "change_percent": change_percent, "points": points,
+            "history_source": "timestamped_portfolio_snapshots"}
 
 
 @app.get("/api/v1/transactions")
