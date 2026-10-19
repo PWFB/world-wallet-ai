@@ -9,7 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
 import solcModule from "solc";
-import { JsonRpcProvider, Wallet, ContractFactory, Contract, isAddress, formatEther } from "ethers";
+import { JsonRpcProvider, Wallet, ContractFactory, Contract, isAddress, formatEther, formatUnits } from "ethers";
 
 const NETWORKS = {
   sepolia: { chainId: 11155111n, explorer: "https://sepolia.etherscan.io" },
@@ -125,7 +125,7 @@ try {
         symbol,
         decimals: Number(decimals),
         totalSupply: totalSupply.toString(),
-        totalSupplyFormatted: (Number(decimals) <= 18 ? (Number(totalSupply) / (10 ** Number(decimals))).toLocaleString("en-US", { maximumFractionDigits: Number(decimals) }) : totalSupply.toString()),
+        totalSupplyFormatted: formatUnits(totalSupply, Number(decimals)),
         deployerTokenBalance: deployerBalance.toString()
       };
       if (contractName === "BalmzToken" && (name !== "BALMZ Token" || symbol !== "BALMZ" || Number(decimals) !== 18 || totalSupply !== 1000000000n * 10n ** 18n || deployerBalance !== totalSupply)) {
