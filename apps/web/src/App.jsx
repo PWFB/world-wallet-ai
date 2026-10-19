@@ -261,8 +261,28 @@ function App() {
   const [selectedCoin, setSelectedCoin] = useState(null);
   const [focusedTransaction, setFocusedTransaction] = useState(null);
   const [showBalance, setShowBalance] = useState(true);
-  const [wallet, setWallet] = useState(fallbackWallet);
-  const [assets, setAssets] = useState(fallbackAssets);
+  const [wallet, setWallet] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_portfolio_v1") || "null");
+      return cached?.wallet && typeof cached.wallet === "object" ? cached.wallet : fallbackWallet;
+    } catch { return fallbackWallet; }
+  });
+  const [assets, setAssets] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_portfolio_v1") || "null");
+      return Array.isArray(cached?.assets) ? cached.assets : fallbackAssets;
+    } catch { return fallbackAssets; }
+  });
+  useEffect(() => {
+    if (!wallet || !Array.isArray(assets) || wallet === fallbackWallet) return;
+    try {
+      localStorage.setItem("world_wallet_last_confirmed_portfolio_v1", JSON.stringify({
+        wallet,
+        assets,
+        savedAt: new Date().toISOString(),
+      }));
+    } catch {}
+  }, [wallet, assets]);
   const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
