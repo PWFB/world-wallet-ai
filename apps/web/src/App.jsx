@@ -313,8 +313,17 @@ function App() {
   const balanceRequestInFlight = useRef(false);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
-  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
+  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
+      return cached && typeof cached.balance === "number" && cached.balance >= 0 ? cached : null;
+    } catch { return null; }
+  });
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
+  useEffect(() => {
+    if (!selectedNetworkBalance || !Number.isFinite(Number(selectedNetworkBalance.balance))) return;
+    try { localStorage.setItem("world_wallet_last_confirmed_network_balance_v1", JSON.stringify(selectedNetworkBalance)); } catch {}
+  }, [selectedNetworkBalance]);
   const [selectedNetworkBalanceBusy, setSelectedNetworkBalanceBusy] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
@@ -562,103 +571,34 @@ function App() {
 
     async function loadWallet() {
       if (!accessToken) return;
-      let authHeaders = { Authorization: `Bearer ${accessToken}` };
-      let refreshedToken = "";
-      // Show the last saved wallet snapshot first while live RPC sync continues.
+      const authHeaders = { Authorization: `Bearer ${accessToken}` };
+      // Dashboard entry is read-only: render the last server snapshot without
+      // triggering slow RPC synchronization. Full sync remains user initiated.
       try {
-        const cachedResponse = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders });
-        if (cachedResponse.ok) {
-          const cached = await cachedResponse.json();
-          if (!cancelled) {
-            if (cached.wallet) setWallet(cached.wallet);
-            if (Array.isArray(cached.assets)) setAssets(cached.assets.map(asset => ({
-              ...asset,
-              icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
-            })));
-          }
-        }
-      } catch {
-        // Cached data is an optimization only; still attempt live refresh.
-      }
-      try {
-        let response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
-          method: "POST",
-          headers: authHeaders,
-        });
-        if (response.status === 401) {
-          const freshToken = await getNeonAccessToken({ forceRefresh: true });
-          if (freshToken && freshToken !== accessToken && !cancelled) {
-            refreshedToken = freshToken;
-            authHeaders = { Authorization: `Bearer ${freshToken}` };
-            // Replay the wallet request immediately with the fresh JWT rather than
-            // leaving the dashboard on its fallback wallet until a later refresh.
-            response = await fetch(`${API_BASE_URL}/api/v1/wallet/refresh`, {
-              method: "POST",
-              headers: authHeaders,
-            });
-          }
-          // Keep the dashboard visible; only report an auth error if one retry
-          // with a refreshed JWT was not possible or was still rejected.
-          if (response.status === 401) {
-            if (!cancelled) {
-              setApiStatus("error");
-              setSyncMessage("Wallet API rejected the current session token after refresh. Your sign-in was kept; please retry the wallet refresh.");
-            }
-            return;
-          }
-        }
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || `Wallet refresh returned ${response.status}`);
+        const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders, cache: "no-store" });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Saved wallet snapshot unavailable.");
         if (cancelled) return;
-        if (refreshedToken) {
-          try { localStorage.setItem(TOKEN_KEY, refreshedToken); } catch {}
-          setAccessToken(refreshedToken);
-        }
-        loadTokenRegistry(authHeaders);
-        setUser(data.user || neonSessionUser || null);
-        setWallet(data.wallet || fallbackWallet);
-        setAssets((data.assets || fallbackAssets).map(asset => ({
+        if (data.wallet) setWallet(data.wallet);
+        if (Array.isArray(data.assets)) setAssets(data.assets.map(asset => ({
           ...asset,
           icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
         })));
-        setSyncedBalanceAssets([...new Set((Array.isArray(data.updates) ? data.updates : [])
-          .map(item => String(item?.asset || "").trim().toUpperCase())
-          .filter(Boolean))]);
-        setActivity((data.transactions || []).map(tx => ({
-          id: tx.id,
-          type: tx.type,
-          asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "",
-          from_address: tx.from_address || tx.from || null, to_address: tx.to_address || tx.to || null,
-          network: tx.network, token_contract_address: tx.token_contract_address || tx.contract_address || null,
-          description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
-          amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
-          raw_amount: Number(tx.amount),
-          time: tx.time,
-          status: tx.status,
-          tx_hash: tx.tx_hash,
-          confirmations: Number(tx.confirmations || 0),
-          block_height: tx.block_height,
-          block_hash: tx.block_hash,
-          log_index: tx.log_index,
-        })));
+        if (data.user) setUser(data.user);
         setApiStatus("online");
-        setLastSyncedAt(data.refreshed_at ? new Date(data.refreshed_at) : new Date());
-        setNetworkStatus(data.network_status || {});
-        setSyncMessage(data.warnings?.length ? data.warnings.join(" • ") : "Wallet data refreshed.");
-        try {
-          const walletResponse = await fetch(API_BASE_URL + "/api/v1/wallet/connect", { headers: authHeaders });
-          const walletData = await walletResponse.json();
-          if (!cancelled) setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
-        } catch {
-          if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
-        }
       } catch (error) {
         if (!cancelled) {
           setApiStatus("error");
-          setSyncMessage(error.message || "Wallet refresh failed.");
-          // Keep the last verified wallet and transaction state during transient
-          // API/database failures instead of replacing it with an empty fallback.
+          // Keep the last confirmed wallet and balance visible on transient errors.
         }
+      }
+      loadTokenRegistry(authHeaders);
+      try {
+        const walletResponse = await fetch(`${API_BASE_URL}/api/v1/wallet/connect`, { headers: authHeaders, cache: "no-store" });
+        const walletData = await walletResponse.json().catch(() => ({}));
+        if (!cancelled && walletResponse.ok) setLiveWallet({ status: walletData.status || "not_configured", mode: walletData.mode || "read_only", addresses: walletData.addresses || [], networks: walletData.networks || [], message: walletData.message || "" });
+      } catch {
+        if (!cancelled) setLiveWallet({ status: "error", mode: "read_only", addresses: [], networks: [], message: "Live wallet connection status unavailable." });
       }
     }
 
@@ -937,18 +877,40 @@ function App() {
     }
   }
 
-  // Automatically synchronize the authenticated wallet whenever the Dashboard is opened.
-  // This removes the need for a pull-to-refresh before the dashboard can show live data.
+  const dashboardTouchStartY = useRef(null);
   useEffect(() => {
-    if (active !== "Dashboard" || !accessToken) return undefined;
-    let cancelled = false;
-    (async () => {
-      await syncWallet();
-      if (cancelled) return;
-      await refreshSelectedNetworkBalance(true);
-    })();
-    return () => { cancelled = true; };
-  }, [active, accessToken]);
+    if (active !== "Dashboard") return undefined;
+    const isAtTop = target => {
+      let node = target instanceof Element ? target : null;
+      while (node && node !== document.body) {
+        if (node.scrollHeight > node.clientHeight + 4) return node.scrollTop <= 2;
+        node = node.parentElement;
+      }
+      return window.scrollY <= 2;
+    };
+    const onTouchStart = event => {
+      if (event.touches?.length === 1 && isAtTop(event.target)) dashboardTouchStartY.current = event.touches[0].clientY;
+      else dashboardTouchStartY.current = null;
+    };
+    const onTouchEnd = event => {
+      const startY = dashboardTouchStartY.current;
+      dashboardTouchStartY.current = null;
+      if (startY == null || !isAtTop(event.target) || !event.changedTouches?.length) return;
+      const distance = event.changedTouches[0].clientY - startY;
+      if (distance < 90 || syncBusy || !accessToken) return;
+      void (async () => {
+        await syncWallet();
+        await refreshSelectedNetworkBalance(true);
+      })();
+    };
+    window.addEventListener("touchstart", onTouchStart, { passive: true });
+    window.addEventListener("touchend", onTouchEnd, { passive: true });
+    return () => {
+      window.removeEventListener("touchstart", onTouchStart);
+      window.removeEventListener("touchend", onTouchEnd);
+      dashboardTouchStartY.current = null;
+    };
+  }, [active, accessToken, syncBusy]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -1499,16 +1461,6 @@ function App() {
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
               <div className="page-actions">
-                <div className="refresh-dropdown">
-                  <button className="secondary refresh-menu-trigger" type="button" onClick={() => setShowRefreshMenu(value => !value)} aria-haspopup="menu" aria-expanded={showRefreshMenu} disabled={syncBusy}>
-                    {syncBusy ? "Refreshing…" : "↻ Refresh"} <span aria-hidden="true">▾</span>
-                  </button>
-                  {showRefreshMenu && <div className="refresh-menu" role="menu" aria-label="Dashboard refresh options">
-                    <button type="button" role="menuitem" onClick={() => { setShowRefreshMenu(false); syncWallet(); }}>Refresh wallet now</button>
-                    <div className="refresh-menu-label">Automatic refresh</div>
-                    {[["off", "Off"], ["60000", "Every 1 minute"], ["300000", "Every 5 minutes"]].map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={refreshInterval === value} className={refreshInterval === value ? "selected" : ""} key={value} onClick={() => { setRefreshInterval(value); setShowRefreshMenu(false); }}>{refreshInterval === value ? "✓ " : ""}{label}</button>)}
-                  </div>}
-                </div>
                 <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
               </div>
             </div>
@@ -1518,7 +1470,7 @@ function App() {
               <article className="hero-card">
                 <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM BALANCE") : "AVAILABLE BALANCE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalanceBusy && !selectedNetworkBalance ? "Checking…" : selectedNetworkBalance ? number(selectedNetworkBalance.balance) : selectedNetworkBalanceMessage ? "Unavailable" : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
-                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceBusy ? "Checking selected network balance…" : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
+                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
 
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
