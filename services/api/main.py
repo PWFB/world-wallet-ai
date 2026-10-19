@@ -495,7 +495,7 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                     "INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING",
                     (wallet_id, user["id"], "Production Wallet"),
                 )
-                conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s AND active_wallet_id IS NULL", (wallet_id, user["id"]))
+                conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id, user["id"]))
         else:
             user_id = "usr_" + sha(email.lower())[:24]
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
