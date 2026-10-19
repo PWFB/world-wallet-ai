@@ -115,7 +115,7 @@ export default function BrowserPage({ onNavigateLogin }) {
 
         <div className="browser-frame-wrap">
           <iframe
-            key={currentUrl}
+            key={currentUrl + ":" + frameVersion}
             title={"World Wallet AI Browser: " + secureHost}
             src={currentUrl}
             className="browser-frame"
