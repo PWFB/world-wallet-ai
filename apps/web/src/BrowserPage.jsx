@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 const shortcuts = [
   { label: "Etherscan", detail: "Ethereum mainnet explorer", url: "https://etherscan.io/" },
@@ -29,18 +29,22 @@ export default function BrowserPage({ onNavigateLogin }) {
   const [frameLoading, setFrameLoading] = useState(false);
   const [frameSlow, setFrameSlow] = useState(false);
   const [externalPopupBlocked, setExternalPopupBlocked] = useState(false);
+  const frameLoadingRef = useRef(false);
   const [showHelp, setShowHelp] = useState(false);
   const secureHost = useMemo(() => {
     try { return new URL(currentUrl).hostname.replace(/^www\./, ""); } catch { return "Search"; }
   }, [currentUrl]);
 
   useEffect(() => {
+    frameLoadingRef.current = true;
     setFrameLoading(true);
     setFrameSlow(false);
     setExternalPopupBlocked(false);
     const timer = window.setTimeout(() => {
-      setFrameLoading(false);
-      setFrameSlow(true);
+      if (frameLoadingRef.current) {
+        setFrameLoading(false);
+        setFrameSlow(true);
+      }
     }, 10000);
     return () => window.clearTimeout(timer);
   }, [currentUrl, frameVersion]);
@@ -121,8 +125,8 @@ export default function BrowserPage({ onNavigateLogin }) {
             className="browser-frame"
             referrerPolicy="strict-origin-when-cross-origin"
             sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
-            onLoad={() => { setFrameLoading(false); setFrameSlow(false); }}
-            onError={() => { setFrameError(true); setFrameLoading(false); }}
+            onLoad={() => { frameLoadingRef.current = false; setFrameLoading(false); setFrameSlow(false); }}
+            onError={() => { frameLoadingRef.current = false; setFrameError(true); setFrameLoading(false); }}
             allow="clipboard-read; clipboard-write"
           />
           {frameLoading && <div className="browser-frame-status" role="status">Loading {secureHost}…</div>}
