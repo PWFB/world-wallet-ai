@@ -880,14 +880,22 @@ function App() {
   const dashboardTouchStartY = useRef(null);
   useEffect(() => {
     if (active !== "Dashboard") return undefined;
+    const isAtTop = target => {
+      let node = target instanceof Element ? target : null;
+      while (node && node !== document.body) {
+        if (node.scrollHeight > node.clientHeight + 4) return node.scrollTop <= 2;
+        node = node.parentElement;
+      }
+      return window.scrollY <= 2;
+    };
     const onTouchStart = event => {
-      if (window.scrollY <= 2 && event.touches?.length === 1) dashboardTouchStartY.current = event.touches[0].clientY;
+      if (event.touches?.length === 1 && isAtTop(event.target)) dashboardTouchStartY.current = event.touches[0].clientY;
       else dashboardTouchStartY.current = null;
     };
     const onTouchEnd = event => {
       const startY = dashboardTouchStartY.current;
       dashboardTouchStartY.current = null;
-      if (startY == null || window.scrollY > 2 || !event.changedTouches?.length) return;
+      if (startY == null || !isAtTop(event.target) || !event.changedTouches?.length) return;
       const distance = event.changedTouches[0].clientY - startY;
       if (distance < 90 || syncBusy || !accessToken) return;
       void (async () => {
