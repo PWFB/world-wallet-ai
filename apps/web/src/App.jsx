@@ -1453,16 +1453,6 @@ function App() {
             <div className="page-heading">
               <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
               <div className="page-actions">
-                <div className="refresh-dropdown">
-                  <button className="secondary refresh-menu-trigger" type="button" onClick={() => setShowRefreshMenu(value => !value)} aria-haspopup="menu" aria-expanded={showRefreshMenu} disabled={syncBusy}>
-                    {syncBusy ? "Refreshing…" : "↻ Refresh"} <span aria-hidden="true">▾</span>
-                  </button>
-                  {showRefreshMenu && <div className="refresh-menu" role="menu" aria-label="Dashboard refresh options">
-                    <button type="button" role="menuitem" onClick={() => { setShowRefreshMenu(false); syncWallet(); }}>Refresh wallet now</button>
-                    <div className="refresh-menu-label">Automatic refresh</div>
-                    {[["off", "Off"], ["60000", "Every 1 minute"], ["300000", "Every 5 minutes"]].map(([value, label]) => <button type="button" role="menuitemradio" aria-checked={refreshInterval === value} className={refreshInterval === value ? "selected" : ""} key={value} onClick={() => { setRefreshInterval(value); setShowRefreshMenu(false); }}>{refreshInterval === value ? "✓ " : ""}{label}</button>)}
-                  </div>}
-                </div>
                 <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
               </div>
             </div>
