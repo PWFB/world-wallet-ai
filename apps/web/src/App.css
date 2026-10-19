@@ -1199,3 +1199,39 @@ textarea:focus-visible {
 .receive-selected .receive-asset-select{display:block;flex:1 1 100%;width:100%;min-width:0;margin-top:4px;background:#091426;color:#fff;border:1px solid #1d3451;border-radius:8px;padding:12px;font:500 12px Inter;outline:0}
 .receive-selected .receive-asset-select:focus{border-color:#00bde8}
 .receive-selected .receive-asset-select option{background:#091426;color:#fff}
+
+
+/* World Wallet AI Secure W Shield branding */
+.ww-shield-logo {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+.ww-auth-brand .ww-shield-logo {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+.brand-mark-image {
+  display: block;
+  width: 39px;
+  height: 39px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+.app-shell .mobile-brand .brand-mark-image {
+  width: 31px;
+  height: 31px;
+}
+.ww-auth-card-icon img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+.ww-auth-card-icon {
+  border: 0;
+  background: transparent;
+}
