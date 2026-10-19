@@ -300,7 +300,7 @@ function App() {
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [dashboardAddresses, setDashboardAddresses] = useState([]);
-  const [dashboardAddress, setDashboardAddress] = useState("0x88a5f3cf2Ec8Ef0536124bB6a7FfCeB3fD82e9e3");
+  const [dashboardAddress, setDashboardAddress] = useState("");
   const [dashboardAddressLabel, setDashboardAddressLabel] = useState("Main Ethereum wallet");
   const [dashboardAddressBusy, setDashboardAddressBusy] = useState(false);
   const [dashboardAddressMessage, setDashboardAddressMessage] = useState("");
@@ -766,8 +766,13 @@ function App() {
   async function attachDashboardAddress() {
     const address = dashboardAddress.trim();
     const walletId = wallet?.wallet_id || user?.wallet_id;
+    const network = selectedNetwork;
+    if (!["ethereum", "sepolia", "bnb"].includes(network)) {
+      setDashboardAddressMessage("This quick attach field supports Ethereum Mainnet, Ethereum Sepolia, and BNB Chain only. Use Wallets to manage Bitcoin or Solana Devnet addresses.");
+      return;
+    }
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
-      setDashboardAddressMessage("Enter a valid 0x Ethereum address.");
+      setDashboardAddressMessage("Connect your existing EVM wallet or enter its public 0x address.");
       return;
     }
     if (!walletId) {
@@ -780,11 +785,11 @@ function App() {
       const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-        body: JSON.stringify({ network: "ethereum", address, label: dashboardAddressLabel.trim() || "Ethereum address" }),
+        body: JSON.stringify({ network, address, label: dashboardAddressLabel.trim() || (network === "sepolia" ? "Ethereum Sepolia address" : network === "bnb" ? "BNB Chain address" : "Ethereum address") }),
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to attach this address.");
-      setDashboardAddressMessage("Ethereum public address attached. Its read-only balance will load separately; portfolio balances are unchanged.");
+      setDashboardAddressMessage((network === "sepolia" ? "Ethereum Sepolia" : network === "bnb" ? "BNB Chain" : "Ethereum Mainnet") + " public address attached. Its read-only balance will load separately; portfolio balances are unchanged.");
       await loadDashboardAddresses();
     } catch (error) {
       setDashboardAddressMessage(error.message || "Unable to attach this address.");
@@ -800,6 +805,19 @@ function App() {
   useEffect(() => {
     try { localStorage.setItem("world_wallet_selected_network_v1", selectedNetwork); } catch {}
   }, [selectedNetwork]);
+  
+  // Never prefill an unrelated/old address. Use the currently connected external
+  // wallet's public EVM address and chain, without ever requesting a private key.
+  useEffect(() => {
+    const address = String(externalWalletConnection?.address || "").trim();
+    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return;
+    setDashboardAddress(address);
+    const rawChainId = externalWalletConnection?.chainId;
+    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
+      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
+    if (network) setSelectedNetwork(network);
+  }, [externalWalletConnection]);
 
   async function refreshSelectedNetworkBalance(forceAddressRefresh = false) {
     if (balanceRequestInFlight.current) return;
