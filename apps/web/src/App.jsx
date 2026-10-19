@@ -789,7 +789,7 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to attach this address.");
-      setDashboardAddressMessage("Ethereum public address attached. Its read-only balance will load separately; portfolio balances are unchanged.");
+      setDashboardAddressMessage((network === "sepolia" ? "Ethereum Sepolia" : network === "bnb" ? "BNB Chain" : "Ethereum Mainnet") + " public address attached. Its read-only balance will load separately; portfolio balances are unchanged.");
       await loadDashboardAddresses();
     } catch (error) {
       setDashboardAddressMessage(error.message || "Unable to attach this address.");
