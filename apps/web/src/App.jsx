@@ -1370,6 +1370,15 @@ function App() {
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}><option value="ethereum">Mainnet</option><option value="sepolia">Sepolia</option><option value="solana_devnet">Devnet</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
+        <div className="mobile-network-switch-row" aria-label="Blockchain network selector">
+          <label htmlFor="mobile-network-select">NETWORK</label>
+          <select id="mobile-network-select" aria-label="Switch blockchain network on mobile" value={selectedNetwork} onChange={event => { setSelectedNetwork(event.target.value); setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); }}>
+            <option value="ethereum">Ethereum Mainnet</option>
+            <option value="sepolia">Ethereum Sepolia (Testnet)</option>
+            <option value="solana_devnet">Solana Devnet</option>
+          </select>
+          <button type="button" className="mobile-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button>
+        </div>
         {(!selectedNetworkBalanceBusy && !selectedNetworkBalance && selectedNetworkBalanceMessage && selectedNetworkBalanceMessage !== "Balance updated.") && <div className="network-balance-feedback network-balance-error" role="status" aria-live="polite">{selectedNetworkBalanceMessage}</div>}
 
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}

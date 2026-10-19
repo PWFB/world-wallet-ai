@@ -1614,3 +1614,59 @@
   .mobile-brand .brand-mark { width: 26px; height: 26px; flex: 0 0 26px; }
   .topbar { gap: 7px; }
 }
+
+
+/* Dedicated mobile network selector: keep it visible below the header on narrow screens. */
+.mobile-network-switch-row { display: none; }
+@media (max-width: 760px) {
+  .app-shell .top-actions .top-network-switch { display: none; }
+  .app-shell .mobile-network-switch-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) 42px;
+    align-items: center;
+    gap: 9px;
+    width: calc(100% - 24px);
+    margin: 10px 12px 12px;
+    padding: 10px;
+    box-sizing: border-box;
+    border: 1px solid #29415f;
+    border-radius: 12px;
+    background: linear-gradient(110deg, #0d1b30, #10213a);
+    color: #a8bdd8;
+  }
+  .app-shell .mobile-network-switch-row label {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .08em;
+    white-space: nowrap;
+  }
+  .app-shell .mobile-network-switch-row select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    padding: 0 10px;
+    border: 1px solid #365474;
+    border-radius: 9px;
+    background: #071426;
+    color: #f1f7ff;
+    font: 600 13px Inter, system-ui, sans-serif;
+  }
+  .app-shell .mobile-network-switch-row .mobile-network-refresh {
+    display: grid;
+    place-items: center;
+    width: 42px;
+    min-width: 42px;
+    height: 42px;
+    padding: 0;
+    border: 1px solid #2a5576;
+    border-radius: 9px;
+    background: #123047;
+    color: #6ee7f9;
+    font-size: 20px;
+  }
+  .app-shell .mobile-network-switch-row .mobile-network-refresh:disabled {
+    opacity: .55;
+    cursor: wait;
+  }
+}
