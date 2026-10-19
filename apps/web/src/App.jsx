@@ -313,8 +313,17 @@ function App() {
   const balanceRequestInFlight = useRef(false);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
-  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
+  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
+      return cached && typeof cached.balance === "number" && cached.balance >= 0 ? cached : null;
+    } catch { return null; }
+  });
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
+  useEffect(() => {
+    if (!selectedNetworkBalance || !Number.isFinite(Number(selectedNetworkBalance.balance))) return;
+    try { localStorage.setItem("world_wallet_last_confirmed_network_balance_v1", JSON.stringify(selectedNetworkBalance)); } catch {}
+  }, [selectedNetworkBalance]);
   const [selectedNetworkBalanceBusy, setSelectedNetworkBalanceBusy] = useState(false);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
@@ -937,19 +946,6 @@ function App() {
     }
   }
 
-  // Automatically synchronize the authenticated wallet whenever the Dashboard is opened.
-  // This removes the need for a pull-to-refresh before the dashboard can show live data.
-  useEffect(() => {
-    if (active !== "Dashboard" || !accessToken) return undefined;
-    let cancelled = false;
-    (async () => {
-      await syncWallet();
-      if (cancelled) return;
-      await refreshSelectedNetworkBalance(true);
-    })();
-    return () => { cancelled = true; };
-  }, [active, accessToken]);
-
   async function handleLogin(event) {
     event.preventDefault();
     setLoginError("");
@@ -1518,7 +1514,7 @@ function App() {
               <article className="hero-card">
                 <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM BALANCE") : "AVAILABLE BALANCE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalanceBusy && !selectedNetworkBalance ? "Checking…" : selectedNetworkBalance ? number(selectedNetworkBalance.balance) : selectedNetworkBalanceMessage ? "Unavailable" : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
-                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceBusy ? "Checking selected network balance…" : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
+                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
 
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
