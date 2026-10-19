@@ -919,6 +919,19 @@ function App() {
     }
   }
 
+  // Automatically synchronize the authenticated wallet whenever the Dashboard is opened.
+  // This removes the need for a pull-to-refresh before the dashboard can show live data.
+  useEffect(() => {
+    if (active !== "Dashboard" || !accessToken) return undefined;
+    let cancelled = false;
+    (async () => {
+      await syncWallet();
+      if (cancelled) return;
+      await refreshSelectedNetworkBalance(true);
+    })();
+    return () => { cancelled = true; };
+  }, [active, accessToken]);
+
   async function handleLogin(event) {
     event.preventDefault();
     setLoginError("");
