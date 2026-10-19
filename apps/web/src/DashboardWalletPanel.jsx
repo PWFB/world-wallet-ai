@@ -2,12 +2,33 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import "./DashboardWalletPanel.css";
 
 export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWalletSwitched }) {
-  const [wallets, setWallets] = useState([]);
-  const [activeWalletId, setActiveWalletId] = useState("");
+  const [wallets, setWallets] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_wallet_list_v1") || "null");
+      return Array.isArray(cached?.wallets) ? cached.wallets : [];
+    } catch { return []; }
+  });
+  const [activeWalletId, setActiveWalletId] = useState(() => {
+    try {
+      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_wallet_list_v1") || "null");
+      return String(cached?.activeWalletId || "");
+    } catch { return ""; }
+  });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const authHeaders = useMemo(() => ({ Authorization: "Bearer " + accessToken }), [accessToken]);
+
+  useEffect(() => {
+    if (!wallets.length || !activeWalletId) return;
+    try {
+      localStorage.setItem("world_wallet_last_confirmed_wallet_list_v1", JSON.stringify({
+        wallets,
+        activeWalletId: String(activeWalletId),
+        savedAt: new Date().toISOString(),
+      }));
+    } catch {}
+  }, [wallets, activeWalletId]);
 
   const loadWallets = useCallback(async () => {
     if (!accessToken) return;
