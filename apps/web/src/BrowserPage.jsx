@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const shortcuts = [
   { label: "Etherscan", detail: "Ethereum mainnet explorer", url: "https://etherscan.io/" },
@@ -26,10 +26,24 @@ export default function BrowserPage({ onNavigateLogin }) {
   const [historyIndex, setHistoryIndex] = useState(0);
   const [frameError, setFrameError] = useState(false);
   const [frameVersion, setFrameVersion] = useState(0);
+  const [frameLoading, setFrameLoading] = useState(false);
+  const [frameSlow, setFrameSlow] = useState(false);
+  const [externalPopupBlocked, setExternalPopupBlocked] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const secureHost = useMemo(() => {
     try { return new URL(currentUrl).hostname.replace(/^www\./, ""); } catch { return "Search"; }
   }, [currentUrl]);
+
+  useEffect(() => {
+    setFrameLoading(true);
+    setFrameSlow(false);
+    setExternalPopupBlocked(false);
+    const timer = window.setTimeout(() => {
+      setFrameLoading(false);
+      setFrameSlow(true);
+    }, 10000);
+    return () => window.clearTimeout(timer);
+  }, [currentUrl, frameVersion]);
 
   function navigate(value) {
     const nextUrl = normalizeDestination(value);
@@ -41,6 +55,8 @@ export default function BrowserPage({ onNavigateLogin }) {
     setAddress(nextUrl);
     setCurrentUrl(nextUrl);
     setFrameError(false);
+    setFrameLoading(true);
+    setFrameSlow(false);
     setHistory(previous => [...previous.slice(0, historyIndex + 1), nextUrl]);
     setHistoryIndex(previous => previous + 1);
   }
@@ -52,6 +68,8 @@ export default function BrowserPage({ onNavigateLogin }) {
     setCurrentUrl(history[index]);
     setAddress(history[index]);
     setFrameError(false);
+    setFrameLoading(true);
+    setFrameSlow(false);
   }
 
   function goForward() {
@@ -64,7 +82,8 @@ export default function BrowserPage({ onNavigateLogin }) {
   }
 
   function openExternal() {
-    window.open(currentUrl, "_blank", "noopener,noreferrer");
+    const opened = window.open(currentUrl, "_blank", "noopener,noreferrer");
+    setExternalPopupBlocked(!opened);
   }
 
   return (
@@ -78,7 +97,7 @@ export default function BrowserPage({ onNavigateLogin }) {
         <div className="browser-toolbar">
           <button className="browser-icon-button" type="button" onClick={goBack} disabled={historyIndex <= 0} aria-label="Back">←</button>
           <button className="browser-icon-button" type="button" onClick={goForward} disabled={historyIndex >= history.length - 1} aria-label="Forward">→</button>
-          <button className="browser-icon-button" type="button" onClick={() => { setFrameError(false); setFrameVersion(value => value + 1); }} aria-label="Refresh">↻</button>
+          <button className="browser-icon-button" type="button" onClick={() => { setFrameError(false); setFrameLoading(true); setFrameSlow(false); setFrameVersion(value => value + 1); }} aria-label="Refresh">↻</button>
           <form className="browser-address-form" onSubmit={event => { event.preventDefault(); navigate(address); }}>
             <span className="browser-lock">⌑</span>
             <input aria-label="Search or enter website" value={address} onChange={event => setAddress(event.target.value)} placeholder="Search Google or enter website / address" autoCapitalize="none" autoCorrect="off" spellCheck="false" />
@@ -87,7 +106,7 @@ export default function BrowserPage({ onNavigateLogin }) {
           <button className="secondary browser-open-button" type="button" onClick={openExternal}>Open tab ↗</button>
         </div>
 
-        <div className="browser-site-meta"><span className="browser-live-dot" /> <b>{secureHost}</b><span>Embedded web view</span><button type="button" onClick={() => setShowHelp(value => !value)}>{showHelp ? "Hide tips" : "Browser tips"}</button></div>
+        <div className="browser-site-meta"><span className="browser-live-dot" /> <b>{secureHost}</b><span>{frameLoading ? "Loading page…" : "In-app web view"}</span><button type="button" onClick={() => setShowHelp(value => !value)}>{showHelp ? "Hide tips" : "Browser tips"}</button></div>
         {showHelp && <div className="browser-help"><b>When a page will not load here</b><p>Some sites, including many sign-in pages and blockchain explorers, block embedded views or require first-party cookies. Use <b>Open tab ↗</b> to use the full website in your browser. Signing in to Etherscan happens on Etherscan itself; World Wallet AI does not receive or store your Etherscan password.</p></div>}
 
         <div className="browser-shortcuts" aria-label="Quick websites">
@@ -101,11 +120,13 @@ export default function BrowserPage({ onNavigateLogin }) {
             src={currentUrl}
             className="browser-frame"
             referrerPolicy="strict-origin-when-cross-origin"
-            sandbox="allow-forms allow-scripts allow-popups allow-popups-to-escape-sandbox"
-            onError={() => setFrameError(true)}
+            sandbox="allow-forms allow-scripts allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-downloads"
+            onLoad={() => { setFrameLoading(false); setFrameSlow(false); }}
+            onError={() => { setFrameError(true); setFrameLoading(false); }}
             allow="clipboard-read; clipboard-write"
           />
-          {frameError && <div className="browser-frame-notice"><b>This site cannot be displayed inside the wallet.</b><p>Open it in a full browser tab to continue. Some websites deliberately block embedding.</p><button className="primary" type="button" onClick={openExternal}>Open {secureHost} ↗</button></div>}
+          {frameLoading && <div className="browser-frame-status" role="status">Loading {secureHost}…</div>}
+          {(frameError || frameSlow) && <div className="browser-frame-notice"><b>{frameError ? "This page could not be loaded in the embedded view." : "This page is taking too long to display here."}</b><p>Some websites block embedded browsers or require browser features that cannot run inside an iframe. Open the same address in a full browser tab to continue.</p><button className="primary" type="button" onClick={openExternal}>Open {secureHost} ↗</button>{externalPopupBlocked && <p role="status">Your browser blocked the new tab. <a href={currentUrl} target="_blank" rel="noopener noreferrer">Tap here to open {secureHost}</a>.</p>}</div>}
         </div>
         <div className="browser-footer"><span>Current site: <b>{currentUrl}</b></span><button type="button" className="secondary" onClick={openExternal}>Open in full browser ↗</button></div>
       </article>
