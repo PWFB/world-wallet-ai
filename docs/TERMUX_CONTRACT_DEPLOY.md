@@ -17,7 +17,7 @@ npm init -y
 npm install ethers@^6 solc@^0.8 @openzeppelin/contracts
 ```
 
-If you use the repository checkout, install the contract dependencies from its contracts folder with `npm install` there. The deploy helper looks for imports relative to the source directory and local `node_modules` folders.
+If you use the repository checkout, install the contract dependencies from its `contracts` folder with `npm install` there. The deploy helper resolves `solc` and `ethers` from its own location first, then falls back to the `contracts` project dependencies, so a duplicate root-level install is not required. It also looks for Solidity imports in the source directory and local `node_modules` folders.
 
 ## 2. Configure a Sepolia RPC endpoint
 
