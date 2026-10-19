@@ -1527,3 +1527,39 @@
 .token-explorer-row code {
   color:#ffffff!important;
 }
+
+
+/* World Wallet AI Secure W Shield branding */
+.ww-shield-logo {
+  display: block;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  object-fit: contain;
+}
+.ww-auth-brand .ww-shield-logo {
+  width: 36px;
+  height: 36px;
+  flex-basis: 36px;
+}
+.brand-mark-image {
+  display: block;
+  width: 39px;
+  height: 39px;
+  flex: 0 0 auto;
+  object-fit: contain;
+}
+.app-shell .mobile-brand .brand-mark-image {
+  width: 31px;
+  height: 31px;
+}
+.ww-auth-card-icon img {
+  display: block;
+  width: 34px;
+  height: 34px;
+  object-fit: contain;
+}
+.ww-auth-card-icon {
+  border: 0;
+  background: transparent;
+}
