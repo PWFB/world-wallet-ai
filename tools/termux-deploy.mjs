@@ -8,8 +8,24 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import readline from "node:readline/promises";
-import solcModule from "solc";
-import { JsonRpcProvider, Wallet, ContractFactory, Contract, isAddress, formatEther, formatUnits } from "ethers";
+import { createRequire } from "node:module";
+
+// The helper lives under tools/, while Termux installs project dependencies in
+// contracts/node_modules. Resolve from the helper first, then the contract
+// project, without requiring duplicate root-level installs.
+const requireFromHelper = createRequire(import.meta.url);
+const requireFromContracts = createRequire(path.resolve(process.cwd(), "contracts/package.json"));
+function loadDependency(name) {
+  try {
+    return requireFromHelper(name);
+  } catch (error) {
+    if (error?.code !== "MODULE_NOT_FOUND") throw error;
+    return requireFromContracts(name);
+  }
+}
+const solcModule = loadDependency("solc");
+const ethers = loadDependency("ethers");
+const { JsonRpcProvider, Wallet, ContractFactory, Contract, isAddress, formatEther, formatUnits } = ethers;
 
 const NETWORKS = {
   sepolia: { chainId: 11155111n, explorer: "https://sepolia.etherscan.io" },
