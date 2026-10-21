@@ -1670,3 +1670,9 @@
     cursor: wait;
   }
 }
+
+
+/* Embedded browser load state and fallback */
+.browser-frame-status{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:2;padding:8px 12px;border:1px solid #2d4564;border-radius:999px;background:#0b1729eF;color:#d7e6f7;font-size:11px;box-shadow:0 5px 20px #0005;pointer-events:none;max-width:90%;text-align:center}
+.browser-frame-notice a{color:#ff9a32;text-decoration:underline;font-weight:700}
+.browser-frame-notice [role="status"]{overflow-wrap:anywhere}
