@@ -45,7 +45,7 @@ export default function BalmzAI() {
       }
       found.sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0));
       const best = found[0];
-      const base = best.baseToken?.address?.toLowerCase() === clean.toLowerCase() ? best.baseToken : best.baseToken;
+      const base = [best.baseToken, best.quoteToken].find(item => item?.address?.toLowerCase() === clean.toLowerCase()) || best.baseToken;
       setToken({ address: clean, name: base?.name || best.baseToken?.name || "Unknown token", symbol: base?.symbol || best.baseToken?.symbol || "—", chain: network, pairAddress: best.pairAddress, dex: best.dexId, url: best.url });
       setPairs(found.slice(0, 8));
       setMarket(best);
@@ -120,8 +120,8 @@ export default function BalmzAI() {
     <div className="balmz-ai-chainbar">
       <div><span className="balmz-ai-status-dot" /> Network</div>
       <div className="balmz-ai-chain-select">
-        <button className={chain === "solana" ? "active" : ""} onClick={() => { setChain("solana"); setAddress(DEFAULT_JUP); setToken(null); setPairs([]); setMarket(null); }}>Solana Mainnet</button>
-        <button className={chain === "bsc" ? "active" : ""} onClick={() => { setChain("bsc"); setAddress(""); setToken(null); setPairs([]); setMarket(null); }}>BNB Smart Chain</button>
+        <button className={chain === "solana" ? "active" : ""} onClick={() => { setChain("solana"); setAddress(DEFAULT_JUP); setToken(null); setPairs([]); setMarket(null); setWallet(""); setWalletBalance(null); setWalletError(""); }}>Solana Mainnet</button>
+        <button className={chain === "bsc" ? "active" : ""} onClick={() => { setChain("bsc"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setWallet(""); setWalletBalance(null); setWalletError(""); }}>BNB Smart Chain</button>
       </div>
       <span className="balmz-ai-chain-note">Read-only public data · No trading permissions</span>
     </div>
