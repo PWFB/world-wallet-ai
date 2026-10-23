@@ -782,11 +782,35 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   useEffect(() => {
-    if (active !== "Transactions" || !accessToken) return;
+    if (!["Transactions", "Receive", "Deposit"].includes(active) || !accessToken) return;
     setHistoryTransactions([]);
     setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
     loadTransactionHistory({ offset: 0, append: false });
   }, [active, accessToken, apiBaseUrl]);
+
+  const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
+    .filter((item, index, all) => item?.symbol && all.findIndex(other => other?.symbol === item.symbol) === index);
+  const normalizeHistoryNetwork = value => String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+  const selectedIncomingHistory = historyTransactions.filter(item =>
+    String(item.type || "").toLowerCase() === "received" &&
+    String(item.asset || item.symbol || "").toUpperCase() === String(asset || "").toUpperCase() &&
+    (receiveNetwork === "all" || normalizeHistoryNetwork(item.network) === normalizeHistoryNetwork(receiveNetwork))
+  );
+  const renderIncomingHistoryPanel = (title, emptyMessage) => (
+    <article className="panel transaction-panel wallet-inline-history">
+      <div className="panel-head"><div><h2>{title}</h2><span>Verified incoming records for {asset}{receiveNetwork === "all" ? "" : " · " + receiveNetwork}</span></div><button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>{historyBusy ? "Loading…" : "↻ Refresh"}</button></div>
+      {historyError && <div role="status" className="feature-error">{historyError} <button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
+      {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved deposit history…</div> : selectedIncomingHistory.length ? selectedIncomingHistory.map((item, index) => (
+        <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={item.tx_hash || item.id || index} onClick={() => setFocusedTransaction?.(item)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(item); } }} aria-label={"View received transaction details for " + (item.asset || asset)}>
+          <span className="activity-icon">↓</span>
+          <div className="transaction-main"><b>{item.asset || item.symbol || asset} received</b><small>{item.description || "Incoming wallet transaction"}</small>{item.tx_hash && <code title={item.tx_hash}>{item.tx_hash}</code>}</div>
+          <strong className="positive">{Number(item.raw_amount ?? item.amount) >= 0 ? "+" : ""}{number(Math.abs(Number(item.raw_amount ?? item.amount)))} {item.asset || item.symbol || asset}</strong>
+          <div className="transaction-meta"><span className={item.status === "confirmed" || item.status === "settled" ? "positive" : item.status === "failed" || item.status === "reorged" ? "negative" : "neutral"}>{item.status || "recorded"}{item.confirmations ? " · " + item.confirmations + " confirmations" : ""}</span>{item.network && <small>{item.network}</small>}{transactionExplorerUrl(item) && <a href={transactionExplorerUrl(item)} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>View on explorer ↗</a>}<small>{item.time || "Time unavailable"}</small></div>
+        </div>
+      )) : <div className="live-chart-empty">{historyError ? "History could not be loaded. Retry to check again." : emptyMessage}</div>}
+      {historyPagination.has_more && <div className="transaction-filter-bar"><span>More records are available ({historyPagination.total} total wallet transactions).</span><button type="button" className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more history"}</button></div>}
+    </article>
+  );
 
   const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
@@ -1435,7 +1459,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <div className="wallet-receive-layout">
         <article className="panel wallet-form-card">
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↓</span><div><h2>Prepare a deposit</h2><p>Select the exact asset and network before sending funds.</p></div></div>
-          <label>Asset to deposit<select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>{assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}</select></label>
+          <label>Asset to deposit<select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>{selectableWalletAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}</select></label>
           <label>Deposit network<select value={receiveNetwork} onChange={e => setReceiveNetwork(e.target.value)}><option value="all">All compatible networks</option>{depositOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <div className="wallet-network-check is-warning"><span>!</span><div><b>Check the network before sending</b><small>Only send {asset} through a network shown for the destination address. Mainnet funds and testnet tokens are not interchangeable.</small></div></div>
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
@@ -1468,6 +1492,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
         </article>
         <aside className="wallet-review-column">
+          {renderIncomingHistoryPanel("Deposit history", "No verified deposits are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Never share your secret phrase</b><p>A deposit only needs the correct public receiving address. Never provide a seed phrase or private key to a sender.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia is for testing only. Do not send real mainnet funds to a Sepolia address.</p></div></article>
@@ -1489,9 +1514,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Receiving address</h2><p>Copy the public address to share with the person sending you funds.</p></div></div>
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
-              {[...RECEIVE_ASSET_OPTIONS, ...assets].filter((item, index, all) =>
-                item?.symbol && networksForAsset(item.symbol).length > 0 && all.findIndex(other => other.symbol === item.symbol) === index
-              ).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
+              {selectableWalletAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
             </select>
           </label>
           <label>Network filter
@@ -1512,10 +1535,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           </div>
         </article>
         <aside className="wallet-review-column">
-          <button type="button" className="panel wallet-review-card wallet-receive-history-link" onClick={() => { setFocusedTransaction?.(null); setActive("Transactions"); }} aria-label="Open all transaction history">
-            <span className="feature-kicker">TRANSACTION HISTORY</span>
-            <div className="wallet-receive-history-link-row"><div><b>View all history</b><small>Open every recorded wallet transaction</small></div><span aria-hidden="true">→</span></div>
-          </button>
+          {renderIncomingHistoryPanel("Received history", "No incoming transactions are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{number(selectedAssetAvailable)} {asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{selectedWalletAsset?.price_available === false || selectedWalletAsset?.value_usd == null ? "Price unavailable" : money(selectedWalletAsset.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Public address only</b><p>Receiving does not require sharing a private key. Only share the public address shown for the matching network.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia and Solana Devnet addresses are for testing. Test tokens are not mainnet funds.</p></div></article>
