@@ -3436,19 +3436,22 @@ def verify_solana_devnet_settlement(
             raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
         if parsed.get("type") != "transferChecked":
             continue
+        if instruction.get("program") not in {"spl-token", "spl-token-2022"}:
+            continue
         info = parsed.get("info")
         if not isinstance(info, dict):
             raise HTTPException(status_code=503, detail="Malformed Solana transfer instruction")
-        token_amount = info.get("tokenAmount")
-        if not isinstance(token_amount, dict):
-            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
-        if instruction.get("program") not in {"spl-token", "spl-token-2022"}:
-            continue
         if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
             continue
         if info.get("authority") != wallet_address:
             continue
-        if str(token_amount.get("amount")) != str(expected_raw):
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
+        raw_amount = token_amount.get("amount")
+        if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            raise HTTPException(status_code=503, detail="Malformed Solana raw token amount")
+        if raw_amount != str(expected_raw):
             continue
         try:
             parsed_decimals = token_amount.get("decimals")
