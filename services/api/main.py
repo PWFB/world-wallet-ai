@@ -1854,8 +1854,9 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     sepolia_address = wallet_network_address(user, "sepolia")
+    solana_mainnet_address = wallet_network_address(user, "solana_mainnet")
     solana_address = wallet_network_address(user, "solana_devnet")
-    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_address:
+    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_mainnet_address and not solana_address:
         raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
