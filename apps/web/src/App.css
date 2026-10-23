@@ -1715,3 +1715,5 @@
 .presale-scope-grid .muted{display:block;font-size:10px;line-height:1.6}
 .presale-disclaimer{color:#657994;font-size:10px;line-height:1.7;margin:16px 0 0}
 @media(max-width:760px){.presale-price-grid,.presale-scope-grid{grid-template-columns:1fr}.presale-metrics-grid{grid-template-columns:1fr}.presale-hero,.presale-readiness-panel,.presale-scope-panel{padding:15px}.presale-check-list>div{grid-template-columns:28px minmax(0,1fr);gap:9px}.presale-check-list em{grid-column:2}.presale-status-pill{font-size:9px;padding:7px 8px}.presale-token-heading h2{font-size:18px}}
+
+.presale-check.verified{background:#0d2b20;border:1px solid #1f8057;color:#62e2a3}
