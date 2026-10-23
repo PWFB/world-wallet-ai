@@ -13,6 +13,18 @@ Reuse a Mainnet address only if the founder controls it, can sign from the walle
 
 The address `BHtNACeUmNwSJG5LwCmgKyfpC4RQoQpNHw7ugffx5Hv1` was reported in the explorer as “Account does not exist” with no transactions. Do not configure it as the presale receiver unless a fresh Mainnet check confirms the correct address and its intended ownership. Never send funds to a guessed or unverified address.
 
+## One-command read-only check from the repository
+
+After cloning the repository in Termux, run this with a public address you control:
+
+```sh
+pkg install curl jq
+bash tools/balmz-solana-mainnet-check.sh YOUR_PUBLIC_SOLANA_ADDRESS
+```
+
+The script verifies the RPC genesis hash before reading finalized balance and account information. It never signs or sends a transaction and does not prove ownership. The BALMZ Presale page can refresh backend Mainnet readiness; payment acceptance remains disabled.
+
+
 ## Verify a public address from Termux
 
 Install the read-only tools if needed:

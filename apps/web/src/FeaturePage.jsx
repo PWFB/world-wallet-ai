@@ -1083,7 +1083,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <article className="panel presale-metric presale-treasury-metric">
           <span className="feature-kicker">MAINNET TREASURY BALANCE</span>
           <strong>{receiverBalanceLabel}</strong>
-          <small>{presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? "Account exists on Solana Mainnet." : "Configured address was not found on Mainnet.") : "Not verified against Solana Mainnet yet."}</small>
+          <small>{presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? (presaleStatus?.readiness?.receiving_address_has_positive_sol_balance ? "Account exists on Mainnet with a positive SOL balance." : "Account exists on Mainnet, but its SOL balance is zero.") : "No on-chain account exists for this address yet.") : "Not verified against Solana Mainnet yet."}</small>
           {presaleStatus?.presale_receiving_address ? <div className="presale-treasury-actions">
             <code>{presaleStatus.presale_receiving_address.slice(0, 8)}…{presaleStatus.presale_receiving_address.slice(-6)}</code>
             <button type="button" className="text-btn" onClick={async () => { try { await navigator.clipboard.writeText(presaleStatus.presale_receiving_address); setMessage("Mainnet treasury address copied."); } catch { setMessage("Clipboard unavailable. Select the treasury address in Network and transaction scope to copy it manually."); } }}>Copy address</button>
