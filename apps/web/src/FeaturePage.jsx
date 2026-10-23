@@ -4,6 +4,7 @@ import WalletVault from "./WalletVault.jsx";
 import ContractTools from "./ContractTools.jsx";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
+import { isTestnetNetwork } from "./network-selection.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -376,7 +377,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {visibleAddresses.length ? visibleAddresses.map(a => {
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
-            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
+            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
             return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
@@ -387,20 +388,22 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <h2>Attach a blockchain address</h2>
       {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" ? "Solana Base58 public address" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Sepolia and Solana Devnet are test networks. You can attach public addresses without a private key. Solana Devnet balance checks require WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.</div>
+      <div className="security-note">Ethereum Sepolia and Solana Devnet are test networks. Solana Mainnet and Devnet are separate network identities; the backend checks each RPC cluster before returning balances. Configure WORLD_WALLET_SOLANA_MAINNET_RPC_URL separately from WORLD_WALLET_SOLANA_DEVNET_RPC_URL.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
-      <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
+      <div className="security-note">The BALMZ-SOL-DEVNET mint is test-only and must not be used as the World Wallet AI presale asset. Register the real production BALMZ mint or contract only after its Mainnet deployment is verified; never substitute the Devnet mint.</div>
     </article>
   </section>;
 }
 
 export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
+  const [presaleStatus, setPresaleStatus] = useState(null);
+  const [presaleStatusError, setPresaleStatusError] = useState("");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
@@ -453,6 +456,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    if (active !== "BALMZ Presale" || !accessToken) return;
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load BALMZ presale status.");
+        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); }
+      })
+      .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
 
   useEffect(() => {
     if (active !== "API Keys" || !accessToken) return;
@@ -1002,6 +1018,51 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
 
+  if (active === "BALMZ Presale") {
+    const solUsd = Number(marketPrices?.SOL?.usd);
+    const hasSolQuote = Number.isFinite(solUsd) && solUsd > 0;
+    return <section className="content feature-content balmz-presale-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Founder-defined pricing plan and production-readiness status.</p></div>
+        <span className="presale-status-pill"><i /> Planning · not live</span>
+      </div>
+      <article className="panel presale-hero">
+        <div className="presale-hero-copy">
+          <div className="presale-token-heading"><img src={BALMZ_LOGO_URL} alt="BALMZ token logo" onError={event => { event.currentTarget.style.display = "none"; }} /><div><span className="feature-kicker">WORLD WALLET AI TOKEN</span><h2>BALMZ-SOL</h2><p>Solana Mainnet production token · not yet deployed</p></div></div>
+          <p className="presale-description">A planned BALMZ token offering with a defined presale price and a separate launch-price target. No sale is open and no payment is being requested by this page.</p>
+        </div>
+        <div className="presale-price-grid">
+          <div className="presale-price-card"><span>PLANNED PRESALE PRICE</span><strong>$7.00</strong><small>USD per BALMZ token</small></div>
+          <div className="presale-price-card"><span>LAUNCH PRICE TARGET</span><strong>1 BALMZ = 1 SOL</strong><small>Target only; market price is not guaranteed</small></div>
+        </div>
+      </article>
+      <div className="presale-metrics-grid">
+        <article className="panel presale-metric"><span className="feature-kicker">SOL MARKET REFERENCE</span><strong>{hasSolQuote ? "$" + solUsd.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4}) : "Unavailable"}</strong><small>{hasSolQuote ? "Live SOL USD quote from the market feed; not a BALMZ price." : "A verified SOL USD quote is not currently available."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRESALE STATUS</span><strong>{presaleStatus?.stage === "planning" ? "Not open" : "Checking status"}</strong><small>{presaleStatus?.payment_acceptance_enabled ? "Payment acceptance is enabled." : "Payment acceptance is disabled."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRODUCTION MINT</span><strong>{presaleStatus?.production_mint || "Not configured"}</strong><small>Devnet mint remains testing-only.</small></article>
+      </div>
+      <article className="panel presale-readiness-panel">
+        <div className="panel-head"><div><h2>Launch readiness</h2><span>Production controls must be verified before accepting funds.</span></div><span className="presale-status-pill"><i /> Payments disabled</span></div>
+        {presaleStatusError && <div className="feature-error" role="status">{presaleStatusError}</div>}
+        <div className="presale-check-list">
+          <div><span className="presale-check pending">1</span><div><b>Deploy and verify the production mint</b><small>Use a separate Solana Mainnet mint. Never use the Devnet mint as the presale asset.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">2</span><div><b>Confirm supply and mint authority</b><small>Verify the 1 billion supply policy and whether mint authority is revoked or securely controlled.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">3</span><div><b>Configure the receiving address and payment verification</b><small>Accept only confirmed Mainnet payments with replay protection and transaction-to-order matching.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">4</span><div><b>Define launch liquidity and price mechanics</b><small>A 1 SOL target is not automatically enforced by token metadata; it needs a disclosed pricing/liquidity mechanism.</small></div><em>Pending</em></div>
+        </div>
+        <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "The production mint, receiving address, and payment settlement are not configured."}</div>
+      </article>
+      <article className="panel presale-scope-panel">
+        <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production and test evidence are kept separate.</span></div></div>
+        <div className="presale-scope-grid">
+          <div><span className="scope-dot scope-test" /><b>Solana Devnet</b><small>Testing only · excluded from production reserves</small><code>{presaleStatus?.devnet_mint || "Devnet mint not loaded"}</code><a href={"https://explorer.solana.com/address/" + (presaleStatus?.devnet_mint || "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF") + "?cluster=devnet"} target="_blank" rel="noopener noreferrer">Open Devnet explorer ↗</a></div>
+          <div><span className="scope-dot scope-production" /><b>Solana Mainnet</b><small>Production · no presale transaction accepted yet</small><code>{presaleStatus?.production_mint || "Production mint not configured"}</code><span className="muted">Mainnet transaction hashes must be verified on the Mainnet RPC before settlement.</span></div>
+        </div>
+        <p className="presale-disclaimer">Transaction history is evidence of activity, not proof of reserves or a guarantee of token value. SOL's market quote is displayed only as a reference; it is not applied to BALMZ balances.</p>
+      </article>
+    </section>;
+  }
+
   if (active === "Proof of Reserves") {
     const loadProof = async () => {
       setToolBusy(true); setMessage(""); setProofData(null);
@@ -1046,7 +1107,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
               const explorer = transactionExplorerUrl(item);
               const status = String(item.status || "recorded").toLowerCase();
               const hasHash = Boolean(String(item.tx_hash || item.transaction_hash || "").trim());
-              const isTestnet = ["sepolia", "solana_devnet", "solana-devnet"].includes(String(item.network || "").trim().toLowerCase());
+              const isTestnet = isTestnetNetwork(item.network, item.asset || item.symbol);
               return <div className="tool-row" key={item.tx_hash || item.id || index}>
                 <div><b>{item.asset || item.symbol || "Asset"} · {item.type || "transaction"}</b><small>{item.time || "Time unavailable"} · {item.network || "Network unavailable"}</small><small>Recorded status: {status} · {Number(item.confirmations || 0)} confirmations reported</small><small>{hasHash && explorer ? "Public explorer reference available; verify the record there." : "Missing transaction hash or supported explorer link; manual verification needed."}{isTestnet ? " Testnet record; excluded from production reserves." : ""}</small></div>
                 <strong>{item.amount == null ? "Amount unavailable" : String(item.amount) + " " + (item.asset || item.symbol || "")}</strong>
@@ -1490,7 +1551,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <h3>Step 1 · Choose a destination address</h3>
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
@@ -1551,7 +1612,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               {item.local && <small className="muted">Shown from this browser's connected wallet. Server attachment and balance verification may still be pending.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>

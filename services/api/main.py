@@ -59,8 +59,28 @@ BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
+SOLANA_MAINNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_MAINNET_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
+SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
 BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
 BALMZ_SOLANA_DEVNET_DECIMALS = 9
+
+
+def normalize_wallet_network(value: str) -> str:
+    """Normalize explicit chain names without guessing which network 'mainnet' means."""
+    network = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    aliases = {
+        "solana": "solana_mainnet",
+        "solana_mainnet_beta": "solana_mainnet",
+        "mainnet_beta": "solana_mainnet",
+        "devnet": "solana_devnet",
+        "eth": "ethereum",
+        "ethereum_mainnet": "ethereum",
+        "ethereum_sepolia": "sepolia",
+        "bsc": "bnb",
+        "binance_smart_chain": "bnb",
+    }
+    return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
@@ -972,12 +992,23 @@ def rpc_call(url: str, method: str, params: list):
 
 
 
+def require_solana_rpc_cluster(url: str, expected_genesis_hash: str, cluster_name: str):
+    """Fail closed when a Solana RPC URL points at the wrong cluster."""
+    if not url:
+        raise ValueError(f"{cluster_name} RPC is not configured")
+    actual_genesis_hash = rpc_call(url, "getGenesisHash", [])
+    if actual_genesis_hash != expected_genesis_hash:
+        raise ValueError(f"Configured {cluster_name} RPC returned an unexpected Solana cluster genesis hash")
+    return actual_genesis_hash
+
+
 def solana_spl_token_balance(owner_address: str, mint_address: str = BALMZ_SOLANA_DEVNET_MINT, decimals: int = BALMZ_SOLANA_DEVNET_DECIMALS):
     """Read the confirmed SPL token balance from Solana Devnet without signing."""
     if not valid_solana_address(owner_address) or not valid_solana_address(mint_address):
         raise ValueError("Invalid Solana owner or mint address")
     if int(decimals) != BALMZ_SOLANA_DEVNET_DECIMALS:
         raise ValueError("Unexpected BALMZ Solana Devnet decimals")
+    require_solana_rpc_cluster(SOLANA_DEVNET_RPC_URL, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
     response = rpc_call(
         SOLANA_DEVNET_RPC_URL,
         "getTokenAccountsByOwner",
@@ -1823,12 +1854,26 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     sepolia_address = wallet_network_address(user, "sepolia")
+    solana_mainnet_address = wallet_network_address(user, "solana_mainnet")
     solana_address = wallet_network_address(user, "solana_devnet")
-    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_address:
+    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_mainnet_address and not solana_address:
         raise HTTPException(status_code=503, detail="No wallet address is configured")
     updates = []
     warnings = []
     with db() as conn:
+        if solana_mainnet_address:
+            try:
+                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+                raw_sol = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [solana_mainnet_address, {"commitment": "confirmed"}])
+                sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"], "SOL", "Solana (Mainnet)", sol_balance),
+                )
+                updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance})
+            except Exception:
+                warnings.append("Solana Mainnet balance service unavailable")
         if btc_address:
             try:
                 btc = btc_balance(btc_address)
@@ -1839,6 +1884,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 warnings.append("Bitcoin balance service unavailable")
         if solana_address and SOLANA_DEVNET_RPC_URL:
             try:
+                require_solana_rpc_cluster(SOLANA_DEVNET_RPC_URL, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
                 raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
                 sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
                 conn.execute(
@@ -1848,7 +1894,8 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 )
                 # This sync path previously stored Devnet SOL in the production SOL row.
                 # Clear that legacy value only after a confirmed live Devnet balance was read.
-                conn.execute("UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'", (user["wallet_id"],))
+                # Do not clear the production SOL row here. A wallet may hold
+                # native SOL on Mainnet and Devnet test SOL at the same time.
                 updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
             except Exception:
                 warnings.append("Solana Devnet balance service unavailable")
@@ -2017,6 +2064,32 @@ def _coinbase_spot_price_fallback():
         "stale": False,
         "cache_age_seconds": 0,
         "note": "Spot prices from fallback provider; 24-hour changes are unavailable.",
+    }
+
+
+@app.get("/api/v1/balmz/presale/status")
+def balmz_presale_status(user: dict = Depends(current_user)):
+    """Return the founder-defined BALMZ-SOL plan without enabling or accepting payments."""
+    return {
+        "token": "BALMZ-SOL",
+        "project": "World Wallet AI",
+        "stage": "planning",
+        "presale_price_usd": 7,
+        "presale_price_unit": "USD per token",
+        "launch_target": {"amount": 1, "asset": "SOL", "meaning": "target only; not a guaranteed market price"},
+        "payment_acceptance_enabled": False,
+        "production_network": "solana_mainnet",
+        "production_mint": None,
+        "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
+        "devnet_mint_is_test_only": True,
+        "recipient_address_configured": False,
+        "transaction_scope": {
+            "presale_payments": "disabled",
+            "mainnet_transactions": "must be verified on Solana Mainnet",
+            "devnet_transactions": "testing evidence only; excluded from production balances and reserves",
+            "proof_of_reserves": "must use independently verified production on-chain balances",
+        },
+        "notice": "Planning only. Do not send funds. Production mint, destination, sale rules, and verified payment settlement are not configured.",
     }
 
 
@@ -2493,13 +2566,12 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
 def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
-    network=request.network.strip().lower().replace("-", "_")
-    network = {"solana":"solana_devnet","devnet":"solana_devnet","solana_devnet":"solana_devnet","mainnet":"ethereum","eth":"ethereum","ethereum_mainnet":"ethereum","bsc":"bnb","binance_smart_chain":"bnb"}.get(network, network)
+    network=normalize_wallet_network(request.network)
     address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network=="solana_devnet" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network in {"solana_mainnet","solana_devnet"} and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_mainnet","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
@@ -2517,16 +2589,15 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
 @app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
 def read_wallet_address_balance(wallet_id: str, network: str, address: str, user: dict = Depends(current_user)):
     """Read the balance for one attached public address without mutating portfolio assets."""
-    network = network.strip().lower().replace("-", "_")
-    network = {"solana":"solana_devnet","devnet":"solana_devnet","mainnet":"ethereum","eth":"ethereum","ethereum_mainnet":"ethereum","bsc":"bnb","binance_smart_chain":"bnb"}.get(network, network)
+    network = normalize_wallet_network(network)
     address = address.strip()
-    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"}:
+    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet"}:
         raise HTTPException(status_code=400, detail="Unsupported wallet network")
     if network in {"ethereum", "sepolia", "bnb"} and not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM address")
     if network == "bitcoin" and not valid_bitcoin_address(address):
         raise HTTPException(status_code=400, detail="Invalid Bitcoin address")
-    if network == "solana_devnet" and not valid_solana_address(address):
+    if network in {"solana_mainnet", "solana_devnet"} and not valid_solana_address(address):
         raise HTTPException(status_code=400, detail="Invalid Solana public address")
     with db() as conn:
         owner = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (wallet_id, user["id"])).fetchone()
@@ -2554,11 +2625,18 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
             rpc_url, asset = BSC_RPC_URL, "BNB"
             if not rpc_url: raise HTTPException(status_code=503, detail="BNB Chain RPC is not configured")
             balance = evm_balance(rpc_url, address)
-        elif network == "solana_devnet":
-            if not SOLANA_DEVNET_RPC_URL: raise HTTPException(status_code=503, detail="Solana Devnet RPC is not configured. Set WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.")
-            raw = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+        elif network in {"solana_mainnet", "solana_devnet"}:
+            if network == "solana_mainnet":
+                rpc_url, asset = SOLANA_MAINNET_RPC_URL, "SOL"
+                expected_hash, cluster_name = SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+            else:
+                rpc_url, asset = SOLANA_DEVNET_RPC_URL, "SOL (Devnet)"
+                expected_hash, cluster_name = SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet"
+            if not rpc_url:
+                raise HTTPException(status_code=503, detail=f"{cluster_name} RPC is not configured")
+            require_solana_rpc_cluster(rpc_url, expected_hash, cluster_name)
+            raw = rpc_call(rpc_url, "getBalance", [address, {"commitment": "confirmed"}])
             balance = int((raw or {}).get("value", 0)) / 1_000_000_000
-            asset = "SOL (Devnet)"
         else:
             balance = btc_balance(address)
             asset = "BTC"
@@ -2983,10 +3061,26 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     for item in addresses:
         network = str(item["network"]).strip().lower().replace("-", "_")
         address = item["address"]
+        if network == "solana_mainnet":
+            # Native SOL is production-network evidence, kept distinct from the
+            # Devnet BALMZ token and never interpreted as BALMZ presale reserves.
+            try:
+                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+                native_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+                slot = rpc_call(SOLANA_MAINNET_RPC_URL, "getSlot", [{"commitment": "confirmed"}])
+                reserves.append({
+                    "network": "solana_mainnet", "address": address, "asset": "SOL",
+                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
+                    "block_number": slot, "source": "Solana Mainnet getBalance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-mainnet: native SOL balance unavailable")
+            continue
         if network == "solana_devnet":
             # Keep testnet holdings separate from production reserve figures.
             solana_rpc = SOLANA_DEVNET_RPC_URL or "https://api.devnet.solana.com"
             try:
+                require_solana_rpc_cluster(solana_rpc, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
                 native_result = rpc_call(solana_rpc, "getBalance", [address, {"commitment": "confirmed"}])
                 testnet_assets.append({
                     "network": "solana-devnet", "address": address, "asset": "SOL-DEVNET",
