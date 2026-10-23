@@ -154,7 +154,7 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         self.assertTrue(summary["valuation_complete"])
         self.assertEqual(summary["unpriced_assets"], [])
 
-    def test_native_devnet_sol_is_stored_separately_from_mainnet_sol(self):
+    def test_devnet_refresh_does_not_clear_the_production_sol_balance(self):
         connection = FakeConnection()
         user = {"id": "test-user", "wallet_id": "test-wallet"}
         with (
@@ -178,11 +178,10 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         ]
         self.assertEqual(len(devnet_writes), 1)
         self.assertEqual(devnet_writes[0][1][3], 1.0)
-        self.assertTrue(any(
+        self.assertFalse(any(
             "UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'" in query
-            and params == (user["wallet_id"],)
-            for query, params in connection.queries
-        ))
+            for query, _params in connection.queries
+        ), "A Devnet refresh must never clear the user's real Solana Mainnet SOL balance")
 
     def test_rpc_failure_warns_and_does_not_write_fake_balance(self):
         connection = FakeConnection()
