@@ -2240,6 +2240,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
         "devnet_mint_is_test_only": True,
         "recipient_address_configured": recipient_is_valid,
+        "receiving_address_configured": recipient_is_valid,
         "presale_receiving_address": BALMZ_PRESALE_RECEIVING_ADDRESS if recipient_is_valid else None,
         "presale_receiving_address_mainnet_verified": receiver_status["mainnet_rpc_verified"],
         "presale_receiving_address_account_exists": receiver_status["account_exists"],
