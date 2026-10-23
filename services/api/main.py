@@ -3413,6 +3413,8 @@ def verify_solana_devnet_settlement(
         item.get("pubkey") if isinstance(item, dict) else item
         for item in keys
     ]
+    if not all(isinstance(key, str) and key for key in key_names):
+        raise HTTPException(status_code=503, detail="Malformed Solana account keys")
     instructions = list(outer_instructions)
     for inner in inner_groups:
         if not isinstance(inner, dict) or not isinstance(inner.get("instructions", []), list):
@@ -3427,11 +3429,19 @@ def verify_solana_devnet_settlement(
     expected_raw = int(expected)
 
     for instruction in instructions:
-        parsed = instruction.get("parsed") or {}
-        info = parsed.get("info") or {}
-        token_amount = info.get("tokenAmount") or {}
+        parsed = instruction.get("parsed")
+        if parsed is None:
+            continue
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
         if parsed.get("type") != "transferChecked":
             continue
+        info = parsed.get("info")
+        if not isinstance(info, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer instruction")
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
         if instruction.get("program") not in {"spl-token", "spl-token-2022"}:
             continue
         if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
