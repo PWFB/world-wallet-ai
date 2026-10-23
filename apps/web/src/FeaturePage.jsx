@@ -1513,7 +1513,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Receiving address</h2><p>Copy the public address to share with the person sending you funds.</p></div></div>
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
-              {selectableWalletAssets.filter(item => networksForAsset(item.symbol).length > 0).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
+              {selectableWalletAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
             </select>
           </label>
           <label>Network filter
