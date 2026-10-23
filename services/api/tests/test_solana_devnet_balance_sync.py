@@ -51,28 +51,42 @@ def account(raw_amount, decimals=9, mint=MINT):
 class SolanaDevnetBalanceTests(unittest.TestCase):
     def test_sums_all_matching_accounts_with_confirmed_devnet_rpc(self):
         response = {"value": [account(1000000000), account(2500000000)]}
-        with patch.object(main, "rpc_call", return_value=response) as rpc:
+        def fake_rpc(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_DEVNET_GENESIS_HASH
+            if method == "getTokenAccountsByOwner":
+                return response
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "rpc_call", side_effect=fake_rpc) as rpc:
             self.assertEqual(main.solana_spl_token_balance(OWNER), 3.5)
-        self.assertEqual(rpc.call_args.args[0], "https://api.devnet.solana.com")
-        self.assertEqual(rpc.call_args.args[1], "getTokenAccountsByOwner")
-        self.assertEqual(rpc.call_args.args[2], [
+        token_calls = [call for call in rpc.call_args_list if call.args[1] == "getTokenAccountsByOwner"]
+        self.assertEqual(len(token_calls), 1)
+        self.assertEqual(token_calls[0].args[0], "https://api.devnet.solana.com")
+        self.assertEqual(token_calls[0].args[2], [
             OWNER, {"mint": MINT},
             {"encoding": "jsonParsed", "commitment": "confirmed"},
         ])
 
     def test_empty_account_list_is_a_real_zero_balance(self):
-        with patch.object(main, "rpc_call", return_value={"value": []}):
+        with patch.object(main, "rpc_call", side_effect=lambda _url, method, _params:
+                          main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else {"value": []}):
             self.assertEqual(main.solana_spl_token_balance(OWNER), 0.0)
 
     def test_malformed_response_is_not_treated_as_zero(self):
-        with patch.object(main, "rpc_call", return_value=None):
+        with patch.object(main, "rpc_call", side_effect=lambda _url, method, _params:
+                          main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else None):
             with self.assertRaises(ValueError):
                 main.solana_spl_token_balance(OWNER)
 
     def test_wrong_decimals_or_mint_are_rejected(self):
         for response in ({"value": [account(1000000000, decimals=6)]},
                          {"value": [account(1000000000, mint="So11111111111111111111111111111111111111112")]}):
-            with self.subTest(response=response), patch.object(main, "rpc_call", return_value=response):
+            with self.subTest(response=response), patch.object(
+                main, "rpc_call",
+                side_effect=lambda _url, method, _params:
+                    main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else response,
+            ):
                 with self.assertRaises(ValueError):
                     main.solana_spl_token_balance(OWNER)
 
@@ -83,7 +97,8 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
             patch.object(main, "wallet_network_address",
                          side_effect=lambda u, n: OWNER if n == "solana_devnet" else None),
             patch.object(main, "db", return_value=FakeDB(connection)),
-            patch.object(main, "rpc_call", return_value={"value": 0}),
+            patch.object(main, "rpc_call", side_effect=lambda _url, method, _params:
+                          main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else {"value": 0}),
             patch.object(main, "solana_spl_token_balance", return_value=1234567.0),
             patch.object(main, "sync_bitcoin_transactions", return_value=[]),
             patch.object(main, "wallet_snapshot",
@@ -146,7 +161,8 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
             patch.object(main, "wallet_network_address",
                          side_effect=lambda u, n: OWNER if n == "solana_devnet" else None),
             patch.object(main, "db", return_value=FakeDB(connection)),
-            patch.object(main, "rpc_call", return_value={"value": 1000000000}),
+            patch.object(main, "rpc_call", side_effect=lambda _url, method, _params:
+                          main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else {"value": 1000000000}),
             patch.object(main, "solana_spl_token_balance", return_value=0.0),
             patch.object(main, "sync_bitcoin_transactions", return_value=[]),
             patch.object(main, "wallet_snapshot",
