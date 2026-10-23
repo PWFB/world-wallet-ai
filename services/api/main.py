@@ -896,6 +896,7 @@ def validate_asset_network(asset: str, network: str):
         "USDT": {"ethereum", "bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
+        "BALMZ-SOL-DEVNET": {"solana-devnet"},
     }
     if symbol not in allowed or net not in allowed[symbol]:
         raise HTTPException(status_code=400, detail=f"{symbol} is not supported on the {net} network")
@@ -3341,6 +3342,154 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
         raise HTTPException(status_code=503, detail="Blockchain settlement verification unavailable") from exc
 
 
+
+def verify_solana_devnet_settlement(
+    tx_signature: str, destination: str, amount: Decimal, wallet_address: str
+):
+    """Verify a confirmed BALMZ SPL transfer on Solana Devnet."""
+    import re
+
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,100}", tx_signature):
+        raise ValueError("Invalid Solana transaction signature")
+    if not valid_solana_address(destination) or not valid_solana_address(wallet_address):
+        raise ValueError("Invalid Solana sender or recipient address")
+
+    result = rpc_call(
+        SOLANA_DEVNET_RPC_URL, "getTransaction",
+        [tx_signature, {
+            "encoding": "jsonParsed",
+            # Settlement must not release a reservation on a merely confirmed
+            # transaction. Require the RPC provider to return finalized data.
+            "commitment": "finalized",
+            "maxSupportedTransactionVersion": 0,
+        }],
+    )
+    if result is None:
+        statuses = rpc_call(
+            SOLANA_DEVNET_RPC_URL, "getSignatureStatuses",
+            [[tx_signature], {"searchTransactionHistory": True}],
+        )
+        if not isinstance(statuses, dict) or not isinstance(statuses.get("value"), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana signature-status response")
+        values = statuses["value"]
+        if len(values) != 1:
+            raise HTTPException(status_code=503, detail="Unexpected Solana signature-status response length")
+        status = values[0]
+        if status is None:
+            return {"state": "not_found", "confirmations": 0, "block_height": None}
+        if not isinstance(status, dict) or "err" not in status:
+            raise HTTPException(status_code=503, detail="Malformed Solana signature status")
+        if status["err"] is not None:
+            raise ValueError("Solana transaction failed on-chain")
+        # A status alone does not prove the exact token transfer. Keep it pending
+        # until getTransaction returns the finalized transaction details.
+        return {"state": "pending", "confirmations": 0, "block_height": None}
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction response")
+
+    meta = result.get("meta")
+    transaction = result.get("transaction")
+    if not isinstance(meta, dict) or not isinstance(transaction, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction metadata")
+
+    if meta.get("err") is not None:
+        raise ValueError("Solana transaction failed on-chain")
+
+    message = transaction.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction message")
+
+    keys = message.get("accountKeys") or []
+    post_balances = meta.get("postTokenBalances") or []
+    outer_instructions = message.get("instructions") or []
+    inner_groups = meta.get("innerInstructions") or []
+    if not all(isinstance(items, list) for items in (keys, post_balances, outer_instructions, inner_groups)):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction instruction or balance lists")
+    if not all(isinstance(item, dict) for item in post_balances):
+        raise HTTPException(status_code=503, detail="Malformed Solana token balance entry")
+
+    key_names = [
+        item.get("pubkey") if isinstance(item, dict) else item
+        for item in keys
+    ]
+    if not all(isinstance(key, str) and key for key in key_names):
+        raise HTTPException(status_code=503, detail="Malformed Solana account keys")
+    instructions = list(outer_instructions)
+    for inner in inner_groups:
+        if not isinstance(inner, dict) or not isinstance(inner.get("instructions", []), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana inner instruction group")
+        instructions.extend(inner.get("instructions") or [])
+    if not all(isinstance(item, dict) for item in instructions):
+        raise HTTPException(status_code=503, detail="Malformed Solana instruction")
+
+    expected = Decimal(amount) * (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
+    if expected != expected.to_integral_value():
+        raise ValueError("Token amount has unsupported precision")
+    expected_raw = int(expected)
+
+    for instruction in instructions:
+        parsed = instruction.get("parsed")
+        if parsed is None:
+            continue
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
+        if parsed.get("type") != "transferChecked":
+            continue
+        if instruction.get("program") not in {"spl-token", "spl-token-2022"}:
+            continue
+        info = parsed.get("info")
+        if not isinstance(info, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer instruction")
+        if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
+            continue
+        if info.get("authority") != wallet_address:
+            continue
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
+        raw_amount = token_amount.get("amount")
+        if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            raise HTTPException(status_code=503, detail="Malformed Solana raw token amount")
+        if raw_amount != str(expected_raw):
+            continue
+        try:
+            parsed_decimals = token_amount.get("decimals")
+            if isinstance(parsed_decimals, bool) or not isinstance(parsed_decimals, int):
+                raise TypeError("Invalid token decimals")
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
+        if parsed_decimals != BALMZ_SOLANA_DEVNET_DECIMALS:
+            continue
+
+        destination_account = info.get("destination")
+        account_index = next(
+            (i for i, key in enumerate(key_names) if key == destination_account),
+            None,
+        )
+        if account_index is None:
+            continue
+        recipient_matches = any(
+            item.get("accountIndex") == account_index
+            and item.get("owner") == destination
+            and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+            for item in post_balances
+        )
+        if recipient_matches:
+            return {
+                "state": "confirmed",
+                # Compatibility marker for the existing integer DB/API field;
+                # finality is explicitly represented separately below.
+                "confirmations": 1,
+                "finality": "finalized",
+                "block_height": None,
+            }
+
+    raise ValueError(
+        "Confirmed transaction does not contain the exact BALMZ Devnet transfer"
+    )
+
+
 def reconcile_settled_asset(conn, user, symbol, network):
     # Chain synchronization is authoritative for actual balance. Re-read it after
     # verification instead of subtracting the request amount a second time.
@@ -3351,6 +3500,11 @@ def reconcile_settled_asset(conn, user, symbol, network):
             value = btc_balance(address)
         elif symbol in {"ETH", "BNB"} and address:
             value = evm_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, address)
+        elif symbol == "BALMZ-SOL-DEVNET" and network == "solana-devnet" and address:
+            value = solana_spl_token_balance(
+                address, BALMZ_SOLANA_DEVNET_MINT,
+                BALMZ_SOLANA_DEVNET_DECIMALS,
+            )
         elif symbol in {"USDT", "BALMZ"} and address:
             if symbol == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
@@ -3396,7 +3550,15 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             raise HTTPException(status_code=409,detail="Transaction is not eligible for settlement")
         if existing_hash and existing_hash.lower() != tx_hash.lower():
             raise HTTPException(status_code=409,detail="Transaction already has a different broadcast hash")
-        if network == "bitcoin":
+        if network == "solana-devnet" and symbol == "BALMZ-SOL-DEVNET":
+            try:
+                verification = verify_solana_devnet_settlement(
+                    tx_hash, destination, abs(Decimal(amount)),
+                    wallet_network_address(user, "solana-devnet"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif network == "bitcoin":
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
             verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
@@ -3415,7 +3577,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
                 (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
             )
             conn.commit()
-            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"broadcast":False}
+            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"finality":verification.get("finality"),"broadcast":False}
 
         hold=abs(Decimal(amount))
         if not asset or Decimal(asset[0] or 0) < hold:
@@ -3435,6 +3597,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             "transaction_id":txid,
             "tx_hash":tx_hash,
             "confirmations":verification.get("confirmations",0),
+            "finality":verification.get("finality"),
             "block_height":verification.get("block_height"),
             "accounting":"reserved_released_and_chain_reconciled",
             "broadcast":False,
