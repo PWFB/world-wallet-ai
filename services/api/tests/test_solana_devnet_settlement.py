@@ -1,4 +1,3 @@
-import copy
 import sys
 import unittest
 from decimal import Decimal
@@ -79,11 +78,52 @@ class SolanaDevnetSettlementTests(unittest.TestCase):
 
         self.assertEqual(result["state"], "confirmed")
         self.assertEqual(result["confirmations"], 1)
+        self.assertEqual(result["finality"], "finalized")
         self.assertIsNone(result["block_height"])
         self.assertEqual(rpc.call_args.args[1], "getTransaction")
         self.assertEqual(
-            rpc.call_args.args[2][1]["commitment"], "confirmed"
+            rpc.call_args.args[2][1]["commitment"], "finalized"
         )
+
+    def test_token_2022_transfer_checked_is_supported(self):
+        tx = confirmed_transaction()
+        tx["transaction"]["message"]["instructions"][0]["program"] = "spl-token-2022"
+
+        result, _ = self.verify(tx)
+
+        self.assertEqual(result["state"], "confirmed")
+        self.assertEqual(result["finality"], "finalized")
+
+    def test_malformed_signature_status_returns_service_error(self):
+        with patch.object(main, "rpc_call", side_effect=[None, {"value": ["not-a-status"]}]):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.verify_solana_devnet_settlement(SIGNATURE, RECIPIENT, AMOUNT, WALLET)
+
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_malformed_signature_status_shape_returns_service_error(self):
+        with patch.object(main, "rpc_call", side_effect=[None, {"value": []}]):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.verify_solana_devnet_settlement(SIGNATURE, RECIPIENT, AMOUNT, WALLET)
+
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_malformed_token_decimals_returns_service_error(self):
+        tx = confirmed_transaction()
+        tx["transaction"]["message"]["instructions"][0]["parsed"]["info"]["tokenAmount"]["decimals"] = "nine"
+
+        with patch.object(main, "rpc_call", return_value=tx):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.verify_solana_devnet_settlement(SIGNATURE, RECIPIENT, AMOUNT, WALLET)
+
+        self.assertEqual(raised.exception.status_code, 503)
+
+    def test_missing_transaction_details_is_not_treated_as_user_error(self):
+        with patch.object(main, "rpc_call", return_value={"meta": None, "transaction": None}):
+            with self.assertRaises(main.HTTPException) as raised:
+                main.verify_solana_devnet_settlement(SIGNATURE, RECIPIENT, AMOUNT, WALLET)
+
+        self.assertEqual(raised.exception.status_code, 503)
 
     def test_wrong_mint_is_rejected(self):
         tx = confirmed_transaction()
