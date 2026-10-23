@@ -114,7 +114,7 @@ class FakeConnection:
             self.store.asset_updates.append(params)
             return FakeCursor()
         if sql.startswith("INSERT INTO transactions"):
-            self.store.transactions.append(params)
+            self.store.transactions.append((sql, params))
             return FakeCursor()
         raise AssertionError(f"Unexpected SQL in test fake: {sql}")
 
@@ -222,7 +222,7 @@ class SolanaDevnetDepositEndpointTests(unittest.TestCase):
         self.assertTrue(second["replayed"])
         self.assertEqual(len(self.store.deposits), 1)
         self.assertEqual(len(self.store.transactions), 1)
-        self.assertEqual(self.store.transactions[0][2], "BALMZ-SOL-DEVNET")
+        self.assertIn("'BALMZ-SOL-DEVNET'", self.store.transactions[0][0])
 
     def test_same_signature_cannot_be_claimed_by_another_wallet(self):
         patches = self.patches()
