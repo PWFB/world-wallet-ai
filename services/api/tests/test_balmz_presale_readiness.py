@@ -99,6 +99,30 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(result["payment_acceptance_enabled"])
         self.assertTrue(any("no positive SOL balance" in warning for warning in result["warnings"]))
 
+    def test_receiver_missing_from_mainnet_is_not_a_valid_funded_treasury(self):
+        def rpc_missing_receiver(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 0}
+            if method == "getAccountInfo":
+                return {"value": None}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""),
+            patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+            patch.object(main, "rpc_call", side_effect=rpc_missing_receiver),
+        ):
+            result = main.balmz_presale_status({"id": "test-user"})
+
+        self.assertTrue(result["receiving_address_configured"])
+        self.assertTrue(result["presale_receiving_address_mainnet_verified"])
+        self.assertFalse(result["presale_receiving_address_account_exists"])
+        self.assertFalse(result["presale_receiving_address_has_positive_sol_balance"])
+        self.assertFalse(result["payment_acceptance_enabled"])
+        self.assertTrue(any("no on-chain account" in warning for warning in result["warnings"]))
+
     def test_mint_authority_still_enabled_is_not_fixed_supply(self):
         def rpc_with_authority(_url, method, params):
             result = mainnet_rpc(_url, method, params)
