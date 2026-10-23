@@ -1801,3 +1801,41 @@
   .presale-order-card{padding:15px}
   .presale-token-heading img{width:48px;height:48px}
 }
+
+
+/* BALMZ presale treasury summary: responsive exchange-style metric card. */
+.balmz-presale-page .presale-metrics-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  align-items: stretch;
+}
+.balmz-presale-page .presale-treasury-metric {
+  border-color: rgba(255, 122, 24, 0.32);
+  background: linear-gradient(145deg, rgba(255, 122, 24, 0.08), rgba(10, 20, 38, 0.92));
+}
+.balmz-presale-page .presale-treasury-metric > strong {
+  color: #ff9a4d;
+  font-variant-numeric: tabular-nums;
+}
+.presale-treasury-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+.presale-treasury-actions code {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: #c5d2e6;
+  font-size: 11px;
+}
+.presale-treasury-actions .text-btn {
+  color: #ff9a4d;
+  white-space: nowrap;
+}
+@media (max-width: 760px) {
+  .balmz-presale-page .presale-metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
