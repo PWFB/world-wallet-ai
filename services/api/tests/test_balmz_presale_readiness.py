@@ -102,7 +102,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
     def test_mint_authority_still_enabled_is_not_fixed_supply(self):
         def rpc_with_authority(_url, method, params):
             result = mainnet_rpc(_url, method, params)
-            if method == "getAccountInfo":
+            if method == "getAccountInfo" and params and params[0] != VALID_RECEIVER:
                 result["value"]["data"]["parsed"]["info"]["mintAuthority"] = VALID_RECEIVER
             return result
 
@@ -133,6 +133,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
     def test_invalid_mint_address_is_not_queried(self):
         with (
             patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", "not-a-solana-address"),
+            patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""),
             patch.object(main, "rpc_call") as rpc,
         ):
             result = main.balmz_presale_status({"id": "test-user"})
