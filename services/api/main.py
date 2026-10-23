@@ -2072,32 +2072,6 @@ def _coinbase_spot_price_fallback():
     }
 
 
-@app.get("/api/v1/balmz/presale/status")
-def balmz_presale_status(user: dict = Depends(current_user)):
-    """Return the founder-defined BALMZ-SOL plan without enabling or accepting payments."""
-    return {
-        "token": "BALMZ-SOL",
-        "project": "World Wallet AI",
-        "stage": "planning",
-        "presale_price_usd": 7,
-        "presale_price_unit": "USD per token",
-        "launch_target": {"amount": 1, "asset": "SOL", "meaning": "target only; not a guaranteed market price"},
-        "payment_acceptance_enabled": False,
-        "production_network": "solana_mainnet",
-        "production_mint": None,
-        "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
-        "devnet_mint_is_test_only": True,
-        "recipient_address_configured": False,
-        "transaction_scope": {
-            "presale_payments": "disabled",
-            "mainnet_transactions": "must be verified on Solana Mainnet",
-            "devnet_transactions": "testing evidence only; excluded from production balances and reserves",
-            "proof_of_reserves": "must use independently verified production on-chain balances",
-        },
-        "notice": "Planning only. Do not send funds. Production mint, destination, sale rules, and verified payment settlement are not configured.",
-    }
-
-
 @app.get("/api/v1/prices/market")
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
