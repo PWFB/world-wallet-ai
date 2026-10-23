@@ -2072,150 +2072,109 @@ def _coinbase_spot_price_fallback():
     }
 
 
-# Solana addresses are base58-encoded 32-byte public keys. This checks formatting only;
-# it does not prove that the operator controls the corresponding wallet.
-_SOLANA_BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-_SOLANA_BASE58_INDEX = {character: index for index, character in enumerate(_SOLANA_BASE58_ALPHABET)}
-
-
-def _is_solana_public_key(value: str | None) -> bool:
-    text = str(value or "").strip()
-    if not 32 <= len(text) <= 44:
-        return False
-    number = 0
-    for character in text:
-        digit = _SOLANA_BASE58_INDEX.get(character)
-        if digit is None:
-            return False
-        number = number * 58 + digit
-    encoded = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
-    leading_zeroes = len(text) - len(text.lstrip("1"))
-    return len((b"\\x00" * leading_zeroes) + encoded) == 32
-
-
-def _solana_rpc_result(method: str, params: list):
-    """Call only the configured Solana Mainnet RPC; never echo provider details to clients."""
-    response = httpx.post(
-        SOLANA_MAINNET_RPC_URL,
-        json={
-            "jsonrpc": "2.0",
-            "id": "world-wallet-ai-balmz-readiness",
-            "method": method,
-            "params": params,
-        },
-        timeout=8.0,
-    )
-    response.raise_for_status()
-    payload = response.json()
-    if not isinstance(payload, dict) or payload.get("error") or "result" not in payload:
-        raise RuntimeError("Solana Mainnet RPC returned an invalid response")
-    return payload["result"]
-
-
 def _verify_balmz_solana_mainnet_mint(mint_address: str | None) -> dict:
-    """Verify the configured SPL mint against Mainnet before showing it as production-ready."""
+    """Verify token identity and observed supply on Solana Mainnet without signing or moving funds."""
     result = {
-        "verified": False,
+        "production_mint_verified": False,
         "supply_matches_target": False,
         "mint_authority_revoked": False,
         "freeze_authority_revoked": False,
+        "observed_supply": None,
         "warnings": [],
     }
     if not mint_address:
-        result["warnings"].append("Production BALMZ-SOL Mainnet mint is not configured.")
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified because it is not configured.")
         return result
-    if not _is_solana_public_key(mint_address):
-        result["warnings"].append("The configured production mint is not a valid Solana public-key format.")
+    if not valid_solana_address(mint_address):
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified because its address format is invalid.")
         return result
 
     try:
-        genesis_hash = _solana_rpc_result("getGenesisHash", [])
-        if genesis_hash != SOLANA_MAINNET_GENESIS_HASH:
-            result["warnings"].append("Mint verification was blocked because the configured RPC did not identify as Solana Mainnet.")
-            return result
-
-        account_response = _solana_rpc_result(
+        require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        account_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
             "getAccountInfo",
             [mint_address, {"encoding": "jsonParsed", "commitment": "finalized"}],
         )
         account = account_response.get("value") if isinstance(account_response, dict) else None
         if not isinstance(account, dict):
-            result["warnings"].append("The configured production mint account was not found on Solana Mainnet.")
-            return result
-        parsed_data = account.get("data", {}).get("parsed", {}) if isinstance(account.get("data"), dict) else {}
-        mint_info = parsed_data.get("info", {}) if isinstance(parsed_data, dict) else {}
-        valid_spl_mint = (
-            account.get("owner") == SOLANA_SPL_TOKEN_PROGRAM_ID
-            and parsed_data.get("type") == "mint"
-            and isinstance(mint_info, dict)
-        )
-        if not valid_spl_mint:
-            result["warnings"].append("The configured production address is not a parsed SPL Token mint account.")
+            result["warnings"].append("Production BALMZ-SOL mint could not be verified because the account was not found on Solana Mainnet.")
             return result
 
-        decimals = mint_info.get("decimals")
-        result["mint_authority_revoked"] = mint_info.get("mintAuthority") is None
-        result["freeze_authority_revoked"] = mint_info.get("freezeAuthority") is None
-        supply_response = _solana_rpc_result(
+        data = account.get("data", {})
+        parsed = data.get("parsed", {}) if isinstance(data, dict) else {}
+        info = parsed.get("info", {}) if isinstance(parsed, dict) else {}
+        valid_spl_mint = (
+            account.get("owner") == SOLANA_SPL_TOKEN_PROGRAM_ID
+            and isinstance(parsed, dict)
+            and parsed.get("type") == "mint"
+            and isinstance(info, dict)
+            and info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS
+        )
+        if not valid_spl_mint:
+            result["warnings"].append("Production BALMZ-SOL mint could not be verified as a 9-decimal SPL Token mint on Solana Mainnet.")
+            return result
+
+        # This boolean confirms the address, program, and network. Supply and authorities
+        # remain separate readiness checks so the UI can explain exactly what still fails.
+        result["production_mint_verified"] = True
+        result["mint_authority_revoked"] = info.get("mintAuthority") is None
+        result["freeze_authority_revoked"] = info.get("freezeAuthority") is None
+
+        supply_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
             "getTokenSupply",
             [mint_address, {"commitment": "finalized"}],
         )
         supply_info = supply_response.get("value", {}) if isinstance(supply_response, dict) else {}
-        expected_raw_supply = str(BALMZ_TARGET_SUPPLY * (10 ** BALMZ_SOLANA_DEVNET_DECIMALS))
-        result["supply_matches_target"] = (
-            decimals == BALMZ_SOLANA_DEVNET_DECIMALS
-            and supply_info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS
-            and str(supply_info.get("amount", "")) == expected_raw_supply
-        )
+        raw_amount = supply_info.get("amount")
+        if isinstance(raw_amount, str) and raw_amount.isdigit() and supply_info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS:
+            observed = Decimal(raw_amount) / (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
+            result["observed_supply"] = int(observed) if observed == observed.to_integral_value() else float(observed)
+            result["supply_matches_target"] = raw_amount == str(BALMZ_TARGET_SUPPLY * (10 ** BALMZ_SOLANA_DEVNET_DECIMALS))
 
         if not result["supply_matches_target"]:
-            result["warnings"].append("Production mint supply does not match the 1,000,000,000-token target at 9 decimals.")
+            result["warnings"].append("Observed Mainnet token supply does not match the 1,000,000,000-token target.")
         if not result["mint_authority_revoked"]:
-            result["warnings"].append("Production mint authority remains active; the fixed-supply check is not satisfied.")
+            result["warnings"].append("The production mint authority is still enabled; fixed supply is not enforced.")
         if not result["freeze_authority_revoked"]:
-            result["warnings"].append("Production freeze authority remains active; review this control before launch.")
-
-        result["verified"] = (
-            result["supply_matches_target"]
-            and result["mint_authority_revoked"]
-            and result["freeze_authority_revoked"]
-        )
+            result["warnings"].append("The production freeze authority is still enabled; review this control before launch.")
     except Exception as exc:
         logger.warning("BALMZ Mainnet mint verification unavailable: error_type=%s", type(exc).__name__)
-        result["warnings"].append("The production mint could not be verified from the configured Solana Mainnet RPC.")
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified on Solana Mainnet.")
     return result
 
 
 @app.get("/api/v1/balmz/presale/status")
 def balmz_presale_status(user: dict = Depends(current_user)):
-    """Report launch readiness truthfully; this endpoint does not accept or settle payments."""
-    configured_mint = BALMZ_SOLANA_MAINNET_MINT or None
-    recipient_is_valid = _is_solana_public_key(BALMZ_PRESALE_RECEIVING_ADDRESS)
-    mint_check = _verify_balmz_solana_mainnet_mint(configured_mint)
+    """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
+    configured_mint = BALMZ_SOLANA_MAINNET_MINT if valid_solana_address(BALMZ_SOLANA_MAINNET_MINT) else None
+    recipient_is_valid = valid_solana_address(BALMZ_PRESALE_RECEIVING_ADDRESS)
+    mint_status = _verify_balmz_solana_mainnet_mint(configured_mint)
     readiness = {
-        "production_mint_verified": mint_check["verified"],
-        "supply_matches_target": mint_check["supply_matches_target"],
-        "mint_authority_revoked": mint_check["mint_authority_revoked"],
-        "freeze_authority_revoked": mint_check["freeze_authority_revoked"],
+        "production_mint_verified": mint_status["production_mint_verified"],
+        "supply_matches_target": mint_status["supply_matches_target"],
+        "mint_authority_revoked": mint_status["mint_authority_revoked"],
+        "freeze_authority_revoked": mint_status["freeze_authority_revoked"],
         "receiving_address_configured": recipient_is_valid,
-        # Deliberately false: no authenticated, idempotent presale settlement endpoint exists yet.
+        # Intentionally false: an authenticated, replay-protected settlement endpoint is not implemented.
         "payment_verification_implemented": False,
-        # Neither a launch-liquidity program nor a confirmed liquidity arrangement is configured.
+        # A token price target alone is not a liquidity or market-making mechanism.
         "liquidity_mechanism_configured": False,
-        # CI result is not inferred from runtime configuration.
+        # CI status is not inferred from runtime settings.
         "regression_suite_verified": False,
     }
-    warnings = list(mint_check["warnings"])
-    if BALMZ_PRESALE_RECEIVING_ADDRESS and not recipient_is_valid:
-        warnings.append("The configured presale destination is not a valid Solana public-key format.")
-    elif not BALMZ_PRESALE_RECEIVING_ADDRESS:
+    warnings = list(mint_status["warnings"])
+    if not BALMZ_PRESALE_RECEIVING_ADDRESS:
         warnings.append("No presale receiving address is configured.")
+    elif not recipient_is_valid:
+        warnings.append("The configured presale receiving address has an invalid Solana public-key format.")
     else:
-        warnings.append("Destination format is valid, but wallet ownership/control has not been verified.")
+        warnings.append("The receiving address format is valid, but wallet control has not been independently verified.")
     warnings.extend([
-        "Payment acceptance remains disabled because verified, replay-protected settlement is not implemented.",
-        "The 1 SOL launch target requires a separately defined and disclosed liquidity/pricing mechanism.",
-        "Production readiness and regression tests must be reviewed before opening the presale.",
+        "Presale payment acceptance remains disabled; confirmed, replay-protected settlement is not implemented.",
+        "The launch target of 1 BALMZ-SOL = 1 SOL is not a guaranteed market price and needs a disclosed liquidity mechanism.",
+        "Complete production readiness checks and regression tests before opening the presale.",
     ])
     return {
         "token": "BALMZ-SOL",
@@ -2225,23 +2184,25 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "presale_price_unit": "USD per token",
         "target_supply": BALMZ_TARGET_SUPPLY,
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
-        "launch_target": {"amount": 1, "asset": "SOL", "meaning": "target only; not a guaranteed market price"},
+        "launch_target": "1 BALMZ-SOL = 1 SOL",
+        "launch_price_guaranteed": False,
         "payment_acceptance_enabled": False,
         "production_network": "solana_mainnet",
-        "production_mint": configured_mint if _is_solana_public_key(configured_mint) else None,
+        "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
         "devnet_mint_is_test_only": True,
         "recipient_address_configured": recipient_is_valid,
         "presale_receiving_address": BALMZ_PRESALE_RECEIVING_ADDRESS if recipient_is_valid else None,
+        "observed_supply": mint_status["observed_supply"],
         "readiness": readiness,
         "warnings": list(dict.fromkeys(warnings)),
         "transaction_scope": {
             "presale_payments": "disabled until production mint, receiving address, and replay-protected payment verification are verified",
-            "mainnet_transactions": "must be verified at finalized commitment on the Solana Mainnet genesis hash",
+            "mainnet_transactions": "must be confirmed at finalized commitment on the Solana Mainnet genesis hash",
             "devnet_transactions": "testing evidence only; excluded from production balances, presale settlement, and reserves",
             "proof_of_reserves": "must use independently verified production on-chain balances; transaction history is not proof of reserves",
         },
-        "notice": "Planning only. Do not send funds. BALMZ-SOL presale payments are disabled; this endpoint reports readiness but never accepts, moves, or settles funds.",
+        "notice": "Planning only. Do not send funds. Presale payments are disabled; this endpoint only reports readiness and never accepts, moves, or settles funds.",
     }
 
 
