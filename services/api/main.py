@@ -68,7 +68,7 @@ BALMZ_SOLANA_DEVNET_DECIMALS = 9
 
 def normalize_wallet_network(value: str) -> str:
     """Normalize explicit chain names without guessing which network 'mainnet' means."""
-    network = re.sub(r"[\\s-]+", "_", str(value or "").strip().lower())
+    network = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
     aliases = {
         "solana": "solana_mainnet",
         "solana_mainnet_beta": "solana_mainnet",
