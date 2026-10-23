@@ -157,19 +157,27 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
     def test_devnet_refresh_does_not_clear_the_production_sol_balance(self):
         connection = FakeConnection()
         user = {"id": "test-user", "wallet_id": "test-wallet"}
+        def wallet_address(_user, network):
+            return OWNER if network in {"solana_mainnet", "solana_devnet"} else None
+
+        def fake_rpc(url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH if url == main.SOLANA_MAINNET_RPC_URL else main.SOLANA_DEVNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 4_000_000_000 if url == main.SOLANA_MAINNET_RPC_URL else 1_000_000_000}
+            raise AssertionError(f"Unexpected RPC call: {url} {method}")
+
         with (
-            patch.object(main, "wallet_network_address",
-                         side_effect=lambda u, n: OWNER if n == "solana_devnet" else None),
+            patch.object(main, "wallet_network_address", side_effect=wallet_address),
             patch.object(main, "db", return_value=FakeDB(connection)),
-            patch.object(main, "rpc_call", side_effect=lambda _url, method, _params:
-                          main.SOLANA_DEVNET_GENESIS_HASH if method == "getGenesisHash" else {"value": 1000000000}),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
             patch.object(main, "solana_spl_token_balance", return_value=0.0),
             patch.object(main, "sync_bitcoin_transactions", return_value=[]),
             patch.object(main, "wallet_snapshot",
                          return_value=([], [], {"available_balance_usd": 0})),
             patch.object(main, "_network_sync_status", return_value={}),
         ):
-            main.sync_wallet(user)
+            result = main.sync_wallet(user)
 
         devnet_writes = [
             (query, params) for query, params in connection.queries
@@ -178,6 +186,12 @@ class SolanaDevnetBalanceTests(unittest.TestCase):
         ]
         self.assertEqual(len(devnet_writes), 1)
         self.assertEqual(devnet_writes[0][1][3], 1.0)
+        mainnet_updates = [
+            update for update in result["updates"]
+            if update.get("network") == "solana_mainnet" and update.get("asset") == "SOL"
+        ]
+        self.assertEqual(len(mainnet_updates), 1)
+        self.assertEqual(mainnet_updates[0]["balance"], 4.0)
         self.assertFalse(any(
             "UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'" in query
             for query, _params in connection.queries
