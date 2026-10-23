@@ -404,6 +404,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [presaleStatus, setPresaleStatus] = useState(null);
   const [presaleStatusError, setPresaleStatusError] = useState("");
+  const [presaleStatusLoading, setPresaleStatusLoading] = useState(false);
+  const [presaleStatusCheckedAt, setPresaleStatusCheckedAt] = useState("");
+  const [presaleRefreshNonce, setPresaleRefreshNonce] = useState(0);
   const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -461,15 +464,24 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   useEffect(() => {
     if (active !== "BALMZ Presale" || !accessToken) return;
     let cancelled = false;
-    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { headers: { Authorization: "Bearer " + accessToken } })
+    setPresaleStatusLoading(true);
+    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", {
+      cache: "no-store",
+      headers: { Authorization: "Bearer " + accessToken, "Cache-Control": "no-cache" },
+    })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Could not load BALMZ presale status.");
-        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); }
+        if (!cancelled) {
+          setPresaleStatus(data);
+          setPresaleStatusError("");
+          setPresaleStatusCheckedAt(new Date().toISOString());
+        }
       })
-      .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
+      .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); })
+      .finally(() => { if (!cancelled) setPresaleStatusLoading(false); });
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, presaleRefreshNonce]);
 
   useEffect(() => {
     if (active !== "API Keys" || !accessToken) return;
@@ -1036,8 +1048,12 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     const readinessLabel = ready => ready ? "Verified" : "Pending";
     return <section className="content feature-content balmz-presale-page">
       <div className="page-heading">
-        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Exchange-style presale overview · production controls are still being verified.</p></div>
-        <span className="presale-status-pill"><i /> Planning · not live</span>
+        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Exchange-inspired presale overview · production controls are still being verified.</p></div>
+        <div className="presale-heading-actions">
+          <button type="button" className="secondary presale-refresh-button" onClick={() => setPresaleRefreshNonce(value => value + 1)} disabled={presaleStatusLoading || !accessToken}>{presaleStatusLoading ? "Checking Mainnet…" : "↻ Refresh readiness"}</button>
+          <span className="presale-status-pill"><i /> Planning · not live</span>
+          {presaleStatusCheckedAt && <small className="presale-last-checked">Last checked {new Date(presaleStatusCheckedAt).toLocaleTimeString()}</small>}
+        </div>
       </div>
 
       <article className="panel presale-hero">
@@ -1076,7 +1092,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <article className="panel presale-metric presale-treasury-metric">
           <span className="feature-kicker">MAINNET TREASURY BALANCE</span>
           <strong>{receiverBalanceLabel}</strong>
-          <small>{presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? "Account exists on Solana Mainnet." : "Configured address was not found on Mainnet.") : "Not verified against Solana Mainnet yet."}</small>
+          <small>{presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? (presaleStatus?.readiness?.receiving_address_has_positive_sol_balance ? "Account exists on Solana Mainnet with a positive SOL balance." : "Account exists, but has no positive SOL balance.") : "No on-chain account was found for this address.") : "Not verified against Solana Mainnet yet."}</small>
           {presaleStatus?.presale_receiving_address ? <div className="presale-treasury-actions">
             <code>{presaleStatus.presale_receiving_address.slice(0, 8)}…{presaleStatus.presale_receiving_address.slice(-6)}</code>
             <button type="button" className="text-btn" onClick={async () => { try { await navigator.clipboard.writeText(presaleStatus.presale_receiving_address); setMessage("Mainnet treasury address copied."); } catch { setMessage("Clipboard unavailable. Select the treasury address in Network and transaction scope to copy it manually."); } }}>Copy address</button>
