@@ -30,3 +30,16 @@ export function cachedBalanceMatchesNetwork(cachedBalance, selectedNetwork) {
   if (!Number.isFinite(balance) || balance < 0) return false;
   return normalizeNetworkId(cachedBalance.network) === normalizeNetworkId(selectedNetwork);
 }
+
+// Testnets must remain visibly separate from production records. Prefer the
+// explicit chain identifier, but also recognize network-qualified BALMZ assets
+// so a missing or stale row network cannot accidentally mark test tokens as
+// production evidence.
+const TESTNET_NETWORKS = new Set(["sepolia", "solana_devnet"]);
+const TESTNET_ASSETS = new Set(["BALMZ-SEP", "BALMZ-SOL-DEVNET"]);
+
+export function isTestnetNetwork(networkValue, assetValue) {
+  const network = normalizeNetworkId(networkValue);
+  const asset = String(assetValue || "").trim().toUpperCase();
+  return TESTNET_NETWORKS.has(network) || TESTNET_ASSETS.has(asset);
+}
