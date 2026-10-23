@@ -337,7 +337,9 @@ function App() {
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
     try {
       const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
-      return cached && typeof cached.balance === "number" && cached.balance >= 0 ? cached : null;
+      const savedNetwork = String(localStorage.getItem("world_wallet_selected_network_v1") || "ethereum").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+      const cachedNetwork = String(cached?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+      return cached && typeof cached.balance === "number" && cached.balance >= 0 && cachedNetwork === savedNetwork ? cached : null;
     } catch { return null; }
   });
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
