@@ -106,6 +106,52 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "did not return a chain ID"):
                 main.require_sepolia_rpc("https://rpc.example")
 
+    def test_normalize_wallet_network_never_aliases_solana_to_devnet_or_generic_mainnet_to_ethereum(self):
+        self.assertEqual(main.normalize_wallet_network("solana"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("solana-mainnet"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("mainnet-beta"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("solana-devnet"), "solana_devnet")
+        self.assertEqual(main.normalize_wallet_network("mainnet"), "mainnet")
+        self.assertEqual(main.normalize_wallet_network("Ethereum Mainnet"), "ethereum")
+
+    def test_solana_rpc_cluster_guard_rejects_devnet_for_production(self):
+        with patch.object(main, "rpc_call", return_value=main.SOLANA_MAINNET_GENESIS_HASH):
+            main.require_solana_rpc_cluster(
+                "https://rpc.example", main.SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+            )
+        with patch.object(main, "rpc_call", return_value=main.SOLANA_DEVNET_GENESIS_HASH):
+            with self.assertRaisesRegex(ValueError, "unexpected Solana cluster genesis hash"):
+                main.require_solana_rpc_cluster(
+                    "https://rpc.example", main.SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+                )
+
+    def test_solana_mainnet_reserves_use_mainnet_rpc_and_are_not_testnet_evidence(self):
+        address = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+
+        def fake_rpc(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 2_000_000_000}
+            if method == "getSlot":
+                return 987654
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "solana_mainnet", "address": address, "label": "mainnet wallet"},
+            ]),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+        ):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["reserves"][0]["network"], "solana_mainnet")
+        self.assertEqual(result["reserves"][0]["asset"], "SOL")
+        self.assertEqual(result["reserves"][0]["balance"], 2.0)
+        self.assertEqual(result["reserves"][0]["block_number"], 987654)
+        self.assertEqual(result["testnet_assets"], [])
+        self.assertEqual(result["token_supplies"], [])
+
     def test_sepolia_token_sync_skips_logs_on_wrong_chain(self):
         wallet = "0x" + "1" * 40
         contract = "0x" + "2" * 40
@@ -488,6 +534,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         mint = main.BALMZ_SOLANA_DEVNET_MINT
 
         def fake_rpc(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_DEVNET_GENESIS_HASH
             if method == "getBalance":
                 return {"value": 5_000_000_000}
             if method == "getTokenSupply":
