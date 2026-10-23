@@ -424,6 +424,16 @@ def init_db():
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,source)
         );
+        CREATE TABLE IF NOT EXISTS solana_devnet_deposits(
+          tx_signature TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          destination_address TEXT NOT NULL,
+          amount NUMERIC(36,18) NOT NULL,
+          slot BIGINT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS solana_devnet_deposits_wallet_created_idx
+          ON solana_devnet_deposits(wallet_id,created_at DESC);
         """)
         if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
             conn.execute(
@@ -3189,6 +3199,9 @@ class TransactionSettleRequest(BaseModel):
     transaction_id: str = Field(min_length=4,max_length=80)
     tx_hash: str = Field(min_length=8,max_length=128)
 
+class SolanaDevnetDepositRequest(BaseModel):
+    tx_signature: str = Field(min_length=64, max_length=100)
+
 EVM_TX_HASH_RE = __import__("re").compile(r"^0x[0-9a-fA-F]{64}$")
 BTC_TX_HASH_RE = __import__("re").compile(r"^[0-9a-fA-F]{64}$")
 ERC20_TRANSFER_TOPIC = "0x" + _keccak_hex("Transfer(address,address,uint256)")
@@ -3488,6 +3501,273 @@ def verify_solana_devnet_settlement(
     raise ValueError(
         "Confirmed transaction does not contain the exact BALMZ Devnet transfer"
     )
+
+
+def verify_solana_devnet_deposit(tx_signature: str, destination_wallet: str):
+    """Verify a finalized incoming BALMZ Devnet transfer; never treats test tokens as Mainnet value."""
+    import re
+
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,100}", tx_signature):
+        raise ValueError("Invalid Solana transaction signature")
+    if not valid_solana_address(destination_wallet):
+        raise ValueError("Invalid Solana Devnet receiving wallet address")
+
+    result = rpc_call(
+        SOLANA_DEVNET_RPC_URL, "getTransaction",
+        [tx_signature, {
+            "encoding": "jsonParsed",
+            "commitment": "finalized",
+            "maxSupportedTransactionVersion": 0,
+        }],
+    )
+    if result is None:
+        statuses = rpc_call(
+            SOLANA_DEVNET_RPC_URL, "getSignatureStatuses",
+            [[tx_signature], {"searchTransactionHistory": True}],
+        )
+        if not isinstance(statuses, dict) or not isinstance(statuses.get("value"), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana signature-status response")
+        values = statuses["value"]
+        if len(values) != 1:
+            raise HTTPException(status_code=503, detail="Unexpected Solana signature-status response length")
+        status = values[0]
+        if status is None:
+            return {"state": "not_found", "confirmations": 0, "slot": None}
+        if not isinstance(status, dict) or "err" not in status:
+            raise HTTPException(status_code=503, detail="Malformed Solana signature status")
+        if status["err"] is not None:
+            raise ValueError("Solana deposit transaction failed on-chain")
+        # A signature status alone cannot establish the mint, recipient owner, or exact amount.
+        return {"state": "pending", "confirmations": 0, "slot": None}
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction response")
+    meta = result.get("meta")
+    transaction = result.get("transaction")
+    if not isinstance(meta, dict) or not isinstance(transaction, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction metadata")
+    if meta.get("err") is not None:
+        raise ValueError("Solana deposit transaction failed on-chain")
+
+    message = transaction.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction message")
+    keys = message.get("accountKeys") or []
+    post_balances = meta.get("postTokenBalances") or []
+    pre_balances = meta.get("preTokenBalances") or []
+    outer_instructions = message.get("instructions") or []
+    inner_groups = meta.get("innerInstructions") or []
+    if not all(isinstance(items, list) for items in (keys, post_balances, pre_balances, outer_instructions, inner_groups)):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction instruction or balance lists")
+    if not all(isinstance(item, dict) for item in (*post_balances, *pre_balances)):
+        raise HTTPException(status_code=503, detail="Malformed Solana token balance entry")
+
+    key_names = [
+        item.get("pubkey") if isinstance(item, dict) else item
+        for item in keys
+    ]
+    if not all(isinstance(key, str) and key for key in key_names):
+        raise HTTPException(status_code=503, detail="Malformed Solana account keys")
+
+    instructions = list(outer_instructions)
+    for inner in inner_groups:
+        if not isinstance(inner, dict) or not isinstance(inner.get("instructions", []), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana inner instruction group")
+        instructions.extend(inner.get("instructions") or [])
+    if not all(isinstance(item, dict) for item in instructions):
+        raise HTTPException(status_code=503, detail="Malformed Solana instruction")
+
+    received_raw = 0
+    matching_transfer_count = 0
+    for instruction in instructions:
+        parsed = instruction.get("parsed")
+        if parsed is None:
+            continue
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
+        if parsed.get("type") != "transferChecked" or instruction.get("program") not in {"spl-token", "spl-token-2022"}:
+            continue
+        info = parsed.get("info")
+        if not isinstance(info, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token transfer instruction")
+        if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
+            continue
+
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer amount")
+        raw_amount = token_amount.get("amount")
+        try:
+            decimals = int(token_amount.get("decimals"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer decimals") from exc
+        if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            raise HTTPException(status_code=503, detail="Malformed Solana raw transfer amount")
+        if decimals != BALMZ_SOLANA_DEVNET_DECIMALS:
+            raise ValueError("BALMZ Devnet deposit has unexpected token decimals")
+        raw_int = int(raw_amount)
+        if raw_int <= 0:
+            raise ValueError("BALMZ Devnet deposit amount must be greater than zero")
+
+        destination_token_account = info.get("destination")
+        source_token_account = info.get("source")
+        if not isinstance(destination_token_account, str):
+            continue
+        try:
+            destination_index = key_names.index(destination_token_account)
+        except ValueError:
+            continue
+
+        owner_rows = [
+            item for item in post_balances
+            if item.get("accountIndex") == destination_index
+            and item.get("owner") == destination_wallet
+            and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+        ]
+        if not owner_rows:
+            continue
+
+        # Do not count a wallet sending tokens to itself as an incoming deposit.
+        if isinstance(source_token_account, str):
+            try:
+                source_index = key_names.index(source_token_account)
+            except ValueError:
+                source_index = None
+            if source_index is not None and any(
+                item.get("accountIndex") == source_index
+                and item.get("owner") == destination_wallet
+                and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+                for item in (*pre_balances, *post_balances)
+            ):
+                continue
+
+        matching_transfer_count += 1
+        received_raw += raw_int
+
+    if matching_transfer_count == 0 or received_raw <= 0:
+        raise ValueError("Transaction does not contain an incoming BALMZ Devnet deposit to this wallet")
+
+    return {
+        "state": "confirmed",
+        "amount": Decimal(received_raw) / (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS),
+        "confirmations": 1,
+        "finality": "finalized",
+        "slot": result.get("slot") if isinstance(result.get("slot"), int) else None,
+    }
+
+
+@app.post("/api/v1/deposits/solana-devnet/verify")
+def verify_solana_devnet_deposit_request(
+    request: SolanaDevnetDepositRequest,
+    user: dict = Depends(current_user),
+):
+    """Record a genuine finalized Devnet deposit for testing; it is not Mainnet funding."""
+    tx_signature = request.tx_signature.strip()
+    destination_wallet = wallet_network_address(user, "solana_devnet")
+    if not destination_wallet:
+        raise HTTPException(
+            status_code=409,
+            detail="Connect a Solana Devnet receiving address to this wallet before verifying deposits",
+        )
+
+    try:
+        verification = verify_solana_devnet_deposit(tx_signature, destination_wallet)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if verification["state"] == "not_found":
+        raise HTTPException(status_code=404, detail="Solana Devnet deposit transaction was not found")
+    if verification["state"] == "pending":
+        return {
+            "status": "pending",
+            "recorded": False,
+            "network": "solana-devnet",
+            "asset": "BALMZ-SOL-DEVNET",
+            "message": "Waiting for finalized transaction details; no deposit has been recorded.",
+        }
+
+    amount = Decimal(verification["amount"])
+    slot = verification.get("slot")
+    try:
+        live_balance = solana_spl_token_balance(destination_wallet)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not refresh the live BALMZ Devnet balance") from exc
+
+    with db() as conn:
+        inserted = conn.execute(
+            """INSERT INTO solana_devnet_deposits(tx_signature,wallet_id,destination_address,amount,slot)
+               VALUES(%s,%s,%s,%s,%s)
+               ON CONFLICT(tx_signature) DO NOTHING
+               RETURNING tx_signature""",
+            (tx_signature, user["wallet_id"], destination_wallet, amount, slot),
+        ).fetchone()
+
+        if not inserted:
+            existing = conn.execute(
+                "SELECT wallet_id,amount FROM solana_devnet_deposits WHERE tx_signature=%s",
+                (tx_signature,),
+            ).fetchone()
+            if not existing:
+                raise HTTPException(status_code=503, detail="Could not confirm the existing Devnet deposit record")
+            if existing[0] != user["wallet_id"]:
+                raise HTTPException(status_code=409, detail="This transaction signature has already been claimed by another wallet")
+            amount = Decimal(existing[1])
+            conn.execute(
+                """INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)
+                   VALUES(%s,'BALMZ-SOL-DEVNET','BALMZ Token (Solana Devnet)',%s,0)
+                   ON CONFLICT(wallet_id,symbol) DO UPDATE
+                   SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
+                (user["wallet_id"], live_balance),
+            )
+            conn.commit()
+            return {
+                "status": "confirmed",
+                "recorded": True,
+                "replayed": True,
+                "network": "solana-devnet",
+                "asset": "BALMZ-SOL-DEVNET",
+                "amount": str(amount),
+                "balance": live_balance,
+                "tx_signature": tx_signature,
+                "slot": slot,
+                "finality": "finalized",
+                "mainnet_funding": False,
+            }
+
+        conn.execute(
+            """INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)
+               VALUES(%s,'BALMZ-SOL-DEVNET','BALMZ Token (Solana Devnet)',%s,0)
+               ON CONFLICT(wallet_id,symbol) DO UPDATE
+               SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
+            (user["wallet_id"], live_balance),
+        )
+        deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
+        conn.execute(
+            """INSERT INTO transactions(
+                 id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height
+               ) VALUES(%s,%s,'received','BALMZ-SOL-DEVNET','BALMZ Devnet deposit',%s,'confirmed',%s,
+                        'solana-devnet',%s,1,%s)""",
+            (
+                deposit_id, user["wallet_id"], amount, destination_wallet, tx_signature,
+                slot if isinstance(slot, int) and slot <= 2147483647 else None,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "status": "confirmed",
+        "recorded": True,
+        "replayed": False,
+        "network": "solana-devnet",
+        "asset": "BALMZ-SOL-DEVNET",
+        "amount": str(amount),
+        "balance": live_balance,
+        "tx_signature": tx_signature,
+        "slot": slot,
+        "finality": "finalized",
+        "mainnet_funding": False,
+        "broadcast": False,
+    }
 
 
 def reconcile_settled_asset(conn, user, symbol, network):
