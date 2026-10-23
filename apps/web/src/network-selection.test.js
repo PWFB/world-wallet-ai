@@ -12,10 +12,20 @@ test("keeps Solana Devnet selected after browser reload", () => {
   assert.equal(readSelectedNetwork(persisted), "solana_devnet");
 });
 
-test("normalizes legacy Devnet labels without matching letter fragments", () => {
+test("normalizes explicit Devnet labels without matching letter fragments", () => {
   assert.equal(normalizeNetworkId("Solana Devnet"), "solana_devnet");
   assert.equal(normalizeNetworkId("solana-devnet"), "solana_devnet");
   assert.equal(normalizeNetworkId("devnet"), "solana_devnet");
+});
+
+test("keeps Solana Mainnet distinct from Solana Devnet", () => {
+  assert.equal(normalizeNetworkId("Solana"), "solana_mainnet");
+  assert.equal(normalizeNetworkId("solana-mainnet"), "solana_mainnet");
+  assert.equal(normalizeNetworkId("mainnet-beta"), "solana_mainnet");
+  assert.equal(normalizeNetworkId("solana-devnet"), "solana_devnet");
+  assert.equal(readSelectedNetwork("solana"), "solana_mainnet");
+  assert.equal(readSelectedNetwork("solana_devnet"), "solana_devnet");
+  assert.notEqual(normalizeNetworkId("solana"), normalizeNetworkId("solana_devnet"));
 });
 
 test("does not infer a chain from the ambiguous generic mainnet label", () => {
@@ -37,7 +47,7 @@ test("keeps Sepolia and production Ethereum balances isolated", () => {
 });
 
 test("restores each supported canonical network without changing its identity", () => {
-  for (const network of ["ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"]) {
+  for (const network of ["ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet"]) {
     assert.equal(readSelectedNetwork(network), network);
   }
 });
@@ -72,4 +82,19 @@ test("does not misclassify production BALMZ as testnet evidence", () => {
   assert.equal(isTestnetNetwork("ethereum", "BALMZ"), false);
   assert.equal(isTestnetNetwork("bnb", "USDT-BNB"), false);
   assert.equal(isTestnetNetwork("bitcoin", "BTC"), false);
+});
+
+test("keeps cached Solana Mainnet balances separate from Devnet balances", () => {
+  const mainnet = { network: "solana_mainnet", balance: 8.25 };
+  const devnet = { network: "solana_devnet", balance: 100 };
+  assert.equal(cachedBalanceMatchesNetwork(mainnet, "solana_mainnet"), true);
+  assert.equal(cachedBalanceMatchesNetwork({ network: "solana", balance: 8.25 }, "solana_mainnet"), true);
+  assert.equal(cachedBalanceMatchesNetwork(mainnet, "solana_devnet"), false);
+  assert.equal(cachedBalanceMatchesNetwork(devnet, "solana_mainnet"), false);
+});
+
+test("Solana Mainnet is production while Devnet remains test-only", () => {
+  assert.equal(isTestnetNetwork("solana", "SOL"), false);
+  assert.equal(isTestnetNetwork("solana_mainnet", "BALMZ"), false);
+  assert.equal(isTestnetNetwork("solana_devnet", "BALMZ-SOL-DEVNET"), true);
 });
