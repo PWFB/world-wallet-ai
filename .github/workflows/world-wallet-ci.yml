@@ -44,5 +44,7 @@ jobs:
           cache-dependency-path: apps/web/package.json
       - name: Install dependencies
         run: npm install
+      - name: Run network selection regression tests
+        run: npm run test:network-selection
       - name: Build World Wallet web app
         run: npm run build

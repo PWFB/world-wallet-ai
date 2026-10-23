@@ -3,6 +3,7 @@ import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
+import { cachedBalanceMatchesNetwork, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
@@ -327,8 +328,7 @@ function App() {
   const [dashboardAddressMessage, setDashboardAddressMessage] = useState("");
   const [selectedNetwork, setSelectedNetwork] = useState(() => {
     try {
-      const saved = String(localStorage.getItem("world_wallet_selected_network_v1") || "").trim().toLowerCase();
-      return ["ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"].includes(saved) ? saved : "ethereum";
+      return readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
     } catch { return "ethereum"; }
   });
   const balanceRequestInFlight = useRef(false);
@@ -337,9 +337,8 @@ function App() {
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
     try {
       const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
-      const savedNetwork = String(localStorage.getItem("world_wallet_selected_network_v1") || "ethereum").trim().toLowerCase().replace(/[\\s-]+/g, "_");
-      const cachedNetwork = String(cached?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
-      return cached && typeof cached.balance === "number" && cached.balance >= 0 && cachedNetwork === savedNetwork ? cached : null;
+      const savedNetwork = readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
+      return cachedBalanceMatchesNetwork(cached, savedNetwork) ? cached : null;
     } catch { return null; }
   });
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
@@ -802,11 +801,9 @@ function App() {
     const address = String(externalWalletConnection?.address || "").trim();
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return;
     setDashboardAddress(address);
-    const rawChainId = externalWalletConnection?.chainId;
-    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
-      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
-    const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    if (network) setSelectedNetwork(network);
+    // A restored EVM connection is address metadata, not permission to change
+    // the user's saved network. In particular, it must not replace Solana
+    // Devnet with Ethereum Mainnet after a reload or pull-to-refresh.
   }, [externalWalletConnection]);
 
   async function refreshSelectedNetworkBalance(forceAddressRefresh = false) {
@@ -819,14 +816,7 @@ function App() {
     setSelectedNetworkBalanceBusy(true);
     setSelectedNetworkBalanceMessage("");
     let token = accessToken;
-    const normalizeNetwork = value => {
-      const network = String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-      if (["solana", "devnet", "solana_devnet"].includes(network)) return "solana_devnet";
-      if (["ethereum", "eth", "mainnet", "ethereum_mainnet"].includes(network)) return "ethereum";
-      if (["sepolia", "ethereum_sepolia"].includes(network)) return "sepolia";
-      if (["bnb", "bsc", "binance_smart_chain"].includes(network)) return "bnb";
-      return network;
-    };
+    const normalizeNetwork = normalizeNetworkId;
     const authorizedFetch = async (url, options = {}) => {
       const makeRequest = currentToken => fetch(url, {
         ...options,
