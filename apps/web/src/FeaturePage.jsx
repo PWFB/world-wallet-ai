@@ -790,10 +790,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
     .filter((item, index, all) => item?.symbol && all.findIndex(other => other?.symbol === item.symbol) === index);
+  const normalizeHistoryNetwork = value => String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
   const selectedIncomingHistory = historyTransactions.filter(item =>
     String(item.type || "").toLowerCase() === "received" &&
     String(item.asset || item.symbol || "").toUpperCase() === String(asset || "").toUpperCase() &&
-    (receiveNetwork === "all" || String(item.network || "").toLowerCase() === String(receiveNetwork).toLowerCase())
+    (receiveNetwork === "all" || normalizeHistoryNetwork(item.network) === normalizeHistoryNetwork(receiveNetwork))
   );
   const renderIncomingHistoryPanel = (title, emptyMessage) => (
     <article className="panel transaction-panel wallet-inline-history">
