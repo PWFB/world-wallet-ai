@@ -1033,7 +1033,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     const budgetUsd = Number(presaleBudgetUsd);
     const validBudget = Number.isFinite(budgetUsd) && budgetUsd >= presalePriceUsd;
     const estimatedTokenCount = validBudget ? budgetUsd / presalePriceUsd : null;
+    // Show a live SOL equivalent only as a non-binding estimate; it is not a locked payment quote.
+    const estimatedSolAmount = hasSolQuote && validBudget ? budgetUsd / solUsd : null;
     const formatTokenCount = value => value === null ? "—" : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    const formatSolAmount = value => value === null ? "Unavailable" : value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 6 }) + " SOL";
     const readinessState = ready => ready ? "verified" : "pending";
     const readinessLabel = ready => ready ? "Verified" : "Pending";
     return <section className="content feature-content balmz-presale-page">
@@ -1064,9 +1067,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             <div className="presale-estimate-input"><span>$</span><input id="presale-budget-usd" type="number" min={presalePriceUsd} step="1" inputMode="decimal" value={presaleBudgetUsd} onChange={event => setPresaleBudgetUsd(event.target.value)} aria-describedby="presale-estimate-note" /></div>
           </label>
           <div className="presale-estimate-result"><span>Estimated token amount</span><strong>{formatTokenCount(estimatedTokenCount)}</strong></div>
+          <div className="presale-estimate-result presale-estimate-sol-result"><span>Indicative SOL equivalent</span><strong>{formatSolAmount(estimatedSolAmount)}</strong></div>
           {!validBudget && <p className="presale-estimate-validation" role="status">Enter at least $7 to view a non-binding estimate.</p>}
+          {!hasSolQuote && <p className="presale-estimate-validation" role="status">SOL equivalent is unavailable until a verified SOL/USD market quote is returned.</p>}
           <button className="primary presale-disabled-cta" type="button" disabled aria-disabled="true">Presale not open</button>
-          <p className="presale-order-note" id="presale-estimate-note">Estimate only. No wallet is connected, no transaction is created, and payment acceptance is disabled.</p>
+          <p className="presale-order-note" id="presale-estimate-note">Planning estimate only. The SOL equivalent can change with the market and excludes network fees or slippage. No wallet is connected, no transaction is created, and payment acceptance remains disabled.</p>
         </aside>
       </article>
 
