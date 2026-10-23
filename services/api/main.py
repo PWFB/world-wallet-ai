@@ -2192,6 +2192,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
         "devnet_mint_is_test_only": True,
         "recipient_address_configured": recipient_is_valid,
+        "receiving_address_configured": recipient_is_valid,
         "presale_receiving_address": BALMZ_PRESALE_RECEIVING_ADDRESS if recipient_is_valid else None,
         "observed_supply": mint_status["observed_supply"],
         "readiness": readiness,
