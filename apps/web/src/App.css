@@ -1768,6 +1768,8 @@
 .presale-estimate-result{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0;padding:13px 0;border-top:1px solid #263449;border-bottom:1px solid #263449}
 .presale-estimate-result span{color:#97a8bd;font-size:10px}
 .presale-estimate-result strong{color:#f4f7fb;font-size:16px;overflow-wrap:anywhere;text-align:right}
+.presale-estimate-sol-result strong{color:#ffad65}
+.presale-estimate-sol-result{margin-top:-8px;border-top:0;padding-top:0}
 .presale-estimate-validation{margin:-6px 0 12px;color:#fbbf83;font-size:9px}
 .presale-disabled-cta{width:100%;min-height:43px;border:1px solid #6b411e!important;border-radius:8px!important;background:linear-gradient(120deg,#4e2c17,#342214)!important;color:#ffbd85!important;opacity:1!important;cursor:not-allowed!important;font-size:11px!important;font-weight:750!important}
 .presale-order-note{margin:12px 0 0;color:#74879f;font-size:9px;line-height:1.65}
