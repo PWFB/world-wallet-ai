@@ -53,6 +53,17 @@ curl -fsS "$RPC" -H 'Content-Type: application/json' \
 
 If `account_exists` is false or the balance is zero, stop and review the address; do not treat it as a funded treasury. An account's balance alone does not establish ownership. Verify control by signing a harmless challenge with the wallet application or through an independently reviewed ownership-verification flow. Never reveal the private key or recovery phrase.
 
+## One-command read-only check from the repository
+
+After cloning the repository in Termux, run this with a public address you control:
+
+```sh
+pkg install curl jq
+bash tools/balmz-solana-mainnet-check.sh YOUR_PUBLIC_SOLANA_ADDRESS
+```
+
+The script verifies the RPC genesis hash before reading finalized balance and account information. It never signs or sends a transaction and does not prove ownership. The World Wallet AI presale UI has a **Refresh readiness** control that re-reads the backend's Mainnet status; the backend still keeps payment acceptance disabled.
+
 ## Backend configuration
 
 The API reads these **server-side Render environment variables**:
