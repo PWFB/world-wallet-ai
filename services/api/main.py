@@ -1861,6 +1861,19 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     updates = []
     warnings = []
     with db() as conn:
+        if solana_mainnet_address:
+            try:
+                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+                raw_sol = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [solana_mainnet_address, {"commitment": "confirmed"}])
+                sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+                conn.execute(
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"], "SOL", "Solana (Mainnet)", sol_balance),
+                )
+                updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance})
+            except Exception:
+                warnings.append("Solana Mainnet balance service unavailable")
         if btc_address:
             try:
                 btc = btc_balance(btc_address)
