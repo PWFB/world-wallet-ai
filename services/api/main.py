@@ -1880,7 +1880,8 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 )
                 # This sync path previously stored Devnet SOL in the production SOL row.
                 # Clear that legacy value only after a confirmed live Devnet balance was read.
-                conn.execute("UPDATE assets SET balance=0 WHERE wallet_id=%s AND symbol='SOL'", (user["wallet_id"],))
+                # Do not clear the production SOL row here. A wallet may hold
+                # native SOL on Mainnet and Devnet test SOL at the same time.
                 updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
             except Exception:
                 warnings.append("Solana Devnet balance service unavailable")
