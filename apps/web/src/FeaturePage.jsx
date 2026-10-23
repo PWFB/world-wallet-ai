@@ -47,8 +47,9 @@ async function walletAuthHeaders(accessToken, extra = {}) {
 function transactionExplorerUrl(transaction) {
   const hash = String(transaction?.tx_hash || transaction?.transaction_hash || "").trim();
   if (!hash) return "";
-  const network = String(transaction?.network || "").toLowerCase();
+  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  if (network === "solana_devnet" || asset === "BALMZ-SOL-DEVNET") return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}?cluster=devnet`;
   if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
   if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
   if (network === "sepolia" || asset === "BALMZ-SEP") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
@@ -64,7 +65,7 @@ function transactionExplorerUrl(transaction) {
 
 function tokenExplorerUrl(transaction) {
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
-  const network = String(transaction?.network || "").toLowerCase();
+  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const contract = String(transaction?.token_contract_address || transaction?.contract_address || "").trim();
   if (contract && /^0x[a-fA-F0-9]{40}$/.test(contract)) {
     return network === "sepolia" || asset === "BALMZ-SEP" ? `https://sepolia.etherscan.io/token/${contract}`
@@ -782,7 +783,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   useEffect(() => {
-    if (!["Transactions", "Receive", "Deposit"].includes(active) || !accessToken) return;
+    if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active) || !accessToken) return;
     setHistoryTransactions([]);
     setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
     loadTransactionHistory({ offset: 0, append: false });
@@ -790,7 +791,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
     .filter((item, index, all) => item?.symbol && all.findIndex(other => other?.symbol === item.symbol) === index);
-  const normalizeHistoryNetwork = value => String(value || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+  const normalizeHistoryNetwork = value => String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const selectedIncomingHistory = historyTransactions.filter(item =>
     String(item.type || "").toLowerCase() === "received" &&
     String(item.asset || item.symbol || "").toUpperCase() === String(asset || "").toUpperCase() &&
@@ -1035,6 +1036,29 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
         {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        <div className="panel action-panel">
+          <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
+          <h2>History reconciliation</h2>
+          <p className="muted">Transaction history supports review of reserve movements, but incoming/outgoing totals are not current reserves. Each record must be checked against its network explorer; saved history alone is not an audit or proof of ownership.</p>
+          {historyError && <div role="status" className="feature-error">{historyError} <button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry history</button></div>}
+          {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading transaction evidence…</div> : historyTransactions.length ? <div className="tool-list">
+            {historyTransactions.slice(0, 10).map((item, index) => {
+              const explorer = transactionExplorerUrl(item);
+              const status = String(item.status || "recorded").toLowerCase();
+              const hasHash = Boolean(String(item.tx_hash || item.transaction_hash || "").trim());
+              const isTestnet = ["sepolia", "solana_devnet", "solana-devnet"].includes(String(item.network || "").trim().toLowerCase());
+              return <div className="tool-row" key={item.tx_hash || item.id || index}>
+                <div><b>{item.asset || item.symbol || "Asset"} · {item.type || "transaction"}</b><small>{item.time || "Time unavailable"} · {item.network || "Network unavailable"}</small><small>Recorded status: {status} · {Number(item.confirmations || 0)} confirmations reported</small><small>{hasHash && explorer ? "Public explorer reference available; verify the record there." : "Missing transaction hash or supported explorer link; manual verification needed."}{isTestnet ? " Testnet record; excluded from production reserves." : ""}</small></div>
+                <strong>{item.amount == null ? "Amount unavailable" : String(item.amount) + " " + (item.asset || item.symbol || "")}</strong>
+                {hasHash && explorer ? <a href={explorer} target="_blank" rel="noreferrer">Verify on explorer ↗</a> : <span className="neutral">Evidence incomplete</span>}
+              </div>;
+            })}
+          </div> : <div className="live-chart-empty">No saved transaction records were returned. Refresh history or check whether this network has a supported history importer.</div>}
+          {historyPagination.has_more && <div className="transaction-filter-bar"><span>Showing the latest 10 of {historyPagination.total} saved records.</span><button type="button" className="secondary" onClick={() => setActive("Transactions")}>Review full history →</button></div>}
+          {!historyPagination.has_more && historyTransactions.length > 0 && <div className="transaction-filter-bar"><span>{historyTransactions.length} saved record(s) loaded.</span><button type="button" className="secondary" onClick={() => setActive("Transactions")}>Open transaction history →</button></div>}
+          {historyTransactions.some(item => !String(item.tx_hash || item.transaction_hash || "").trim() || !transactionExplorerUrl(item)) && <div className="security-note">Suggestion: review records marked “Evidence incomplete,” confirm the correct network, and run a fresh history sync. Do not count unsupported or unverified records as reserve evidence.</div>}
+          {historyTransactions.some(item => ["pending", "unconfirmed", "failed", "reorged"].includes(String(item.status || "").toLowerCase())) && <div className="security-note">Suggestion: inspect pending, failed, or reorged entries separately. Do not treat them as settled reserve movements until the chain status is verified.</div>}
+        </div>
         {proofData?.testnet_assets?.length ? <div className="panel action-panel">
           <p className="feature-kicker">TESTNET HOLDINGS · NOT PRODUCTION RESERVES</p>
           <h2>Solana Devnet assets</h2>
