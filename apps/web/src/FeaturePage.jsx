@@ -1512,6 +1512,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           </div>
         </article>
         <aside className="wallet-review-column">
+          <button type="button" className="panel wallet-review-card wallet-receive-history-link" onClick={() => { setFocusedTransaction?.(null); setActive("Transactions"); }} aria-label="Open all transaction history">
+            <span className="feature-kicker">TRANSACTION HISTORY</span>
+            <div className="wallet-receive-history-link-row"><div><b>View all history</b><small>Open every recorded wallet transaction</small></div><span aria-hidden="true">→</span></div>
+          </button>
           <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{number(selectedAssetAvailable)} {asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{selectedWalletAsset?.price_available === false || selectedWalletAsset?.value_usd == null ? "Price unavailable" : money(selectedWalletAsset.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Public address only</b><p>Receiving does not require sharing a private key. Only share the public address shown for the matching network.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia and Solana Devnet addresses are for testing. Test tokens are not mainnet funds.</p></div></article>
