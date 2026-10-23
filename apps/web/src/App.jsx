@@ -1564,6 +1564,7 @@ function App() {
                   ) : performance.points.length > 1 ? (() => {
                     const values = performance.points.map(point => Number(point.value_usd)).filter(Number.isFinite);
                     if (values.length < 2) return <div className="live-chart-empty">Not enough verified snapshots to draw this period yet.</div>;
+                    if (values.every(value => value === 0)) return <div className="live-chart-empty">All {values.length} recorded snapshots show a verified portfolio value of $0.00 for this period. Portfolio performance cannot be calculated until a positive verified balance is recorded. Devnet test tokens are excluded from Mainnet portfolio valuation.</div>;
                     const min = Math.min(...values), max = Math.max(...values), span = max - min || 1;
                     const coords = values.map((value, index) => ({ x: 20 + index * 560 / Math.max(values.length - 1, 1), y: 148 - ((value - min) / span) * 112 }));
                     const path = coords.map((point, index) => (index ? "L" : "M") + point.x.toFixed(2) + " " + point.y.toFixed(2)).join(" ");
