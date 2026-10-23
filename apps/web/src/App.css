@@ -1839,3 +1839,11 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Read-only Mainnet readiness refresh controls for the BALMZ presale. */
+.presale-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.presale-refresh-button{min-height:36px;padding:8px 12px;border-color:rgba(255,122,24,.48)!important;color:#ff9a4b!important;background:#171c26!important;font-size:11px}
+.presale-refresh-button:disabled{opacity:.65;cursor:wait}
+.presale-last-checked{color:#8493a8;font-size:10px;white-space:nowrap}
+@media(max-width:760px){.presale-heading-actions{justify-content:flex-start}.presale-last-checked{width:100%}}
