@@ -405,6 +405,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [presaleStatus, setPresaleStatus] = useState(null);
   const [presaleStatusError, setPresaleStatusError] = useState("");
   const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
+  const [presaleStatusCheckedAt, setPresaleStatusCheckedAt] = useState(null);
   const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
@@ -462,11 +463,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   useEffect(() => {
     if (active !== "BALMZ Presale" || !accessToken) return;
     let cancelled = false;
-    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { headers: { Authorization: "Bearer " + accessToken } })
+    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } })
       .then(async response => {
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Could not load BALMZ presale status.");
-        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); }
+        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); setPresaleStatusCheckedAt(new Date().toISOString()); }
       })
       .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
     return () => { cancelled = true; };
@@ -1038,7 +1039,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return <section className="content feature-content balmz-presale-page">
       <div className="page-heading">
         <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Exchange-style presale overview · production controls are still being verified.</p></div>
-        <div className="presale-heading-actions"><span className="presale-status-pill"><i /> Planning · not live</span><button type="button" className="presale-refresh-button" disabled={presaleStatusBusy} onClick={async () => { setPresaleStatusBusy(true); setPresaleStatusError(""); try { const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { headers: { Authorization: "Bearer " + accessToken } }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Could not refresh BALMZ presale status."); setPresaleStatus(data); setMessage("Presale readiness refreshed from the backend."); } catch (error) { setPresaleStatusError(error.message || "Could not refresh BALMZ presale status."); } finally { setPresaleStatusBusy(false); } }}>{presaleStatusBusy ? "Checking…" : "↻ Refresh checks"}</button></div>
+        <div className="presale-heading-actions"><span className="presale-status-pill"><i /> Planning · not live</span><button type="button" className="presale-refresh-button" disabled={presaleStatusBusy} onClick={async () => { setPresaleStatusBusy(true); setPresaleStatusError(""); try { const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Could not refresh BALMZ presale status."); setPresaleStatus(data); setPresaleStatusCheckedAt(new Date().toISOString()); setMessage("Presale readiness refreshed from the backend."); } catch (error) { setPresaleStatusError(error.message || "Could not refresh BALMZ presale status."); } finally { setPresaleStatusBusy(false); } }}>{presaleStatusBusy ? "Checking…" : "↻ Refresh checks"}</button>{presaleStatusCheckedAt && <small className="presale-last-checked">Last checked {new Date(presaleStatusCheckedAt).toLocaleTimeString()}</small>}</div>
       </div>
 
       <article className="panel presale-hero">

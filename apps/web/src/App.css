@@ -1848,3 +1848,8 @@
 .presale-refresh-button:focus-visible{outline:2px solid #ff7a18;outline-offset:3px}
 .presale-refresh-button:disabled{opacity:.65;cursor:wait}
 @media(max-width:520px){.presale-heading-actions{width:100%;justify-content:space-between}.presale-refresh-button{flex:0 0 auto}}
+
+
+/* Timestamp for the last successful, no-cache BALMZ presale readiness check. */
+.presale-last-checked{flex-basis:100%;color:#8497b2;font-size:10px;text-align:right;line-height:1.5}
+@media(max-width:520px){.presale-last-checked{text-align:left}}
