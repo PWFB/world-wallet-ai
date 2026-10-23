@@ -1717,3 +1717,87 @@
 @media(max-width:760px){.presale-price-grid,.presale-scope-grid{grid-template-columns:1fr}.presale-metrics-grid{grid-template-columns:1fr}.presale-hero,.presale-readiness-panel,.presale-scope-panel{padding:15px}.presale-check-list>div{grid-template-columns:28px minmax(0,1fr);gap:9px}.presale-check-list em{grid-column:2}.presale-status-pill{font-size:9px;padding:7px 8px}.presale-token-heading h2{font-size:18px}}
 
 .presale-check.verified{background:#0d2b20;border:1px solid #1f8057;color:#62e2a3}
+
+
+/* BALMZ-SOL: exchange-inspired presale layout in World Wallet AI's own orange/navy identity. */
+.balmz-presale-page .page-heading{align-items:center;gap:14px;margin-bottom:18px}
+.balmz-presale-page .page-heading h1{letter-spacing:-.35px}
+.balmz-presale-page .eyebrow{color:#ff7a18}
+.balmz-presale-page .panel{border-color:#223550}
+.presale-hero{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) minmax(285px,350px);
+  align-items:stretch;
+  gap:24px;
+  padding:22px;
+  background:
+    radial-gradient(circle at 8% 0%,rgba(255,122,24,.12),transparent 34%),
+    linear-gradient(138deg,#101c30 0%,#091221 72%);
+  border-color:#57381f;
+  box-shadow:0 16px 44px rgba(0,0,0,.18);
+}
+.presale-hero-main,.presale-hero-copy{min-width:0}
+.presale-token-heading{gap:14px}
+.presale-token-heading img{border-color:rgba(255,122,24,.6);background:#0a1425;box-shadow:0 0 25px rgba(255,122,24,.08)}
+.presale-token-heading .feature-kicker{color:#ff9a4b}
+.presale-token-heading h2{font-size:clamp(20px,2.4vw,28px);letter-spacing:.1px}
+.presale-description{max-width:660px;font-size:12px;color:#9babc0}
+.presale-price-grid{margin-top:24px;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.presale-price-card{border-color:#27364a;background:rgba(5,12,22,.75);padding:16px}
+.presale-price-card>span,.presale-metric>.feature-kicker{color:#9aa9bc;letter-spacing:.8px;font-weight:650}
+.presale-price-card:first-child strong{color:#ff8c36}
+.presale-price-card:nth-child(2) strong{color:#f5f7fa}
+.presale-order-card{
+  min-width:0;
+  padding:19px;
+  border:1px solid rgba(255,122,24,.45);
+  border-radius:12px;
+  background:linear-gradient(160deg,rgba(255,122,24,.09),rgba(7,15,27,.96) 42%);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.025),0 12px 34px rgba(0,0,0,.16);
+}
+.presale-order-top{display:flex;justify-content:space-between;align-items:center;gap:8px;color:#a6b4c7;font-size:9px;font-weight:750;letter-spacing:.7px}
+.presale-order-badge{padding:5px 7px;border:1px solid #6b451f;border-radius:5px;background:#24170d;color:#ffad65;font-size:8px;white-space:nowrap}
+.presale-order-rate{margin:20px 0 17px;color:#ff8c36;font-size:27px;line-height:1.2;font-weight:800;letter-spacing:-.7px}
+.presale-order-rate small{display:inline-block;color:#9baabd;font-size:10px;font-weight:550;letter-spacing:0}
+.presale-estimate-label{display:block;color:#aebbd0;font-size:10px;font-weight:600}
+.presale-estimate-input{display:flex;align-items:center;gap:8px;margin-top:7px;padding:0 12px;border:1px solid #3b4a5e;border-radius:8px;background:#080f1c;min-height:44px}
+.presale-estimate-input:focus-within{border-color:#ff7a18;box-shadow:0 0 0 2px rgba(255,122,24,.12)}
+.presale-estimate-input>span{color:#ff9b50;font-weight:750}
+.presale-estimate-input input{width:100%;min-width:0;height:42px;border:0!important;outline:0;background:transparent!important;color:#f5f7fa!important;font-size:14px!important;font-weight:700}
+.presale-estimate-input input:focus{box-shadow:none!important}
+.presale-estimate-result{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:16px 0;padding:13px 0;border-top:1px solid #263449;border-bottom:1px solid #263449}
+.presale-estimate-result span{color:#97a8bd;font-size:10px}
+.presale-estimate-result strong{color:#f4f7fb;font-size:16px;overflow-wrap:anywhere;text-align:right}
+.presale-estimate-validation{margin:-6px 0 12px;color:#fbbf83;font-size:9px}
+.presale-disabled-cta{width:100%;min-height:43px;border:1px solid #6b411e!important;border-radius:8px!important;background:linear-gradient(120deg,#4e2c17,#342214)!important;color:#ffbd85!important;opacity:1!important;cursor:not-allowed!important;font-size:11px!important;font-weight:750!important}
+.presale-order-note{margin:12px 0 0;color:#74879f;font-size:9px;line-height:1.65}
+.presale-metrics-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.presale-metric{padding:16px;background:linear-gradient(145deg,#0e1a2c,#091321)}
+.presale-metric strong{font-family:Inter,system-ui,sans-serif;font-size:clamp(14px,1.6vw,20px);font-weight:750;line-height:1.35;letter-spacing:-.3px}
+.presale-metric:first-child strong{color:#ff9748}
+.presale-check-list>div{padding:16px 0}
+.presale-check-list em{color:#f1bd78;text-align:right;white-space:nowrap}
+.presale-check.pending{background:#241a11;border-color:#6c441f;color:#ffb070}
+.presale-check.verified{background:#0d2b20;border-color:#1f8057;color:#62e2a3}
+.presale-warning{border-color:#70421f;background:#21170f;color:#ffd2aa}
+.presale-warning b{color:#ff9b50}
+.presale-scope-grid>div{background:linear-gradient(145deg,#0c192b,#07111f)}
+.presale-scope-grid .scope-dot.scope-production{background:#ff7a18}
+.presale-scope-grid a{color:#ff9b50}
+.presale-disclaimer{color:#8091a8}
+@media(max-width:1040px){
+  .presale-hero{grid-template-columns:minmax(0,1fr) minmax(260px,315px);gap:16px;padding:18px}
+  .presale-metrics-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:820px){
+  .presale-hero{grid-template-columns:minmax(0,1fr);padding:15px}
+  .presale-order-card{max-width:none}
+  .presale-price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:520px){
+  .presale-price-grid,.presale-metrics-grid{grid-template-columns:minmax(0,1fr)}
+  .presale-check-list>div{grid-template-columns:28px minmax(0,1fr);gap:9px}
+  .presale-check-list em{grid-column:2;text-align:left}
+  .presale-order-card{padding:15px}
+  .presale-token-heading img{width:48px;height:48px}
+}
