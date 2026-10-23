@@ -404,6 +404,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [presaleStatus, setPresaleStatus] = useState(null);
   const [presaleStatusError, setPresaleStatusError] = useState("");
+  const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
@@ -1022,46 +1023,73 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     const solUsd = Number(marketPrices?.SOL?.usd);
     const hasSolQuote = Number.isFinite(solUsd) && solUsd > 0;
     const presaleReadiness = presaleStatus?.readiness || {};
+    const presalePriceUsd = Number(presaleStatus?.presale_price_usd ?? 7);
+    const budgetUsd = Number(presaleBudgetUsd);
+    const validBudget = Number.isFinite(budgetUsd) && budgetUsd >= presalePriceUsd;
+    const estimatedTokenCount = validBudget ? budgetUsd / presalePriceUsd : null;
+    const formatTokenCount = value => value === null ? "—" : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
     const readinessState = ready => ready ? "verified" : "pending";
     const readinessLabel = ready => ready ? "Verified" : "Pending";
     return <section className="content feature-content balmz-presale-page">
       <div className="page-heading">
-        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Founder-defined pricing plan and production-readiness status.</p></div>
+        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Exchange-style presale overview · production controls are still being verified.</p></div>
         <span className="presale-status-pill"><i /> Planning · not live</span>
       </div>
+
       <article className="panel presale-hero">
-        <div className="presale-hero-copy">
-          <div className="presale-token-heading"><img src={BALMZ_LOGO_URL} alt="BALMZ token logo" onError={event => { event.currentTarget.style.display = "none"; }} /><div><span className="feature-kicker">WORLD WALLET AI TOKEN</span><h2>BALMZ-SOL</h2><p>{presaleStatus?.production_mint ? "Configured production mint · verification status shown below" : "Solana Mainnet production token · not yet deployed"}</p></div></div>
-          <p className="presale-description">A planned BALMZ token offering with a defined presale price and a separate launch-price target. No sale is open and no payment is being requested by this page.</p>
+        <div className="presale-hero-main">
+          <div className="presale-hero-copy">
+            <div className="presale-token-heading">
+              <img src={BALMZ_LOGO_URL} alt="BALMZ token logo" onError={event => { event.currentTarget.style.display = "none"; }} />
+              <div><span className="feature-kicker">WORLD WALLET AI TOKEN</span><h2>BALMZ-SOL</h2><p>Solana Mainnet · production token not yet verified</p></div>
+            </div>
+            <p className="presale-description">Founder-defined plan: a $7 USD presale price, with a separate launch target of 1 BALMZ-SOL = 1 SOL. No sale is open and this page does not request or submit payments.</p>
+            <div className="presale-price-grid">
+              <div className="presale-price-card"><span>PLANNED PRESALE PRICE</span><strong>$7.00</strong><small>Per BALMZ-SOL token · USD reference</small></div>
+              <div className="presale-price-card"><span>LAUNCH PRICE TARGET</span><strong>1 : 1 SOL</strong><small>Target only; market price is not guaranteed</small></div>
+            </div>
+          </div>
         </div>
-        <div className="presale-price-grid">
-          <div className="presale-price-card"><span>PLANNED PRESALE PRICE</span><strong>{`${Number(presaleStatus?.presale_price_usd ?? 7).toFixed(2)}`}</strong><small>USD per BALMZ token</small></div>
-          <div className="presale-price-card"><span>LAUNCH PRICE TARGET</span><strong>1 BALMZ = 1 SOL</strong><small>Target only; market price is not guaranteed</small></div>
-        </div>
+
+        <aside className="presale-order-card" aria-label="Presale estimate only">
+          <div className="presale-order-top"><span>ESTIMATE PRESALE ALLOCATION</span><span className="presale-order-badge">NOT LIVE</span></div>
+          <div className="presale-order-rate">$7.00 <small>/ BALMZ-SOL</small></div>
+          <label className="presale-estimate-label" htmlFor="presale-budget-usd">Contribution estimate (USD)
+            <div className="presale-estimate-input"><span>$</span><input id="presale-budget-usd" type="number" min={presalePriceUsd} step="1" inputMode="decimal" value={presaleBudgetUsd} onChange={event => setPresaleBudgetUsd(event.target.value)} aria-describedby="presale-estimate-note" /></div>
+          </label>
+          <div className="presale-estimate-result"><span>Estimated token amount</span><strong>{formatTokenCount(estimatedTokenCount)}</strong></div>
+          {!validBudget && <p className="presale-estimate-validation" role="status">Enter at least $7 to view a non-binding estimate.</p>}
+          <button className="primary presale-disabled-cta" type="button" disabled aria-disabled="true">Presale not open</button>
+          <p className="presale-order-note" id="presale-estimate-note">Estimate only. No wallet is connected, no transaction is created, and payment acceptance is disabled.</p>
+        </aside>
       </article>
+
       <div className="presale-metrics-grid">
         <article className="panel presale-metric"><span className="feature-kicker">SOL MARKET REFERENCE</span><strong>{hasSolQuote ? "$" + solUsd.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4}) : "Unavailable"}</strong><small>{hasSolQuote ? "Live SOL USD quote from the market feed; not a BALMZ price." : "A verified SOL USD quote is not currently available."}</small></article>
         <article className="panel presale-metric"><span className="feature-kicker">PRESALE STATUS</span><strong>{presaleStatus?.stage === "planning" ? "Not open" : "Checking status"}</strong><small>{presaleStatus?.payment_acceptance_enabled ? "Payment acceptance is enabled." : "Payment acceptance is disabled."}</small></article>
-        <article className="panel presale-metric"><span className="feature-kicker">PRODUCTION MINT</span><strong>{presaleStatus?.production_mint || "Not configured"}</strong><small>Devnet mint remains testing-only.</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PLANNED TOKEN SUPPLY</span><strong>{Number(presaleStatus?.target_supply ?? 1_000_000_000).toLocaleString("en-US")}</strong><small>Founder target · not proof of a deployed Mainnet supply.</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRODUCTION MINT</span><strong>{presaleStatus?.production_mint || "Not configured"}</strong><small>Production mint must be verified independently; Devnet is test-only.</small></article>
       </div>
+
       <article className="panel presale-readiness-panel">
-        <div className="panel-head"><div><h2>Launch readiness</h2><span>Production controls must be verified before accepting funds.</span></div><span className="presale-status-pill"><i /> Payments disabled</span></div>
+        <div className="panel-head"><div><h2>Launch readiness</h2><span>All critical controls must be verified before accepting funds.</span></div><span className="presale-status-pill"><i /> Payments disabled</span></div>
         {presaleStatusError && <div className="feature-error" role="status">{presaleStatusError}</div>}
         <div className="presale-check-list">
-          <div><span className={"presale-check " + readinessState(presaleReadiness.production_mint_verified)}>{presaleReadiness.production_mint_verified ? "✓" : "1"}</span><div><b>Deploy and verify the production mint</b><small>Use a separate Solana Mainnet mint. Never use the Devnet mint as the presale asset.</small></div><em>{readinessLabel(presaleReadiness.production_mint_verified)}</em></div>
-          <div><span className={"presale-check " + readinessState(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}>{presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked ? "✓" : "2"}</span><div><b>Confirm supply and mint authority</b><small>Verify the 1 billion supply policy and revoke mint authority if the production token is intended to have a fixed supply.</small></div><em>{readinessLabel(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}</em></div>
-          <div><span className={"presale-check " + readinessState(presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented)}>{presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented ? "✓" : "3"}</span><div><b>Configure the receiving address and payment verification</b><small>Accept only confirmed Mainnet payments with replay protection and transaction-to-order matching.</small></div><em>{readinessLabel(presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented)}</em></div>
-          <div><span className={"presale-check " + readinessState(presaleReadiness.liquidity_mechanism_configured)}>{presaleReadiness.liquidity_mechanism_configured ? "✓" : "4"}</span><div><b>Define launch liquidity and price mechanics</b><small>A 1 SOL target is not automatically enforced by token metadata; it needs a disclosed pricing/liquidity mechanism.</small></div><em>{readinessLabel(presaleReadiness.liquidity_mechanism_configured)}</em></div>
-          <div><span className={"presale-check " + readinessState(presaleReadiness.regression_suite_verified)}>{presaleReadiness.regression_suite_verified ? "✓" : "5"}</span><div><b>Pass the complete regression and settlement tests</b><small>Test duplicate signatures, wrong recipients, wrong mint/network, partial payments, wallet isolation, and safe failure before any live sale.</small></div><em>{readinessLabel(presaleReadiness.regression_suite_verified)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.production_mint_verified)}>{presaleReadiness.production_mint_verified ? "✓" : "1"}</span><div><b>Deploy and verify the production mint</b><small>Use a separate Solana Mainnet mint and confirm the account belongs to the SPL Token program. Never use the Devnet mint as a presale asset.</small></div><em>{readinessLabel(presaleReadiness.production_mint_verified)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}>{presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked ? "✓" : "2"}</span><div><b>Confirm supply and mint authority</b><small>Verify the 1 billion supply policy at 9 decimals and revoke mint authority if the production supply is intended to be fixed.</small></div><em>{readinessLabel(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented)}>{presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented ? "✓" : "3"}</span><div><b>Verify the treasury address and settlement service</b><small>Address format alone does not prove wallet control. Settlement must verify finalized Mainnet payments, reject wrong recipients, and prevent duplicate signatures.</small></div><em>{readinessLabel(presaleReadiness.receiving_address_configured && presaleReadiness.payment_verification_implemented)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.liquidity_mechanism_configured)}>{presaleReadiness.liquidity_mechanism_configured ? "✓" : "4"}</span><div><b>Define launch liquidity and price mechanics</b><small>A 1 SOL price target is not automatically enforced by token metadata; it requires a disclosed and funded pricing/liquidity mechanism.</small></div><em>{readinessLabel(presaleReadiness.liquidity_mechanism_configured)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.regression_suite_verified)}>{presaleReadiness.regression_suite_verified ? "✓" : "5"}</span><div><b>Pass backend and frontend regression tests</b><small>Cover wrong cluster, wrong destination, duplicate signatures, insufficient payment, wrong mint, and production/testnet isolation.</small></div><em>{readinessLabel(presaleReadiness.regression_suite_verified)}</em></div>
         </div>
         {presaleStatus?.warnings?.map((warning, index) => <div className="security-note" key={index}>Readiness warning: {warning}</div>)}
-        <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "The production mint, receiving address, and payment settlement are not configured."}</div>
+        <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "Presale payments are disabled until production checks and settlement are complete."}</div>
       </article>
+
       <article className="panel presale-scope-panel">
-        <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production and test evidence are kept separate.</span></div></div>
+        <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production activity and test evidence remain isolated.</span></div></div>
         <div className="presale-scope-grid">
-          <div><span className="scope-dot scope-test" /><b>Solana Devnet</b><small>Testing only · excluded from production reserves</small><code>{presaleStatus?.devnet_mint || "Devnet mint not loaded"}</code><a href={"https://explorer.solana.com/address/" + (presaleStatus?.devnet_mint || "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF") + "?cluster=devnet"} target="_blank" rel="noopener noreferrer">Open Devnet explorer ↗</a></div>
-          <div><span className="scope-dot scope-production" /><b>Solana Mainnet</b><small>Production · no presale transaction accepted yet</small><code>{presaleStatus?.production_mint || "Production mint not configured"}</code><span className="muted">Mainnet transaction hashes must be verified on the Mainnet RPC before settlement.</span></div>
+          <div><span className="scope-dot scope-test" /><b>Solana Devnet</b><small>Testing only · excluded from production reserves and presale settlement</small><code>{presaleStatus?.devnet_mint || "Devnet mint not loaded"}</code><a href={"https://explorer.solana.com/address/" + (presaleStatus?.devnet_mint || "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF") + "?cluster=devnet"} target="_blank" rel="noopener noreferrer">Open Devnet explorer ↗</a></div>
+          <div><span className="scope-dot scope-production" /><b>Solana Mainnet</b><small>Production · no presale transaction accepted</small><code>{presaleStatus?.production_mint || "Production mint not configured"}</code><span className="muted">Receiving address: {presaleStatus?.presale_receiving_address || "Not configured"}</span><span className="muted">Mainnet signatures must be independently verified before settlement.</span></div>
         </div>
         <p className="presale-disclaimer">Transaction history is evidence of activity, not proof of reserves or a guarantee of token value. SOL's market quote is displayed only as a reference; it is not applied to BALMZ balances.</p>
       </article>
