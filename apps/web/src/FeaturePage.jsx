@@ -402,6 +402,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
 export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
+  const [presaleStatus, setPresaleStatus] = useState(null);
+  const [presaleStatusError, setPresaleStatusError] = useState("");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
@@ -454,6 +456,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    if (active !== "BALMZ Presale" || !accessToken) return;
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load BALMZ presale status.");
+        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); }
+      })
+      .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
 
   useEffect(() => {
     if (active !== "API Keys" || !accessToken) return;
@@ -1002,6 +1017,51 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     } finally { setBusy(false); }
   }
 
+
+  if (active === "BALMZ Presale") {
+    const solUsd = Number(marketPrices?.SOL?.usd);
+    const hasSolQuote = Number.isFinite(solUsd) && solUsd > 0;
+    return <section className="content feature-content balmz-presale-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Founder-defined pricing plan and production-readiness status.</p></div>
+        <span className="presale-status-pill"><i /> Planning · not live</span>
+      </div>
+      <article className="panel presale-hero">
+        <div className="presale-hero-copy">
+          <div className="presale-token-heading"><img src={BALMZ_LOGO_URL} alt="BALMZ token logo" onError={event => { event.currentTarget.style.display = "none"; }} /><div><span className="feature-kicker">WORLD WALLET AI TOKEN</span><h2>BALMZ-SOL</h2><p>Solana Mainnet production token · not yet deployed</p></div></div>
+          <p className="presale-description">A planned BALMZ token offering with a defined presale price and a separate launch-price target. No sale is open and no payment is being requested by this page.</p>
+        </div>
+        <div className="presale-price-grid">
+          <div className="presale-price-card"><span>PLANNED PRESALE PRICE</span><strong>$7.00</strong><small>USD per BALMZ token</small></div>
+          <div className="presale-price-card"><span>LAUNCH PRICE TARGET</span><strong>1 BALMZ = 1 SOL</strong><small>Target only; market price is not guaranteed</small></div>
+        </div>
+      </article>
+      <div className="presale-metrics-grid">
+        <article className="panel presale-metric"><span className="feature-kicker">SOL MARKET REFERENCE</span><strong>{hasSolQuote ? "$" + solUsd.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4}) : "Unavailable"}</strong><small>{hasSolQuote ? "Live SOL USD quote from the market feed; not a BALMZ price." : "A verified SOL USD quote is not currently available."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRESALE STATUS</span><strong>{presaleStatus?.stage === "planning" ? "Not open" : "Checking status"}</strong><small>{presaleStatus?.payment_acceptance_enabled ? "Payment acceptance is enabled." : "Payment acceptance is disabled."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRODUCTION MINT</span><strong>{presaleStatus?.production_mint || "Not configured"}</strong><small>Devnet mint remains testing-only.</small></article>
+      </div>
+      <article className="panel presale-readiness-panel">
+        <div className="panel-head"><div><h2>Launch readiness</h2><span>Production controls must be verified before accepting funds.</span></div><span className="presale-status-pill"><i /> Payments disabled</span></div>
+        {presaleStatusError && <div className="feature-error" role="status">{presaleStatusError}</div>}
+        <div className="presale-check-list">
+          <div><span className="presale-check pending">1</span><div><b>Deploy and verify the production mint</b><small>Use a separate Solana Mainnet mint. Never use the Devnet mint as the presale asset.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">2</span><div><b>Confirm supply and mint authority</b><small>Verify the 1 billion supply policy and whether mint authority is revoked or securely controlled.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">3</span><div><b>Configure the receiving address and payment verification</b><small>Accept only confirmed Mainnet payments with replay protection and transaction-to-order matching.</small></div><em>Pending</em></div>
+          <div><span className="presale-check pending">4</span><div><b>Define launch liquidity and price mechanics</b><small>A 1 SOL target is not automatically enforced by token metadata; it needs a disclosed pricing/liquidity mechanism.</small></div><em>Pending</em></div>
+        </div>
+        <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "The production mint, receiving address, and payment settlement are not configured."}</div>
+      </article>
+      <article className="panel presale-scope-panel">
+        <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production and test evidence are kept separate.</span></div></div>
+        <div className="presale-scope-grid">
+          <div><span className="scope-dot scope-test" /><b>Solana Devnet</b><small>Testing only · excluded from production reserves</small><code>{presaleStatus?.devnet_mint || "Devnet mint not loaded"}</code><a href={"https://explorer.solana.com/address/" + (presaleStatus?.devnet_mint || "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF") + "?cluster=devnet"} target="_blank" rel="noopener noreferrer">Open Devnet explorer ↗</a></div>
+          <div><span className="scope-dot scope-production" /><b>Solana Mainnet</b><small>Production · no presale transaction accepted yet</small><code>{presaleStatus?.production_mint || "Production mint not configured"}</code><span className="muted">Mainnet transaction hashes must be verified on the Mainnet RPC before settlement.</span></div>
+        </div>
+        <p className="presale-disclaimer">Transaction history is evidence of activity, not proof of reserves or a guarantee of token value. SOL's market quote is displayed only as a reference; it is not applied to BALMZ balances.</p>
+      </article>
+    </section>;
+  }
 
   if (active === "Proof of Reserves") {
     const loadProof = async () => {
