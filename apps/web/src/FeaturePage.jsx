@@ -426,6 +426,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
+  const [devnetDepositSignature, setDevnetDepositSignature] = useState("");
+  const [devnetDepositBusy, setDevnetDepositBusy] = useState(false);
+  const [devnetDepositMessage, setDevnetDepositMessage] = useState("");
+  const [devnetDepositResult, setDevnetDepositResult] = useState(null);
   const [toolItems, setToolItems] = useState([]);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
@@ -716,6 +720,64 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       setHistoryError(error.message || "Could not load transaction history.");
     } finally {
       setHistoryBusy(false);
+    }
+  }
+
+  async function verifyDevnetDeposit() {
+    const txSignature = devnetDepositSignature.trim();
+    if (!txSignature) {
+      setDevnetDepositMessage("Paste the Solana Devnet transaction signature first.");
+      return;
+    }
+    if (!accessToken) {
+      setDevnetDepositMessage("Sign in again before verifying a deposit.");
+      return;
+    }
+
+    setDevnetDepositBusy(true);
+    setDevnetDepositMessage("");
+    setDevnetDepositResult(null);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/deposits/solana-devnet/verify", {
+        method: "POST",
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ tx_signature: txSignature }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not verify the Solana Devnet deposit.");
+
+      if (data.status === "pending") {
+        setDevnetDepositMessage(data.message || "Transaction details are not final yet; no deposit was recorded.");
+        return;
+      }
+
+      setDevnetDepositResult(data);
+      let statusMessage = data.replayed
+        ? "This Devnet deposit was already recorded (" + number(data.amount) + " BALMZ-SOL-DEVNET); no duplicate activity was added."
+        : "Finalized Devnet deposit recorded: " + number(data.amount) + " BALMZ-SOL-DEVNET.";
+      statusMessage += " Devnet tokens do not fund Mainnet transactions.";
+
+      try {
+        const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+          method: "POST",
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const refreshed = await refreshResponse.json();
+        if (refreshResponse.ok) {
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
+          onTransactionsUpdated?.(refreshed.transactions || []);
+          statusMessage += " Wallet balance refreshed.";
+        } else {
+          statusMessage += " Use Refresh to reload the wallet balance.";
+        }
+      } catch {
+        statusMessage += " The deposit is recorded; refresh the wallet display to reload the balance.";
+      }
+      setDevnetDepositMessage(statusMessage);
+    } catch (error) {
+      setDevnetDepositMessage(error?.message || "Could not verify the Solana Devnet deposit.");
+    } finally {
+      setDevnetDepositBusy(false);
     }
   }
 
@@ -1389,6 +1451,21 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <p className="muted">Open the wallet or exchange holding your funds, choose the same asset and network, paste the copied address, and review the address and network carefully before confirming.</p>
           <h3>Step 3 · Verify the transaction</h3>
           <div className="wallet-network-check"><span>i</span><div><b>Deposit status is not yet independently tracked here</b><small>This screen does not mark a deposit as complete. Check the transaction hash on the correct network explorer and wait for confirmations.</small></div></div>
+          {asset === "BALMZ-SOL-DEVNET" && <article className="panel wallet-review-card" aria-labelledby="solana-devnet-deposit-verification">
+            <span className="feature-kicker">SOLANA DEVNET TEST FLOW</span>
+            <h3 id="solana-devnet-deposit-verification">Verify a BALMZ Devnet deposit</h3>
+            <p className="muted">After BALMZ-SOL-DEVNET reaches your connected Solana Devnet address, paste its transaction signature. The API checks the finalized on-chain transfer and records it once.</p>
+            <label>Solana Devnet transaction signature
+              <input value={devnetDepositSignature} onChange={event => setDevnetDepositSignature(event.target.value)} placeholder="Paste transaction signature" autoComplete="off" spellCheck="false" />
+            </label>
+            {devnetDepositMessage && <div role="status" className={/could not|not found|failed|invalid|error|sign in/i.test(devnetDepositMessage) ? "feature-error" : "feature-success"}>{devnetDepositMessage}</div>}
+            {devnetDepositResult && <div className="wallet-summary-row"><span>Recorded Devnet amount</span><b>{number(devnetDepositResult.amount)} BALMZ-SOL-DEVNET</b></div>}
+            <button className="primary feature-submit" onClick={verifyDevnetDeposit} disabled={devnetDepositBusy || !devnetDepositSignature.trim() || !accessToken}>
+              {devnetDepositBusy ? "Checking finalized transaction…" : "Verify Devnet deposit →"}
+            </button>
+            <div className="wallet-network-check is-warning"><span>!</span><div><b>Devnet only — not Mainnet funding</b><small>This confirms a test-network deposit for testing the wallet workflow. It does not fund, broadcast, or settle a real Mainnet transaction.</small></div></div>
+          </article>}
+
         </article>
         <aside className="wallet-review-column">
           <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
