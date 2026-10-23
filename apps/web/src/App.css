@@ -1676,3 +1676,42 @@
 .browser-frame-status{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:2;padding:8px 12px;border:1px solid #2d4564;border-radius:999px;background:#0b1729eF;color:#d7e6f7;font-size:11px;box-shadow:0 5px 20px #0005;pointer-events:none;max-width:90%;text-align:center}
 .browser-frame-notice a{color:#ff9a32;text-decoration:underline;font-weight:700}
 .browser-frame-notice [role="status"]{overflow-wrap:anywhere}
+
+/* BALMZ-SOL presale: exchange-style layout in World Wallet AI's existing dark/cyan/gold palette. */
+.balmz-presale-page{max-width:1180px}
+.presale-status-pill{display:inline-flex;align-items:center;gap:7px;padding:8px 11px;border:1px solid #55451f;border-radius:999px;background:#211b0e;color:#e7c66c;font-size:10px;white-space:nowrap}
+.presale-status-pill i{width:7px;height:7px;border-radius:50%;background:#e6b84f;display:inline-block}
+.presale-hero{padding:24px;background:radial-gradient(circle at 90% 0%,rgba(0,212,255,.09),transparent 38%),linear-gradient(135deg,#101f3b,#0a1427);border-color:#254269}
+.presale-token-heading{display:flex;align-items:center;gap:13px}
+.presale-token-heading img{width:54px;height:54px;object-fit:contain;border-radius:50%;background:#081325;border:1px solid #263b59;padding:5px}
+.presale-token-heading h2{font-family:Orbitron;font-size:22px;margin:5px 0}
+.presale-token-heading p,.presale-description{font-size:11px;color:#8293ad;line-height:1.7;margin:5px 0 0}
+.presale-description{max-width:760px;margin-top:18px}
+.presale-price-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:22px}
+.presale-price-card{padding:18px;border:1px solid #1d3451;border-radius:10px;background:rgba(5,13,27,.68);display:flex;flex-direction:column;gap:7px}
+.presale-price-card>span,.presale-metric>.feature-kicker{font-size:9px;letter-spacing:1.1px;color:#7e92af}
+.presale-price-card strong{font-family:Orbitron;font-size:clamp(20px,3vw,30px);color:#fff;overflow-wrap:anywhere}
+.presale-price-card small,.presale-metric small{font-size:10px;line-height:1.6;color:#7587a2}
+.presale-metrics-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:12px 0}
+.presale-metric{padding:18px;display:flex;flex-direction:column;gap:9px;min-width:0}
+.presale-metric strong{font-family:Orbitron;font-size:clamp(15px,2vw,21px);overflow-wrap:anywhere}
+.presale-readiness-panel,.presale-scope-panel{padding:22px;margin-top:12px}
+.presale-readiness-panel .panel-head,.presale-scope-panel .panel-head{align-items:center;gap:10px}
+.presale-readiness-panel .panel-head h2,.presale-scope-panel .panel-head h2{margin:0 0 5px;font-family:Orbitron;font-size:15px}
+.presale-check-list{display:flex;flex-direction:column;margin-top:16px}
+.presale-check-list>div{display:grid;grid-template-columns:30px minmax(0,1fr) auto;align-items:start;gap:12px;padding:15px 0;border-bottom:1px solid #192943}
+.presale-check{width:26px;height:26px;border-radius:8px;display:grid;place-items:center;font-size:11px;font-weight:700}
+.presale-check.pending{background:#2a2110;border:1px solid #665022;color:#e7c66c}
+.presale-check-list b,.presale-scope-grid b{display:block;font-size:11px}
+.presale-check-list small,.presale-scope-grid small{display:block;color:#7487a2;font-size:10px;line-height:1.6;margin-top:4px}
+.presale-check-list em{font-style:normal;color:#d7b85d;font-size:9px}
+.presale-warning{margin-top:16px;padding:13px 14px;border:1px solid #5a4522;border-radius:9px;background:#211a0d;color:#ddc17b;font-size:10px;line-height:1.7}
+.presale-scope-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:14px}
+.presale-scope-grid>div{padding:16px;border:1px solid #1b2d48;border-radius:10px;background:#091426;min-width:0}
+.scope-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin:0 7px 1px 0}
+.scope-test{background:#d6a94c}.scope-production{background:#22c55e}
+.presale-scope-grid code{display:block;margin:12px 0;overflow-wrap:anywhere;word-break:break-word;font-size:10px;color:#c5d4e8}
+.presale-scope-grid a{color:#4ddaf7;font-size:10px;text-decoration:none}
+.presale-scope-grid .muted{display:block;font-size:10px;line-height:1.6}
+.presale-disclaimer{color:#657994;font-size:10px;line-height:1.7;margin:16px 0 0}
+@media(max-width:760px){.presale-price-grid,.presale-scope-grid{grid-template-columns:1fr}.presale-metrics-grid{grid-template-columns:1fr}.presale-hero,.presale-readiness-panel,.presale-scope-panel{padding:15px}.presale-check-list>div{grid-template-columns:28px minmax(0,1fr);gap:9px}.presale-check-list em{grid-column:2}.presale-status-pill{font-size:9px;padding:7px 8px}.presale-token-heading h2{font-size:18px}}
