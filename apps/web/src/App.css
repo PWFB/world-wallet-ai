@@ -1839,3 +1839,12 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Presale readiness refresh: visible, keyboard-accessible, and aligned with the orange identity. */
+.presale-heading-actions{display:flex;align-items:center;justify-content:flex-end;gap:9px;flex-wrap:wrap}
+.presale-refresh-button{min-height:34px;padding:8px 11px;border:1px solid rgba(255,122,24,.48);border-radius:8px;background:rgba(255,122,24,.08);color:#ff9a4d;font-size:10px;font-weight:700}
+.presale-refresh-button:hover:not(:disabled){background:rgba(255,122,24,.16);border-color:#ff7a18}
+.presale-refresh-button:focus-visible{outline:2px solid #ff7a18;outline-offset:3px}
+.presale-refresh-button:disabled{opacity:.65;cursor:wait}
+@media(max-width:520px){.presale-heading-actions{width:100%;justify-content:space-between}.presale-refresh-button{flex:0 0 auto}}
