@@ -23,11 +23,11 @@ jobs:
         with:
           node-version: 22
 
-      # Pin npm to a stable major while the repo has no committed lockfile.
-      - name: Pin npm
+      # Use pnpm to avoid the reproducible npm Arborist edgesOut crash.
+      - name: Set up pnpm
         run: |
-          npm install --global npm@10.9.4
-          npm --version
+          npm install --global pnpm@10.14.0
+          pnpm --version
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -37,19 +37,19 @@ jobs:
 
       - name: Install web dependencies
         working-directory: apps/web
-        run: npm install --no-audit --no-fund
+        run: pnpm install --no-frozen-lockfile
 
       - name: Build web app
         working-directory: apps/web
-        run: npm run build
+        run: pnpm run build
 
       - name: Generate Capacitor Android project
         working-directory: apps/web
-        run: npx cap add android
+        run: pnpm exec cap add android
 
       - name: Sync web assets into Android project
         working-directory: apps/web
-        run: npx cap sync android
+        run: pnpm exec cap sync android
 
       - name: Assemble debug APK
         working-directory: apps/web/android
