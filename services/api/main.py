@@ -1067,15 +1067,24 @@ def evm_balance(url: str, address: str):
 def btc_balance(address: str):
     if not address:
         return None
+    # Validate before placing the address into a public API path. This also
+    # prevents malformed input from being treated as a Bitcoin Mainnet address.
+    if not valid_bitcoin_address(address):
+        raise ValueError("Invalid Bitcoin Mainnet address")
     response = httpx.get(f"https://blockstream.info/api/address/{address}", timeout=10)
     response.raise_for_status()
     data = response.json()
-    chain = data.get("chain_stats", {})
+    chain = data.get("chain_stats")
+    if not isinstance(chain, dict):
+        raise ValueError("Bitcoin API response is missing confirmed chain statistics")
+    funded = int(chain.get("funded_txo_sum", 0))
+    spent = int(chain.get("spent_txo_sum", 0))
+    if funded < 0 or spent < 0 or spent > funded:
+        raise ValueError("Bitcoin API returned invalid confirmed balance statistics")
     # Confirmed balance is the accounting source of truth. Pending mempool
     # movement is surfaced through transaction status and must not bypass
     # the wallet's reservation model.
-    confirmed = int(chain.get("funded_txo_sum", 0)) - int(chain.get("spent_txo_sum", 0))
-    return confirmed / 100_000_000
+    return (funded - spent) / 100_000_000
 
 def erc20_balance(url: str, contract: str, address: str, decimals: int = 18):
     """Read a real ERC-20 balance using registry metadata."""
@@ -1365,6 +1374,9 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
 def bitcoin_address_transactions(address: str):
     if not address:
         return []
+    # Never query the explorer with an unvalidated address.
+    if not valid_bitcoin_address(address):
+        raise ValueError("Invalid Bitcoin Mainnet address")
     txs = []
     next_url = f"https://blockstream.info/api/address/{address}/txs"
     max_pages = max(1, min(int(os.getenv("WORLD_WALLET_BTC_TX_PAGES", "3")), 10))
