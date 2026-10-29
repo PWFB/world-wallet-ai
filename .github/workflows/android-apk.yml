@@ -1,0 +1,64 @@
+name: Android debug APK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "apps/web/**"
+      - ".github/workflows/android-apk.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-debug-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Use pnpm to avoid the reproducible npm Arborist edgesOut crash.
+      - name: Set up pnpm
+        run: |
+          npm install --global pnpm@10.14.0
+          pnpm --version
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build web app
+        working-directory: apps/web
+        run: pnpm run build
+
+      - name: Generate Capacitor Android project
+        working-directory: apps/web
+        run: pnpm exec cap add android
+
+      - name: Sync web assets into Android project
+        working-directory: apps/web
+        run: pnpm exec cap sync android
+
+      - name: Assemble debug APK
+        working-directory: apps/web/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: world-wallet-ai-android-debug
+          path: apps/web/android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
