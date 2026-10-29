@@ -41,7 +41,14 @@ jobs:
 
       - name: Build web app
         working-directory: apps/web
-        run: pnpm run build
+        env:
+          VITE_NEON_AUTH_URL: ${{ vars.VITE_NEON_AUTH_URL }}
+        run: |
+          if [ -z "$VITE_NEON_AUTH_URL" ]; then
+            echo "::error::Missing GitHub Actions repository variable VITE_NEON_AUTH_URL"
+            exit 1
+          fi
+          pnpm run build
 
       - name: Generate Capacitor Android project
         working-directory: apps/web
