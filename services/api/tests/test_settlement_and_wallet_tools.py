@@ -21,6 +21,36 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertNotIn(main._chain_heights, [route.endpoint for route in main.app.routes])
         self.assertNotIn(main.wallet_asset_symbol, [route.endpoint for route in main.app.routes])
 
+    def test_bitcoin_mainnet_address_validation_accepts_known_legacy_address(self):
+        self.assertTrue(main.valid_bitcoin_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT"))
+
+    def test_bitcoin_balance_rejects_invalid_address_before_network_request(self):
+        with patch.object(main.httpx, "get") as get:
+            with self.assertRaisesRegex(ValueError, "Invalid Bitcoin Mainnet address"):
+                main.btc_balance("not-a-bitcoin-address")
+        get.assert_not_called()
+
+    def test_bitcoin_transaction_sync_rejects_invalid_address_before_network_request(self):
+        with patch.object(main.httpx, "get") as get:
+            with self.assertRaisesRegex(ValueError, "Invalid Bitcoin Mainnet address"):
+                main.bitcoin_address_transactions("not-a-bitcoin-address")
+        get.assert_not_called()
+
+    def test_bitcoin_balance_uses_confirmed_chain_statistics_only(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {
+                    "chain_stats": {"funded_txo_sum": 250000000, "spent_txo_sum": 50000000},
+                    "mempool_stats": {"funded_txo_sum": 900000000, "spent_txo_sum": 0},
+                }
+
+        address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+        with patch.object(main.httpx, "get", return_value=Response()) as get:
+            self.assertEqual(main.btc_balance(address), 2.0)
+        get.assert_called_once_with(f"https://blockstream.info/api/address/{address}", timeout=10)
+
     def test_exact_base_units_accepts_supported_precision(self):
         self.assertEqual(main.exact_base_units(Decimal("1.25"), 8), 125000000)
         self.assertEqual(main.exact_base_units(Decimal("0.000001"), 6), 1)
