@@ -22,8 +22,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: apps/web/package.json
+
+      # Pin npm to a stable major while the repo has no committed lockfile.
+      - name: Pin npm
+        run: |
+          npm install --global npm@10.9.4
+          npm --version
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -33,7 +37,7 @@ jobs:
 
       - name: Install web dependencies
         working-directory: apps/web
-        run: npm install
+        run: npm install --no-audit --no-fund
 
       - name: Build web app
         working-directory: apps/web
