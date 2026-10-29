@@ -1064,14 +1064,37 @@ function App() {
         throw new Error(authErrorMessage(result.error, "Unable to sign in with password."));
       }
 
-      // Only enter the wallet after retrieving a real Neon JWT. The API still
-      // verifies its signature, issuer, identity, and expiry on every request.
-      const token = await getWalletTokenWithRetry();
+      // First use the browser's Neon Auth session. On native Capacitor builds,
+      // the WebView origin can differ from the website origin and the cross-origin
+      // /token cookie exchange may be blocked. If that happens, retry the same
+      // password sign-in through the backend's existing Neon Auth relay, which
+      // keeps the provider cookie exchange server-side. The API still verifies
+      // the returned JWT signature, issuer, identity, and expiry on every request.
+      let token = await getWalletTokenWithRetry();
+      let signedInUser = result?.data?.user || result?.user || null;
+
       if (!token) {
-        throw new Error("Neon Auth accepted the sign-in, but the secure wallet token could not be retrieved. Please retry.");
+        const relayResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password: loginPassword }),
+          cache: "no-store",
+        });
+        const relayData = await relayResponse.json().catch(() => ({}));
+        if (!relayResponse.ok) {
+          throw new Error(relayData.detail || "Sign-in succeeded, but the secure wallet session could not be completed. Please retry.");
+        }
+        token = relayData.access_token || "";
+        if (!isUsableNeonAccessToken(token)) {
+          throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
+        }
+        signedInUser = relayData.user || signedInUser;
       }
 
-      const signedInUser = result?.data?.user || result?.user || null;
+      if (!isUsableNeonAccessToken(token)) {
+        throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
+      }
+
       localStorage.setItem(TOKEN_KEY, token);
       setUser(signedInUser);
       setAccessToken(token);

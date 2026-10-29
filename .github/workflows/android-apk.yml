@@ -41,24 +41,87 @@ jobs:
 
       - name: Build web app
         working-directory: apps/web
-        run: pnpm run build
+        env:
+          VITE_NEON_AUTH_URL: ${{ vars.VITE_NEON_AUTH_URL }}
+        run: |
+          if [ -z "$VITE_NEON_AUTH_URL" ]; then
+            echo "::error::Missing GitHub Actions repository variable VITE_NEON_AUTH_URL"
+            exit 1
+          fi
+          pnpm run build
 
       - name: Generate Capacitor Android project
         working-directory: apps/web
         run: pnpm exec cap add android
 
+      - name: Apply World Wallet AI native branding
+        working-directory: apps/web
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("android/app/src/main")
+          drawable = root / "res/drawable"
+          drawable.mkdir(parents=True, exist_ok=True)
+
+          icon = """<?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp" android:height="108dp"
+              android:viewportWidth="108" android:viewportHeight="108">
+              <path android:fillColor="#101A2B" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#101A2B" android:strokeColor="#FF7A18"
+                  android:strokeWidth="5" android:strokeLineJoin="round"
+                  android:pathData="M54,7 L92,22 L92,49 C92,73 76,91 54,102 C32,91 16,73 16,49 L16,22 Z"/>
+              <path android:fillColor="#00000000" android:strokeColor="#FFFFFF"
+                  android:strokeWidth="7" android:strokeLineCap="round"
+                  android:strokeLineJoin="round"
+                  android:pathData="M31,37 L42,70 L54,51 L66,70 L77,37"/>
+          </vector>
+          """
+          (drawable / "world_wallet_ai_icon.xml").write_text(icon)
+          (drawable / "world_wallet_ai_splash.xml").write_text(icon)
+
+          manifest = root / "AndroidManifest.xml"
+          source = manifest.read_text()
+          source, count = re.subn(r'android:icon="@[^"]+"', 'android:icon="@drawable/world_wallet_ai_icon"', source, count=1)
+          if count != 1:
+              raise SystemExit("Could not safely locate the Android application icon declaration.")
+          source = re.sub(r'android:roundIcon="@[^"]+"', 'android:roundIcon="@drawable/world_wallet_ai_icon"', source, count=1)
+          manifest.write_text(source)
+
+          styles = root / "res/values/styles.xml"
+          if styles.exists():
+              source = styles.read_text()
+              pattern = r'(<style name="AppTheme.NoActionBarLaunch"[^>]*>)'
+              match = re.search(pattern, source)
+              if match:
+                  additions = '''
+                      <item name="android:windowSplashScreenBackground">#101A2B</item>
+                      <item name="android:windowSplashScreenAnimatedIcon">@drawable/world_wallet_ai_splash</item>
+                  '''
+                  source = source[:match.end()] + additions + source[match.end():]
+                  styles.write_text(source)
+
+          print("World Wallet AI W-shield launcher and splash resources created.")
+          PY
+          grep -q 'android:icon="@drawable/world_wallet_ai_icon"' android/app/src/main/AndroidManifest.xml
+
       - name: Sync web assets into Android project
         working-directory: apps/web
         run: pnpm exec cap sync android
 
-      - name: Assemble debug APK
+      - name: Build debug APK and AAB
         working-directory: apps/web/android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug bundleDebug
 
-      - name: Upload debug APK
+      - name: Upload debug APK and AAB
         uses: actions/upload-artifact@v4
         with:
-          name: world-wallet-ai-android-debug
-          path: apps/web/android/app/build/outputs/apk/debug/app-debug.apk
+          name: world-wallet-ai-android-branded
+          path: |
+            apps/web/android/app/build/outputs/apk/debug/app-debug.apk
+            apps/web/android/app/build/outputs/bundle/debug/app-debug.aab
           if-no-files-found: error
           retention-days: 14
