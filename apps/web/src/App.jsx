@@ -847,7 +847,7 @@ function App() {
           if (walletId) balanceWalletIdRef.current = walletId;
         }
         if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
-        const addressResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/addresses");
+        const addressResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses");
         const addressData = await addressResponse.json().catch(() => ({}));
         if (!addressResponse.ok) throw new Error(addressData.detail || ("Unable to load attached addresses (HTTP " + addressResponse.status + ")."));
         currentAddresses = Array.isArray(addressData.addresses) ? addressData.addresses : [];
