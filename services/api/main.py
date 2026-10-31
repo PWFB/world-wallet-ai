@@ -1496,24 +1496,29 @@ def wallet_valuation_summary(assets, transactions):
     # affect production portfolio valuation or mark production holdings as unpriced.
     testnet_symbols = {"BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"}
     testnet_networks = {"sepolia", "ethereum-sepolia", "solana-devnet", "solana_devnet"}
-    assets = [item for item in assets
-              if str(item.get("symbol", "")) not in testnet_symbols
-              and str(item.get("network", "")).strip().lower() not in testnet_networks
-              and item.get("network") is not None]
+    production_candidates = [item for item in assets
+                             if str(item.get("symbol", "")) not in testnet_symbols
+                             and str(item.get("network", "")).strip().lower() not in testnet_networks]
+    unclassified_assets = [
+        item for item in production_candidates
+        if item.get("network") is None
+        and (float(item.get("balance") or 0) > 0 or float(item.get("reserved_balance") or 0) > 0)
+    ]
+    assets = [item for item in production_candidates if item.get("network") is not None]
     transactions = [item for item in transactions
                     if str(item.get("asset", "")) not in testnet_symbols
                     and str(item.get("network", "")).strip().lower() not in testnet_networks]
     prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
-    available_valuation_complete = all(
+    available_valuation_complete = not unclassified_assets and all(
         (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
         or bool(item.get("price_available"))
         for item in assets
     )
-    actual_valuation_complete = all(
+    actual_valuation_complete = not unclassified_assets and all(
         float(item["actual_balance"] or 0) <= 0 or bool(item.get("price_available"))
         for item in assets
     )
-    reserved_valuation_complete = all(
+    reserved_valuation_complete = not unclassified_assets and all(
         float(item["reserved_balance"] or 0) <= 0 or bool(item.get("price_available"))
         for item in assets
     )
@@ -1522,6 +1527,9 @@ def wallet_valuation_summary(assets, transactions):
         str(item["symbol"]) for item in assets
         if (float(item["balance"] or 0) > 0 or float(item["reserved_balance"] or 0) > 0)
         and not bool(item.get("price_available"))
+    } | {
+        str(item.get("symbol") or "Asset") + " (network attribution pending)"
+        for item in unclassified_assets
     })
     unpriced_actual_assets = sorted({
         str(item["symbol"]) for item in assets
@@ -1578,6 +1586,7 @@ def wallet_valuation_summary(assets, transactions):
         "valuation_complete": available_valuation_complete and actual_valuation_complete,
         "reserved_valuation_complete": reserved_valuation_complete,
         "unpriced_assets": unpriced_assets,
+        "unclassified_assets": sorted(str(item.get("symbol") or "Asset") for item in unclassified_assets),
         "unpriced_actual_assets": unpriced_actual_assets,
         "unpriced_reserved_assets": unpriced_reserved_assets,
         "total_received_usd": partial_received if received_valuation_complete else None,
