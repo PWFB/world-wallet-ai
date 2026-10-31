@@ -89,6 +89,15 @@ const RECEIVE_ASSET_OPTIONS = [
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ (Solana Devnet testnet)" },
 ];
 
+const networkDisplayName = network => ({
+  ethereum: "Ethereum Mainnet",
+  sepolia: "Ethereum Sepolia · Testnet",
+  bnb: "BNB Chain Mainnet",
+  bitcoin: "Bitcoin Mainnet",
+  solana_mainnet: "Solana Mainnet",
+  solana_devnet: "Solana Devnet · Testnet",
+}[String(network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_")] || (network ? String(network).replace(/[_-]+/g, " ").toUpperCase() : "Network not specified"));
+
 const networksForAsset = symbol => ({
   BTC: [{ value: "bitcoin", label: "Bitcoin" }],
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
@@ -377,7 +386,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {visibleAddresses.length ? visibleAddresses.map(a => {
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
-            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
+            const networkLabel = networkDisplayName(a.network);
             return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
@@ -1178,7 +1187,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <div className="tool-status"><span className="status-dot"></span><b>{proofData ? (proofData.status === "partial" ? "Partial on-chain snapshot" : "On-chain snapshot") : "Not yet checked"}</b></div>
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
-        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {networkDisplayName(item.network)}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
         <div className="panel action-panel">
           <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
           <h2>History reconciliation</h2>
@@ -1259,7 +1268,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         {chainResult && <div className="feature-summary">
           <span className="feature-kicker">LIVE TESTNET BALANCE</span>
           <div className="hero-balance">{number(chainResult.on_chain_balance)} <small>Sepolia ETH</small></div>
-          <div className="security-note">Block {chainResult.block_number == null ? "unavailable" : Number(chainResult.block_number).toLocaleString()} · {chainResult.address}</div>
+          <div className="security-note">{networkDisplayName(chainResult.network || network)} · Block {chainResult.block_number == null ? "unavailable" : Number(chainResult.block_number).toLocaleString()} · {chainResult.address}</div>
           {chainResult.mainnet_eth_usd_price != null && <div className="security-note">Mainnet ETH reference price: {money(chainResult.mainnet_eth_usd_price)} per ETH. This does not give testnet ETH real-world value.</div>}
           <label>Amount of Sepolia ETH to compare<input inputMode="decimal" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.5"/></label>
           <div className="hero-balance">{hypotheticalUsd == null ? "—" : money(hypotheticalUsd)} <small>hypothetical USD reference</small></div>
@@ -1412,7 +1421,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div className="panel-head"><div><b>{result.label}</b><small>{result.ok ? (result.data.block_number == null ? "Live API result" : "Block " + Number(result.data.block_number).toLocaleString()) : "Balance unavailable"}</small></div><strong className={result.ok ? "positive" : "negative"}>{result.ok ? number(result.data.available_balance ?? result.data.on_chain_balance) + " " + result.symbol : "Unavailable"}</strong></div>
           {result.ok ? <>
             <div className="tool-row"><div><b>Native available balance</b><small>{result.data.balance_basis}</small></div><strong>{number(result.data.available_balance ?? result.data.on_chain_balance)} {result.data.native_symbol || result.symbol}</strong></div>
-            {result.data.tokens?.length ? result.data.tokens.map(token => <div className="tool-row" key={token.contract_address}><div><b>{token.symbol}</b><small>{token.name} · token balance</small></div><code>{token.contract_address}</code><strong>{token.available_balance == null ? "Unavailable" : number(token.available_balance) + " " + token.symbol}</strong></div>) : <div className="security-note">No configured ERC-20 token balances were returned for this network.</div>}
+            {result.data.tokens?.length ? result.data.tokens.map(token => <div className="tool-row" key={token.contract_address}><div><b>{token.symbol}</b><small>{token.name} · {networkDisplayName(network)} · token balance</small></div><code>{token.contract_address}</code><strong>{token.available_balance == null ? "Unavailable" : number(token.available_balance) + " " + token.symbol}</strong></div>) : <div className="security-note">No configured ERC-20 token balances were returned for this network.</div>}
             {result.network === "sepolia" && <div className="security-note">Sepolia is a testnet. Test ETH and test tokens have no redeemable real-world value.</div>}
           </> : <div className="feature-error">{result.error}</div>}
         </div>)}
@@ -1633,7 +1642,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <h3>Step 1 · Choose a destination address</h3>
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{networkDisplayName(item.network)}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
@@ -1778,8 +1787,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div><small>Network</small><b>{transaction.network || "Not supplied by transaction record"}</b></div><div><small>Time</small><b>{transaction.time || "—"}</b></div>
           <div><small>Confirmations</small><b>{transaction.confirmations == null ? "—" : Number(transaction.confirmations).toLocaleString()}</b></div><div><small>Block height</small><b>{transaction.block_height == null ? "—" : Number(transaction.block_height).toLocaleString()}</b></div>
           <div className="transaction-detail-wide"><small>Transaction hash</small>{transaction.tx_hash ? <code>{transaction.tx_hash}</code> : <span>Not available — this record may not have been broadcast to a blockchain.</span>}</div>
-          <div className="transaction-detail-wide"><small>From address</small>{transaction.from_address || transaction.from ? <code>{transaction.from_address || transaction.from}</code> : <span>Not supplied</span>}</div>
-          <div className="transaction-detail-wide"><small>To address</small>{transaction.to_address || transaction.to ? <code>{transaction.to_address || transaction.to}</code> : <span>Not supplied</span>}</div>
+          <div className="transaction-detail-wide"><small>From address · {networkDisplayName(network)}</small>{transaction.from_address || transaction.from ? <code>{transaction.from_address || transaction.from}</code> : <span>Not supplied</span>}</div>
+          <div className="transaction-detail-wide"><small>To address · {networkDisplayName(network)}</small>{transaction.to_address || transaction.to ? <code>{transaction.to_address || transaction.to}</code> : <span>Not supplied</span>}</div>
           {transaction.description && <div className="transaction-detail-wide"><small>Description</small><span>{transaction.description}</span></div>}
         </div>
         {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. A missing transaction hash cannot be searched as a confirmed transfer.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
@@ -2030,7 +2039,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     const removeBook=async id=>{const entry=toolItems.find(item=>item.id===id);if(!window.confirm("Remove "+(entry?.label||"this saved address")+" from this wallet’s address book? This cannot be undone."))return;setToolBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/address-book/delete",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({id})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to remove address.");setMessage("Address removed.");await loadBook();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Address Book</h1><p className="muted">Save trusted destination addresses for this wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel"><h2>Add address</h2><label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label><label>Address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label><label>Label<input value={note} onChange={e=>setNote(e.target.value)} placeholder="My exchange"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()||!note.trim()} onClick={addBook}>{toolBusy?"Saving…":"Save address →"}</button></article>
-      <article className="panel tool-panel"><div className="panel-head"><div><h2>Saved addresses</h2><span>Private to this wallet</span></div><button className="secondary" onClick={loadBook}>↻ Refresh</button></div>{toolItems.length?toolItems.map(a=><div className="tool-row" key={a.id}><div><b>{a.label}</b><small>{a.network}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>removeBook(a.id)}>Remove</button></div>):<div className="live-chart-empty">No saved addresses loaded.</div>}</article></div></section>;
+      <article className="panel tool-panel"><div className="panel-head"><div><h2>Saved addresses</h2><span>Private to this wallet</span></div><button className="secondary" onClick={loadBook}>↻ Refresh</button></div>{toolItems.length?toolItems.map(a=><div className="tool-row" key={a.id}><div><b>{a.label}</b><small>{networkDisplayName(a.network)}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>removeBook(a.id)}>Remove</button></div>):<div className="live-chart-empty">No saved addresses loaded.</div>}</article></div></section>;
   }
 
   if (active === "Request Center") {
