@@ -286,6 +286,7 @@ function App() {
     } catch {}
   }, [wallet, assets]);
   const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
+  const initialChainRefreshRef = useRef(false);
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
   const [marketPricesError, setMarketPricesError] = useState("");
@@ -609,8 +610,10 @@ function App() {
         })));
         if (data.user) setUser(data.user);
         setApiStatus("online");
-        // Immediately request verified chain balances; backend chain checks keep Mainnet and testnets separate.
-        try {
+        // Refresh once per authenticated page session, not on each background snapshot poll.
+        if (!initialChainRefreshRef.current) {
+          initialChainRefreshRef.current = true;
+          try {
           const liveResponse = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", { method: "POST", headers: authHeaders, cache: "no-store" });
           const live = await liveResponse.json().catch(() => ({}));
           if (liveResponse.ok && !cancelled) {
@@ -621,7 +624,8 @@ function App() {
             if (live.last_balance_sync_at) setLastSyncedAt(live.last_balance_sync_at);
             if (Array.isArray(live.transactions)) setActivity(live.transactions.map(tx => ({ id: tx.id, type: tx.type, asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "", network: tx.network, description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"), amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""), raw_amount: Number(tx.amount), time: tx.time, status: tx.status, tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height })));
           }
-        } catch { /* Preserve the last confirmed wallet snapshot when a chain RPC is unavailable. */ }
+          } catch { /* Preserve the last confirmed wallet snapshot when a chain RPC is unavailable. */ }
+        }
       } catch (error) {
         if (!cancelled) {
           setApiStatus("error");
