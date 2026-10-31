@@ -1035,7 +1035,7 @@
 .app-shell .network-balance-feedback{margin:0 20px 8px;padding:8px 12px;border:1px solid #1d665e;border-radius:9px;background:#092b2a;color:#a8f3df;font-size:12px;line-height:1.45;overflow-wrap:anywhere}
 .app-shell .network-balance-error{border-color:#76502d;background:#2b2115;color:#ffd3a2}
 .app-shell .top-network-switch{display:flex;align-items:center;gap:4px;min-width:0;padding:3px;border:1px solid #263c58;border-radius:10px;background:#0b1729}
-.app-shell .top-network-switch select{width:100px;max-width:28vw;min-width:0;height:31px;padding:0 5px;border:0;border-radius:7px;background:#102039;color:#dce9fa;font:600 10px Inter,system-ui,sans-serif}
+.app-shell .top-network-switch select{width:165px;max-width:36vw;min-width:0;height:31px;padding:0 5px;border:0;border-radius:7px;background:#102039;color:#dce9fa;font:600 10px Inter,system-ui,sans-serif}
 .app-shell .top-network-refresh{display:grid;place-items:center;flex:0 0 30px;width:30px;height:31px!important;min-width:30px!important;padding:0!important;border:0!important;border-radius:7px!important;background:#123047!important;color:#6ee7f9!important;font-size:15px!important}
 .app-shell .top-network-refresh:disabled{opacity:.55;cursor:wait}
 .app-shell .balance-grid{grid-template-columns:minmax(230px,1.5fr) repeat(3,minmax(0,1fr));gap:10px;margin-bottom:12px}
@@ -1055,7 +1055,7 @@
   .app-shell .top-browser-button{font-size:0;min-width:31px!important;width:31px;padding:0!important}
   .app-shell .top-browser-button span{display:none}
   .app-shell .top-network-switch{gap:2px;padding:2px}
-  .app-shell .top-network-switch select{width:86px;max-width:25vw;height:30px;font-size:9px}
+  .app-shell .top-network-switch select{width:130px;max-width:38vw;height:30px;font-size:9px}
   .app-shell .top-network-refresh{flex-basis:27px;width:27px;min-width:27px!important;height:30px!important}
   .app-shell .content{width:100%;padding:18px 12px calc(28px + env(safe-area-inset-bottom))}
   .app-shell .page-heading{gap:10px;margin-bottom:14px}
@@ -1076,7 +1076,7 @@
 @media(max-width:380px){
   .app-shell .mobile-brand{gap:5px;font-size:8px}
   .app-shell .mobile-brand .brand-mark{width:27px;height:27px;flex:0 0 27px}
-  .app-shell .top-network-switch select{width:73px;max-width:23vw}
+  .app-shell .top-network-switch select{width:108px;max-width:34vw}
   .app-shell .top-network-refresh{display:none}
   .app-shell .top-actions button:nth-child(2),.app-shell .top-actions button:nth-child(3){display:none}
   .app-shell .balance-grid>.stat-card{padding:11px}
@@ -1616,62 +1616,7 @@
 }
 
 
-/* Dedicated mobile network selector: keep it visible below the header on narrow screens. */
-.mobile-network-switch-row { display: none; }
-@media (max-width: 760px) {
-  .app-shell .top-actions .top-network-switch { display: none; }
-  .app-shell .mobile-network-switch-row {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) 42px;
-    align-items: center;
-    gap: 9px;
-    width: calc(100% - 24px);
-    margin: 10px 12px 12px;
-    padding: 10px;
-    box-sizing: border-box;
-    border: 1px solid #29415f;
-    border-radius: 12px;
-    background: linear-gradient(110deg, #0d1b30, #10213a);
-    color: #a8bdd8;
-  }
-  .app-shell .mobile-network-switch-row label {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: .08em;
-    white-space: nowrap;
-  }
-  .app-shell .mobile-network-switch-row select {
-    display: block;
-    width: 100%;
-    min-width: 0;
-    height: 42px;
-    padding: 0 10px;
-    border: 1px solid #365474;
-    border-radius: 9px;
-    background: #071426;
-    color: #f1f7ff;
-    font: 600 13px Inter, system-ui, sans-serif;
-  }
-  .app-shell .mobile-network-switch-row .mobile-network-refresh {
-    display: grid;
-    place-items: center;
-    width: 42px;
-    min-width: 42px;
-    height: 42px;
-    padding: 0;
-    border: 1px solid #2a5576;
-    border-radius: 9px;
-    background: #123047;
-    color: #6ee7f9;
-    font-size: 20px;
-  }
-  .app-shell .mobile-network-switch-row .mobile-network-refresh:disabled {
-    opacity: .55;
-    cursor: wait;
-  }
-}
-
-
+/* A single network selector is shared by desktop and mobile layouts. */
 /* Embedded browser load state and fallback */
 .browser-frame-status{position:absolute;top:12px;left:50%;transform:translateX(-50%);z-index:2;padding:8px 12px;border:1px solid #2d4564;border-radius:999px;background:#0b1729eF;color:#d7e6f7;font-size:11px;box-shadow:0 5px 20px #0005;pointer-events:none;max-width:90%;text-align:center}
 .browser-frame-notice a{color:#ff9a32;text-decoration:underline;font-weight:700}
@@ -1888,3 +1833,9 @@
 .transaction-controls input,.transaction-controls select{min-width:0;min-height:38px;padding:9px 10px;border:1px solid #263b58;border-radius:8px;background:#091629;color:#e8eff9;font:inherit;font-size:10px}
 .transaction-controls input:focus,.transaction-controls select:focus{outline:2px solid rgba(255,122,24,.45);outline-offset:1px}
 @media(max-width:760px){.transaction-controls{grid-template-columns:1fr 1fr}.transaction-controls input{grid-column:1/-1}.transaction-controls button{grid-column:1/-1}}
+
+
+/* Wallet selection lives in the Wallets workspace, not inside the balance card. */
+.app-shell .balance-card-tools{display:flex;align-items:center;gap:8px}
+.app-shell .manage-wallets-button{min-height:29px;padding:5px 9px;border:1px solid #29415f;border-radius:7px;background:#102039;color:#b9cbe0;font:600 9px Inter,system-ui,sans-serif;white-space:nowrap}
+.app-shell .manage-wallets-button:hover{border-color:#ff7a18;color:#fff}
