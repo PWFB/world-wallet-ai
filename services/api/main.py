@@ -1495,8 +1495,9 @@ def wallet_valuation_summary(assets, transactions):
     # Devnet assets remain visible in the wallet asset list, but must never
     # affect production portfolio valuation or mark production holdings as unpriced.
     devnet_symbols = {"BALMZ-SOL-DEVNET", "SOL-DEVNET"}
-    assets = [item for item in assets if str(item.get("symbol", "")) not in devnet_symbols]
-    transactions = [item for item in transactions if str(item.get("asset", "")) not in devnet_symbols]
+    testnet_networks = {"sepolia", "ethereum-sepolia", "solana-devnet", "solana_devnet"}
+    assets = [item for item in assets if str(item.get("symbol", "")) not in devnet_symbols | {"BALMZ-SEP"}]
+    transactions = [item for item in transactions if str(item.get("asset", "")) not in devnet_symbols | {"BALMZ-SEP"} and str(item.get("network", "")).strip().lower() not in testnet_networks]
     prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
     available_valuation_complete = all(
         (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
