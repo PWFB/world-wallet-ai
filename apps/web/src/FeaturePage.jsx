@@ -438,6 +438,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [devnetDepositMessage, setDevnetDepositMessage] = useState("");
   const [devnetDepositResult, setDevnetDepositResult] = useState(null);
   const [toolItems, setToolItems] = useState([]);
+  const [requestItems, setRequestItems] = useState([]);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestError, setRequestError] = useState("");
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
@@ -804,9 +807,25 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   useEffect(() => {
     if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active) || !accessToken) return;
-    setHistoryTransactions([]);
-    setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+    // Keep the last confirmed rows visible while the next page is loading.
+    // A failed background refresh must not make saved history disappear.
     loadTransactionHistory({ offset: 0, append: false });
+  }, [active, accessToken, apiBaseUrl]);
+
+  useEffect(() => {
+    if (active !== "Request Center" || !accessToken) return;
+    let cancelled = false;
+    setRequestBusy(true);
+    setRequestError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to load requests.");
+        if (!cancelled) setRequestItems(Array.isArray(data.requests) ? data.requests : []);
+      })
+      .catch(error => { if (!cancelled) setRequestError(error.message || "Unable to load requests."); })
+      .finally(() => { if (!cancelled) setRequestBusy(false); });
+    return () => { cancelled = true; };
   }, [active, accessToken, apiBaseUrl]);
 
   const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
@@ -1907,11 +1926,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Request Center") {
-    const loadRequests=async()=>{setToolBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setToolItems(d.requests||[]);}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
+    const loadRequests=async()=>{setRequestBusy(true);setRequestError("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setRequestItems(Array.isArray(d.requests)?d.requests:[]);}catch(e){setRequestError(e.message||"Unable to load requests.");}finally{setRequestBusy(false);}};
     const createRequest=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({kind:"support",title:destination,details:note})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to create request.");setDestination("");setNote("");setMessage("Request created.");await loadRequests();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Request Center</h1><p className="muted">Create and track database-backed support requests.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel"><h2>New request</h2><label>Title<input value={destination} onChange={e=>setDestination(e.target.value)} maxLength="120" placeholder="Request title"/></label><label>Details<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="1000" placeholder="Describe what you need"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={createRequest}>{toolBusy?"Saving…":"Create request →"}</button></article>
-      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests}>{toolBusy?"Loading…":"↻ Refresh"}</button></div>{toolItems.length?toolItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">No requests loaded. Tap Refresh.</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
+      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests} disabled={requestBusy}>{requestBusy?"Loading…":"↻ Refresh"}</button></div>{requestError&&<div role="status" className="feature-error">{requestError}</div>}{requestItems.length?requestItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">{requestBusy?"Loading your saved requests…":requestError?"Requests could not be loaded. Retry to check again.":"No requests have been created yet."}</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
   }
 
   if (active === "Wallet Connect") {
