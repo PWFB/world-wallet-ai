@@ -7,6 +7,7 @@ import secrets
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
+from threading import Lock
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -303,10 +304,42 @@ class ApiKeyImportRequest(BaseModel):
     api_key: str = Field(min_length=30, max_length=300)
 
 
+# A small per-process pool prevents request bursts from opening unbounded Neon
+# connections. Render currently runs one API worker; keep this limit conservative.
+_DB_POOL = None
+_DB_POOL_LOCK = Lock()
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
-    return psycopg.connect(DATABASE_URL)
+    global _DB_POOL
+    if _DB_POOL is None:
+        with _DB_POOL_LOCK:
+            if _DB_POOL is None:
+                from psycopg_pool import ConnectionPool
+                _DB_POOL = ConnectionPool(
+                    conninfo=DATABASE_URL,
+                    min_size=1,
+                    max_size=5,
+                    timeout=5,
+                    max_idle=300,
+                    max_lifetime=1800,
+                    reconnect_timeout=10,
+                    kwargs={
+                        "connect_timeout": 5,
+                        "application_name": "world-wallet-ai-api",
+                    },
+                    open=True,
+                )
+    return _DB_POOL.connection(timeout=5)
+
+
+@app.on_event("shutdown")
+def close_database_pool():
+    """Return pooled connections cleanly when the API process shuts down."""
+    if _DB_POOL is not None:
+        _DB_POOL.close()
 
 
 def sha(value: str) -> str:
@@ -2101,7 +2134,7 @@ def _coinbase_spot_price_fallback():
             return symbol, None
         return symbol, {"usd": value, "usd_24h_change": None, "listed": True}
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=4) as pool:
         futures = {pool.submit(fetch, symbol, product): symbol for symbol, product in pairs.items()}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -2318,77 +2351,82 @@ def balmz_presale_status(user: dict = Depends(current_user)):
     }
 
 
+# Serialize cache misses: concurrent dashboard panels share one provider refresh
+# rather than each spawning a separate provider request burst.
+_MARKET_PRICE_REFRESH_LOCK = Lock()
+
+
 @app.get("/api/v1/prices/market")
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
     global _MARKET_PRICE_CACHE
-    # Reuse the last verified quote for one minute. The frontend refreshes at a
-    # similar cadence, so this avoids duplicate provider calls from multiple
-    # dashboard panels while still exposing a fresh timestamp and cache age.
     cached = _MARKET_PRICE_CACHE.fresh_response(max_age_seconds=60)
     if cached is not None:
         return cached
-    coin_ids = {
-        "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
-        "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
-        "LTC":"litecoin","DOGE":"dogecoin",
-    }
-    try:
-        response = httpx.get(
-            f"{_active_coingecko_config()[1]}/simple/price",
-            params={
-                "ids": ",".join(coin_ids.values()),
-                "vs_currencies": "usd",
-                "include_24hr_change": "true",
-            },
-            headers=coingecko_headers(),
-            timeout=8,
-        )
-        response.raise_for_status()
-        raw = response.json()
-    except Exception as exc:
-        # Log only provider/status metadata, never request headers or API keys.
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        logger.warning("CoinGecko market-price request failed: error_type=%s status=%s",
-                       type(exc).__name__, status)
-        # Prefer a recent successful quote, then try an independent spot-price provider.
-        fallback = _MARKET_PRICE_CACHE.stale_response()
-        if fallback is not None:
-            logger.info("Serving cached market quotes: age_seconds=%s", fallback.get("cache_age_seconds"))
-            return fallback
-        backup = _coinbase_spot_price_fallback()
-        if backup is not None:
-            _MARKET_PRICE_CACHE.store(backup)
-            logger.warning("Serving fresh spot quotes from Coinbase fallback; 24h changes are unavailable")
-            return backup
-        raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
-
-    prices = {}
-    for symbol, coin_id in coin_ids.items():
-        quote = raw.get(coin_id, {})
-        usd = quote.get("usd")
-        prices[symbol] = {
-            "usd": float(usd) if usd is not None else None,
-            "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
-            "listed": usd is not None,
+    with _MARKET_PRICE_REFRESH_LOCK:
+        # Re-check after acquiring the lock because another request may have
+        # populated the cache while this request waited.
+        cached = _MARKET_PRICE_CACHE.fresh_response(max_age_seconds=60)
+        if cached is not None:
+            return cached
+        coin_ids = {
+            "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
+            "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
+            "LTC":"litecoin","DOGE":"dogecoin",
         }
-    # Chain-qualified variants reuse the same underlying token's genuine USD quote.
-    # This is a price reference only; balances remain separated by network.
-    for alias, source in (("USDT-BNB", "USDT"), ("USDC-BNB", "USDC")):
-        if source in prices:
-            prices[alias] = dict(prices[source])
-    # BALMZ has no verified market quote yet. Never invent a price.
-    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
-    prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
-    payload = {
-        "source": "CoinGecko",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "prices": prices,
-        "stale": False,
-        "cache_age_seconds": 0,
-    }
-    _MARKET_PRICE_CACHE.store(payload)
-    return payload
+        try:
+            api_key, base_url = _active_coingecko_config()
+            response = httpx.get(
+                f"{base_url}/simple/price",
+                params={
+                    "ids": ",".join(coin_ids.values()),
+                    "vs_currencies": "usd",
+                    "include_24hr_change": "true",
+                },
+                headers=coingecko_headers(api_key, base_url),
+                timeout=httpx.Timeout(8.0, connect=3.0),
+            )
+            response.raise_for_status()
+            raw = response.json()
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            logger.warning("CoinGecko market-price request failed: error_type=%s status=%s",
+                           type(exc).__name__, status)
+            fallback = _MARKET_PRICE_CACHE.stale_response()
+            if fallback is not None:
+                logger.info("Serving cached market quotes: age_seconds=%s", fallback.get("cache_age_seconds"))
+                return fallback
+            backup = _coinbase_spot_price_fallback()
+            if backup is not None:
+                _MARKET_PRICE_CACHE.store(backup)
+                logger.warning("Serving fresh spot quotes from Coinbase fallback; 24h changes are unavailable")
+                return backup
+            raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
+
+        prices = {}
+        for symbol, coin_id in coin_ids.items():
+            quote = raw.get(coin_id, {})
+            usd = quote.get("usd")
+            prices[symbol] = {
+                "usd": float(usd) if usd is not None else None,
+                "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
+                "listed": usd is not None,
+            }
+        for alias, source in (("USDT-BNB", "USDT"), ("USDC-BNB", "USDC")):
+            if source in prices:
+                prices[alias] = dict(prices[source])
+        prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False,
+                           "eth_reference_usd": prices.get("ETH", {}).get("usd")}
+        prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
+        payload = {
+            "source": "CoinGecko",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "prices": prices,
+            "stale": False,
+            "cache_age_seconds": 0,
+        }
+        _MARKET_PRICE_CACHE.store(payload)
+        return payload
 
 
 @app.get("/api/v1/prices/history/{symbol}")
