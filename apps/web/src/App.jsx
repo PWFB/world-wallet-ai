@@ -661,7 +661,7 @@ function App() {
           block_height: tx.block_height,
         })));
       } catch {
-        if (!cancelled) setActivity([]);
+        // Preserve the last confirmed activity list during transient API failures.
       }
     }
 
