@@ -1501,10 +1501,13 @@ def wallet_valuation_summary(assets, transactions):
                              and str(item.get("network", "")).strip().lower() not in testnet_networks]
     unclassified_assets = [
         item for item in production_candidates
-        if item.get("network") is None
+        if "network" in item and item.get("network") is None
         and (float(item.get("balance") or 0) > 0 or float(item.get("reserved_balance") or 0) > 0)
     ]
-    assets = [item for item in production_candidates if item.get("network") is not None]
+    # Legacy callers/tests without a network field keep their established
+    # behaviour. Only wallet_snapshot's explicit network=None is withheld.
+    assets = [item for item in production_candidates
+              if not ("network" in item and item.get("network") is None)]
     transactions = [item for item in transactions
                     if str(item.get("asset", "")) not in testnet_symbols
                     and str(item.get("network", "")).strip().lower() not in testnet_networks]
