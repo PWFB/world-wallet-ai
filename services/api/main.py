@@ -1908,6 +1908,8 @@ def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
     if network == "bnb" and symbol in {"USDT", "USDC"}:
         return f"{symbol}-BNB"
+    if network == "sepolia" and symbol == "BALMZ":
+        return "BALMZ-SEP"
     return symbol
 
 
