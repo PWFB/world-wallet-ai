@@ -3,7 +3,7 @@ import "./App.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
-import { cachedBalanceMatchesNetwork, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
+import { cachedBalanceMatchesNetwork, defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
@@ -351,7 +351,7 @@ function App() {
       return readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
     } catch { return "ethereum"; }
   });
-  const balanceRequestInFlight = useRef(false);
+  const balanceRequestIdRef = useRef(0);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
   const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
@@ -884,13 +884,29 @@ function App() {
     // Devnet with Ethereum Mainnet after a reload or pull-to-refresh.
   }, [externalWalletConnection]);
 
+  function changeSelectedNetwork(nextNetwork) {
+    const normalized = normalizeNetworkId(nextNetwork);
+    if (normalized === normalizeNetworkId(selectedNetwork)) return;
+    setSelectedNetwork(normalized);
+    try { localStorage.setItem("world_wallet_selected_network_v1", normalized); } catch {}
+    setSelectedNetworkAddress("");
+    setSelectedNetworkBalance(null);
+    setSelectedNetworkBalanceMessage("");
+  }
+
+  function changeNetworkEnvironment(environment) {
+    // Entering either environment always selects its agreed safe default.
+    changeSelectedNetwork(defaultNetworkForEnvironment(environment));
+  }
+
   async function refreshSelectedNetworkBalance(forceAddressRefresh = false) {
-    if (balanceRequestInFlight.current) return;
+    const requestId = ++balanceRequestIdRef.current;
+    const requestedNetwork = normalizeNetworkId(selectedNetwork);
     if (!accessToken) {
+      setSelectedNetworkBalanceBusy(false);
       setSelectedNetworkBalanceMessage("Sign in to check a wallet balance.");
       return;
     }
-    balanceRequestInFlight.current = true;
     setSelectedNetworkBalanceBusy(true);
     setSelectedNetworkBalanceMessage("");
     let token = accessToken;
@@ -912,7 +928,7 @@ function App() {
       return response;
     };
     try {
-      const normalizedSelectedNetwork = normalizeNetwork(selectedNetwork);
+      const normalizedSelectedNetwork = requestedNetwork;
       let walletId = forceAddressRefresh ? "" : (balanceWalletIdRef.current || wallet?.wallet_id || wallet?.id || user?.wallet_id);
       let currentAddresses = dashboardAddresses;
       const hasCachedAddress = !forceAddressRefresh && currentAddresses.some(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
@@ -935,6 +951,7 @@ function App() {
       const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
       const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
       if (!chosen) throw new Error("No address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets to inspect its existing public address.");
+      if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
       if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
       const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
       const response = await authorizedFetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/balance?" + query.toString());
@@ -942,14 +959,16 @@ function App() {
       if (!response.ok) throw new Error(data.detail || ("Balance request failed (HTTP " + response.status + ")."));
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
+      if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
       setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
       setSelectedNetworkBalanceMessage("Balance updated.");
     } catch (error) {
       // Keep the last confirmed balance visible if a refresh fails.
-      setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
+      if (requestId === balanceRequestIdRef.current && normalizeNetworkId(selectedNetwork) === requestedNetwork) setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
     } finally {
-      balanceRequestInFlight.current = false;
-      setSelectedNetworkBalanceBusy(false);
+      if (requestId === balanceRequestIdRef.current) {
+        setSelectedNetworkBalanceBusy(false);
+      }
     }
   }
 
@@ -1501,16 +1520,18 @@ function App() {
           <button type="button" className="mobile-brand" aria-label={mobileMenuOpen ? "Close wallet navigation" : "Open wallet navigation"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(current => !current)}><span className="mobile-menu-glyph" aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span><span className="mobile-brand-logo"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /></span><b>WORLD WALLET <span>AI</span></b></button>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
-            <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Switch blockchain network" value={selectedNetwork} onChange={event => { const nextNetwork = event.target.value; setSelectedNetwork(nextNetwork); try { localStorage.setItem("world_wallet_selected_network_v1", nextNetwork); } catch {} setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); setSelectedNetworkBalanceMessage(""); }}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (Testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (Testnet)</option></select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
+            <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Select wallet environment" value={networkEnvironment(selectedNetwork)} onChange={event => changeNetworkEnvironment(event.target.value)}><option value="mainnet">Mainnet</option><option value="devnet">Devnet</option></select><select aria-label="Select blockchain network" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>{["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option></>}</select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
         <div className="mobile-network-switch-row" aria-label="Blockchain network selector">
+          <label htmlFor="mobile-environment-select">ENVIRONMENT</label>
+          <select id="mobile-environment-select" aria-label="Select wallet environment on mobile" value={networkEnvironment(selectedNetwork)} onChange={event => changeNetworkEnvironment(event.target.value)}>
+            <option value="mainnet">Mainnet</option>
+            <option value="devnet">Devnet</option>
+          </select>
           <label htmlFor="mobile-network-select">NETWORK</label>
-          <select id="mobile-network-select" aria-label="Switch blockchain network on mobile" value={selectedNetwork} onChange={event => { const nextNetwork = event.target.value; setSelectedNetwork(nextNetwork); try { localStorage.setItem("world_wallet_selected_network_v1", nextNetwork); } catch {} setSelectedNetworkAddress(""); setSelectedNetworkBalance(null); setSelectedNetworkBalanceMessage(""); }}>
-            <option value="ethereum">Ethereum Mainnet</option>
-            <option value="sepolia">Ethereum Sepolia (Testnet)</option>
-            <option value="solana_mainnet">Solana Mainnet</option>
-            <option value="solana_devnet">Solana Devnet (Testnet)</option>
+          <select id="mobile-network-select" aria-label="Select blockchain network on mobile" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>
+            {["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option></>}
           </select>
           <button type="button" className="mobile-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button>
         </div>

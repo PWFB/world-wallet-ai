@@ -5,6 +5,8 @@ import {
   isTestnetNetwork,
   normalizeNetworkId,
   readSelectedNetwork,
+  networkEnvironment,
+  defaultNetworkForEnvironment,
 } from "./network-selection.js";
 
 test("keeps Solana Devnet selected after browser reload", () => {
@@ -97,4 +99,15 @@ test("Solana Mainnet is production while Devnet remains test-only", () => {
   assert.equal(isTestnetNetwork("solana", "SOL"), false);
   assert.equal(isTestnetNetwork("solana_mainnet", "BALMZ"), false);
   assert.equal(isTestnetNetwork("solana_devnet", "BALMZ-SOL-DEVNET"), true);
+});
+
+test("maps Mainnet and Devnet environments to isolated default networks", () => {
+  assert.equal(defaultNetworkForEnvironment("mainnet"), "ethereum");
+  assert.equal(defaultNetworkForEnvironment("devnet"), "solana_devnet");
+  assert.equal(networkEnvironment("ethereum"), "mainnet");
+  assert.equal(networkEnvironment("bnb"), "mainnet");
+  assert.equal(networkEnvironment("bitcoin"), "mainnet");
+  assert.equal(networkEnvironment("solana_mainnet"), "mainnet");
+  assert.equal(networkEnvironment("sepolia"), "devnet");
+  assert.equal(networkEnvironment("solana_devnet"), "devnet");
 });
