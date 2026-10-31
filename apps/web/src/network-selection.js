@@ -47,3 +47,11 @@ export function isTestnetNetwork(networkValue, assetValue) {
   const asset = String(assetValue || "").trim().toUpperCase();
   return TESTNET_NETWORKS.has(network) || TESTNET_ASSETS.has(asset);
 }
+
+export function networkEnvironment(value) {
+  return ["sepolia", "solana_devnet"].includes(normalizeNetworkId(value)) ? "devnet" : "mainnet";
+}
+
+export function defaultNetworkForEnvironment(environment) {
+  return environment === "devnet" ? "solana_devnet" : "ethereum";
+}
