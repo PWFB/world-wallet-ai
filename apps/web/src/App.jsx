@@ -286,6 +286,7 @@ function App() {
     } catch {}
   }, [wallet, assets]);
   const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
+  const chainRefreshTokenRef = useRef("");
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
   const [marketPricesError, setMarketPricesError] = useState("");
@@ -297,27 +298,45 @@ function App() {
   const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [externalWalletConnection, setExternalWalletConnection] = useState(() => { try { return JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return null; } });
-  const walletCoinCatalogWithRegistry = useMemo(() => walletCoinCatalog.map(coin => {
-    const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
-    const liveRecord = records.find(t => t.wallet_network_connected);
-    const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
-    const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
-    const quote = marketPrices[coin.symbol] || {};
-    return {
-      ...coin,
-      status: coin.symbol === "BALMZ"
-        ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
-        : coin.symbol === "BALMZ-SEP"
-          ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-          : coin.status,
-      registry: liveRecord || mainnetContract || sepoliaContract || records[0] || null,
-      connected: Boolean(liveRecord),
-      price_usd: quote.usd == null ? null : Number(quote.usd),
-      price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
-      price_listed: quote.listed === true,
-      price_source: quote.usd == null ? null : "CoinGecko",
-    };
-  }), [tokenRegistry, marketPrices]);
+  const walletCoinCatalogWithRegistry = useMemo(() => {
+    const catalog = walletCoinCatalog.map(coin => {
+      const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
+      const liveRecord = records.find(t => t.wallet_network_connected);
+      const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
+      const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
+      const quote = marketPrices[coin.symbol] || {};
+      return {
+        ...coin,
+        status: coin.symbol === "BALMZ"
+          ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
+          : coin.symbol === "BALMZ-SEP"
+            ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
+            : coin.status,
+        registry: liveRecord || mainnetContract || sepoliaContract || records[0] || null,
+        connected: Boolean(liveRecord),
+        price_usd: quote.usd == null ? null : Number(quote.usd),
+        price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
+        price_listed: quote.listed === true,
+        price_source: quote.usd == null ? null : "CoinGecko",
+      };
+    });
+    const catalogSymbols = new Set(catalog.map(coin => coin.symbol));
+    const additionalWalletAssets = assets
+      .filter(asset => asset?.symbol && !catalogSymbols.has(asset.symbol))
+      .map(asset => ({
+        symbol: asset.symbol,
+        name: asset.name || asset.symbol,
+        icon: asset.symbol.startsWith("BALMZ") ? "B" : "•",
+        status: asset.network_label || asset.network || "Network not classified",
+        registry: null,
+        connected: Boolean(asset.network),
+        price_usd: asset.price_usd == null ? null : Number(asset.price_usd),
+        price_24h_change: null,
+        price_listed: asset.price_available === true,
+        price_source: asset.price_available ? "Wallet snapshot" : null,
+      }));
+    return [...catalog, ...additionalWalletAssets];
+  }, [walletCoinCatalog, tokenRegistry, marketPrices, assets]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
@@ -473,7 +492,7 @@ function App() {
         setCoinPriceHistoryLoading(false);
         return;
       }
-      const historySymbol = selectedCoin === "BALMZ-SOL-DEVNET" ? "SOL" : selectedCoin;
+      const historySymbol = selectedCoin === "BALMZ-SOL-DEVNET" ? "SOL" : selectedCoin.endsWith("-BNB") ? selectedCoin.slice(0, -4) : selectedCoin;
       setCoinPriceHistoryLoading(true);
       try {
         const response = await fetch(API_BASE_URL + "/api/v1/prices/history/" + encodeURIComponent(historySymbol) + "?days=1", { cache: "no-store" });
@@ -609,6 +628,40 @@ function App() {
         })));
         if (data.user) setUser(data.user);
         setApiStatus("online");
+
+        // Fetch current on-chain balances once per authenticated session.
+        // RPC validation on the backend keeps Mainnet and testnets isolated.
+        if (chainRefreshTokenRef.current !== accessToken) {
+          chainRefreshTokenRef.current = accessToken;
+          try {
+            const liveResponse = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", {
+              method: "POST",
+              headers: authHeaders,
+              cache: "no-store",
+            });
+            const live = await liveResponse.json().catch(() => ({}));
+            if (liveResponse.ok && !cancelled) {
+              if (live.wallet) setWallet(live.wallet);
+              if (Array.isArray(live.assets)) setAssets(live.assets.map(asset => ({
+                ...asset,
+                icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+              })));
+              if (Array.isArray(live.transactions)) setActivity(live.transactions.map(tx => ({
+                id: tx.id, type: tx.type, asset: tx.asset || tx.symbol || "",
+                symbol: tx.asset || tx.symbol || "", network: tx.network,
+                description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
+                amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
+                raw_amount: Number(tx.amount), time: tx.time, status: tx.status,
+                tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height,
+              })));
+              if (Array.isArray(live.updates)) setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
+              if (live.network_status) setNetworkStatus(live.network_status);
+              if (live.last_balance_sync_at) setLastSyncedAt(live.last_balance_sync_at);
+            }
+          } catch {
+            // Keep the last confirmed snapshot when any RPC is temporarily unavailable.
+          }
+        }
       } catch (error) {
         if (!cancelled) {
           setApiStatus("error");
@@ -661,7 +714,7 @@ function App() {
           block_height: tx.block_height,
         })));
       } catch {
-        if (!cancelled) setActivity([]);
+        // Keep the last confirmed activity rows visible during transient API failures.
       }
     }
 
@@ -1540,8 +1593,11 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ Token Balance</span><strong>{number(assets.filter(asset => ["BALMZ", "BALMZ-SEP", "BALMZ-SOL-DEVNET"].includes(String(asset.symbol || "").toUpperCase())).reduce((total, asset) => total + Number(asset.balance || 0), 0))} <small>BALMZ*</small></strong><b className="neutral">{apiStatus === "error" ? "Wallet data unavailable" : assets.some(asset => ["BALMZ", "BALMZ-SEP", "BALMZ-SOL-DEVNET"].includes(String(asset.symbol || "").toUpperCase())) ? "Recorded BALMZ holdings across supported networks" : "No balance recorded"}</b><div className="stat-source">*Combined display only; includes separate network balances. Devnet tokens have no USD valuation.</div></article>
-              <article className="stat-card solana-devnet-balance-card"><span>Solana Devnet SOL</span><strong>{assets.some(asset => String(asset.symbol || "").toUpperCase() === "SOL-DEVNET") ? number(assets.find(asset => String(asset.symbol || "").toUpperCase() === "SOL-DEVNET")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">{apiStatus === "error" ? "Wallet data unavailable" : assets.some(asset => String(asset.symbol || "").toUpperCase() === "SOL-DEVNET") ? "Recorded Devnet balance" : "Sync wallet to verify balance"}</b><div className="stat-source">Solana Devnet test SOL only · not Mainnet SOL · no USD valuation</div></article>
+              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{assets.some(asset => asset.symbol === "BALMZ") ? number(assets.find(asset => asset.symbol === "BALMZ")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Last confirmed Mainnet data retained" : assets.some(asset => asset.symbol === "BALMZ") ? "Mainnet token balance" : "Not yet verified on Mainnet"}</b><div className="stat-source">Ethereum Mainnet only · no Devnet or Sepolia test tokens included.</div></article>
+              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SEP") ? number(assets.find(asset => asset.symbol === "BALMZ-SEP")?.balance || 0) : "—"} <small>BALMZ-SEP</small></strong><b className="neutral">Sepolia testnet only · excluded from Mainnet valuation.</b></article>
+              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "BALMZ-SOL-DEVNET")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">Solana Devnet only · excluded from Mainnet valuation.</b></article>
+              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{assets.some(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet") ? number(assets.find(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Mainnet only · production balance.</b></article>
+              <article className="stat-card solana-devnet-balance-card"><span>Solana Devnet SOL (testnet)</span><strong>{assets.some(asset => asset.symbol === "SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "SOL-DEVNET")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Devnet test SOL only · not Mainnet SOL · no USD valuation.</b></article>
             </div>
 
 
@@ -1641,7 +1697,7 @@ function App() {
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} />
-                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {liveStatus}</small></div>
+                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {live?.network_label || c.status || liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol === "BALMZ-SOL-DEVNET" ? `BALMZ market: Not listed • SOL reference: ${Number(marketPrices.SOL?.usd) > 0 ? "$" + money(marketPrices.SOL.usd) : "Unavailable"} • Wallet value: —` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
                     </button>;
