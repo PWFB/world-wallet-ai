@@ -433,6 +433,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historySearch, setHistorySearch] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
   const [devnetDepositSignature, setDevnetDepositSignature] = useState("");
   const [devnetDepositBusy, setDevnetDepositBusy] = useState(false);
@@ -1786,6 +1789,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Transactions") {
+    const visibleHistoryTransactions = historyTransactions.filter(item => {
+      const type = String(item.type || "").toLowerCase();
+      const status = String(item.status || "recorded").toLowerCase();
+      const term = historySearch.trim().toLowerCase();
+      const searchable = [item.type, item.asset, item.symbol, item.description, item.tx_hash, item.network, item.status, item.amount].join(" ").toLowerCase();
+      const typeMatches = historyTypeFilter === "all" || type.includes(historyTypeFilter);
+      const statusMatches = historyStatusFilter === "all"
+        || (historyStatusFilter === "pending" && ["pending", "pending_review", "broadcast_pending", "unconfirmed"].includes(status))
+        || (historyStatusFilter === "confirmed" && ["confirmed", "success", "settled"].includes(status))
+        || (historyStatusFilter === "failed" && ["failed", "reorged", "rejected"].includes(status));
+      return typeMatches && statusMatches && (!term || searchable.includes(term));
+    });
     async function settleTransaction(transaction) {
       const txHash = window.prompt("Enter the real blockchain transaction hash for this request:");
       if (!txHash) return;
@@ -1857,9 +1872,15 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       {historyError && <div role="status" className="feature-error">{historyError} <button className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
       <article className="panel transaction-panel">
-        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{historyTransactions.length} of {historyPagination.total} transaction{historyPagination.total===1?"":"s"}</small></div>
-        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : historyTransactions.length ? historyTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
-          <span className="activity-icon">{a.type[0].toUpperCase()}</span>
+        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>Showing {visibleHistoryTransactions.length} of {historyTransactions.length} loaded · {historyPagination.total} total</small></div>
+        <div className="transaction-controls" aria-label="Filter transaction history">
+          <input type="search" value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search asset, hash, network or description…" aria-label="Search transactions"/>
+          <select value={historyTypeFilter} onChange={event => setHistoryTypeFilter(event.target.value)} aria-label="Filter transaction type"><option value="all">All types</option><option value="received">Received</option><option value="sent">Sent</option><option value="deposit">Deposits</option><option value="withdraw">Withdrawals</option><option value="swap">Swaps</option></select>
+          <select value={historyStatusFilter} onChange={event => setHistoryStatusFilter(event.target.value)} aria-label="Filter transaction status"><option value="all">All statuses</option><option value="confirmed">Confirmed</option><option value="pending">Pending</option><option value="failed">Failed / reorged</option></select>
+          <button type="button" className="secondary" onClick={() => { setHistorySearch(""); setHistoryTypeFilter("all"); setHistoryStatusFilter("all"); }}>Clear filters</button>
+        </div>
+        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : visibleHistoryTransactions.length ? visibleHistoryTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
+          <span className="activity-icon">{String(a.type || "T").slice(0,1).toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
@@ -1871,7 +1892,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={event => { event.stopPropagation(); settleTransaction(a); }} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
-        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : "No real wallet transactions recorded yet."}</div>}
+        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : (historyTransactions.length ? "No transactions match these filters." : "No real wallet transactions recorded yet.")}</div>}
         {historyPagination.has_more && <div className="transaction-filter-bar"><span>More saved transactions are available.</span><button className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more transactions"}</button></div>}
       </article>
     </section>;
