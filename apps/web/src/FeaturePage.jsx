@@ -402,6 +402,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
 export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
+  const [marketSearch, setMarketSearch] = useState("");
   const [presaleStatus, setPresaleStatus] = useState(null);
   const [presaleStatusError, setPresaleStatusError] = useState("");
   const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
@@ -1949,6 +1950,52 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </article>
   </section>;
   }
+  if (active === "Markets") {
+    const marketRows = (walletCoinCatalog || []).map(item => {
+      const quote = marketPrices?.[item.symbol] || {};
+      const price = Number(quote.usd);
+      const change = Number(quote.usd_24h_change);
+      const hasPrice = quote.usd !== null && quote.usd !== undefined && Number.isFinite(price) && price > 0;
+      return { ...item, price: hasPrice ? price : null, change: Number.isFinite(change) ? change : null, source: quote.source || (hasPrice ? "CoinGecko" : null), listed: quote.listed === true };
+    }).filter(item => {
+      const term = marketSearch.trim().toLowerCase();
+      return !term || item.symbol.toLowerCase().includes(term) || String(item.name || "").toLowerCase().includes(term);
+    }).sort((a, b) => {
+      if (a.price != null && b.price == null) return -1;
+      if (a.price == null && b.price != null) return 1;
+      return a.symbol.localeCompare(b.symbol);
+    });
+    return <section className="content feature-content market-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">DISCOVER / LIVE MARKET DATA</p><h1>Markets</h1><p className="muted">Explore supported assets using available market-provider quotes. Prices are informational and do not execute trades.</p></div>
+        <div className="page-actions"><button type="button" className="secondary" onClick={() => refreshMarketPrices?.()} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing quotes…" : "↻ Refresh markets"}</button><button type="button" className="secondary" onClick={() => setActive("Portfolio")}>Open portfolio →</button></div>
+      </div>
+      <article className="panel market-toolbar">
+        <label className="market-search-label" htmlFor="market-search">Search assets</label>
+        <input id="market-search" type="search" value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search by name or symbol…"/>
+        <div className="market-provider-status" role="status">
+          <span className={marketPricesError ? "market-status-dot is-error" : marketPricesLoading ? "market-status-dot is-loading" : "market-status-dot"} />
+          {marketPricesError ? "Market provider reported an issue. Some quotes may be unavailable." : marketPricesUpdatedAt ? "Last quote update: " + new Date(marketPricesUpdatedAt).toLocaleString() : marketPricesLoading ? "Loading market quotes…" : "Quote update time unavailable"}
+        </div>
+        {marketPricesError && <p className="market-error">{marketPricesError}</p>}
+      </article>
+      <article className="panel market-table-panel">
+        <div className="panel-head"><div><h2>Supported assets</h2><span>{marketRows.length} matching assets · sorted by quote availability</span></div></div>
+        {marketRows.length ? <div className="market-table-wrap"><table className="market-table">
+          <thead><tr><th>Asset</th><th>Price (USD)</th><th>24h change</th><th>Quote status</th><th> </th></tr></thead>
+          <tbody>{marketRows.map(item => <tr key={item.symbol}>
+            <td><div className="market-asset"><AssetIcon symbol={item.symbol} fallback={item.icon || "•"}/><span><b>{item.name || item.symbol}</b><small>{item.symbol} · {item.status || "Network not classified"}</small></span></div></td>
+            <td className="market-price">{item.price == null ? "Unavailable" : "$" + money(item.price)}</td>
+            <td className={item.change == null ? "neutral" : item.change >= 0 ? "positive" : "negative"}>{item.change == null ? "—" : (item.change >= 0 ? "+" : "") + item.change.toFixed(2) + "%"}</td>
+            <td><span className={item.price == null ? "market-quote-badge is-muted" : "market-quote-badge is-live"}>{item.price == null ? (item.symbol.startsWith("BALMZ") ? "Not listed / unpriced" : "Quote unavailable") : "Quote available"}</span></td>
+            <td><button type="button" className="text-btn" onClick={() => { setSelectedCoin?.(item.symbol); setActive("Dashboard"); }}>View asset →</button></td>
+          </tr>)}</tbody>
+        </table></div> : <div className="live-chart-empty">No supported assets match “{marketSearch}”. Try another name or symbol.</div>}
+        <p className="market-disclaimer">Market quotes can change, be delayed, or be unavailable. A listed asset is not proof that this wallet holds it. Wallet balances and valuations are shown separately in Portfolio and are never inferred from market prices.</p>
+      </article>
+    </section>;
+  }
+
   if (active === "Staking" || active === "NFTs") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT</p><h1>{active}</h1><p className="muted">Manage your digital assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div><article className="panel assets-panel"><div className="panel-head"><div><h2>{active} assets</h2><span>Current wallet holdings</span></div></div><div className="asset-list">{assets.map(a=><div className="asset-row" key={a.symbol}><AssetIcon symbol={a.symbol} fallback={a.icon || "•"} /><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{a.price_available === false || a.value_usd == null ? "Price unavailable" : money(a.value_usd)}</small></div><small className="neutral">24h change unavailable</small></div>)}</div></article></section>;
 
   if (active === "Verify Contract") {
