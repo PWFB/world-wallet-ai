@@ -4,6 +4,30 @@ import { getNeonAccessToken } from "./auth-client.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
+const NETWORK_LABELS = {
+  ethereum: "Ethereum Mainnet · MAINNET",
+  bnb: "BNB Chain · MAINNET",
+  bitcoin: "Bitcoin · MAINNET",
+  solana_mainnet: "Solana · MAINNET",
+  sepolia: "Ethereum Sepolia · TESTNET",
+  solana_devnet: "Solana Devnet · TESTNET",
+};
+function networkDisplayName(network) {
+  return NETWORK_LABELS[String(network || "").toLowerCase()] || "Network not specified";
+}
+function addressExplorerUrl(network, address) {
+  const value = String(address || "");
+  switch (String(network || "").toLowerCase()) {
+    case "sepolia": return "https://sepolia.etherscan.io/address/" + value;
+    case "bnb": return "https://bscscan.com/address/" + value;
+    case "ethereum": return "https://etherscan.io/address/" + value;
+    case "solana_devnet": return "https://explorer.solana.com/address/" + value + "?cluster=devnet";
+    case "solana_mainnet": return "https://explorer.solana.com/address/" + value;
+    case "bitcoin": return "https://mempool.space/address/" + value;
+    default: return "#";
+  }
+}
+
 
 function readVault() {
   try {
@@ -441,7 +465,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <h2>{shown.name || "Wallet"}</h2>
       <div className="wallet-detail-grid">
         <div><small>Wallet ID</small><code>{shown.walletId}</code></div>
-        <div><small>Network</small><b>{shown.network === "sepolia" ? "Ethereum Sepolia" : shown.network === "bnb" ? "BNB Chain" : "Ethereum"}</b></div>
+        <div><small>Network · Environment</small><b>{({ethereum:"Ethereum Mainnet · MAINNET",bnb:"BNB Chain Mainnet · MAINNET",bitcoin:"Bitcoin Mainnet · MAINNET",solana_mainnet:"Solana Mainnet · MAINNET",sepolia:"Ethereum Sepolia · TESTNET",solana_devnet:"Solana Devnet · TESTNET"})[String(shown.network || "").toLowerCase()] || "Network not specified · VERIFY NETWORK"}</b></div>
         <div><small>Wallet address</small><code>{shown.address}</code></div>
       </div>
       {generated && <div className="wallet-secret-warning">
@@ -458,7 +482,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       </div>}
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
       <div className="security-note">Smart-contract addresses are managed separately. This panel shows your wallet address, not a token contract address.</div>
-      <a className="secondary" href={shown.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + shown.address : shown.network === "bnb" ? "https://bscscan.com/address/" + shown.address : shown.network === "ethereum" ? "https://etherscan.io/address/" + shown.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
+      <a className="secondary" href={addressExplorerUrl(shown.network, shown.address)} target="_blank" rel="noreferrer">View wallet address on its network explorer ↗</a>
       <button className="secondary" onClick={async () => { try { if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable"); await navigator.clipboard.writeText(shown.address); setMessage("Wallet address copied."); } catch { setMessage("Could not access clipboard. Select and copy the wallet address above manually."); } }}>Copy wallet address</button>
     </article>}
 
@@ -466,9 +490,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { setSelectedId(event.target.value); setPassword(""); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
-      {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { setSelectedId(event.target.value); setPassword(""); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({networkDisplayName(item.network)})</option>)}</select></label>
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Network · Environment</small><code>{networkDisplayName(selected.network)}</code></div><div><small>Public address</small><code>{selected.address}</code></div></div>}
+      {selected && <a className="secondary" href={addressExplorerUrl(selected.network, selected.address)} target="_blank" rel="noreferrer">View selected wallet on its network explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
       {unlocked && <div className="wallet-message-signing">
