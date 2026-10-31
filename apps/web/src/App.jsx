@@ -615,8 +615,8 @@ function App() {
     async function loadWallet() {
       if (!accessToken) return;
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
-      // Dashboard entry is read-only: render the last server snapshot without
-      // triggering slow RPC synchronization. Full sync remains user initiated.
+      // Render the last confirmed snapshot first, then perform one authenticated
+      // read-only chain-balance sync for this session. Transaction signing remains external.
       try {
         const response = await fetch(`${API_BASE_URL}/api/v1/wallet`, { headers: authHeaders, cache: "no-store" });
         const data = await response.json().catch(() => ({}));
