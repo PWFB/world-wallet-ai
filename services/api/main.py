@@ -1494,9 +1494,12 @@ def wallet_valuation_summary(assets, transactions):
     """
     # Devnet assets remain visible in the wallet asset list, but must never
     # affect production portfolio valuation or mark production holdings as unpriced.
-    devnet_symbols = {"BALMZ-SOL-DEVNET", "SOL-DEVNET"}
-    assets = [item for item in assets if str(item.get("symbol", "")) not in devnet_symbols]
-    transactions = [item for item in transactions if str(item.get("asset", "")) not in devnet_symbols]
+    testnet_symbols = {"BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"}
+    testnet_networks = {"sepolia", "ethereum-sepolia", "solana-devnet", "solana_devnet"}
+    assets = [item for item in assets if str(item.get("symbol", "")) not in testnet_symbols]
+    transactions = [item for item in transactions
+                    if str(item.get("asset", "")) not in testnet_symbols
+                    and str(item.get("network", "")).strip().lower() not in testnet_networks]
     prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
     available_valuation_complete = all(
         (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
@@ -1591,12 +1594,31 @@ def wallet_valuation_summary(assets, transactions):
 def wallet_snapshot(user):
     with db() as conn:
         assets=[]
+        network_by_asset = {
+            "BTC": "bitcoin", "ETH": "ethereum", "BNB": "bnb",
+            "SOL": "solana_mainnet", "SOL-DEVNET": "solana_devnet",
+            "USDT": "ethereum", "USDT-BNB": "bnb", "USDC": "ethereum",
+            "USDC-BNB": "bnb", "BALMZ": "ethereum", "BALMZ-SEP": "sepolia",
+            "BALMZ-SOL-DEVNET": "solana_devnet",
+        }
+        for registry_symbol, registry_network in conn.execute(
+            "SELECT symbol,network FROM token_registry WHERE status='active'"
+        ):
+            network_by_asset[wallet_asset_symbol(str(registry_symbol), str(registry_network))] = str(registry_network)
+        network_labels = {
+            "bitcoin": "Bitcoin Mainnet", "ethereum": "Ethereum Mainnet",
+            "bnb": "BNB Chain Mainnet", "solana_mainnet": "Solana Mainnet",
+            "sepolia": "Ethereum Sepolia (testnet)", "solana_devnet": "Solana Devnet (testnet)",
+        }
         for symbol,name,balance,reserved_balance,price in conn.execute(
             "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
         ):
             actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
             price_available = p > 0
-            assets.append({"symbol":symbol,"name":name,"balance":float(available),"available_balance":float(available),
+            asset_network = network_by_asset.get(str(symbol))
+            assets.append({"symbol":symbol,"name":name,"network":asset_network,
+                "network_label":network_labels.get(asset_network, "Network not classified"),
+                "balance":float(available),"available_balance":float(available),
                 "actual_balance":float(actual),"reserved_balance":float(reserved),"price_usd":float(p),
                 "price_available":price_available,
                 "live_price_usd":float(p) if price_available else None,
@@ -1613,6 +1635,7 @@ def wallet_snapshot(user):
             FROM transactions
             WHERE wallet_id=%s
               AND (type='received' OR (type IN ('sent','withdrawal') AND amount < 0))
+              AND COALESCE(LOWER(REPLACE(network, '_', '-')), '') NOT IN ('sepolia', 'ethereum-sepolia', 'solana-devnet')
             GROUP BY type,asset
         """,(user["wallet_id"],)):
             transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0),"count":int(row[3] or 0)})
@@ -1863,7 +1886,9 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
-    return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+    if network == "bnb" and symbol in {"USDT", "USDC"}:
+        return f"{symbol}-BNB"
+    return symbol
 
 
 def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
