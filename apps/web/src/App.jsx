@@ -656,9 +656,9 @@ function App() {
                 raw_amount: Number(tx.amount), time: tx.time, status: tx.status,
                 tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height,
               })));
+              const verifiedMainnetRead = Array.isArray(live.updates) && live.updates.some(item => ["bitcoin", "ethereum", "bnb", "solana_mainnet"].includes(String(item?.network || "").toLowerCase()));
               if (Array.isArray(live.updates)) {
                 setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
-                setHasVerifiedMainnetBalance(live.updates.some(item => ["bitcoin", "ethereum", "bnb", "solana_mainnet"].includes(String(item?.network || "").toLowerCase())));
               }
               if (live.network_status) setNetworkStatus(live.network_status);
               if (live.last_balance_sync_at) setLastSyncedAt(live.last_balance_sync_at);
@@ -676,6 +676,7 @@ function App() {
                     ...asset,
                     icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
                   })));
+                  if (verifiedMainnetRead) setHasVerifiedMainnetBalance(true);
                 }
               } catch {
                 // Existing verified prices and balances remain visible if quotes fail.
