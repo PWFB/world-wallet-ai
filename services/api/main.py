@@ -1496,7 +1496,10 @@ def wallet_valuation_summary(assets, transactions):
     # affect production portfolio valuation or mark production holdings as unpriced.
     testnet_symbols = {"BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"}
     testnet_networks = {"sepolia", "ethereum-sepolia", "solana-devnet", "solana_devnet"}
-    assets = [item for item in assets if str(item.get("symbol", "")) not in testnet_symbols]
+    assets = [item for item in assets
+              if str(item.get("symbol", "")) not in testnet_symbols
+              and str(item.get("network", "")).strip().lower() not in testnet_networks
+              and item.get("network") is not None]
     transactions = [item for item in transactions
                     if str(item.get("asset", "")) not in testnet_symbols
                     and str(item.get("network", "")).strip().lower() not in testnet_networks]
@@ -1616,6 +1619,11 @@ def wallet_snapshot(user):
             actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
             price_available = p > 0
             asset_network = network_by_asset.get(str(symbol))
+            # Older releases could store Solana Devnet SOL in the generic SOL
+            # row. Without a separately configured Mainnet address that row
+            # cannot safely be attributed to production holdings.
+            if str(symbol) == "SOL" and not wallet_network_address(user, "solana_mainnet"):
+                asset_network = None
             assets.append({"symbol":symbol,"name":name,"network":asset_network,
                 "network_label":network_labels.get(asset_network, "Network not classified"),
                 "balance":float(available),"available_balance":float(available),
