@@ -609,6 +609,19 @@ function App() {
         })));
         if (data.user) setUser(data.user);
         setApiStatus("online");
+        // Immediately request verified chain balances; backend chain checks keep Mainnet and testnets separate.
+        try {
+          const liveResponse = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", { method: "POST", headers: authHeaders, cache: "no-store" });
+          const live = await liveResponse.json().catch(() => ({}));
+          if (liveResponse.ok && !cancelled) {
+            if (live.wallet) setWallet(live.wallet);
+            if (Array.isArray(live.assets)) setAssets(live.assets.map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" })));
+            if (Array.isArray(live.updates)) setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
+            if (live.network_status) setNetworkStatus(live.network_status);
+            if (live.last_balance_sync_at) setLastSyncedAt(live.last_balance_sync_at);
+            if (Array.isArray(live.transactions)) setActivity(live.transactions.map(tx => ({ id: tx.id, type: tx.type, asset: tx.asset || tx.symbol || "", symbol: tx.asset || tx.symbol || "", network: tx.network, description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"), amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""), raw_amount: Number(tx.amount), time: tx.time, status: tx.status, tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height })));
+          }
+        } catch { /* Preserve the last confirmed wallet snapshot when a chain RPC is unavailable. */ }
       } catch (error) {
         if (!cancelled) {
           setApiStatus("error");
