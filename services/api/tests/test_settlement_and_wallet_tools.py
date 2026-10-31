@@ -658,6 +658,64 @@ class WalletValuationSummaryTests(unittest.TestCase):
         self.assertEqual(summary["reserved_balance_usd"], 0)
         self.assertEqual(summary["valuation_basis"], "current_verified_market_quotes")
 
+    def test_testnet_asset_rows_never_enter_mainnet_portfolio_valuation(self):
+        assets = [
+            {
+                "symbol": "ETH", "network": "ethereum",
+                "balance": 1.0, "actual_balance": 1.0, "reserved_balance": 0,
+                "price_usd": 2000, "price_available": True,
+                "value_usd": 2000, "actual_value_usd": 2000,
+            },
+            {
+                "symbol": "BALMZ", "network": "ethereum",
+                "balance": 10, "actual_balance": 10, "reserved_balance": 0,
+                "price_usd": 0, "price_available": False,
+                "value_usd": None, "actual_value_usd": None,
+            },
+            {
+                "symbol": "BALMZ", "network": "sepolia",
+                "balance": 500, "actual_balance": 500, "reserved_balance": 0,
+                "price_usd": 99, "price_available": True,
+                "value_usd": 49500, "actual_value_usd": 49500,
+            },
+            {
+                "symbol": "BALMZ-SOL-DEVNET", "network": "solana_devnet",
+                "balance": 1000, "actual_balance": 1000, "reserved_balance": 0,
+                "price_usd": 99, "price_available": True,
+                "value_usd": 99000, "actual_value_usd": 99000,
+            },
+        ]
+
+        summary = main.wallet_valuation_summary(assets, [])
+
+        self.assertEqual(summary["partial_available_balance_usd"], 2000)
+        self.assertIsNone(summary["available_balance_usd"])
+        self.assertEqual(summary["unpriced_assets"], ["BALMZ"])
+
+    def test_explicitly_unclassified_positive_balance_is_not_assumed_mainnet(self):
+        assets = [
+            {
+                "symbol": "ETH", "network": "ethereum",
+                "balance": 1.0, "actual_balance": 1.0, "reserved_balance": 0,
+                "price_usd": 2000, "price_available": True,
+                "value_usd": 2000, "actual_value_usd": 2000,
+            },
+            {
+                "symbol": "SOL", "network": None,
+                "balance": 3.0, "actual_balance": 3.0, "reserved_balance": 0,
+                "price_usd": 150, "price_available": True,
+                "value_usd": 450, "actual_value_usd": 450,
+            },
+        ]
+
+        summary = main.wallet_valuation_summary(assets, [])
+
+        self.assertEqual(summary["partial_available_balance_usd"], 2000)
+        self.assertIsNone(summary["available_balance_usd"])
+        self.assertFalse(summary["valuation_complete"])
+        self.assertEqual(summary["unclassified_assets"], ["SOL"])
+        self.assertEqual(summary["unpriced_assets"], ["SOL (network attribution pending)"])
+
     def test_empty_wallet_returns_real_zero_when_nothing_is_unpriced(self):
         summary = main.wallet_valuation_summary([], [])
 
