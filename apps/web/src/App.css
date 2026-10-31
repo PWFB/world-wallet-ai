@@ -1881,3 +1881,10 @@
 .market-quote-badge.is-muted{color:#a6b2c3;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.16)}
 .market-disclaimer{margin:14px 2px 2px;color:#72849f;font-size:9px;line-height:1.65}
 @media(max-width:760px){.market-toolbar{grid-template-columns:1fr}.market-provider-status{justify-self:start}.market-table-panel{padding:12px}.market-table th,.market-table td{padding:11px 8px}}
+
+
+/* Transaction history filtering controls */
+.transaction-controls{display:grid;grid-template-columns:minmax(180px,1fr) repeat(2,minmax(130px,170px)) auto;gap:8px;margin:12px 0 14px}
+.transaction-controls input,.transaction-controls select{min-width:0;min-height:38px;padding:9px 10px;border:1px solid #263b58;border-radius:8px;background:#091629;color:#e8eff9;font:inherit;font-size:10px}
+.transaction-controls input:focus,.transaction-controls select:focus{outline:2px solid rgba(255,122,24,.45);outline-offset:1px}
+@media(max-width:760px){.transaction-controls{grid-template-columns:1fr 1fr}.transaction-controls input{grid-column:1/-1}.transaction-controls button{grid-column:1/-1}}
