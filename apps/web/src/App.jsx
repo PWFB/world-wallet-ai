@@ -286,6 +286,7 @@ function App() {
     } catch {}
   }, [wallet, assets]);
   const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
+  const [hasVerifiedMainnetBalance, setHasVerifiedMainnetBalance] = useState(false);
   const chainRefreshTokenRef = useRef("");
   const [marketPrices, setMarketPrices] = useState({});
   const [marketPricesUpdatedAt, setMarketPricesUpdatedAt] = useState(null);
@@ -633,6 +634,7 @@ function App() {
         // RPC validation on the backend keeps Mainnet and testnets isolated.
         if (chainRefreshTokenRef.current !== accessToken) {
           chainRefreshTokenRef.current = accessToken;
+          setHasVerifiedMainnetBalance(false);
           try {
             const liveResponse = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", {
               method: "POST",
@@ -654,9 +656,30 @@ function App() {
                 raw_amount: Number(tx.amount), time: tx.time, status: tx.status,
                 tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height,
               })));
-              if (Array.isArray(live.updates)) setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
+              if (Array.isArray(live.updates)) {
+                setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
+                setHasVerifiedMainnetBalance(live.updates.some(item => ["bitcoin", "ethereum", "bnb", "solana_mainnet"].includes(String(item?.network || "").toLowerCase())));
+              }
               if (live.network_status) setNetworkStatus(live.network_status);
               if (live.last_balance_sync_at) setLastSyncedAt(live.last_balance_sync_at);
+              // Update stored USD quotes after chain balances, so the portfolio
+              // total is recalculated from live holdings and current provider prices.
+              try {
+                const priceResponse = await fetch(API_BASE_URL + "/api/v1/prices/refresh", {
+                  method: "POST",
+                  headers: authHeaders,
+                });
+                const priced = await priceResponse.json().catch(() => ({}));
+                if (priceResponse.ok && !cancelled) {
+                  if (priced.wallet) setWallet(priced.wallet);
+                  if (Array.isArray(priced.assets)) setAssets(priced.assets.map(asset => ({
+                    ...asset,
+                    icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+                  })));
+                }
+              } catch {
+                // Existing verified prices and balances remain visible if quotes fail.
+              }
             }
           } catch {
             // Keep the last confirmed snapshot when any RPC is temporarily unavailable.
@@ -765,8 +788,9 @@ function App() {
     const authHeaders = { Authorization: "Bearer " + accessToken };
     async function loadPerformance(recordSnapshot = false) {
       try {
-        if (recordSnapshot) {
-          // Snapshot creation records only a complete, verified portfolio USD valuation.
+        if (recordSnapshot && hasVerifiedMainnetBalance) {
+          // Never append a new production performance point until a Mainnet
+          // chain balance has been read successfully in this session.
           await fetch(API_BASE_URL + "/api/v1/portfolio/performance/snapshot", {
             method: "POST",
             headers: authHeaders,
@@ -789,7 +813,7 @@ function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [accessToken, performancePeriod]);
+  }, [accessToken, performancePeriod, hasVerifiedMainnetBalance]);
 
   async function loadDashboardAddresses() {
     if (!accessToken) return;
