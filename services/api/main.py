@@ -1996,7 +1996,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 # token symbol across chains. Keep Ethereum USDT as USDT and
                 # represent BNB Chain USDT separately.
                 asset_symbol = wallet_asset_symbol(symbol, network)
-                asset_name = f"{name} (BNB Chain)" if asset_symbol == "USDT-BNB" else name
+                asset_name = f"{name} (BNB Chain)" if asset_symbol.endswith("-BNB") else name
                 conn.execute(
                     "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
                     "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
@@ -2350,6 +2350,11 @@ def market_prices():
             "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
             "listed": usd is not None,
         }
+    # Chain-qualified variants reuse the same underlying token's genuine USD quote.
+    # This is a price reference only; balances remain separated by network.
+    for alias, source in (("USDT-BNB", "USDT"), ("USDC-BNB", "USDC")):
+        if source in prices:
+            prices[alias] = dict(prices[source])
     # BALMZ has no verified market quote yet. Never invent a price.
     prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
     prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
@@ -2417,6 +2422,8 @@ def refresh_prices(user: dict = Depends(current_user)):
         # existing internal placeholder, and the frontend labels it Not listed.
         market_prices["BALMZ"] = 0.0
         market_prices["BALMZ-SEP"] = 0.0
+        market_prices["USDT-BNB"] = market_prices["USDT"]
+        market_prices["USDC-BNB"] = market_prices["USDC"]
         for symbol, price in market_prices.items():
             conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
         conn.commit()
