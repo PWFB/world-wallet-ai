@@ -438,6 +438,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [devnetDepositMessage, setDevnetDepositMessage] = useState("");
   const [devnetDepositResult, setDevnetDepositResult] = useState(null);
   const [toolItems, setToolItems] = useState([]);
+  const [requestItems, setRequestItems] = useState([]);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestError, setRequestError] = useState("");
   const [selectedRequest, setSelectedRequest] = useState(null);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
@@ -804,9 +807,30 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   useEffect(() => {
     if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active) || !accessToken) return;
-    setHistoryTransactions([]);
-    setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+    // Keep confirmed rows visible while a fresh page loads.
     loadTransactionHistory({ offset: 0, append: false });
+  }, [active, accessToken, apiBaseUrl]);
+
+  useEffect(() => {
+    if (active !== "Request Center" || !accessToken) return;
+    let cancelled = false;
+    setRequestBusy(true);
+    setRequestError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", {
+      headers: { Authorization: "Bearer " + accessToken },
+    })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to load requests.");
+        if (!cancelled) setRequestItems(Array.isArray(data.requests) ? data.requests : []);
+      })
+      .catch(error => {
+        if (!cancelled) setRequestError(error.message || "Unable to load requests.");
+      })
+      .finally(() => {
+        if (!cancelled) setRequestBusy(false);
+      });
+    return () => { cancelled = true; };
   }, [active, accessToken, apiBaseUrl]);
 
   const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
@@ -1857,18 +1881,35 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     setSyncBusy(true);
     setSyncMessage("");
     try {
+      const headers = await walletAuthHeaders(accessToken);
       const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
         method: "POST",
-        headers: await walletAuthHeaders(accessToken),
+        headers,
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
-      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
+      let refreshedWallet = data.wallet;
+      let refreshedAssets = Array.isArray(data.assets) ? data.assets : [];
+      try {
+        const priceResponse = await fetch(apiBaseUrl + "/api/v1/prices/refresh", {
+          method: "POST",
+          headers,
+        });
+        const priced = await priceResponse.json();
+        if (priceResponse.ok) {
+          refreshedWallet = priced.wallet || refreshedWallet;
+          refreshedAssets = Array.isArray(priced.assets) ? priced.assets : refreshedAssets;
+        }
+      } catch {
+        // Retain the last wallet snapshot if the independent price provider is unavailable.
+      }
+      onWalletUpdated?.({ wallet: refreshedWallet, assets: refreshedAssets, updates: data.updates || [] });
       onTransactionsUpdated?.(data.transactions || []);
+      await refreshMarketPrices?.();
       const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
       setSyncMessage(warnings.length
-        ? "Balance sync completed with warnings: " + warnings.join(" • ")
-        : "Wallet balances refreshed from configured on-chain addresses.");
+        ? "Wallet balances refreshed with warnings: " + warnings.join(" • ")
+        : "Mainnet and testnet balances refreshed separately from their configured networks.");
     } catch (error) {
       setSyncMessage(error?.message || "Wallet balance sync failed.");
     } finally {
@@ -1876,9 +1917,26 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     }
   };
 
-  if (active === "Portfolio") return <section className="content feature-content portfolio-page">
+  if (active === "Portfolio") {
+    const mainnetNetworks = ["bitcoin", "ethereum", "bnb", "solana_mainnet"];
+    const testnetNetworks = ["sepolia", "solana_devnet", "solana-devnet"];
+    const testnetSymbols = ["BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"];
+    const mainnetAssets = assets.filter(item => mainnetNetworks.includes(String(item.network || "").toLowerCase()));
+    const testnetAssets = assets.filter(item => testnetNetworks.includes(String(item.network || "").toLowerCase()) || testnetSymbols.includes(String(item.symbol || "").toUpperCase()));
+    const classifiedSymbols = new Set([...mainnetAssets, ...testnetAssets].map(item => item.symbol));
+    const unclassifiedAssets = assets.filter(item => !classifiedSymbols.has(item.symbol));
+    return <section className="content feature-content portfolio-page">
     <div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT / LIVE MARKET</p><h1>Portfolio</h1><p className="muted">Open any coin to view its individual trading card, quote, wallet balance and supported actions.</p></div><div className="page-actions"><button className="secondary" onClick={refreshPortfolioBalances} disabled={syncBusy}>{syncBusy ? "Syncing balances…" : "↻ Refresh wallet data"}</button><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div></div>
-    <div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{walletBalanceText || (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd))} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div>
+    <div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>MAINNET AVAILABLE BALANCE</span></div><div className="hero-balance">{walletBalanceText || (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd))} <small>USD</small></div><div className="balance-meta"><span>Production networks only</span><b className="neutral">Verified USD quotes required</b></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change remain unavailable until reliable cost-basis and valuation history are connected.</small></article></div>
+    <article className="panel assets-panel portfolio-network-panel">
+      <div className="panel-head"><div><h2>Mainnet holdings</h2><span>Production balances only · Ethereum, BNB Chain, Bitcoin and Solana Mainnet</span></div></div>
+      {mainnetAssets.length ? <div className="asset-list">{mainnetAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · {item.network_label || item.network}</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>{item.value_usd == null ? "USD value unavailable" : "$" + money(item.value_usd)}</small></div></div>)}</div> : <div className="live-chart-empty">No verified Mainnet balance has been returned yet. Connect a production public address and refresh wallet data.</div>}
+    </article>
+    <article className="panel assets-panel portfolio-network-panel">
+      <div className="panel-head"><div><h2>Testnet balances</h2><span>Sepolia and Solana Devnet · excluded from Mainnet valuation</span></div></div>
+      {testnetAssets.length ? <div className="asset-list">{testnetAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · {item.network_label || item.network || "Testnet"}</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>Testnet balance · no Mainnet USD value</small></div></div>)}</div> : <div className="live-chart-empty">No Sepolia or Solana Devnet balances have been verified for this wallet.</div>}
+    </article>
+    {unclassifiedAssets.length > 0 && <article className="panel assets-panel portfolio-network-panel"><div className="panel-head"><div><h2>Network attribution pending</h2><span>These saved rows will not be merged into either network group until classified.</span></div></div><div className="asset-list">{unclassifiedAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · Network not classified</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>USD valuation withheld pending network classification</small></div></div>)}</div></article>}
     {(walletBalanceCaption || unpricedAssets.length > 0) && <p className="coin-catalog-note portfolio-valuation-note" role="status">{walletBalanceCaption || ("No verified USD quote for: " + unpricedAssets.join(", "))}</p>}
     {(syncMessage || (walletRefreshMessage && walletRefreshMessage !== "Wallet data refreshed.")) && <div className="market-price-error" role="status">{syncMessage || walletRefreshMessage}</div>}
     <article className="panel market-prices-panel portfolio-market-panel"><div className="panel-head"><div><h2>Live market prices</h2><span>Live quotes for supported coins · refreshed automatically</span></div><button type="button" className="text-btn" onClick={refreshMarketPrices} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing…" : "↻ Refresh prices"}</button></div>
@@ -1887,9 +1945,10 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <p className="coin-catalog-note">{marketPricesUpdatedAt ? "Last updated " + new Date(marketPricesUpdatedAt).toLocaleTimeString() : "Waiting for the first successful market response."} · BALMZ remains unpriced until a verifiable market quote exists.</p>
     </article>
     <article className="panel assets-panel portfolio-assets-panel"><div className="panel-head"><div><h2>Coin trading cards</h2><span>{(walletCoinCatalog||[]).length} supported catalog entries · select a card to open its trading details</span></div></div>
-      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const hasStoredBalance=heldBalance>0||Number(held?.reserved_balance||0)>0;const balanceLabel=balanceSynced?number(heldBalance)+" "+c.symbol:hasStoredBalance?number(heldBalance)+" "+c.symbol+" · recorded, not synced":"Not synced";return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="portfolio-coin-network">{c.status||"Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceLabel}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
+      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const hasStoredBalance=heldBalance>0||Number(held?.reserved_balance||0)>0;const balanceLabel=balanceSynced?number(heldBalance)+" "+c.symbol:hasStoredBalance?number(heldBalance)+" "+c.symbol+" · recorded, not synced":"Not synced";return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="portfolio-coin-network">{held?.network_label || c.status || "Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceLabel}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
     </article>
   </section>;
+  }
   if (active === "Staking" || active === "NFTs") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT</p><h1>{active}</h1><p className="muted">Manage your digital assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div><article className="panel assets-panel"><div className="panel-head"><div><h2>{active} assets</h2><span>Current wallet holdings</span></div></div><div className="asset-list">{assets.map(a=><div className="asset-row" key={a.symbol}><AssetIcon symbol={a.symbol} fallback={a.icon || "•"} /><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{a.price_available === false || a.value_usd == null ? "Price unavailable" : money(a.value_usd)}</small></div><small className="neutral">24h change unavailable</small></div>)}</div></article></section>;
 
   if (active === "Verify Contract") {
@@ -1907,11 +1966,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Request Center") {
-    const loadRequests=async()=>{setToolBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setToolItems(d.requests||[]);}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
+    const loadRequests=async()=>{setRequestBusy(true);setRequestError("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setRequestItems(Array.isArray(d.requests)?d.requests:[]);}catch(e){setRequestError(e.message||"Unable to load requests.");}finally{setRequestBusy(false);}};
     const createRequest=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({kind:"support",title:destination,details:note})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to create request.");setDestination("");setNote("");setMessage("Request created.");await loadRequests();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Request Center</h1><p className="muted">Create and track database-backed support requests.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel"><h2>New request</h2><label>Title<input value={destination} onChange={e=>setDestination(e.target.value)} maxLength="120" placeholder="Request title"/></label><label>Details<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="1000" placeholder="Describe what you need"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={createRequest}>{toolBusy?"Saving…":"Create request →"}</button></article>
-      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests}>{toolBusy?"Loading…":"↻ Refresh"}</button></div>{toolItems.length?toolItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">No requests loaded. Tap Refresh.</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
+      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests} disabled={requestBusy}>{requestBusy?"Loading…":"↻ Refresh"}</button></div>{requestError&&<div role="status" className="feature-error">{requestError}</div>}{requestItems.length?requestItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">{requestBusy ? "Loading your saved requests…" : requestError ? "Requests could not be loaded. Retry to check again." : "No requests have been created yet."}</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
   }
 
   if (active === "Wallet Connect") {
