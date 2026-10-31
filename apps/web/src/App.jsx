@@ -351,7 +351,6 @@ function App() {
       return readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
     } catch { return "ethereum"; }
   });
-  const balanceRequestInFlight = useRef(false);
   const balanceRequestIdRef = useRef(0);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
@@ -904,10 +903,10 @@ function App() {
     const requestId = ++balanceRequestIdRef.current;
     const requestedNetwork = normalizeNetworkId(selectedNetwork);
     if (!accessToken) {
+      setSelectedNetworkBalanceBusy(false);
       setSelectedNetworkBalanceMessage("Sign in to check a wallet balance.");
       return;
     }
-    balanceRequestInFlight.current = true;
     setSelectedNetworkBalanceBusy(true);
     setSelectedNetworkBalanceMessage("");
     let token = accessToken;
@@ -968,7 +967,6 @@ function App() {
       if (requestId === balanceRequestIdRef.current && normalizeNetworkId(selectedNetwork) === requestedNetwork) setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
     } finally {
       if (requestId === balanceRequestIdRef.current) {
-        balanceRequestInFlight.current = false;
         setSelectedNetworkBalanceBusy(false);
       }
     }
