@@ -1855,3 +1855,36 @@
 /* Timestamp for the last successful, no-cache BALMZ presale readiness check. */
 .presale-last-checked{flex-basis:100%;color:#8497b2;font-size:10px;text-align:right;line-height:1.5}
 @media(max-width:520px){.presale-last-checked{text-align:left}}
+
+
+/* Markets workspace: quote transparency, accessible table and responsive asset discovery. */
+.market-page{max-width:1320px}
+.market-toolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:10px 18px;align-items:center;margin-bottom:14px}
+.market-search-label{grid-column:1/-1;color:#8ea2bb;font-size:10px;font-weight:600}
+.market-toolbar input{width:100%;min-height:42px;padding:10px 13px;border:1px solid #29415e;border-radius:9px;background:#081426;color:#f2f6fc;font:inherit;font-size:12px;outline:none}
+.market-toolbar input:focus{border-color:#ff7a18;box-shadow:0 0 0 3px rgba(255,122,24,.12)}
+.market-provider-status{display:flex;align-items:center;gap:8px;color:#8295ae;font-size:10px;justify-self:end}
+.market-status-dot{width:8px;height:8px;flex:0 0 8px;border-radius:50%;background:#22c55e}
+.market-status-dot.is-error{background:#f87171}.market-status-dot.is-loading{background:#fbbf24}
+.market-error{grid-column:1/-1;color:#f4a4a4;font-size:10px;margin:0}
+.market-table-wrap{width:100%;overflow-x:auto}
+.market-table{width:100%;border-collapse:collapse;min-width:680px}
+.market-table th{text-align:left;padding:12px 10px;color:#7186a2;font-size:9px;text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid #1c304b}
+.market-table td{padding:13px 10px;border-bottom:1px solid #172943;font-size:11px;vertical-align:middle}
+.market-table tbody tr:hover{background:rgba(24,48,76,.32)}
+.market-asset{display:flex;align-items:center;gap:10px;min-width:190px}
+.market-asset>span:last-child{display:grid;gap:3px}
+.market-asset b{font-size:11px}.market-asset small{font-size:9px;color:#7186a2}
+.market-price{font-variant-numeric:tabular-nums;font-weight:700;white-space:nowrap}
+.market-quote-badge{display:inline-flex;padding:5px 8px;border-radius:999px;font-size:9px;white-space:nowrap}
+.market-quote-badge.is-live{color:#80dca8;background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.22)}
+.market-quote-badge.is-muted{color:#a6b2c3;background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.16)}
+.market-disclaimer{margin:14px 2px 2px;color:#72849f;font-size:9px;line-height:1.65}
+@media(max-width:760px){.market-toolbar{grid-template-columns:1fr}.market-provider-status{justify-self:start}.market-table-panel{padding:12px}.market-table th,.market-table td{padding:11px 8px}}
+
+
+/* Transaction history filtering controls */
+.transaction-controls{display:grid;grid-template-columns:minmax(180px,1fr) repeat(2,minmax(130px,170px)) auto;gap:8px;margin:12px 0 14px}
+.transaction-controls input,.transaction-controls select{min-width:0;min-height:38px;padding:9px 10px;border:1px solid #263b58;border-radius:8px;background:#091629;color:#e8eff9;font:inherit;font-size:10px}
+.transaction-controls input:focus,.transaction-controls select:focus{outline:2px solid rgba(255,122,24,.45);outline-offset:1px}
+@media(max-width:760px){.transaction-controls{grid-template-columns:1fr 1fr}.transaction-controls input{grid-column:1/-1}.transaction-controls button{grid-column:1/-1}}

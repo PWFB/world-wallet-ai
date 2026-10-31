@@ -1304,7 +1304,7 @@ function App() {
   }
 
   const nav = useMemo(() => ({
-    Main: ["Dashboard", "BALMZ AI", "BALMZ Presale", "Wallets", "Portfolio", "Send", "Receive", "Deposit", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
+    Main: ["Dashboard", "BALMZ AI", "BALMZ Presale", "Wallets", "Portfolio", "Markets", "Send", "Receive", "Deposit", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
     Tools: ["Browser", "Wallet Connect", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
     Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
     Support: ["Support Center", "Help & Docs"],

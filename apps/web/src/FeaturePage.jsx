@@ -402,6 +402,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
 export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
+  const [marketSearch, setMarketSearch] = useState("");
   const [presaleStatus, setPresaleStatus] = useState(null);
   const [presaleStatusError, setPresaleStatusError] = useState("");
   const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
@@ -432,6 +433,9 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historySearch, setHistorySearch] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
   const [devnetDepositSignature, setDevnetDepositSignature] = useState("");
   const [devnetDepositBusy, setDevnetDepositBusy] = useState(false);
@@ -1785,6 +1789,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Transactions") {
+    const visibleHistoryTransactions = historyTransactions.filter(item => {
+      const type = String(item.type || "").toLowerCase();
+      const status = String(item.status || "recorded").toLowerCase();
+      const term = historySearch.trim().toLowerCase();
+      const searchable = [item.type, item.asset, item.symbol, item.description, item.tx_hash, item.network, item.status, item.amount].join(" ").toLowerCase();
+      const typeMatches = historyTypeFilter === "all" || type.includes(historyTypeFilter);
+      const statusMatches = historyStatusFilter === "all"
+        || (historyStatusFilter === "pending" && ["pending", "pending_review", "broadcast_pending", "unconfirmed"].includes(status))
+        || (historyStatusFilter === "confirmed" && ["confirmed", "success", "settled"].includes(status))
+        || (historyStatusFilter === "failed" && ["failed", "reorged", "rejected"].includes(status));
+      return typeMatches && statusMatches && (!term || searchable.includes(term));
+    });
     async function settleTransaction(transaction) {
       const txHash = window.prompt("Enter the real blockchain transaction hash for this request:");
       if (!txHash) return;
@@ -1856,9 +1872,15 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       {historyError && <div role="status" className="feature-error">{historyError} <button className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
       <article className="panel transaction-panel">
-        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{historyTransactions.length} of {historyPagination.total} transaction{historyPagination.total===1?"":"s"}</small></div>
-        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : historyTransactions.length ? historyTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
-          <span className="activity-icon">{a.type[0].toUpperCase()}</span>
+        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>Showing {visibleHistoryTransactions.length} of {historyTransactions.length} loaded · {historyPagination.total} total</small></div>
+        <div className="transaction-controls" aria-label="Filter transaction history">
+          <input type="search" value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search asset, hash, network or description…" aria-label="Search transactions"/>
+          <select value={historyTypeFilter} onChange={event => setHistoryTypeFilter(event.target.value)} aria-label="Filter transaction type"><option value="all">All types</option><option value="received">Received</option><option value="sent">Sent</option><option value="deposit">Deposits</option><option value="withdraw">Withdrawals</option><option value="swap">Swaps</option></select>
+          <select value={historyStatusFilter} onChange={event => setHistoryStatusFilter(event.target.value)} aria-label="Filter transaction status"><option value="all">All statuses</option><option value="confirmed">Confirmed</option><option value="pending">Pending</option><option value="failed">Failed / reorged</option></select>
+          <button type="button" className="secondary" onClick={() => { setHistorySearch(""); setHistoryTypeFilter("all"); setHistoryStatusFilter("all"); }}>Clear filters</button>
+        </div>
+        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : visibleHistoryTransactions.length ? visibleHistoryTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
+          <span className="activity-icon">{String(a.type || "T").slice(0,1).toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
@@ -1870,7 +1892,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={event => { event.stopPropagation(); settleTransaction(a); }} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
-        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : "No real wallet transactions recorded yet."}</div>}
+        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : (historyTransactions.length ? "No transactions match these filters." : "No real wallet transactions recorded yet.")}</div>}
         {historyPagination.has_more && <div className="transaction-filter-bar"><span>More saved transactions are available.</span><button className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more transactions"}</button></div>}
       </article>
     </section>;
@@ -1949,6 +1971,52 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </article>
   </section>;
   }
+  if (active === "Markets") {
+    const marketRows = (walletCoinCatalog || []).map(item => {
+      const quote = marketPrices?.[item.symbol] || {};
+      const price = Number(quote.usd);
+      const change = Number(quote.usd_24h_change);
+      const hasPrice = quote.usd !== null && quote.usd !== undefined && Number.isFinite(price) && price > 0;
+      return { ...item, price: hasPrice ? price : null, change: Number.isFinite(change) ? change : null, source: quote.source || (hasPrice ? "CoinGecko" : null), listed: quote.listed === true };
+    }).filter(item => {
+      const term = marketSearch.trim().toLowerCase();
+      return !term || item.symbol.toLowerCase().includes(term) || String(item.name || "").toLowerCase().includes(term);
+    }).sort((a, b) => {
+      if (a.price != null && b.price == null) return -1;
+      if (a.price == null && b.price != null) return 1;
+      return a.symbol.localeCompare(b.symbol);
+    });
+    return <section className="content feature-content market-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">DISCOVER / LIVE MARKET DATA</p><h1>Markets</h1><p className="muted">Explore supported assets using available market-provider quotes. Prices are informational and do not execute trades.</p></div>
+        <div className="page-actions"><button type="button" className="secondary" onClick={() => refreshMarketPrices?.()} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing quotes…" : "↻ Refresh markets"}</button><button type="button" className="secondary" onClick={() => setActive("Portfolio")}>Open portfolio →</button></div>
+      </div>
+      <article className="panel market-toolbar">
+        <label className="market-search-label" htmlFor="market-search">Search assets</label>
+        <input id="market-search" type="search" value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search by name or symbol…"/>
+        <div className="market-provider-status" role="status">
+          <span className={marketPricesError ? "market-status-dot is-error" : marketPricesLoading ? "market-status-dot is-loading" : "market-status-dot"} />
+          {marketPricesError ? "Market provider reported an issue. Some quotes may be unavailable." : marketPricesUpdatedAt ? "Last quote update: " + new Date(marketPricesUpdatedAt).toLocaleString() : marketPricesLoading ? "Loading market quotes…" : "Quote update time unavailable"}
+        </div>
+        {marketPricesError && <p className="market-error">{marketPricesError}</p>}
+      </article>
+      <article className="panel market-table-panel">
+        <div className="panel-head"><div><h2>Supported assets</h2><span>{marketRows.length} matching assets · sorted by quote availability</span></div></div>
+        {marketRows.length ? <div className="market-table-wrap"><table className="market-table">
+          <thead><tr><th>Asset</th><th>Price (USD)</th><th>24h change</th><th>Quote status</th><th> </th></tr></thead>
+          <tbody>{marketRows.map(item => <tr key={item.symbol}>
+            <td><div className="market-asset"><AssetIcon symbol={item.symbol} fallback={item.icon || "•"}/><span><b>{item.name || item.symbol}</b><small>{item.symbol} · {item.status || "Network not classified"}</small></span></div></td>
+            <td className="market-price">{item.price == null ? "Unavailable" : "$" + money(item.price)}</td>
+            <td className={item.change == null ? "neutral" : item.change >= 0 ? "positive" : "negative"}>{item.change == null ? "—" : (item.change >= 0 ? "+" : "") + item.change.toFixed(2) + "%"}</td>
+            <td><span className={item.price == null ? "market-quote-badge is-muted" : "market-quote-badge is-live"}>{item.price == null ? (item.symbol.startsWith("BALMZ") ? "Not listed / unpriced" : "Quote unavailable") : "Quote available"}</span></td>
+            <td><button type="button" className="text-btn" onClick={() => { setSelectedCoin?.(item.symbol); setActive("Dashboard"); }}>View asset →</button></td>
+          </tr>)}</tbody>
+        </table></div> : <div className="live-chart-empty">No supported assets match “{marketSearch}”. Try another name or symbol.</div>}
+        <p className="market-disclaimer">Market quotes can change, be delayed, or be unavailable. A listed asset is not proof that this wallet holds it. Wallet balances and valuations are shown separately in Portfolio and are never inferred from market prices.</p>
+      </article>
+    </section>;
+  }
+
   if (active === "Staking" || active === "NFTs") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT</p><h1>{active}</h1><p className="muted">Manage your digital assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div><article className="panel assets-panel"><div className="panel-head"><div><h2>{active} assets</h2><span>Current wallet holdings</span></div></div><div className="asset-list">{assets.map(a=><div className="asset-row" key={a.symbol}><AssetIcon symbol={a.symbol} fallback={a.icon || "•"} /><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{a.price_available === false || a.value_usd == null ? "Price unavailable" : money(a.value_usd)}</small></div><small className="neutral">24h change unavailable</small></div>)}</div></article></section>;
 
   if (active === "Verify Contract") {
