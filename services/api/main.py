@@ -979,7 +979,7 @@ def validate_asset_network(asset: str, network: str):
     symbol = asset.upper().strip()
     net = network.strip().lower()
     allowed = {
-        "ETH": {"ethereum", "sepolia"},
+        "ETH": {"ethereum"},
         "BNB": {"bnb"},
         "USDT": {"ethereum", "bnb"},
         "BTC": {"bitcoin"},
