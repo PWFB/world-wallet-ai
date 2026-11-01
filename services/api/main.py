@@ -3756,7 +3756,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if not contract:
                 raise HTTPException(status_code=503, detail=label + " contract is not configured for settlement verification")
             if not _same_address(tx.get("to"), contract):
-                raise HTTPException(status_code=409, detail="Token contract does not match the configured USDT contract")
+                raise HTTPException(status_code=409, detail=f"Token contract does not match the configured {label} contract")
             decimals = erc20_decimals(rpc, contract)
             if decimals is None or decimals < 0 or decimals > 36:
                 raise HTTPException(status_code=503, detail="Unable to determine token decimals")
@@ -4216,16 +4216,23 @@ def reconcile_settled_asset(conn, user, symbol, network):
         if symbol == "BTC" and address:
             value = btc_balance(address)
         elif symbol in {"ETH", "BNB"} and address:
-            value = evm_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, address)
+            rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
+            if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
+            elif network == "sepolia": require_sepolia_rpc(rpc)
+            value = evm_balance(rpc, address)
         elif symbol == "BALMZ-SOL-DEVNET" and network == "solana-devnet" and address:
             value = solana_spl_token_balance(
                 address, BALMZ_SOLANA_DEVNET_MINT,
                 BALMZ_SOLANA_DEVNET_DECIMALS,
             )
-        elif symbol in {"USDT", "BALMZ"} and address:
+        elif symbol in {"USDT", "BALMZ", "BALMZ-SEP"} and address:
             if symbol == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 rpc = ETH_RPC_URL if network == "ethereum" else ""
+            elif symbol == "BALMZ-SEP":
+                contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
+                rpc = SEPOLIA_RPC_URL if network == "sepolia" else ""
+                if rpc: require_sepolia_rpc(rpc)
             else:
                 contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
                 rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL
@@ -4253,12 +4260,12 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (user["wallet_id"],symbol),
         ).fetchone()
         row=conn.execute(
-            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address,type FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
             (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,destination,network,existing_hash,source_address=row
+        txid,symbol,amount,status,destination,network,existing_hash,source_address,transaction_type=row
         if status in {"confirmed","settled"}:
             return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
         if status == "cancelled":
@@ -4282,8 +4289,9 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
         elif network in {"ethereum","bnb","sepolia"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
-            if not source_address:
+            if not source_address and transaction_type == "withdrawal":
                 raise HTTPException(status_code=409,detail="This withdrawal has no recorded source address and cannot be settled automatically")
+            source_address = source_address or wallet_network_address(user,network)
             verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),source_address)
         else:
             raise HTTPException(status_code=400,detail="Unsupported settlement network")
