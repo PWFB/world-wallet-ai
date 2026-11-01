@@ -91,6 +91,12 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mainnet chain ID 1"):
                 main.require_ethereum_mainnet_rpc("https://rpc.example")
 
+    def test_sepolia_asset_symbol_is_not_mainnet_eth(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException):
+            main.validate_asset_network("ETH", "sepolia")
+        self.assertEqual(main.validate_asset_network("BALMZ-SEP", "sepolia"), ("BALMZ-SEP", "sepolia"))
+
     def test_bnb_rpc_requires_chain_id_56(self):
         with patch.object(main, "evm_chain_id", return_value=56):
             self.assertEqual(main.require_bnb_rpc("https://bsc.example"), 56)
