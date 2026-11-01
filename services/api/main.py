@@ -1113,6 +1113,13 @@ def require_sepolia_rpc(url: str):
         raise ValueError("Configured Sepolia RPC did not report chain ID 11155111")
 
 
+def require_bnb_rpc(url: str):
+    """Fail closed if the BNB RPC endpoint is not BNB Smart Chain mainnet."""
+    chain_id = evm_chain_id(url)
+    if chain_id != 56:
+        raise ValueError("Configured BNB RPC did not report chain ID 56")
+
+
 def evm_balance(url: str, address: str):
     raw = rpc_call(url, "eth_getBalance", [address, "latest"])
     return int(raw, 16) / 10**18 if raw else 0.0
@@ -3719,8 +3726,12 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
     rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
     if not rpc or not wallet_address:
         raise HTTPException(status_code=503, detail=f"{network.title()} settlement RPC or wallet is not configured")
-    if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
-    elif network == "sepolia": require_sepolia_rpc(rpc)
+    try:
+        if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
+        elif network == "sepolia": require_sepolia_rpc(rpc)
+        elif network == "bnb": require_bnb_rpc(rpc)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} RPC chain identity check failed") from exc
     try:
         tx = rpc_call(rpc, "eth_getTransactionByHash", [tx_hash])
         if not tx:
@@ -4228,6 +4239,7 @@ def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
             rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
             if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
             elif network == "sepolia": require_sepolia_rpc(rpc)
+            elif network == "bnb": require_bnb_rpc(rpc)
             value = evm_balance(rpc, address)
         elif symbol == "BALMZ-SOL-DEVNET" and network == "solana-devnet" and address:
             value = solana_spl_token_balance(
