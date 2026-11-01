@@ -417,6 +417,7 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [addresses, setAddresses] = useState([]);
+  const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
   const [wcProvider, setWcProvider] = useState(null);
   const [wcAccount, setWcAccount] = useState("");
@@ -466,18 +467,20 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
   }, [asset]);
 
   useEffect(() => {
-    if (active !== "Receive") return;
+    if (!["Receive","Send","Withdraw"].includes(active)) return;
     let cancelled = false;
     fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
       .then(async r => ({ ok: r.ok, data: await r.json() }))
       .then(({ ok, data }) => {
         if (cancelled) return;
-        setAddresses(ok ? (data.addresses || []) : []);
+        const next = ok ? (data.addresses || []) : [];
+        setAddresses(next);
+        setSelectedSourceAddress(current => next.some(item => item.network === network && item.address === current && item.ownership_verified) ? current : "");
         setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load wallet addresses."));
       })
       .catch(() => { if (!cancelled) { setAddresses([]); setAddressMessage("Unable to load wallet addresses."); } });
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, network]);
   async function connectWalletConnect() {
     setWcBusy(true);
     setWcError("");
@@ -706,7 +709,9 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
 
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
-      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
+      const source = addresses.find(item => item.network === network && item.address === selectedSourceAddress && item.ownership_verified);
+      if (!source) throw new Error("Choose an attached address on this network that has completed ownership verification.");
+      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null, source_address: source.address };
       body[endpoint.includes("transfers") ? "recipient" : "destination"] = destination;
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
@@ -1122,7 +1127,9 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
           </div>
         </div>
         <label>{send ? "Recipient" : "Destination"}<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="Wallet address"/></label>
-        <label>Network<select value={network} onChange={e=>setNetwork(e.target.value)} disabled={!networksForAsset(asset).length}>{networksForAsset(asset).length ? networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}</select></label>
+        <label>Network<select value={network} onChange={e=>{setNetwork(e.target.value);setSelectedSourceAddress("");}} disabled={!networksForAsset(asset).length}>{networksForAsset(asset).length ? networksForAsset(asset).map(item=><option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}</select></label>
+        <label>Source wallet address<select value={selectedSourceAddress} onChange={e=>setSelectedSourceAddress(e.target.value)}><option value="">Select verified attached address</option>{addresses.filter(item=>item.network===network).map(item=><option key={item.network+item.address} value={item.address} disabled={!item.ownership_verified}>{item.label || "Address"} · {item.address.slice(0,10)}…{item.address.slice(-6)} {item.ownership_verified ? "✓ Verified" : "· Not verified"}</option>)}</select></label>
+        <div className="security-note">{addresses.some(item=>item.network===network&&item.ownership_verified) ? "Only ownership-verified addresses can authorize a transaction." : "No verified source address is available on this network. Attach an address and complete its network-native signature verification first."}</div>
         <div className="network-safety"><b>{asset}</b><span>{networksForAsset(asset).length ? `Compatible: ${networksForAsset(asset).map(n => n.label).join(" / ")}` : "This asset is catalog-only and cannot be sent on-chain yet."}</span></div>
         <label>Note<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="200" placeholder="Optional note"/></label>
         {message && <div className={message.startsWith("Request accepted") ? "feature-success":"feature-error"}>{message}</div>}
