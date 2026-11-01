@@ -116,7 +116,7 @@ function getLocalExternalReceiveAddress() {
   }
 }
 
-function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId }) {
   const [wallets, setWallets] = useState([]);
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
@@ -294,10 +294,61 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         throw new Error("The server accepted the request but the address was not found in the saved address list. Please retry.");
       }
 
+      const savedAddress = (listData.addresses || []).find(item =>
+        item.network === network &&
+        (["ethereum", "sepolia", "bnb"].includes(network)
+          ? String(item.address || "").toLowerCase() === value.toLowerCase()
+          : String(item.address || "") === value
+        )
+      );
+      let ownershipVerified = Boolean(savedAddress?.ownership_verified);
+      if (["ethereum", "sepolia", "bnb"].includes(network)) {
+        const provider = externalProvider || window.ethereum || window.coinbaseWalletExtension;
+        if (provider?.request) {
+          try {
+            const accounts = await provider.request({ method: "eth_accounts" });
+            const chainHex = externalChainId ?? await provider.request({ method: "eth_chainId" });
+            const expectedChain = { ethereum: 1, sepolia: 11155111, bnb: 56 }[network];
+            const connectedChain = typeof chainHex === "number" ? chainHex : Number.parseInt(String(chainHex), 16);
+            const signerAccounts = Array.isArray(accounts) && accounts.length ? accounts : (externalAccount ? [externalAccount] : []);
+            if (signerAccounts.some(item => String(item).toLowerCase() === value.toLowerCase()) && connectedChain === expectedChain) {
+              const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/challenge", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ network, address: value, label: cleanLabel }),
+              });
+              const challenge = await challengeResponse.json().catch(() => ({}));
+              if (!challengeResponse.ok) throw new Error(challenge.detail || "Could not create ownership challenge.");
+              const messageHex = "0x" + Array.from(new TextEncoder().encode(challenge.message), byte => byte.toString(16).padStart(2, "0")).join("");
+              const signature = await provider.request({ method: "personal_sign", params: [messageHex, value] });
+              const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/verify", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+              });
+              const verified = await verifyResponse.json().catch(() => ({}));
+              if (!verifyResponse.ok) throw new Error(verified.detail || "Address ownership verification failed.");
+              ownershipVerified = verified.ownership_verified === true;
+              const refreshedAddresses = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+                headers: await walletAuthHeaders(accessToken),
+              });
+              const refreshedList = await refreshedAddresses.json().catch(() => ({}));
+              if (refreshedAddresses.ok) listData.addresses = refreshedList.addresses || listData.addresses;
+            } else {
+              setMessage("Address saved, but ownership is not verified. Connect the matching wallet on the selected network and retry to sign the verification message.");
+            }
+          } catch (signError) {
+            setMessage("Address saved but not ownership-verified: " + (signError?.message || "wallet signature was not completed."));
+          }
+        } else {
+          setMessage("Address saved but not ownership-verified. Connect a compatible EVM wallet to sign the ownership challenge.");
+        }
+      }
       setWalletAddresses(listData.addresses);
       setAddressesLoadedForWallet(walletId);
       setAddress("");
-      setMessage("Public address saved and verified for " + network + ". Checking live wallet data…");
+      if (ownershipVerified) setMessage("Address saved and ownership signature verified. No transaction was sent. Checking live wallet data…");
+      else if (!["ethereum", "sepolia", "bnb"].includes(network)) setMessage("Public address saved for " + network + ". This address has not undergone native ownership verification.");
 
       // Address persistence is independent of chain refresh. A missing RPC or
       // unavailable indexer must not make a successfully saved address look unsaved.
@@ -378,7 +429,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
             const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
-            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
@@ -415,6 +466,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [addresses, setAddresses] = useState(() => getLocalExternalReceiveAddress());
+  const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
+  const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
   const [swapFrom, setSwapFrom] = useState("ETH");
   const [swapTo, setSwapTo] = useState("USDT");
@@ -467,6 +520,21 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    const activeWalletId = wallet?.wallet_id || wallet?.id;
+    setSelectedSourceAddress("");
+    if (!activeWalletId || !accessToken) { setWithdrawalAddresses([]); return; }
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(activeWalletId) + "/addresses", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load attached wallet addresses.");
+        if (!cancelled) setWithdrawalAddresses(Array.isArray(data.addresses) ? data.addresses : []);
+      })
+      .catch(() => { if (!cancelled) setWithdrawalAddresses([]); });
+    return () => { cancelled = true; };
+  }, [wallet?.wallet_id, wallet?.id, apiBaseUrl, accessToken]);
 
   useEffect(() => {
     if (active !== "BALMZ Presale" || !accessToken) return;
@@ -914,17 +982,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return settleData;
   }
 
-  async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination }) {
+  async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
     if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
     const config = await configResponse.json();
     if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
     const networkConfig = config.networks?.[network];
-    if (!networkConfig?.wallet_address) throw new Error("Production " + network + " signing address is not configured.");
+    if (!networkConfig) throw new Error("Signing configuration for " + network + " is not available.");
+    const expectedSigner = sourceAddress || networkConfig.wallet_address;
+    if (!expectedSigner) throw new Error("Select a verified attached source address before signing.");
     const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
     const signer = accounts?.[0];
-    if (!signer || signer.toLowerCase() !== networkConfig.wallet_address.toLowerCase()) {
-      throw new Error("Connect the configured production wallet address before signing this transaction.");
+    if (!signer || signer.toLowerCase() !== expectedSigner.toLowerCase()) {
+      throw new Error("Connect the selected verified source address before signing this transaction.");
     }
     const chainId = await window.ethereum.request({ method: "eth_chainId" });
     if (chainId.toLowerCase() !== networkConfig.chain_id.toLowerCase()) {
@@ -932,16 +1002,17 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
       } catch (error) {
         if (Number(error?.code) === 4001) throw error;
-        throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum" : "BNB Chain") + " mainnet.");
+        throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum Mainnet" : network === "sepolia" ? "Ethereum Sepolia testnet" : "BNB Chain") + ".");
       }
     }
 
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT" || asset === "BALMZ") {
-      const contract = asset === "BALMZ" ? networkConfig.balmz_contract : networkConfig.usdt_contract;
-      const configuredDecimals = asset === "BALMZ" ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
+    } else if (asset === "USDT" || asset === "BALMZ" || asset === "BALMZ-SEP") {
+      const isBalmz = asset === "BALMZ" || asset === "BALMZ-SEP";
+      const contract = isBalmz ? networkConfig.balmz_contract : networkConfig.usdt_contract;
+      const configuredDecimals = isBalmz ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
       if (!contract || configuredDecimals == null) throw new Error(asset + " external signing is not configured for this network.");
       const decimals = Number(configuredDecimals);
       const units = decimalToUnits(amount, decimals);
@@ -997,14 +1068,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT", "BALMZ"].includes(asset);
+      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "BALMZ", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
+      const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
+      if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
+      const selectedSource = withdrawalAddresses.find(item => item.network === network && String(item.address || "").toLowerCase() === selectedSourceAddress.toLowerCase());
+      if (!selectedSource) throw new Error("The selected source address is not attached to the active wallet.");
+      if (evmNetwork && selectedSource.ownership_verified !== true) throw new Error("Verify ownership of the selected EVM address before sending or withdrawing.");
 
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
-      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
+      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null, source_address: selectedSourceAddress };
       body[endpoint.includes("transfers") ? "recipient" : "destination"] = destination;
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
@@ -1012,7 +1088,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
       transactionId = data.transfer?.id || data.withdrawal?.id;
       if (isLiveEvm && transactionId) {
-        const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim() });
+        const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim(), sourceAddress: selectedSourceAddress });
         setMessage(settlement.status === "broadcast_pending" ? "Live transaction broadcast. Waiting for blockchain confirmation." : "Live transaction verified and wallet accounting reconciled.");
       } else if (isLiveBitcoin && transactionId) {
         const settlement = await broadcastExternalBitcoin({ transactionId, amount: parsedAmount, destination: destination.trim() });
@@ -1543,7 +1619,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
@@ -1584,17 +1660,28 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             <input value={destination} onChange={e => { setDestination(e.target.value); setMessage(""); }} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"} autoComplete="off" spellCheck="false"/>
           </label>
           <label>Network
-            <select value={network} onChange={e => { setNetwork(e.target.value); setMessage(""); }} disabled={!networkOptions.length}>
+            <select value={network} onChange={e => { setNetwork(e.target.value); setSelectedSourceAddress(""); setMessage(""); }} disabled={!networkOptions.length}>
               {networkOptions.length ? networkOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}
             </select>
           </label>
+          <label>Source address
+            <select value={selectedSourceAddress} onChange={e => setSelectedSourceAddress(e.target.value)} disabled={!withdrawalAddresses.length}>
+              <option value="">Select an attached source address</option>
+              {withdrawalAddresses.filter(item => item.network === network).map(item => (
+                <option key={item.network + ":" + item.address} value={item.address} disabled={["ethereum", "bnb", "sepolia"].includes(network) && item.ownership_verified !== true}>
+                  {item.label || "Wallet"} · {item.address.slice(0, 8)}…{item.address.slice(-6)}{["ethereum", "bnb", "sepolia"].includes(network) ? (item.ownership_verified ? " · Verified" : " · Verify first") : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="security-note">EVM transfers and withdrawals require a signature-verified source address. Signing the ownership message does not send funds. Sepolia remains a test network.</div>
           <div className={destination ? (destinationLooksValid ? "wallet-network-check is-valid" : "wallet-network-check is-warning") : "wallet-network-check"}>
             <span>{destination ? (destinationLooksValid ? "✓" : "!") : "i"}</span>
             <div><b>{destination ? (destinationLooksValid ? "Address format looks valid" : "Check the destination address") : "Network compatibility matters"}</b><small>Use an address for the selected network. A valid-looking address does not prove ownership or guarantee that the destination supports this asset.</small></div>
           </div>
           <label>Note <span className="wallet-optional">(optional)</span><textarea value={note} onChange={e => setNote(e.target.value)} maxLength="200" placeholder="Add a note for your records"/></label>
           {message && <div role="status" className={/accepted|broadcast|verified|reconciled/i.test(message) ? "feature-success" : "feature-error"}>{message}</div>}
-          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
+          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !selectedSourceAddress || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
           <p className="wallet-form-footnote">You will see a wallet approval prompt for supported live transfers. Never share a recovery phrase or private key with anyone.</p>
         </article>
         <aside className="wallet-review-column">
