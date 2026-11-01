@@ -222,6 +222,7 @@ class TransferRequest(BaseModel):
     recipient: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class WithdrawalRequest(BaseModel):
@@ -3544,7 +3545,15 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.recipient,network):
         raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
-    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{request.note or ''}")
+    source_address=(request.source_address or "").strip() or wallet_network_address(user,network)
+    if not source_address: raise HTTPException(status_code=409,detail="No source address is attached for this network")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address): raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    comparison="lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+    with db() as address_conn:
+        attached=address_conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(user["wallet_id"],network,source_address)).fetchone()
+    if not attached: raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if network in {"ethereum","bnb","sepolia"} and not attached[0]: raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before transfer")
+    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -3569,8 +3578,8 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
