@@ -4207,10 +4207,10 @@ def verify_solana_devnet_deposit_request(
     }
 
 
-def reconcile_settled_asset(conn, user, symbol, network):
-    # Chain synchronization is authoritative for actual balance. Re-read it after
-    # verification instead of subtracting the request amount a second time.
-    address = wallet_network_address(user, network)
+def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
+    # Re-read the exact source wallet used by this transaction; do not silently
+    # reconcile a different attached address on the same network.
+    address = source_address or wallet_network_address(user, network)
     value = None
     try:
         if symbol == "BTC" and address:
@@ -4285,7 +4285,10 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
         elif network == "bitcoin":
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
-            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
+            if not source_address and transaction_type == "withdrawal":
+                raise HTTPException(status_code=409,detail="This withdrawal has no recorded source address and cannot be settled automatically")
+            source_address=source_address or wallet_network_address(user,"bitcoin")
+            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),source_address)
         elif network in {"ethereum","bnb","sepolia"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
@@ -4317,7 +4320,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             "UPDATE transactions SET status='settled',tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
             (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
         )
-        reconcile_settled_asset(conn,user,symbol,network)
+        reconcile_settled_asset(conn,user,symbol,network,source_address)
         conn.commit()
         return {
             "status":"confirmed",
