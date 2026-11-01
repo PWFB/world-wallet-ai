@@ -1118,6 +1118,7 @@ def require_bnb_rpc(url: str):
     chain_id = evm_chain_id(url)
     if chain_id != 56:
         raise ValueError("Configured BNB RPC did not report chain ID 56")
+    return chain_id
 
 
 def evm_balance(url: str, address: str):
