@@ -817,10 +817,10 @@ def configured_addresses(user):
     """
     with db() as conn:
         rows = conn.execute(
-            "SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
+            "SELECT network,address,label,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
             (user["wallet_id"],),
         ).fetchall()
-    return [{"network":r[0],"address":r[1],"label":r[2]} for r in rows]
+    return [{"network":r[0],"address":r[1],"label":r[2],"ownership_verified":bool(r[3])} for r in rows]
 
 
 def wallet_network_address(user, network):
