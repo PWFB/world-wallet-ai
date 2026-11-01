@@ -111,6 +111,7 @@ class TransferRequest(BaseModel):
     recipient: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class WithdrawalRequest(BaseModel):
@@ -2013,7 +2014,7 @@ def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,use
     except ImportError:
         raise HTTPException(status_code=503,detail="EVM signature verification dependency is not installed")
     with db() as conn:
-        challenge=conn.execute("SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges WHERE id=%s AND wallet_id=%s AND owner_id=%s",(request.challenge_id,wallet_id,user["id"])).fetchone()
+        challenge=conn.execute("SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges WHERE id=%s AND wallet_id=%s AND owner_id=%s FOR UPDATE",(request.challenge_id,wallet_id,user["id"])).fetchone()
         if not challenge: raise HTTPException(status_code=404,detail="Verification challenge not found")
         if challenge[4] is not None: raise HTTPException(status_code=409,detail="Verification challenge already used")
         if challenge[3] <= datetime.now(timezone.utc): raise HTTPException(status_code=410,detail="Verification challenge expired")
@@ -2459,9 +2460,23 @@ def reserve_asset(conn,user,symbol: str,amount: Decimal):
 @app.post("/api/v1/transfers")
 def transfer(request: TransferRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
+    source_address=(request.source_address or "").strip()
+    if not source_address:
+        raise HTTPException(status_code=400,detail="Select an attached source address explicitly; automatic first-address selection is disabled")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address):
+        raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    with db() as address_conn:
+        attached=address_conn.execute(
+            "SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND address=%s",
+            (user["wallet_id"],network,source_address),
+        ).fetchone()
+    if not attached:
+        raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if not attached[0]:
+        raise HTTPException(status_code=403,detail="Selected source address must pass network-native ownership verification before it can authorize a transfer")
     if not valid_destination_for_network(request.recipient,network):
         raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
-    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{request.note or ''}")
+    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{source_address}|{request.recipient.strip()}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -2486,8 +2501,8 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
@@ -2499,21 +2514,20 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.destination,network):
         raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
-    source_address = (request.source_address or "").strip() or wallet_network_address(user,network)
-    if request.source_address:
-        if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address):
-            raise HTTPException(status_code=400,detail="Invalid source address for selected network")
-        with db() as address_conn:
-            attached=address_conn.execute(
-                "SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND address=%s",
-                (user["wallet_id"],network,source_address),
-            ).fetchone()
-        if not attached:
-            raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
-        if network in {"ethereum","bnb","sepolia"} and not attached[0]:
-            raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before it can authorize a withdrawal")
+    source_address = (request.source_address or "").strip()
     if not source_address:
-        raise HTTPException(status_code=409,detail="No source address is attached for this network")
+        raise HTTPException(status_code=400,detail="Select an attached source address explicitly; automatic first-address selection is disabled")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address):
+        raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    with db() as address_conn:
+        attached=address_conn.execute(
+            "SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND address=%s",
+            (user["wallet_id"],network,source_address),
+        ).fetchone()
+    if not attached:
+        raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if not attached[0]:
+        raise HTTPException(status_code=403,detail="Selected source address must pass network-native ownership verification before it can authorize a withdrawal")
     fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
