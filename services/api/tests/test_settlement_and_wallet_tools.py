@@ -91,6 +91,13 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mainnet chain ID 1"):
                 main.require_ethereum_mainnet_rpc("https://rpc.example")
 
+    def test_bnb_rpc_requires_chain_id_56(self):
+        with patch.object(main, "evm_chain_id", return_value=56):
+            self.assertEqual(main.require_bnb_rpc("https://bsc.example"), 56)
+        with patch.object(main, "evm_chain_id", return_value=1):
+            with self.assertRaisesRegex(ValueError, "chain ID 56"):
+                main.require_bnb_rpc("https://bsc.example")
+
     def test_ethereum_rpc_falls_back_when_primary_provider_fails(self):
         class Response:
             def raise_for_status(self):
