@@ -294,12 +294,14 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         throw new Error("The server accepted the request but the address was not found in the saved address list. Please retry.");
       }
 
-      let ownershipVerified = Boolean((listData.addresses || []).find(item =>
+      const savedAddress = (listData.addresses || []).find(item =>
         item.network === network &&
         (["ethereum", "sepolia", "bnb"].includes(network)
           ? String(item.address || "").toLowerCase() === value.toLowerCase()
           : String(item.address || "") === value
-        )?.ownership_verified);
+        )
+      );
+      let ownershipVerified = Boolean(savedAddress?.ownership_verified);
       if (["ethereum", "sepolia", "bnb"].includes(network)) {
         const provider = window.ethereum || window.coinbaseWalletExtension;
         if (provider?.request) {
