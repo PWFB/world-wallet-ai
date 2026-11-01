@@ -983,7 +983,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
-    if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
+    const provider = wcProvider || window.ethereum;
+    if (!provider || typeof provider.request !== "function") throw new Error("No compatible external EVM wallet is available. Connect an injected wallet or WalletConnect before signing.");
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
     const config = await configResponse.json();
     if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
@@ -991,18 +992,22 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     if (!networkConfig) throw new Error("Signing configuration for " + network + " is not available.");
     const expectedSigner = sourceAddress || networkConfig.wallet_address;
     if (!expectedSigner) throw new Error("Select a verified attached source address before signing.");
-    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    const accounts = await provider.request({ method: "eth_requestAccounts" });
     const signer = accounts?.[0];
     if (!signer || signer.toLowerCase() !== expectedSigner.toLowerCase()) {
       throw new Error("Connect the selected verified source address before signing this transaction.");
     }
-    const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    if (chainId.toLowerCase() !== networkConfig.chain_id.toLowerCase()) {
+    let chainId = await provider.request({ method: "eth_chainId" });
+    if (String(chainId).toLowerCase() !== String(networkConfig.chain_id).toLowerCase()) {
       try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
+        await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
       } catch (error) {
         if (Number(error?.code) === 4001) throw error;
         throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum Mainnet" : network === "sepolia" ? "Ethereum Sepolia testnet" : "BNB Chain") + ".");
+      }
+      chainId = await provider.request({ method: "eth_chainId" });
+      if (String(chainId).toLowerCase() !== String(networkConfig.chain_id).toLowerCase()) {
+        throw new Error("The connected wallet is not on the required network. No transaction was submitted.");
       }
     }
 
@@ -1025,7 +1030,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       throw new Error("This asset is not available for live external EVM broadcast yet.");
     }
 
-    const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [tx] });
+    const txHash = await provider.request({ method: "eth_sendTransaction", params: [tx] });
     if (!txHash) throw new Error("External wallet did not return a transaction hash.");
 
     const settleResponse = await fetch(apiBaseUrl + "/api/v1/transactions/settle", {
@@ -1070,7 +1075,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "BALMZ", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
+      if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
       const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
       if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
