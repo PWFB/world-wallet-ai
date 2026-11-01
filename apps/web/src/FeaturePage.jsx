@@ -294,10 +294,58 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         throw new Error("The server accepted the request but the address was not found in the saved address list. Please retry.");
       }
 
+      let ownershipVerified = Boolean((listData.addresses || []).find(item =>
+        item.network === network &&
+        (["ethereum", "sepolia", "bnb"].includes(network)
+          ? String(item.address || "").toLowerCase() === value.toLowerCase()
+          : String(item.address || "") === value
+        )?.ownership_verified);
+      if (["ethereum", "sepolia", "bnb"].includes(network)) {
+        const provider = window.ethereum || window.coinbaseWalletExtension;
+        if (provider?.request) {
+          try {
+            const accounts = await provider.request({ method: "eth_accounts" });
+            const chainHex = await provider.request({ method: "eth_chainId" });
+            const expectedChain = { ethereum: 1, sepolia: 11155111, bnb: 56 }[network];
+            const connectedChain = Number.parseInt(String(chainHex), 16);
+            if (Array.isArray(accounts) && accounts.some(item => String(item).toLowerCase() === value.toLowerCase()) && connectedChain === expectedChain) {
+              const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/challenge", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ network, address: value, label: cleanLabel }),
+              });
+              const challenge = await challengeResponse.json().catch(() => ({}));
+              if (!challengeResponse.ok) throw new Error(challenge.detail || "Could not create ownership challenge.");
+              const messageHex = "0x" + Array.from(new TextEncoder().encode(challenge.message), byte => byte.toString(16).padStart(2, "0")).join("");
+              const signature = await provider.request({ method: "personal_sign", params: [messageHex, value] });
+              const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/verify", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+              });
+              const verified = await verifyResponse.json().catch(() => ({}));
+              if (!verifyResponse.ok) throw new Error(verified.detail || "Address ownership verification failed.");
+              ownershipVerified = verified.ownership_verified === true;
+              const refreshedAddresses = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+                headers: await walletAuthHeaders(accessToken),
+              });
+              const refreshedList = await refreshedAddresses.json().catch(() => ({}));
+              if (refreshedAddresses.ok) listData.addresses = refreshedList.addresses || listData.addresses;
+            } else {
+              setMessage("Address saved, but ownership is not verified. Connect the matching wallet on the selected network and retry to sign the verification message.");
+            }
+          } catch (signError) {
+            setMessage("Address saved but not ownership-verified: " + (signError?.message || "wallet signature was not completed."));
+          }
+        } else {
+          setMessage("Address saved but not ownership-verified. Connect a compatible EVM wallet to sign the ownership challenge.");
+        }
+      }
       setWalletAddresses(listData.addresses);
       setAddressesLoadedForWallet(walletId);
       setAddress("");
-      setMessage("Public address saved and verified for " + network + ". Checking live wallet data…");
+      if (ownershipVerified) setMessage("Address saved and ownership signature verified. No transaction was sent. Checking live wallet data…");
+      else if (!["ethereum", "sepolia", "bnb"].includes(network)) setMessage("Public address saved for " + network + ". This address has not undergone native ownership verification.");
 
       // Address persistence is independent of chain refresh. A missing RPC or
       // unavailable indexer must not make a successfully saved address look unsaved.
@@ -378,7 +426,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
             const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
-            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
