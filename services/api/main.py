@@ -120,6 +120,7 @@ class WithdrawalRequest(BaseModel):
     destination: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class RequestCreate(BaseModel):
@@ -284,9 +285,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
-          status TEXT NOT NULL, destination TEXT, network TEXT, tx_hash TEXT, confirmations INTEGER NOT NULL DEFAULT 0,
+          status TEXT NOT NULL, destination TEXT, network TEXT, from_address TEXT, tx_hash TEXT, confirmations INTEGER NOT NULL DEFAULT 0,
           block_height INTEGER, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS from_address TEXT;
         CREATE TABLE IF NOT EXISTS address_book(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id),
           label TEXT NOT NULL, address TEXT NOT NULL, network TEXT NOT NULL,
@@ -2497,7 +2499,22 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.destination,network):
         raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
-    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{request.note or ''}")
+    source_address = (request.source_address or "").strip() or wallet_network_address(user,network)
+    if request.source_address:
+        if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address):
+            raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+        with db() as address_conn:
+            attached=address_conn.execute(
+                "SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND address=%s",
+                (user["wallet_id"],network,source_address),
+            ).fetchone()
+        if not attached:
+            raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+        if network in {"ethereum","bnb","sepolia"} and not attached[0]:
+            raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before it can authorize a withdrawal")
+    if not source_address:
+        raise HTTPException(status_code=409,detail="No source address is attached for this network")
+    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -2522,8 +2539,8 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
@@ -2732,12 +2749,12 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (user["wallet_id"],symbol),
         ).fetchone()
         row=conn.execute(
-            "SELECT id,asset,amount,status,destination,network,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
             (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,destination,network,existing_hash=row
+        txid,symbol,amount,status,destination,network,existing_hash,source_address=row
         if status in {"confirmed","settled"}:
             return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
         if status == "cancelled":
@@ -2749,11 +2766,11 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
         if network == "bitcoin":
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
-            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
+            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),source_address or wallet_network_address(user,"bitcoin"))
         elif network in {"ethereum","bnb"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
-            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),wallet_network_address(user,network))
+            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),source_address or wallet_network_address(user,network))
         else:
             raise HTTPException(status_code=400,detail="Unsupported settlement network")
 
