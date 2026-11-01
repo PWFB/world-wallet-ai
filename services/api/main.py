@@ -270,9 +270,10 @@ def init_db():
           status=CASE WHEN token_registry.symbol='BALMZ' THEN 'pending_contract' ELSE token_registry.status END;
         CREATE TABLE IF NOT EXISTS wallet_addresses(
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
-          label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          PRIMARY KEY(wallet_id,network,address)
+          label TEXT NOT NULL DEFAULT 'primary', ownership_verified BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network,address)
         );
+        ALTER TABLE wallet_addresses ADD COLUMN IF NOT EXISTS ownership_verified BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE wallet_addresses DROP CONSTRAINT IF EXISTS wallet_addresses_pkey;
         ALTER TABLE wallet_addresses ADD CONSTRAINT wallet_addresses_pkey PRIMARY KEY(wallet_id,network,address);
         CREATE TABLE IF NOT EXISTS wallet_address_challenges(
@@ -1969,8 +1970,8 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
     with db() as conn:
         owner=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",(wallet_id,)).fetchall()
-    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None} for r in rows]}
+        rows=conn.execute("SELECT network,address,label,created_at,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",(wallet_id,)).fetchall()
+    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None,"ownership_verified":bool(r[4])} for r in rows]}
 
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
@@ -1994,7 +1995,7 @@ def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallen
     if not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     challenge_id="wac_"+secrets.token_urlsafe(24)
     issued=int(time.time())
-    message="World Wallet AI address ownership verification\\nWallet: "+wallet_id+"\\nNetwork: "+network+"\\nAddress: "+address+"\\nChallenge: "+challenge_id+"\\nIssued: "+str(issued)+"\\nSign this message only to prove control of this address. This does not authorize a transaction."
+    message="World Wallet AI address ownership verification\nWallet: "+wallet_id+"\nNetwork: "+network+"\nAddress: "+address+"\nChallenge: "+challenge_id+"\nIssued: "+str(issued)+"\nSign this message only to prove control of this address. This does not authorize a transaction."
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
@@ -2017,7 +2018,7 @@ def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,use
         try: recovered=Account.recover_message(encode_defunct(text=challenge[2]),signature=request.signature)
         except Exception: raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature")
         if recovered.lower()!=challenge[1].lower(): raise HTTPException(status_code=400,detail="Signature does not match attached address")
-        conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,'verified') ON CONFLICT(wallet_id,network,address) DO UPDATE SET label=CASE WHEN wallet_addresses.label='' THEN 'verified' ELSE wallet_addresses.label END",(wallet_id,challenge[0],challenge[1]))
+        conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified) VALUES(%s,%s,%s,'primary',TRUE) ON CONFLICT(wallet_id,network,address) DO UPDATE SET ownership_verified=TRUE",(wallet_id,challenge[0],challenge[1]))
         conn.execute("UPDATE wallet_address_challenges SET used_at=NOW() WHERE id=%s",(request.challenge_id,))
         conn.commit()
     return {"status":"verified","wallet_id":wallet_id,"network":challenge[0],"address":challenge[1],"ownership_verified":True}
