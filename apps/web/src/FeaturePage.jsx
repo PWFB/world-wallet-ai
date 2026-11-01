@@ -116,7 +116,7 @@ function getLocalExternalReceiveAddress() {
   }
 }
 
-function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId }) {
   const [wallets, setWallets] = useState([]);
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
@@ -303,14 +303,15 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       );
       let ownershipVerified = Boolean(savedAddress?.ownership_verified);
       if (["ethereum", "sepolia", "bnb"].includes(network)) {
-        const provider = window.ethereum || window.coinbaseWalletExtension;
+        const provider = externalProvider || window.ethereum || window.coinbaseWalletExtension;
         if (provider?.request) {
           try {
             const accounts = await provider.request({ method: "eth_accounts" });
-            const chainHex = await provider.request({ method: "eth_chainId" });
+            const chainHex = externalChainId ?? await provider.request({ method: "eth_chainId" });
             const expectedChain = { ethereum: 1, sepolia: 11155111, bnb: 56 }[network];
-            const connectedChain = Number.parseInt(String(chainHex), 16);
-            if (Array.isArray(accounts) && accounts.some(item => String(item).toLowerCase() === value.toLowerCase()) && connectedChain === expectedChain) {
+            const connectedChain = typeof chainHex === "number" ? chainHex : Number.parseInt(String(chainHex), 16);
+            const signerAccounts = Array.isArray(accounts) && accounts.length ? accounts : (externalAccount ? [externalAccount] : []);
+            if (signerAccounts.some(item => String(item).toLowerCase() === value.toLowerCase()) && connectedChain === expectedChain) {
               const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/challenge", {
                 method: "POST",
                 headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
@@ -522,7 +523,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   useEffect(() => {
     const activeWalletId = wallet?.wallet_id || wallet?.id;
-    if (!activeWalletId || !accessToken) { setWithdrawalAddresses([]); setSelectedSourceAddress(""); return; }
+    setSelectedSourceAddress("");
+    if (!activeWalletId || !accessToken) { setWithdrawalAddresses([]); return; }
     let cancelled = false;
     fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(activeWalletId) + "/addresses", { headers: { Authorization: "Bearer " + accessToken } })
       .then(async response => {
@@ -1617,7 +1619,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
