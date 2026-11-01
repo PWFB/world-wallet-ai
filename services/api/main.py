@@ -2880,8 +2880,8 @@ def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallen
     network=normalize_wallet_network(request.network); address=request.address.strip()
     if network not in {"ethereum","bnb","sepolia"}: raise HTTPException(status_code=400,detail="EVM signature verification supports Ethereum, BNB, and Sepolia only")
     if not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
-    challenge_id="wac_"+secrets.token_urlsafe(24); issued=int(time.time())
-    message=(f"World Wallet AI address ownership verification\\nWallet: {wallet_id}\\nNetwork: {network}\\nAddress: {address}\\nChallenge: {challenge_id}\\nIssued: {issued}\\nSign this message only to prove control of this address. This does not authorize a transaction.")
+    challenge_id="wac_"+secrets.token_urlsafe(24); issued=int(datetime.now(timezone.utc).timestamp())
+    message=(f"World Wallet AI address ownership verification\nWallet: {wallet_id}\nNetwork: {network}\nAddress: {address}\nChallenge: {challenge_id}\nIssued: {issued}\nSign this message only to prove control of this address. This does not authorize a transaction.")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
@@ -3598,7 +3598,7 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
         if not asset_row:
             raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
-            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status,t.from_address "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
             "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
@@ -3608,7 +3608,7 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
                 raise HTTPException(status_code=409,detail="Idempotency key was already used for a different withdrawal")
             return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
                     "replayed":True,"withdrawal":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
-                    "destination":existing[4],"network":existing[5]}}
+                    "destination":existing[4],"network":existing[5],"source_address":existing[7]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
         if not ok:
             conn.rollback()
