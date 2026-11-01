@@ -231,6 +231,7 @@ class WithdrawalRequest(BaseModel):
     destination: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class RequestCreate(BaseModel):
@@ -279,6 +280,16 @@ class WalletAddressRequest(BaseModel):
     network: str = Field(min_length=2, max_length=32)
     address: str = Field(min_length=4, max_length=128)
     label: str = Field(default="primary", min_length=1, max_length=80)
+
+
+class WalletAddressChallengeRequest(BaseModel):
+    network: str = Field(min_length=2, max_length=32)
+    address: str = Field(min_length=4, max_length=128)
+
+
+class WalletAddressVerifyRequest(BaseModel):
+    challenge_id: str = Field(min_length=12, max_length=100)
+    signature: str = Field(min_length=20, max_length=300)
 
 
 class WalletActivateRequest(BaseModel):
@@ -426,9 +437,16 @@ def init_db():
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
         );
-        -- Upgrade legacy one-address-per-network wallets without removing saved addresses.
+        -- Preserve existing rows while supporting multiple addresses and ownership proof.
         ALTER TABLE wallet_addresses DROP CONSTRAINT IF EXISTS wallet_addresses_pkey;
+        ALTER TABLE wallet_addresses ADD COLUMN IF NOT EXISTS ownership_verified BOOLEAN NOT NULL DEFAULT FALSE;
         CREATE UNIQUE INDEX IF NOT EXISTS wallet_addresses_unique_address_idx ON wallet_addresses(wallet_id,network,address);
+        CREATE TABLE IF NOT EXISTS wallet_address_challenges(
+          id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), owner_id TEXT NOT NULL REFERENCES users(id),
+          network TEXT NOT NULL, address TEXT NOT NULL, message TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS wallet_address_challenges_owner_idx ON wallet_address_challenges(owner_id,wallet_id,created_at DESC);
         CREATE TABLE IF NOT EXISTS portfolio_performance_snapshots(
           id BIGSERIAL PRIMARY KEY,
           wallet_id TEXT NOT NULL REFERENCES wallets(id),
@@ -456,6 +474,7 @@ def init_db():
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS from_address TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_hash TEXT;
@@ -2830,8 +2849,8 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
     with db() as conn:
         owner=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",(wallet_id,)).fetchall()
-    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None} for r in rows]}
+        rows=conn.execute("SELECT network,address,label,created_at,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",(wallet_id,)).fetchall()
+    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None,"ownership_verified":bool(r[4])} for r in rows]}
 
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
@@ -2845,15 +2864,55 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        # EVM addresses are case-insensitive; Base58 Solana addresses are case-sensitive.
         comparison = "lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
-        existing=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
+        existing=conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison} FOR UPDATE",(wallet_id,network,address)).fetchone()
         if existing:
             conn.execute(f"UPDATE wallet_addresses SET label=%s WHERE wallet_id=%s AND network=%s AND {comparison}",(request.label.strip(),wallet_id,network,address))
         else:
-            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
+            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified) VALUES(%s,%s,%s,%s,FALSE) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
+        saved=conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
         conn.commit()
-    return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip()}}
+    return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip(),"ownership_verified":bool(saved and saved[0])}}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses/challenge")
+def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallengeRequest,user: dict = Depends(current_user)):
+    network=normalize_wallet_network(request.network); address=request.address.strip()
+    if network not in {"ethereum","bnb","sepolia"}: raise HTTPException(status_code=400,detail="EVM signature verification supports Ethereum, BNB, and Sepolia only")
+    if not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
+    challenge_id="wac_"+secrets.token_urlsafe(24); issued=int(time.time())
+    message=(f"World Wallet AI address ownership verification\\nWallet: {wallet_id}\\nNetwork: {network}\\nAddress: {address}\\nChallenge: {challenge_id}\\nIssued: {issued}\\nSign this message only to prove control of this address. This does not authorize a transaction.")
+    with db() as conn:
+        owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
+        if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
+        attached=conn.execute("SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)",(wallet_id,network,address)).fetchone()
+        if not attached: raise HTTPException(status_code=404,detail="Attach this address before verifying ownership")
+        conn.execute("INSERT INTO wallet_address_challenges(id,wallet_id,owner_id,network,address,message,expires_at) VALUES(%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",(challenge_id,wallet_id,user["id"],network,address,message))
+        conn.commit()
+    return {"challenge_id":challenge_id,"message":message,"expires_in_seconds":600}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses/verify")
+def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,user: dict = Depends(current_user)):
+    try:
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+    except ImportError as exc:
+        raise HTTPException(status_code=503,detail="EVM signature verification dependency is not installed") from exc
+    with db() as conn:
+        challenge=conn.execute("SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges WHERE id=%s AND wallet_id=%s AND owner_id=%s FOR UPDATE",(request.challenge_id,wallet_id,user["id"])).fetchone()
+        if not challenge: raise HTTPException(status_code=404,detail="Verification challenge not found")
+        if challenge[4] is not None: raise HTTPException(status_code=409,detail="Verification challenge already used")
+        if challenge[3] <= datetime.now(timezone.utc): raise HTTPException(status_code=410,detail="Verification challenge expired")
+        try: recovered=Account.recover_message(encode_defunct(text=challenge[2]),signature=request.signature)
+        except Exception as exc: raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature") from exc
+        if recovered.lower()!=challenge[1].lower(): raise HTTPException(status_code=400,detail="Signature does not match attached address")
+        updated=conn.execute("UPDATE wallet_addresses SET ownership_verified=TRUE WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)",(wallet_id,challenge[0],challenge[1]))
+        if updated.rowcount != 1: raise HTTPException(status_code=409,detail="Attached address no longer exists")
+        consumed=conn.execute("UPDATE wallet_address_challenges SET used_at=NOW() WHERE id=%s AND used_at IS NULL AND expires_at>NOW()",(request.challenge_id,))
+        if consumed.rowcount != 1: raise HTTPException(status_code=409,detail="Verification challenge was already consumed or expired")
+        conn.commit()
+    return {"status":"verified","wallet_id":wallet_id,"network":challenge[0],"address":challenge[1],"ownership_verified":True}
 
 
 @app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
@@ -3522,7 +3581,15 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.destination,network):
         raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
-    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{request.note or ''}")
+    source_address=(request.source_address or "").strip() or wallet_network_address(user,network)
+    if not source_address: raise HTTPException(status_code=409,detail="No source address is attached for this network")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address): raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    comparison="lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+    with db() as address_conn:
+        attached=address_conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(user["wallet_id"],network,source_address)).fetchone()
+    if not attached: raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if network in {"ethereum","bnb","sepolia"} and not attached[0]: raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before withdrawal")
+    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -3547,8 +3614,8 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
@@ -3639,9 +3706,11 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, w
 
 
 def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: str, amount: Decimal, wallet_address: str):
-    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
     if not rpc or not wallet_address:
         raise HTTPException(status_code=503, detail=f"{network.title()} settlement RPC or wallet is not configured")
+    if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
+    elif network == "sepolia": require_sepolia_rpc(rpc)
     try:
         tx = rpc_call(rpc, "eth_getTransactionByHash", [tx_hash])
         if not tx:
@@ -3677,6 +3746,9 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if asset == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 label = "BALMZ"
+            elif asset == "BALMZ-SEP":
+                contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
+                label = "BALMZ Sepolia"
             else:
                 contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
                 label = "USDT"
@@ -4180,12 +4252,12 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (user["wallet_id"],symbol),
         ).fetchone()
         row=conn.execute(
-            "SELECT id,asset,amount,status,destination,network,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
             (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,destination,network,existing_hash=row
+        txid,symbol,amount,status,destination,network,existing_hash,source_address=row
         if status in {"confirmed","settled"}:
             return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
         if status == "cancelled":
@@ -4206,10 +4278,12 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
             verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
-        elif network in {"ethereum","bnb"}:
+        elif network in {"ethereum","bnb","sepolia"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
-            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),wallet_network_address(user,network))
+            if not source_address:
+                raise HTTPException(status_code=409,detail="This withdrawal has no recorded source address and cannot be settled automatically")
+            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),source_address)
         else:
             raise HTTPException(status_code=400,detail="Unsupported settlement network")
 
