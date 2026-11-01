@@ -978,11 +978,12 @@ def validate_asset_network(asset: str, network: str):
     symbol = asset.upper().strip()
     net = network.strip().lower()
     allowed = {
-        "ETH": {"ethereum"},
+        "ETH": {"ethereum", "sepolia"},
         "BNB": {"bnb"},
         "USDT": {"ethereum", "bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
+        "BALMZ-SEP": {"sepolia"},
         "BALMZ-SOL-DEVNET": {"solana-devnet"},
     }
     if symbol not in allowed or net not in allowed[symbol]:
