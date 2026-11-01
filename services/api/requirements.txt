@@ -7,3 +7,4 @@ httpx==0.28.1
 PyJWT==2.10.1
 pycryptodome==3.23.0
 cryptography==45.0.7
+eth-account==0.13.7
