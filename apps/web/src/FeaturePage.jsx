@@ -217,7 +217,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
-          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
+          {visibleAddresses.length ? visibleAddresses.map(a => <div className="tool-row" key={a.network + a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}{a.local ? " • Local vault" : ""}{a.ownership_verified ? " • Ownership verified" : " • Not verified"}</small></div><code>{a.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button></div>) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
     </div>
@@ -1003,13 +1003,9 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
         const existingResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", { headers: { Authorization: "Bearer " + accessToken } });
         const existingData = await existingResponse.json();
         if (!existingResponse.ok) throw new Error(existingData.detail || "Unable to inspect the selected wallet.");
-        const existingAddress = (existingData.addresses || []).find(item => item.network === network);
-        if (existingAddress && existingAddress.address.toLowerCase() === value.trim().toLowerCase()) {
-          setMessage("This address is already attached to the selected wallet.");
-          return;
-        }
-        if (existingAddress && !window.confirm("This wallet already has a " + network + " address. Replacing it will change which address is tracked for this network. Continue?")) {
-          setMessage("Address attachment cancelled; existing wallet address was kept.");
+        const existingAddress = (existingData.addresses || []).find(item => item.network === network && item.address.toLowerCase() === value.trim().toLowerCase());
+        if (existingAddress) {
+          setMessage("This exact address is already attached to the selected wallet. Other addresses on the same network remain saved.");
           return;
         }
         const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses", {
@@ -1018,7 +1014,25 @@ export default function FeaturePage({ assetCatalog = [], selectedAsset, focusedT
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Unable to attach address.");
-        setMessage("Public address attached to the selected wallet profile. This does not transfer funds or grant signing access.");
+        if (["ethereum","bnb","sepolia"].includes(network) && wcProvider && wcAccount.toLowerCase() === value.trim().toLowerCase()) {
+          const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses/challenge", {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+            body: JSON.stringify({ network, address: value.trim(), label }),
+          });
+          const challenge = await challengeResponse.json();
+          if (!challengeResponse.ok) throw new Error(challenge.detail || "Could not create ownership challenge.");
+          const messageHex = "0x" + Array.from(new TextEncoder().encode(challenge.message), byte => byte.toString(16).padStart(2, "0")).join("");
+          const signature = await wcProvider.request({ method: "personal_sign", params: [messageHex, value.trim()] });
+          const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(targetWalletId) + "/addresses/verify", {
+            method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+            body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+          });
+          const verified = await verifyResponse.json();
+          if (!verifyResponse.ok) throw new Error(verified.detail || "Address signature verification failed.");
+          setMessage("Address attached and ownership signature verified. No transaction was sent.");
+        } else {
+          setMessage("Address attached without replacing any other address. It is not yet ownership-verified. Connect the matching EVM wallet with Wallet Connect and attach again to sign a one-time verification message.");
+        }
       } catch (error) { setMessage(error.message || "Unable to attach address."); }
       finally { setToolBusy(false); }
     };
