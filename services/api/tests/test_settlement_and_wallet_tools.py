@@ -375,10 +375,12 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         wallet = "0x" + "1" * 40
         contract = "0x" + "3" * 40
         user = {"wallet_id": "wallet_test"}
-        with patch.object(main, "wallet_owns_network_address", return_value=True), \\
-             patch.object(main, "require_bnb_rpc", return_value=56), \\
-             patch.object(main, "erc20_decimals", return_value=18) as decimals_reader, \\
-             patch.object(main, "evm_block_number", return_value=None):
+        with (
+            patch.object(main, "wallet_owns_network_address", return_value=True),
+            patch.object(main, "require_bnb_rpc", return_value=56),
+            patch.object(main, "erc20_decimals", return_value=18) as decimals_reader,
+            patch.object(main, "evm_block_number", return_value=None),
+        ):
             imported, warning = main.sync_evm_token_transactions(
                 user, "https://bnb.example", "bnb", contract, "USDT-BNB",
                 decimals=6, wallet_address=wallet,
@@ -388,8 +390,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         decimals_reader.assert_called_once_with("https://bnb.example", contract)
 
     def test_verified_bnb_token_decimals_reject_wrong_chain(self):
-        with patch.object(main, "evm_chain_id", return_value=1), \\
-             patch.object(main, "erc20_decimals") as decimals_reader:
+        with (
+            patch.object(main, "evm_chain_id", return_value=1),
+            patch.object(main, "erc20_decimals") as decimals_reader,
+        ):
             with self.assertRaisesRegex(ValueError, "chain ID 56"):
                 main.verified_erc20_decimals("https://rpc.example", "0x" + "3" * 40, "bnb")
         decimals_reader.assert_not_called()
