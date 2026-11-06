@@ -1924,6 +1924,12 @@ def _chain_heights():
     for network, url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL), ("sepolia", SEPOLIA_RPC_URL)):
         if url:
             try:
+                if network == "ethereum":
+                    require_ethereum_mainnet_rpc(url)
+                elif network == "bnb":
+                    require_bnb_rpc(url)
+                elif network == "sepolia":
+                    require_sepolia_rpc(url)
                 heights[network] = _hex_int(rpc_call(url, "eth_blockNumber", []))
             except Exception:
                 heights[network] = None
@@ -2787,6 +2793,18 @@ def wallet_signing_config(user: dict = Depends(current_user)):
     ethereum_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     bitcoin_address = wallet_network_address(user, "bitcoin")
+    bnb_rpc_verified = False
+    bnb_usdt_decimals = None
+    if BSC_RPC_URL:
+        try:
+            require_bnb_rpc(BSC_RPC_URL)
+            bnb_rpc_verified = True
+            if USDT_BSC_CONTRACT:
+                bnb_usdt_decimals = erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT)
+        except Exception:
+            # Do not advertise BNB signing details when RPC chain identity is unknown.
+            bnb_rpc_verified = False
+            bnb_usdt_decimals = None
     return {
         "mode": "external_signer",
         "networks": {
@@ -2799,10 +2817,11 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "balmz_decimals": erc20_decimals(ETH_RPC_URL, BALMZ_ETH_CONTRACT) if ETH_RPC_URL and BALMZ_ETH_CONTRACT else None,
             },
             "bnb": {
-                "chain_id": "0x38",
-                "wallet_address": bnb_address if BSC_RPC_URL else None,
-                "usdt_contract": USDT_BSC_CONTRACT or None,
-                "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
+                "rpc_verified": bnb_rpc_verified,
+                "chain_id": "0x38" if bnb_rpc_verified else None,
+                "wallet_address": bnb_address if bnb_rpc_verified else None,
+                "usdt_contract": (USDT_BSC_CONTRACT or None) if bnb_rpc_verified else None,
+                "usdt_decimals": bnb_usdt_decimals if bnb_rpc_verified else None,
             },
             # Sepolia is a separate test network. Do not query token metadata here:
             # only the chain-checked sync path may call the configured Sepolia RPC.
@@ -2975,6 +2994,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         elif network == "bnb":
             rpc_url, asset = BSC_RPC_URL, "BNB"
             if not rpc_url: raise HTTPException(status_code=503, detail="BNB Chain RPC is not configured")
+            require_bnb_rpc(rpc_url)
             balance = evm_balance(rpc_url, address)
         elif network in {"solana_mainnet", "solana_devnet"}:
             if network == "solana_mainnet":
@@ -3104,9 +3124,15 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
+        elif network == "sepolia":
+            require_sepolia_rpc(rpc)
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Blockchain RPC unavailable") from exc
+        raise HTTPException(status_code=503, detail="Blockchain RPC unavailable or chain identity mismatch") from exc
     has_code = bool(code and code not in {"0x","0x0"})
     return {
         "status": "contract" if has_code else "no_contract_code",
@@ -3483,6 +3509,10 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
             if not rpc:
                 warnings.append(f"{network}: RPC is not configured")
                 continue
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc)
+            elif network == "bnb":
+                require_bnb_rpc(rpc)
             raw = rpc_call(rpc, "eth_getBalance", [address, "latest"])
             height = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
             reserves.append({
@@ -3497,15 +3527,16 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, contract, decimals in tokens:
+                asset_symbol = wallet_asset_symbol(symbol, network)
                 try:
                     reserves.append({
-                        "network": network, "address": address, "asset": symbol,
+                        "network": network, "address": address, "asset": asset_symbol,
                         "balance": erc20_balance(rpc, contract, address, int(decimals)),
                         "contract_address": contract, "block_number": height,
                         "source": "configured ERC-20 contract balanceOf",
                     })
                 except Exception:
-                    warnings.append(f"{network} {symbol}: token balance unavailable")
+                    warnings.append(f"{network} {asset_symbol}: token balance unavailable")
         except Exception:
             warnings.append(f"{network}: on-chain lookup failed")
     return {
@@ -3529,6 +3560,14 @@ def inspect_contract(request: ContractInspectRequest, user: dict = Depends(curre
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
+        elif network == "sepolia":
+            require_sepolia_rpc(rpc)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported contract inspection network")
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
         has_code = bool(code and code not in {"0x", "0x0"})
         if not has_code:
