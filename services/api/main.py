@@ -277,7 +277,7 @@ class ContractInspectRequest(BaseModel):
 
 class WalletCreateRequest(BaseModel):
     name: str = Field(default="New Wallet", min_length=1, max_length=80)
-    wallet_id: str | None = Field(default=None, pattern=r"^\\d{11}$")
+    wallet_id: str | None = Field(default=None, pattern=r"^\d{11}$")
 
 
 class WalletAddressRequest(BaseModel):
