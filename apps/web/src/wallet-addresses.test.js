@@ -55,6 +55,19 @@ test("fails closed when no active wallet exists or vault data is invalid", () =>
   assert.deepEqual(getLocalVaultReceiveAddresses(storage), []);
 });
 
+test("does not fall back to a different wallet when the active wallet has no local vault entry", () => {
+  const entries = [
+    { walletId: "12345678901", name: "Wallet A", networkAddresses: deriveWalletAddressBundle(phraseA) },
+    { walletId: "23456789012", name: "Wallet B", networkAddresses: deriveWalletAddressBundle(phraseB) },
+  ];
+  const values = new Map([
+    [VAULT_STORAGE_KEY, JSON.stringify(entries)],
+    [ACTIVE_WALLET_STORAGE_KEY, "99999999999"],
+  ]);
+  const storage = { getItem: key => values.get(key) || null };
+  assert.deepEqual(getLocalVaultReceiveAddresses(storage), []);
+});
+
 test("generates an 11-digit numeric wallet number and avoids local duplicates", () => {
   let call = 0;
   const cryptoProvider = {
