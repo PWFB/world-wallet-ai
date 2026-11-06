@@ -4,6 +4,7 @@ import base64
 import hashlib
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
@@ -1752,6 +1753,51 @@ def root():
 @app.get("/health")
 def health():
     return {"status":"ok","database_configured":bool(DATABASE_URL)}
+
+
+_BNB_HEALTH_CACHE_TTL_SECONDS = 60
+_BNB_HEALTH_CACHE_LOCK = Lock()
+_BNB_HEALTH_CACHE = {"checked_at": 0.0, "result": None}
+
+
+@app.get("/health/bnb")
+def bnb_rpc_health():
+    """Read-only operational check for the configured BNB mainnet RPC and USDT contract."""
+    now = time.monotonic()
+    with _BNB_HEALTH_CACHE_LOCK:
+        cached = _BNB_HEALTH_CACHE
+        if cached["result"] is not None and now - cached["checked_at"] < _BNB_HEALTH_CACHE_TTL_SECONDS:
+            return dict(cached["result"])
+
+    try:
+        if not BSC_RPC_URL:
+            raise ValueError("BNB Chain RPC is not configured")
+        if not USDT_BSC_CONTRACT:
+            raise ValueError("BNB USDT contract is not configured")
+        chain_id = require_bnb_rpc(BSC_RPC_URL)
+        decimals = verified_erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT, "bnb", chain_checked=True)
+        latest_block = evm_block_number(BSC_RPC_URL)
+        if latest_block is None or latest_block <= 0:
+            raise ValueError("BNB RPC did not return a valid latest block")
+    except Exception as exc:
+        logger.warning("BNB RPC health check failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="BNB Chain RPC or USDT-BNB contract check failed") from exc
+
+    result = {
+        "status": "ok",
+        "network": "bnb",
+        "chain_id": chain_id,
+        "rpc_verified": True,
+        "contract_address": USDT_BSC_CONTRACT,
+        "token": "Binance-Peg BSC-USD",
+        "decimals": decimals,
+        "latest_block": latest_block,
+        "read_only": True,
+    }
+    with _BNB_HEALTH_CACHE_LOCK:
+        _BNB_HEALTH_CACHE["checked_at"] = now
+        _BNB_HEALTH_CACHE["result"] = result
+    return dict(result)
 
 
 @app.post("/api/v1/auth/login")

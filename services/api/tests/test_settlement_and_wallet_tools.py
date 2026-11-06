@@ -11,6 +11,39 @@ import main
 
 
 class SettlementAndWalletToolTests(unittest.TestCase):
+    def test_bnb_rpc_health_reports_verified_chain_and_contract_precision(self):
+        with patch.object(main, "_BNB_HEALTH_CACHE", {"checked_at": 0.0, "result": None}), \
+             patch.object(main.time, "monotonic", return_value=100.0), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "5" * 40), \
+             patch.object(main, "require_bnb_rpc", return_value=56) as chain_check, \
+             patch.object(main, "verified_erc20_decimals", return_value=18) as decimals_check, \
+             patch.object(main, "evm_block_number", return_value=45000000) as block_check:
+            result = main.bnb_rpc_health()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["chain_id"], 56)
+        self.assertTrue(result["rpc_verified"])
+        self.assertEqual(result["decimals"], 18)
+        self.assertEqual(result["latest_block"], 45000000)
+        self.assertTrue(result["read_only"])
+        chain_check.assert_called_once_with("https://bnb.example")
+        decimals_check.assert_called_once_with("https://bnb.example", "0x" + "5" * 40, "bnb", chain_checked=True)
+        block_check.assert_called_once_with("https://bnb.example")
+
+    def test_bnb_rpc_health_fails_closed_before_contract_read_on_wrong_chain(self):
+        with patch.object(main, "_BNB_HEALTH_CACHE", {"checked_at": 0.0, "result": None}), \
+             patch.object(main.time, "monotonic", return_value=100.0), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "5" * 40), \
+             patch.object(main, "require_bnb_rpc", side_effect=ValueError("wrong chain")), \
+             patch.object(main, "verified_erc20_decimals") as decimals_check, \
+             patch.object(main, "evm_block_number") as block_check:
+            with self.assertRaises(main.HTTPException) as caught:
+                main.bnb_rpc_health()
+        self.assertEqual(caught.exception.status_code, 503)
+        decimals_check.assert_not_called()
+        block_check.assert_not_called()
+
     def test_wallet_sync_route_is_registered_on_sync_handler_only(self):
         sync_routes = [
             route for route in main.app.routes
