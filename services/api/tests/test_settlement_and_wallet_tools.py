@@ -298,12 +298,16 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(100)
             raise AssertionError("Unexpected RPC method: " + method)
 
-        with patch.object(main, "configured_addresses", return_value=[
-            {"network": "bnb", "address": address, "label": "primary"},
-        ]), patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
-             patch.object(main, "db", return_value=db_context), \
-             patch.object(main, "rpc_call", side_effect=fake_rpc), \
-             patch.object(main, "erc20_balance", return_value=12.5):
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "bnb", "address": address, "label": "primary"},
+            ]),
+            patch.object(main, "BSC_RPC_URL", "https://bnb.example"),
+            patch.object(main, "db", return_value=db_context),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+            patch.object(main, "verified_erc20_decimals", return_value=18),
+            patch.object(main, "erc20_balance", return_value=12.5),
+        ):
             result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
 
         self.assertEqual(
@@ -360,11 +364,14 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         conn = Mock()
         user = {"wallet_id": "wallet_test"}
 
-        with patch.object(main, "wallet_network_address", return_value=wallet), \
-             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
-             patch.object(main, "USDT_BSC_CONTRACT", contract), \
-             patch.object(main, "require_bnb_rpc", return_value=56), \
-             patch.object(main, "erc20_balance", return_value=12.5):
+        with (
+            patch.object(main, "wallet_network_address", return_value=wallet),
+            patch.object(main, "BSC_RPC_URL", "https://bnb.example"),
+            patch.object(main, "USDT_BSC_CONTRACT", contract),
+            patch.object(main, "require_bnb_rpc", return_value=56),
+            patch.object(main, "verified_erc20_decimals", return_value=18),
+            patch.object(main, "erc20_balance", return_value=12.5),
+        ):
             main.reconcile_settled_asset(conn, user, "USDT-BNB", "bnb", wallet)
 
         conn.execute.assert_called_once()
