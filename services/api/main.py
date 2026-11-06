@@ -978,10 +978,15 @@ def valid_destination_for_network(address: str, network: str) -> bool:
 def validate_asset_network(asset: str, network: str):
     symbol = asset.upper().strip()
     net = network.strip().lower()
+    # BNB Chain USDT has its own wallet-asset row. Normalize the legacy
+    # request label so reservations never debit Ethereum USDT by accident.
+    if symbol == "USDT" and net == "bnb":
+        symbol = "USDT-BNB"
     allowed = {
         "ETH": {"ethereum"},
         "BNB": {"bnb"},
-        "USDT": {"ethereum", "bnb"},
+        "USDT": {"ethereum"},
+        "USDT-BNB": {"bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
         "BALMZ-SEP": {"sepolia"},
@@ -1217,6 +1222,8 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
+        elif network == "bnb":
+            require_bnb_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
@@ -1332,6 +1339,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
+        elif network == "bnb":
+            require_bnb_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
@@ -2054,6 +2063,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 warnings.append("Ethereum balance service unavailable")
         if BSC_RPC_URL and bnb_address:
             try:
+                require_bnb_rpc(BSC_RPC_URL)
                 bnb = evm_balance(BSC_RPC_URL, bnb_address)
                 conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
                 updates.append({"network":"bnb","asset":"BNB","balance":bnb})
@@ -2073,6 +2083,8 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             try:
                 if network == "sepolia":
                     require_sepolia_rpc(rpc_url)
+                elif network == "bnb":
+                    require_bnb_rpc(rpc_url)
                 balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
                 if balance is None:
                     continue
@@ -3132,6 +3144,8 @@ def _inspect_evm_address(address, network, rpc):
             require_sepolia_rpc(rpc)
         elif network == "ethereum":
             require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
         raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
         block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
         balance = int(raw_balance or "0x0", 16) / 10**18
@@ -3771,9 +3785,19 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             elif asset == "BALMZ-SEP":
                 contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
                 label = "BALMZ Sepolia"
+            elif asset == "USDT-BNB":
+                contract = USDT_BSC_CONTRACT if network == "bnb" else ""
+                label = "USDT on BNB Chain"
             else:
-                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
-                label = "USDT"
+                # Accept pre-fix pending BNB transactions using the legacy
+                # generic USDT symbol, but never route new BNB reservations
+                # through that label (validate_asset_network canonicalizes it).
+                contract = (
+                    USDT_ETH_CONTRACT if network == "ethereum"
+                    else USDT_BSC_CONTRACT if network == "bnb"
+                    else ""
+                )
+                label = "USDT on BNB Chain" if network == "bnb" else "USDT"
             if not contract:
                 raise HTTPException(status_code=503, detail=label + " contract is not configured for settlement verification")
             if not _same_address(tx.get("to"), contract):
@@ -4247,7 +4271,7 @@ def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
                 address, BALMZ_SOLANA_DEVNET_MINT,
                 BALMZ_SOLANA_DEVNET_DECIMALS,
             )
-        elif symbol in {"USDT", "BALMZ", "BALMZ-SEP"} and address:
+        elif symbol in {"USDT", "USDT-BNB", "BALMZ", "BALMZ-SEP"} and address:
             if symbol == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 rpc = ETH_RPC_URL if network == "ethereum" else ""
@@ -4255,9 +4279,13 @@ def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
                 contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
                 rpc = SEPOLIA_RPC_URL if network == "sepolia" else ""
                 if rpc: require_sepolia_rpc(rpc)
+            elif network == "ethereum":
+                contract, rpc = USDT_ETH_CONTRACT, ETH_RPC_URL
+            elif network == "bnb":
+                contract, rpc = USDT_BSC_CONTRACT, BSC_RPC_URL
+                if rpc: require_bnb_rpc(rpc)
             else:
-                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
-                rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL
+                contract, rpc = "", ""
             if contract and rpc:
                 value = erc20_balance(rpc, contract, address)
     except Exception:
