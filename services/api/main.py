@@ -90,6 +90,7 @@ def normalize_wallet_network(value: str) -> str:
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
+BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
 BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
 
@@ -1340,7 +1341,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         if network == "sepolia":
             require_sepolia_rpc(url)
         elif network == "bnb":
-            require_bnb_rpc(url)
+            decimals = verified_erc20_decimals(url, contract, network)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
@@ -1707,7 +1708,10 @@ def wallet_snapshot(user):
             # cannot safely be attributed to production holdings.
             if str(symbol) == "SOL" and not wallet_network_address(user, "solana_mainnet"):
                 asset_network = None
-            assets.append({"symbol":symbol,"name":name,"network":asset_network,
+            display_name = ("Binance-Peg BSC-USD (BNB Chain)"
+                            if str(symbol) == "USDT-BNB" and USDT_BSC_CONTRACT.lower() == BSC_USDT_MAINNET_CONTRACT.lower()
+                            else name)
+            assets.append({"symbol":symbol,"name":display_name,"network":asset_network,
                 "network_label":network_labels.get(asset_network, "Network not classified"),
                 "balance":float(available),"available_balance":float(available),
                 "actual_balance":float(actual),"reserved_balance":float(reserved),"price_usd":float(p),
@@ -2091,7 +2095,8 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                     require_sepolia_rpc(rpc_url)
                 elif network == "bnb":
                     require_bnb_rpc(rpc_url)
-                balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
+                    token_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
+                balance = erc20_balance(rpc_url, contract, token_address, token_decimals if network == "bnb" else int(decimals))
                 if balance is None:
                     continue
                 # Asset balances are keyed by symbol, so never combine the same
@@ -2105,7 +2110,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                     (user["wallet_id"],asset_symbol,asset_name,balance),
                 )
                 updates.append({"network":network,"asset":asset_symbol,"balance":balance,
-                                "contract_address":contract,"decimals":int(decimals)})
+                                "contract_address":contract,"decimals":token_decimals if network == "bnb" else int(decimals)})
             except Exception:
                 warnings.append(f"{network} {symbol} token balance service unavailable")
         conn.commit()
@@ -2800,7 +2805,7 @@ def wallet_signing_config(user: dict = Depends(current_user)):
             require_bnb_rpc(BSC_RPC_URL)
             bnb_rpc_verified = True
             if USDT_BSC_CONTRACT:
-                bnb_usdt_decimals = erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT)
+                bnb_usdt_decimals = verified_erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT, "bnb", chain_checked=True)
         except Exception:
             # Do not advertise BNB signing details when RPC chain identity is unknown.
             bnb_rpc_verified = False
@@ -2851,7 +2856,17 @@ def list_token_registry(user: dict = Depends(current_user)):
     for r in rows:
         registry_network = str(r[2]).strip().lower().replace("-", "_")
         supported = registry_network in networks
-        tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        token_name = r[1]
+        token_decimals = r[4]
+        if registry_network == "bnb" and r[3]:
+            try:
+                token_decimals = verified_erc20_decimals(BSC_RPC_URL, r[3], "bnb")
+            except Exception:
+                # Never publish stale registry precision as verified BNB token metadata.
+                token_decimals = None
+            if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
+                token_name = "Binance-Peg BSC-USD"
+        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
@@ -3196,15 +3211,17 @@ def _inspect_evm_address(address, network, rpc):
                 ).fetchall()
             for symbol, name, contract, decimals in tokens:
                 try:
-                    value = erc20_balance(rpc, contract, address, int(decimals))
+                    token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else int(decimals)
+                    value = erc20_balance(rpc, contract, address, token_decimals)
+                    display_name = "Binance-Peg BSC-USD" if network == "bnb" and str(contract).lower() == BSC_USDT_MAINNET_CONTRACT.lower() else name
                     result["tokens"].append({
-                        "symbol": symbol, "name": name, "contract_address": contract,
-                        "decimals": int(decimals), "on_chain_balance": value, "available_balance": value,
+                        "symbol": symbol, "name": display_name, "contract_address": contract,
+                        "decimals": token_decimals, "on_chain_balance": value, "available_balance": value,
                     })
                 except Exception:
                     result["tokens"].append({
                         "symbol": symbol, "name": name, "contract_address": contract,
-                        "decimals": int(decimals), "on_chain_balance": None, "available_balance": None,
+                        "decimals": None if network == "bnb" else int(decimals), "on_chain_balance": None, "available_balance": None,
                         "status": "unavailable",
                     })
         return result
@@ -3531,7 +3548,10 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
                 try:
                     reserves.append({
                         "network": network, "address": address, "asset": asset_symbol,
-                        "balance": erc20_balance(rpc, contract, address, int(decimals)),
+                        "balance": erc20_balance(
+                            rpc, contract, address,
+                            verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else int(decimals),
+                        ),
                         "contract_address": contract, "block_number": height,
                         "source": "configured ERC-20 contract balanceOf",
                     })
@@ -3747,6 +3767,24 @@ def erc20_decimals(url: str, contract: str):
     return _hex_int(raw) if raw is not None else None
 
 
+def verified_erc20_decimals(url: str, contract: str, network: str, *, chain_checked: bool = False):
+    """Read ERC-20 precision only from the selected EVM network and validate its range."""
+    network = str(network or "").strip().lower()
+    if network not in {"ethereum", "bnb", "sepolia"}:
+        raise ValueError("Unsupported network for ERC-20 decimals")
+    if not chain_checked:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(url)
+        elif network == "bnb":
+            require_bnb_rpc(url)
+        else:
+            require_sepolia_rpc(url)
+    decimals = erc20_decimals(url, contract)
+    if decimals is None or not isinstance(decimals, int) or decimals < 0 or decimals > 36:
+        raise ValueError("Unable to determine valid ERC-20 decimals")
+    return decimals
+
+
 def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, wallet_address: str):
     response = httpx.get(f"https://blockstream.info/api/tx/{tx_hash}", timeout=15)
     if response.status_code == 404:
@@ -3841,9 +3879,10 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
                 raise HTTPException(status_code=503, detail=label + " contract is not configured for settlement verification")
             if not _same_address(tx.get("to"), contract):
                 raise HTTPException(status_code=409, detail=f"Token contract does not match the configured {label} contract")
-            decimals = erc20_decimals(rpc, contract)
-            if decimals is None or decimals < 0 or decimals > 36:
-                raise HTTPException(status_code=503, detail="Unable to determine token decimals")
+            try:
+                decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Unable to determine token decimals") from exc
             expected = exact_base_units(amount, decimals)
             found = False
             for log in receipt.get("logs") or []:
@@ -4326,7 +4365,8 @@ def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
             else:
                 contract, rpc = "", ""
             if contract and rpc:
-                value = erc20_balance(rpc, contract, address)
+                token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else 18
+                value = erc20_balance(rpc, contract, address, token_decimals)
     except Exception:
         value = None
     if value is not None:
