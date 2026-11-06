@@ -65,7 +65,7 @@ test("generates an 11-digit numeric wallet number and avoids local duplicates", 
     },
   };
   const value = generateWalletNumber([{ walletId: "10000000000" }], cryptoProvider);
-  assert.match(value, /^\\d{11}$/);
+  assert.match(value, /^\d{11}$/);
   assert.equal(value, "10000000001");
 });
 
