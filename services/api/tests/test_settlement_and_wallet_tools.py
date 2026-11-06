@@ -270,7 +270,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
              patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
              patch.object(main, "USDT_BSC_CONTRACT", contract), \
              patch.object(main, "rpc_call", return_value=hex(56)), \
-             patch.object(main, "erc20_decimals", return_value=6):
+             patch.object(main, "erc20_decimals", return_value=18):
             result = main.wallet_signing_config({"wallet_id": "wallet_test"})
 
         self.assertEqual(result["networks"]["bnb"], {
@@ -278,7 +278,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             "chain_id": "0x38",
             "wallet_address": address,
             "usdt_contract": contract,
-            "usdt_decimals": 6,
+            "usdt_decimals": 18,
         })
 
     def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
@@ -370,6 +370,29 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         conn.execute.assert_called_once()
         self.assertIn("symbol=%s", conn.execute.call_args.args[0])
         self.assertEqual(conn.execute.call_args.args[1], (12.5, "wallet_test", "USDT-BNB"))
+
+    def test_bnb_token_history_uses_contract_decimals_not_registry_default(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "3" * 40
+        user = {"wallet_id": "wallet_test"}
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \\
+             patch.object(main, "require_bnb_rpc", return_value=56), \\
+             patch.object(main, "erc20_decimals", return_value=18) as decimals_reader, \\
+             patch.object(main, "evm_block_number", return_value=None):
+            imported, warning = main.sync_evm_token_transactions(
+                user, "https://bnb.example", "bnb", contract, "USDT-BNB",
+                decimals=6, wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertEqual(warning, "latest block unavailable")
+        decimals_reader.assert_called_once_with("https://bnb.example", contract)
+
+    def test_verified_bnb_token_decimals_reject_wrong_chain(self):
+        with patch.object(main, "evm_chain_id", return_value=1), \\
+             patch.object(main, "erc20_decimals") as decimals_reader:
+            with self.assertRaisesRegex(ValueError, "chain ID 56"):
+                main.verified_erc20_decimals("https://rpc.example", "0x" + "3" * 40, "bnb")
+        decimals_reader.assert_not_called()
 
     def test_bnb_rpc_requires_chain_id_56(self):
         with patch.object(main, "evm_chain_id", return_value=56):
