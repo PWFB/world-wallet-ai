@@ -1358,7 +1358,8 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
             _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
         return imported, None
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s native transaction sync failed: error_type=%s", network, type(exc).__name__)
         return [], f"{network} native transaction service unavailable"
 def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6, wallet_address=None):
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
@@ -1383,7 +1384,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
         start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
         logs = evm_transfer_logs(url, contract, wallet_address, start, latest)
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s %s transaction RPC preparation failed: error_type=%s", network, symbol, type(exc).__name__)
         return [], f"{network} {symbol} transaction service unavailable"
 
     candidates = []
@@ -1493,7 +1495,8 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                 )
             _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s %s transaction persistence failed: error_type=%s", network, symbol, type(exc).__name__)
         return [], f"{network} {symbol} transaction service unavailable"
     return imported, None
 def bitcoin_address_transactions(address: str):
@@ -2208,7 +2211,8 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             bnb = evm_balance(BSC_RPC_URL, bnb_address)
             asset_balance_updates.append((bnb, "BNB"))
             updates.append({"network":"bnb","asset":"BNB","balance":bnb})
-        except Exception:
+        except Exception as exc:
+            logger.warning("BNB Chain balance synchronization failed: error_type=%s", type(exc).__name__)
             warnings.append("BNB Chain balance service unavailable")
 
     # Token decimals and balances are resolved from the verified chain outside
