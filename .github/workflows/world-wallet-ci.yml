@@ -46,5 +46,7 @@ jobs:
         run: npm install
       - name: Run network selection regression tests
         run: npm run test:network-selection
+      - name: Run multi-chain wallet derivation regression tests
+        run: npm run test:wallet-addresses
       - name: Build World Wallet web app
         run: npm run build
