@@ -67,11 +67,11 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
                      "sepolia": None, "solana_mainnet": None, "solana_devnet": None}
 
         def verify_bnb(_url):
-            self._assert_no_database_connection()
+            self._assert_no_database_connection_during_network()
             return 56
 
         def read_balance(_url, _address):
-            self._assert_no_database_connection()
+            self._assert_no_database_connection_during_network()
             return 0.75
 
         with patch.object(main, "db", side_effect=lambda: _Connection()), \
@@ -104,7 +104,7 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
         address = "0x" + "2" * 40
 
         def rpc(_url, method, _params):
-            self._assert_no_database_connection()
+            self._assert_no_database_connection_during_network()
             self.assertEqual(method, "eth_getBlockByNumber")
             return {"hash": "0xblock", "transactions": []}
 
@@ -135,7 +135,7 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
         }
 
         def rpc(_url, method, _params):
-            self._assert_no_database_connection()
+            self._assert_no_database_connection_during_network()
             self.assertEqual(method, "eth_getTransactionReceipt")
             return {"status": "0x1"}
 
