@@ -131,7 +131,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(1)
             raise AssertionError("BNB blocks must not be queried on the wrong chain")
 
-        with patch.object(main, "wallet_owns_network_address", return_value=True), \\
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_native_transactions(
                 {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb", wallet_address=wallet
@@ -151,7 +151,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(1)
             raise AssertionError("BNB token logs must not be queried on the wrong chain")
 
-        with patch.object(main, "wallet_owns_network_address", return_value=True), \\
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_token_transactions(
                 {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb",
@@ -191,10 +191,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return {"hash": "0xabc"}
             raise AssertionError("Unexpected RPC method: " + method)
 
-        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
-             patch.object(main, "USDT_BSC_CONTRACT", contract), \\
-             patch.object(main, "require_bnb_rpc", return_value=56), \\
-             patch.object(main, "erc20_decimals", return_value=6), \\
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "erc20_decimals", return_value=6), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main.verify_evm_settlement(
                 tx_hash, "USDT-BNB", "bnb", destination, Decimal("1"), wallet
@@ -209,10 +209,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         conn = Mock()
         user = {"wallet_id": "wallet_test"}
 
-        with patch.object(main, "wallet_network_address", return_value=wallet), \\
-             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
-             patch.object(main, "USDT_BSC_CONTRACT", contract), \\
-             patch.object(main, "require_bnb_rpc", return_value=56), \\
+        with patch.object(main, "wallet_network_address", return_value=wallet), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
              patch.object(main, "erc20_balance", return_value=12.5):
             main.reconcile_settled_asset(conn, user, "USDT-BNB", "bnb", wallet)
 
