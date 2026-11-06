@@ -4,7 +4,6 @@ import { HDNodeWallet } from "ethers";
 import { deriveWalletAddressBundle } from "./wallet-addresses.js";
 import { getLocalVaultReceiveAddresses, ACTIVE_WALLET_STORAGE_KEY, VAULT_STORAGE_KEY } from "./receive-addresses.js";
 import { generateWalletNumber } from "./wallet-number.js";
-import { webcrypto } from "node:crypto";
 
 const phraseA = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const phraseB = "legal winner thank year wave sausage worth useful legal winner thank yellow";
