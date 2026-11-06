@@ -46,5 +46,9 @@ jobs:
         run: npm install
       - name: Run network selection regression tests
         run: npm run test:network-selection
+      - name: Run Ethereum wallet safety tests
+        run: npm run test:wallet-safety
+      - name: Run Neon Auth token freshness tests
+        run: node --test src/neon-token.test.js
       - name: Build World Wallet web app
         run: npm run build
