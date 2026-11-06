@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { getNeonAccessToken } from "./auth-client.js";
 import { decryptRecoveryPhrase, deriveWalletAddressBundle, encryptRecoveryPhrase } from "./wallet-addresses.js";
-import { setActiveLocalWalletId } from "./receive-addresses.js";
+import { getActiveLocalWalletId, setActiveLocalWalletId } from "./receive-addresses.js";
 import { generateWalletNumber } from "./wallet-number.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
@@ -52,7 +52,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); }
     const refreshDeployedContracts = () => { try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); } };
     window.addEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
-    if (saved.length) setSelectedId(saved[0].walletId);
+    if (saved.length) setSelectedId(getActiveLocalWalletId() || saved[0].walletId);
     // Contract Generator can hand off a deployed token address to this page.
     try {
       const pending = JSON.parse(localStorage.getItem("world_wallet_pending_token_contract") || "null");
@@ -65,6 +65,35 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     } catch {}
     return () => window.removeEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
   }, []);
+
+  useEffect(() => {
+    const onWalletSelected = event => {
+      const nextWalletId = String(event?.detail?.walletId || "");
+      if (!nextWalletId || nextWalletId === String(selectedId)) return;
+      setSelectedId(nextWalletId);
+      setUnlocked(null);
+      setGenerated(null);
+      setPassword("");
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
+      setNativeBalance("");
+      setRecipient("");
+      setSendAmount("");
+      setTokenRecipient("");
+      setTokenAmount("");
+      setTxHash("");
+      setTokenTxHash("");
+      setSignature("");
+      setSignMessage("");
+      setVerifyResult(null);
+      setVerifyAddressInput("");
+      setVerifyMessageInput("");
+      setVerifySignatureInput("");
+      setMessage("Wallet context switched. Unlock the selected wallet to use its local signing key.");
+    };
+    window.addEventListener("world-wallet-wallet-selected", onWalletSelected);
+    return () => window.removeEventListener("world-wallet-wallet-selected", onWalletSelected);
+  }, [selectedId]);
 
   useEffect(() => {
     if (!accessToken) return;
