@@ -4,7 +4,7 @@ import unittest
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
@@ -255,8 +255,62 @@ class SettlementAndWalletToolTests(unittest.TestCase):
              patch.object(main, "erc20_decimals") as decimals:
             result = main.wallet_signing_config({"wallet_id": "wallet_test"})
 
-        self.assertIsNone(result["networks"]["bnb"]["usdt_decimals"])
+        bnb = result["networks"]["bnb"]
+        self.assertFalse(bnb["rpc_verified"])
+        self.assertIsNone(bnb["chain_id"])
+        self.assertIsNone(bnb["wallet_address"])
+        self.assertIsNone(bnb["usdt_contract"])
+        self.assertIsNone(bnb["usdt_decimals"])
         decimals.assert_not_called()
+
+    def test_signing_config_exposes_bnb_fields_only_after_chain_56_verification(self):
+        address = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "bnb" else None), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "rpc_call", return_value=hex(56)), \
+             patch.object(main, "erc20_decimals", return_value=6):
+            result = main.wallet_signing_config({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["networks"]["bnb"], {
+            "rpc_verified": True,
+            "chain_id": "0x38",
+            "wallet_address": address,
+            "usdt_contract": contract,
+            "usdt_decimals": 6,
+        })
+
+    def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
+        address = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        db_context = MagicMock()
+        db_conn = MagicMock()
+        db_context.__enter__.return_value = db_conn
+        db_conn.execute.return_value.fetchall.return_value = [("USDT", contract, 6)]
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_chainId":
+                return hex(56)
+            if method == "eth_getBalance":
+                return hex(2 * 10**18)
+            if method == "eth_blockNumber":
+                return hex(100)
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "bnb", "address": address, "label": "primary"},
+        ]), patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "db", return_value=db_context), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc), \
+             patch.object(main, "erc20_balance", return_value=12.5):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(
+            [item["asset"] for item in result["reserves"]],
+            ["BNB", "USDT-BNB"],
+        )
+        self.assertEqual(result["reserves"][1]["balance"], 12.5)
 
     def test_bnb_usdt_settlement_uses_bnb_contract(self):
         tx_hash = "0x" + "a" * 64
