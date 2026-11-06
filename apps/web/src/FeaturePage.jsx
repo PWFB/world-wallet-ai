@@ -102,19 +102,21 @@ const networksForAsset = symbol => ({
   "BALMZ-SOL-DEVNET": [{ value: "solana_devnet", label: "Solana Devnet (testnet)" }],
 }[symbol] || []);
 
-function getLocalExternalReceiveAddress() {
+function getSavedExternalConnections() {
   try {
-    const connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
-    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return [];
-    const rawChainId = connection.chainId;
-    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
-      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
+    const legacy = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
+    const list = [...(Array.isArray(saved) ? saved : []), ...(legacy ? [legacy] : [])];
+    return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
+      .filter((item, index, all) => all.findIndex(other => Number(other.chainId) === Number(item.chainId) && other.address.toLowerCase() === item.address.toLowerCase()) === index);
+  } catch { return []; }
+}
+function getLocalExternalReceiveAddress() {
+  return getSavedExternalConnections().map(connection => {
+    const chainId = Number(connection.chainId);
     const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    if (!network) return [];
-    return [{ network, address: connection.address, label: "Connected external wallet", local: true }];
-  } catch {
-    return [];
-  }
+    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true };
+  }).filter(item => item.network);
 }
 
 function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId }) {
@@ -163,53 +165,42 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => { loadWallets(); }, [accessToken]);
 
-  // When a user has connected an external EVM wallet, attach its public address
-  // to the active server wallet when the Wallets screen loads. Private keys never
-  // enter this flow. Unsupported chains are left unmodified rather than mislabeled.
+  // Attach every saved external EVM address to its matching network on the active wallet.
+  // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
-    let connection;
-    try { connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return; }
-    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return;
-    const rawChainId = connection.chainId;
-    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
-      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const connections = getSavedExternalConnections();
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
-    const externalNetwork = networkByChain[chainId];
-    if (!externalNetwork) return;
-    if (walletAddresses.some(item => item.network === externalNetwork && String(item.address || "").toLowerCase() === connection.address.toLowerCase())) return;
-    const attachKey = walletId + ":" + externalNetwork + ":" + connection.address.toLowerCase();
-    if (externalAttachRef.current.has(attachKey)) return;
-    externalAttachRef.current.add(attachKey);
     let cancelled = false;
     (async () => {
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
-          method: "POST",
-          headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
-          body: JSON.stringify({ network: externalNetwork, address: connection.address, label: "external wallet" }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "External wallet connected, but its address could not be attached.");
-        if (cancelled) return;
-        await loadAddresses(walletId);
-        const refreshedResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
-        const refreshed = await refreshedResponse.json();
-        if (refreshedResponse.ok) {
-          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
-          onTransactionsUpdated?.(refreshed.transactions || []);
-          setMessage("External wallet address attached to the active wallet. Live data refreshed; verify the network and source warnings.");
-        } else {
-          setMessage("External wallet address attached. Wallet refresh needs a retry: " + (refreshed.detail || "refresh unavailable."));
+      for (const connection of connections) {
+        const externalNetwork = networkByChain[Number(connection.chainId)];
+        if (!externalNetwork || !connection.address) continue;
+        if (walletAddresses.some(item => item.network === externalNetwork && String(item.address || "").toLowerCase() === connection.address.toLowerCase())) continue;
+        const attachKey = walletId + ":" + externalNetwork + ":" + connection.address.toLowerCase();
+        if (externalAttachRef.current.has(attachKey)) continue;
+        externalAttachRef.current.add(attachKey);
+        try {
+          const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+            method: "POST",
+            headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ network: externalNetwork, address: connection.address, label: connection.label || "external wallet" }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "External wallet address could not be attached.");
+          if (cancelled) return;
+          await loadAddresses(walletId);
+        } catch (error) {
+          externalAttachRef.current.delete(attachKey);
+          if (!cancelled) setMessage(error?.message || "Could not attach a connected external wallet address.");
         }
-      } catch (error) {
-        externalAttachRef.current.delete(attachKey);
-        if (!cancelled) setMessage(error?.message || "Could not attach the connected external wallet address.");
+      }
+      if (!cancelled) {
+        try { await refreshActiveWallet(); } catch (error) { setMessage("Addresses are saved; wallet refresh can be retried: " + (error?.message || "unavailable")); }
       }
     })();
     return () => { cancelled = true; };
   }, [walletId, addressesLoadedForWallet, walletAddresses, accessToken, apiBaseUrl]);
-
   const refreshActiveWallet = async () => {
     const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
     const data = await response.json();
@@ -638,10 +629,14 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [active, apiBaseUrl, accessToken]);
   function persistExternalConnection(connection) {
     try {
-      if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
-      else localStorage.removeItem("world_wallet_external_connection_v1");
+      const existing = getSavedExternalConnections();
+      if (connection?.address && Number.isFinite(Number(connection.chainId))) {
+        const next = [...existing.filter(item => !(Number(item.chainId) === Number(connection.chainId) && item.address.toLowerCase() === connection.address.toLowerCase())), connection];
+        localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+      }
     } catch {}
-    window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+    window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));
   }
 
   function parseExternalChainId(value) {
@@ -715,8 +710,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     try {
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [1],
-        optionalChains: [11155111, 56],
+        chains: [56],
+        optionalChains: [1, 11155111],
         showQrModal: true,
         methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
         events: ["accountsChanged", "chainChanged", "disconnect"],
@@ -728,39 +723,38 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         },
       });
       provider.on("accountsChanged", accounts => {
+        const chainId = parseExternalChainId(provider.chainId);
         const address = accounts?.[0] || "";
         setWcAccount(address);
-        const connection = address ? { address, chainId: parseExternalChainId(provider.chainId), connectedAt: new Date().toISOString() } : null;
-        try { if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); else localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
-        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+        (Array.isArray(accounts) ? accounts : []).forEach((account, index) => {
+          if (/^0x[a-fA-F0-9]{40}$/.test(account || "") && chainId) persistExternalConnection({ address: account, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+        });
       });
-      provider.on("chainChanged", chain => {
-        setWcChainId(parseExternalChainId(chain));
+      provider.on("chainChanged", async chain => {
+        const chainId = parseExternalChainId(chain);
+        setWcChainId(chainId);
         try {
-          const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
-          if (previous?.address) {
-            const connection = { ...previous, chainId: parseExternalChainId(chain) };
-            localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
-            window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
-          }
+          const accounts = await provider.request({ method: "eth_accounts" });
+          (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
+            if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+          });
         } catch {}
       });
       provider.on("disconnect", () => {
         setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
-        try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
+        // Keep previously attached addresses; disconnecting a session must not delete receiving routes.
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
       });
       await provider.connect();
       const accounts = await provider.request({ method: "eth_accounts" });
+      const chainId = parseExternalChainId(provider.chainId);
       setWcAccount(accounts?.[0] || "");
-      setWcChainId(parseExternalChainId(provider.chainId));
+      setWcChainId(chainId);
       setWcProvider(provider);
       setWcProviderKind("walletconnect");
-      if (accounts?.[0]) {
-        const connection = { address: accounts[0], chainId: parseExternalChainId(provider.chainId), provider: "walletconnect", connectedAt: new Date().toISOString() };
-        try { localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); } catch {}
-        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
-      }
+      (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
+        if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+      });
       if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
     } catch (error) {
       setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
