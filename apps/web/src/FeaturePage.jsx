@@ -261,7 +261,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       await refreshActiveWallet();
       await loadWallets();
       setMessage("Wallet switched. Live balances now belong to the selected wallet.");
-    } catch (error) { setMessage(error.message || "Unable to switch wallet."); }
+      return true;
+    } catch (error) { setMessage(error.message || "Unable to switch wallet."); return false; }
     finally { setBusy(false); }
   };
 
@@ -419,7 +420,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel" style={{ gridColumn: "1 / -1" }}>
         <p className="feature-kicker">ACTIVE WALLET · ISOLATED CONTEXT</p>
