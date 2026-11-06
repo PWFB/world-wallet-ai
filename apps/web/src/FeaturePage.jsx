@@ -584,13 +584,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [selectedAsset]);
 
   useEffect(() => {
+    const activeWalletId = wallet?.wallet_id || wallet?.id;
+    if (activeWalletId) setActiveLocalWalletId(String(activeWalletId));
+  }, [wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
     const options = networksForAsset(asset);
     if (options.length && !options.some(item => item.value === network)) setNetwork(options[0].value);
   }, [asset]);
 
   useEffect(() => {
     const syncLocalReceiveAddresses = () => {
-      const localAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(wallet?.wallet_id || wallet?.id || getActiveLocalWalletId())];
+      const localAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(getActiveLocalWalletId())];
       setAddresses(previous => {
         const serverAddresses = previous.filter(item => !item.local);
         return [...localAddresses, ...serverAddresses].filter((item, index, all) =>
