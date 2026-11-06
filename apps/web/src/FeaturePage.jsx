@@ -469,7 +469,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState(() => [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(wallet?.wallet_id || wallet?.id)]);
+  const [addresses, setAddresses] = useState(() => [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(getActiveLocalWalletId())]);
   const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
   const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
