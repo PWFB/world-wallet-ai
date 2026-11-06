@@ -36,7 +36,21 @@ export function getLocalVaultReceiveAddresses(storage) {
     if (!Array.isArray(entries) || entries.length === 0) return [];
     const activeWalletId = getActiveLocalWalletId(store);
     const selected = entries.find(entry => String(entry?.walletId) === String(activeWalletId)) || entries[0];
-    if (!selected || !Array.isArray(selected.networkAddresses)) return [];
+    if (!selected) return [];
+    if (!Array.isArray(selected.networkAddresses)) {
+      if (selected.address && selected.network) {
+        return [{
+          network: selected.network,
+          address: selected.address,
+          label: (selected.name || "Wallet") + " · existing local address",
+          local: true,
+          source: "legacy-local-vault",
+          walletId: selected.walletId,
+          environment: ["sepolia", "solana_devnet"].includes(selected.network) ? "testnet" : "mainnet",
+        }];
+      }
+      return [];
+    }
 
     return selected.networkAddresses
       .filter(item => item && typeof item.network === "string" && typeof item.address === "string" && item.address.trim())
