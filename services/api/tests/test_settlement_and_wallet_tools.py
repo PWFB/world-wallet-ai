@@ -3,7 +3,7 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
@@ -96,6 +96,129 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             main.validate_asset_network("ETH", "sepolia")
         self.assertEqual(main.validate_asset_network("BALMZ-SEP", "sepolia"), ("BALMZ-SEP", "sepolia"))
+
+    def test_usdt_asset_is_canonicalized_by_network(self):
+        from fastapi import HTTPException
+        self.assertEqual(main.validate_asset_network("USDT", "ethereum"), ("USDT", "ethereum"))
+        self.assertEqual(main.validate_asset_network("USDT", "bnb"), ("USDT-BNB", "bnb"))
+        self.assertEqual(main.validate_asset_network("USDT-BNB", "bnb"), ("USDT-BNB", "bnb"))
+        with self.assertRaises(HTTPException):
+            main.validate_asset_network("USDT-BNB", "ethereum")
+
+    def test_bnb_address_inspection_stops_before_balance_on_wrong_chain(self):
+        address = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB balance must not be read from the wrong chain")
+
+        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+            with self.assertRaises(main.HTTPException) as caught:
+                main._inspect_evm_address(address, "bnb", "https://rpc.example")
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_native_transaction_sync_stops_before_block_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB blocks must not be queried on the wrong chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_native_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb", wallet_address=wallet
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_token_transaction_sync_stops_before_log_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB token logs must not be queried on the wrong chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb",
+                contract, "USDT-BNB", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_usdt_settlement_uses_bnb_contract(self):
+        tx_hash = "0x" + "a" * 64
+        wallet = "0x" + "1" * 40
+        destination = "0x" + "2" * 40
+        contract = "0x" + "3" * 40
+        tx = {"from": wallet, "to": contract, "value": "0x0"}
+        receipt = {
+            "status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc",
+            "logs": [{
+                "address": contract,
+                "topics": [
+                    main.ERC20_TRANSFER_TOPIC,
+                    "0x" + "0" * 24 + wallet[2:],
+                    "0x" + "0" * 24 + destination[2:],
+                ],
+                "data": hex(1_000_000),
+            }],
+        }
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return tx
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_blockNumber":
+                return "0x66"
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0xabc"}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "erc20_decimals", return_value=6), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.verify_evm_settlement(
+                tx_hash, "USDT-BNB", "bnb", destination, Decimal("1"), wallet
+            )
+
+        self.assertEqual(result["state"], "confirmed")
+        self.assertEqual(result["confirmations"], 3)
+
+    def test_bnb_usdt_reconciliation_updates_the_network_qualified_asset(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "3" * 40
+        conn = Mock()
+        user = {"wallet_id": "wallet_test"}
+
+        with patch.object(main, "wallet_network_address", return_value=wallet), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "erc20_balance", return_value=12.5):
+            main.reconcile_settled_asset(conn, user, "USDT-BNB", "bnb", wallet)
+
+        conn.execute.assert_called_once()
+        self.assertIn("symbol=%s", conn.execute.call_args.args[0])
+        self.assertEqual(conn.execute.call_args.args[1], (12.5, "wallet_test", "USDT-BNB"))
 
     def test_bnb_rpc_requires_chain_id_56(self):
         with patch.object(main, "evm_chain_id", return_value=56):
