@@ -3,7 +3,7 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
@@ -140,6 +140,27 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("transaction service unavailable", warning)
         self.assertEqual(calls, ["eth_chainId"])
 
+    def test_bnb_token_transaction_sync_stops_before_log_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB token logs must not be queried on the wrong chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \\
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb",
+                contract, "USDT-BNB", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
     def test_bnb_usdt_settlement_uses_bnb_contract(self):
         tx_hash = "0x" + "a" * 64
         wallet = "0x" + "1" * 40
@@ -185,7 +206,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
     def test_bnb_usdt_reconciliation_updates_the_network_qualified_asset(self):
         wallet = "0x" + "1" * 40
         contract = "0x" + "3" * 40
-        conn = unittest.mock.Mock()
+        conn = Mock()
         user = {"wallet_id": "wallet_test"}
 
         with patch.object(main, "wallet_network_address", return_value=wallet), \\
