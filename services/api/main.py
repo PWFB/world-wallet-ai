@@ -2793,13 +2793,17 @@ def wallet_signing_config(user: dict = Depends(current_user)):
     ethereum_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     bitcoin_address = wallet_network_address(user, "bitcoin")
+    bnb_rpc_verified = False
     bnb_usdt_decimals = None
-    if BSC_RPC_URL and USDT_BSC_CONTRACT:
+    if BSC_RPC_URL:
         try:
             require_bnb_rpc(BSC_RPC_URL)
-            bnb_usdt_decimals = erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT)
+            bnb_rpc_verified = True
+            if USDT_BSC_CONTRACT:
+                bnb_usdt_decimals = erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT)
         except Exception:
-            # Do not query token metadata or advertise it from a wrong-chain RPC.
+            # Do not advertise BNB signing details when RPC chain identity is unknown.
+            bnb_rpc_verified = False
             bnb_usdt_decimals = None
     return {
         "mode": "external_signer",
@@ -2813,10 +2817,11 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "balmz_decimals": erc20_decimals(ETH_RPC_URL, BALMZ_ETH_CONTRACT) if ETH_RPC_URL and BALMZ_ETH_CONTRACT else None,
             },
             "bnb": {
-                "chain_id": "0x38",
-                "wallet_address": bnb_address if BSC_RPC_URL else None,
-                "usdt_contract": USDT_BSC_CONTRACT or None,
-                "usdt_decimals": bnb_usdt_decimals,
+                "rpc_verified": bnb_rpc_verified,
+                "chain_id": "0x38" if bnb_rpc_verified else None,
+                "wallet_address": bnb_address if bnb_rpc_verified else None,
+                "usdt_contract": (USDT_BSC_CONTRACT or None) if bnb_rpc_verified else None,
+                "usdt_decimals": bnb_usdt_decimals if bnb_rpc_verified else None,
             },
             # Sepolia is a separate test network. Do not query token metadata here:
             # only the chain-checked sync path may call the configured Sepolia RPC.
@@ -3522,15 +3527,16 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, contract, decimals in tokens:
+                asset_symbol = wallet_asset_symbol(symbol, network)
                 try:
                     reserves.append({
-                        "network": network, "address": address, "asset": symbol,
+                        "network": network, "address": address, "asset": asset_symbol,
                         "balance": erc20_balance(rpc, contract, address, int(decimals)),
                         "contract_address": contract, "block_number": height,
                         "source": "configured ERC-20 contract balanceOf",
                     })
                 except Exception:
-                    warnings.append(f"{network} {symbol}: token balance unavailable")
+                    warnings.append(f"{network} {asset_symbol}: token balance unavailable")
         except Exception:
             warnings.append(f"{network}: on-chain lookup failed")
     return {
