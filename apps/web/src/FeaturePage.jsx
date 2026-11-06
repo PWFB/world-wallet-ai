@@ -5,6 +5,7 @@ import ContractTools from "./ContractTools.jsx";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
+import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -1130,6 +1131,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     } finally { setBusy(false); }
   }
 
+
+  if (active === "Wallet Safety") return <WalletSafetyLayer />;
 
   if (active === "BALMZ Presale") {
     const solUsd = Number(marketPrices?.SOL?.usd);
