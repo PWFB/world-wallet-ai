@@ -277,6 +277,7 @@ class ContractInspectRequest(BaseModel):
 
 class WalletCreateRequest(BaseModel):
     name: str = Field(default="New Wallet", min_length=1, max_length=80)
+    wallet_id: str | None = Field(default=None, pattern=r"^\\d{11}$")
 
 
 class WalletAddressRequest(BaseModel):
@@ -3039,15 +3040,34 @@ def list_wallets(user: dict = Depends(current_user)):
 
 @app.post("/api/v1/wallets")
 def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user)):
-    wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
+    # Wallet numbers are 11 numeric digits. The ID remains a TEXT primary key,
+    # so this does not require a schema migration or alter existing wallet rows.
+    # A client-generated number lets the browser vault and API record share the
+    # exact same identity; the database primary key prevents global collisions.
+    requested_wallet_id = request.wallet_id
     with db() as conn:
-        conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
-        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
+        wallet_id = requested_wallet_id
+        inserted = None
+        for _ in range(10):
+            candidate = wallet_id or str(secrets.randbelow(90_000_000_000) + 10_000_000_000)
+            inserted = conn.execute(
+                "INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) ON CONFLICT (id) DO NOTHING RETURNING id",
+                (candidate,user["id"],request.name.strip()),
+            ).fetchone()
+            if inserted:
+                wallet_id = inserted[0]
+                break
+            if requested_wallet_id:
+                raise HTTPException(status_code=409, detail="That 11-digit wallet number is already in use. Generate a new wallet number and retry.")
+            wallet_id = None
+        if not inserted or not wallet_id:
+            raise HTTPException(status_code=503, detail="A unique wallet number could not be allocated. Please retry.")
+        for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BALMZ-SOL-DEVNET","BALMZ Token (Solana Devnet)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
         conn.commit()
     user["wallet_id"]=wallet_id
-    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
+    return {"wallet":{"id":wallet_id,"wallet_number":wallet_id,"name":request.name.strip(),"active":True},"message":"Non-custodial wallet profile created. Its public network addresses are derived locally from the wallet recovery phrase and saved to this wallet only."}
 
 
 @app.post("/api/v1/wallets/active")
