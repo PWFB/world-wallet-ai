@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { HDNodeWallet } from "ethers";
 import { deriveWalletAddressBundle } from "./wallet-addresses.js";
 import { getLocalVaultReceiveAddresses, ACTIVE_WALLET_STORAGE_KEY, VAULT_STORAGE_KEY } from "./receive-addresses.js";
+import { generateWalletNumber } from "./wallet-number.js";
+import { webcrypto } from "node:crypto";
 
 const phraseA = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 const phraseB = "legal winner thank year wave sausage worth useful legal winner thank yellow";
@@ -52,4 +54,29 @@ test("Receive reads only the active wallet's public address bundle", () => {
 test("fails closed when no active wallet exists or vault data is invalid", () => {
   const storage = { getItem: key => key === VAULT_STORAGE_KEY ? "{" : null };
   assert.deepEqual(getLocalVaultReceiveAddresses(storage), []);
+});
+
+test("generates an 11-digit numeric wallet number and avoids local duplicates", () => {
+  let call = 0;
+  const cryptoProvider = {
+    getRandomValues(bytes) {
+      bytes[0] = 0;
+      bytes[1] = call++;
+      return bytes;
+    },
+  };
+  const value = generateWalletNumber([{ walletId: "10000000000" }], cryptoProvider);
+  assert.match(value, /^\\d{11}$/);
+  assert.equal(value, "10000000001");
+});
+
+test("rejects wallet number generation without a secure random source", () => {
+  assert.throws(() => generateWalletNumber([], null), /Secure random/);
+});
+
+test("recovery phrase encryption round-trips locally and rejects a wrong password", async () => {
+  const { encryptRecoveryPhrase, decryptRecoveryPhrase } = await import("./wallet-addresses.js");
+  const encrypted = await encryptRecoveryPhrase(phraseA, "correct horse battery");
+  assert.equal(await decryptRecoveryPhrase(encrypted, "correct horse battery"), phraseA);
+  await assert.rejects(() => decryptRecoveryPhrase(encrypted, "incorrect password"));
 });
