@@ -1341,7 +1341,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         if network == "sepolia":
             require_sepolia_rpc(url)
         elif network == "bnb":
-            decimals = verified_erc20_decimals(url, contract, network, chain_checked=True)
+            decimals = verified_erc20_decimals(url, contract, network)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
