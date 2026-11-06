@@ -6,6 +6,7 @@ import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
 import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
+import { getLocalVaultReceiveAddresses, getActiveLocalWalletId, setActiveLocalWalletId } from "./receive-addresses.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -81,6 +82,7 @@ function tokenExplorerUrl(transaction) {
 const RECEIVE_ASSET_OPTIONS = [
   { symbol: "BTC", name: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum" },
+  { symbol: "SOL", name: "Solana" },
   { symbol: "BNB", name: "BNB" },
   { symbol: "USDT", name: "Tether USD" },
   { symbol: "USDC", name: "USD Coin" },
@@ -91,8 +93,9 @@ const RECEIVE_ASSET_OPTIONS = [
 ];
 
 const networksForAsset = symbol => ({
-  BTC: [{ value: "bitcoin", label: "Bitcoin" }],
+  BTC: [{ value: "bitcoin", label: "Bitcoin Mainnet" }],
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
+  SOL: [{ value: "solana_mainnet", label: "Solana Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
   USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
@@ -102,20 +105,27 @@ const networksForAsset = symbol => ({
   "BALMZ-SOL-DEVNET": [{ value: "solana_devnet", label: "Solana Devnet (testnet)" }],
 }[symbol] || []);
 
-function getSavedExternalConnections() {
+function getSavedExternalConnections(activeWalletId = getActiveLocalWalletId()) {
   try {
     const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
     const legacy = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
     const list = [...(Array.isArray(saved) ? saved : []), ...(legacy ? [legacy] : [])];
-    return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
+    // Older WalletConnect links had no wallet binding. Bind them once to the
+    // wallet active when first loaded; never display them across every wallet.
+    const migrated = list.map(item => item && !item.walletId && activeWalletId ? { ...item, walletId: activeWalletId } : item);
+    if (activeWalletId && migrated.some((item, index) => item !== list[index])) {
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(migrated));
+      if (legacy && !legacy.walletId) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify({ ...legacy, walletId: activeWalletId }));
+    }
+    return migrated.filter(item => item?.walletId === activeWalletId && item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
       .filter((item, index, all) => all.findIndex(other => Number(other.chainId) === Number(item.chainId) && other.address.toLowerCase() === item.address.toLowerCase()) === index);
   } catch { return []; }
 }
-function getLocalExternalReceiveAddress() {
-  return getSavedExternalConnections().map(connection => {
+function getLocalExternalReceiveAddress(activeWalletId = getActiveLocalWalletId()) {
+  return getSavedExternalConnections(activeWalletId).map(connection => {
     const chainId = Number(connection.chainId);
     const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true };
+    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true, source: "walletconnect", walletId: connection.walletId };
   }).filter(item => item.network);
 }
 
@@ -155,8 +165,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to load wallets.");
       setWallets(data.wallets || []);
-      const activeId = data.active_wallet_id || data.wallets?.find(w => w.active)?.id || "";
+      const activeId = data.active_wallet_id || data.wallets?.find(w => w.active)?.id || getActiveLocalWalletId();
       setWalletId(activeId);
+      if (activeId) setActiveLocalWalletId(activeId);
       if (activeId) await loadAddresses(activeId);
     } catch (error) {
       setMessage(error.message || "Unable to load wallets.");
@@ -169,7 +180,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
-    const connections = getSavedExternalConnections();
+    const connections = getSavedExternalConnections(walletId);
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
     let cancelled = false;
     (async () => {
@@ -244,12 +255,14 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to switch wallet.");
+      setActiveLocalWalletId(id);
       // Refresh the canonical wallet list after activation; loadWallets also loads
       // the active wallet's addresses, so avoid a duplicate address request here.
       await refreshActiveWallet();
       await loadWallets();
       setMessage("Wallet switched. Live balances now belong to the selected wallet.");
-    } catch (error) { setMessage(error.message || "Unable to switch wallet."); }
+      return true;
+    } catch (error) { setMessage(error.message || "Unable to switch wallet."); return false; }
     finally { setBusy(false); }
   };
 
@@ -392,27 +405,27 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
-  const visibleAddresses = [...walletAddresses, ...localEntries.filter(entry => entry.address && (!selectedWallet || entry.walletId === selectedWallet.id || entry.walletId === walletId || entry.walletId.startsWith("local-"))).map(entry => ({ network: entry.network || "ethereum", address: entry.address, label: entry.name || "Local signing wallet", local: true, walletId: entry.walletId }))].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
+  const visibleAddresses = [
+    ...walletAddresses,
+    ...localEntries.filter(entry => String(entry.walletId) === String(walletId)).flatMap(entry =>
+      Array.isArray(entry.networkAddresses) && entry.networkAddresses.length
+        ? entry.networkAddresses.map(item => ({ ...item, label: item.label || entry.name || "Local signing wallet", local: true, walletId: entry.walletId }))
+        : entry.address ? [{ network: entry.network || "ethereum", address: entry.address, label: entry.name || "Local signing wallet", local: true, walletId: entry.walletId }] : []
+    ),
+  ].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
 
   return <section className="content feature-content">
     <div className="page-heading">
-      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
+      <div><p className="eyebrow">NON-CUSTODIAL WEB3 WALLET</p><h1>Wallets</h1><p className="muted">Create independent wallets, receive on supported networks, and switch each wallet’s separate activity and balances.</p></div>
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
-      <article className="panel action-panel">
-        <p className="feature-kicker">CREATE WALLET PROFILE</p>
-        <h2>New wallet</h2>
-        <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
-        <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
-        <button className="primary feature-submit" disabled={busy || !walletName.trim()} onClick={createWallet}>{busy ? "Creating…" : "Create wallet →"}</button>
-        <div className="security-note">For a non-custodial wallet, create or import the signing account in a compatible wallet app and connect only its public address here.</div>
-      </article>
-      <article className="panel action-panel">
-        <p className="feature-kicker">ACTIVE WALLET</p>
+      <article className="panel action-panel" style={{ gridColumn: "1 / -1" }}>
+        <p className="feature-kicker">ACTIVE WALLET · ISOLATED CONTEXT</p>
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
+        <p className="muted">Changing this selection changes the active address set, balances, transaction history and wallet context. Other wallets remain separate.</p>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
@@ -457,7 +470,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState(() => getLocalExternalReceiveAddress());
+  const [addresses, setAddresses] = useState(() => [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(getActiveLocalWalletId())]);
   const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
   const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
@@ -572,26 +585,35 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [selectedAsset]);
 
   useEffect(() => {
+    const activeWalletId = wallet?.wallet_id || wallet?.id;
+    if (activeWalletId) setActiveLocalWalletId(String(activeWalletId));
+  }, [wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
     const options = networksForAsset(asset);
     if (options.length && !options.some(item => item.value === network)) setNetwork(options[0].value);
   }, [asset]);
 
   useEffect(() => {
-    const syncLocalExternalAddress = () => {
-      const localAddresses = getLocalExternalReceiveAddress();
+    const syncLocalReceiveAddresses = () => {
+      const localAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(getActiveLocalWalletId())];
       setAddresses(previous => {
         const serverAddresses = previous.filter(item => !item.local);
-        return [...serverAddresses, ...localAddresses].filter((item, index, all) =>
+        return [...localAddresses, ...serverAddresses].filter((item, index, all) =>
           item?.address && item?.network &&
           all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
         );
       });
     };
-    window.addEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-    window.addEventListener("storage", syncLocalExternalAddress);
+    window.addEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+    window.addEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+    window.addEventListener("world-wallet-wallet-selected", syncLocalReceiveAddresses);
+    window.addEventListener("storage", syncLocalReceiveAddresses);
     return () => {
-      window.removeEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-      window.removeEventListener("storage", syncLocalExternalAddress);
+      window.removeEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("world-wallet-wallet-selected", syncLocalReceiveAddresses);
+      window.removeEventListener("storage", syncLocalReceiveAddresses);
     };
   }, []);
 
@@ -606,8 +628,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const { ok, data } = { ok: response.ok, data: await response.json() };
         if (cancelled) return;
         const serverAddresses = ok && Array.isArray(data.addresses) ? data.addresses : [];
-        const localExternalAddresses = getLocalExternalReceiveAddress();
-        const combined = [...serverAddresses, ...localExternalAddresses].filter((item, index, all) =>
+        const localReceiveAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress()];
+        const combined = [...localReceiveAddresses, ...serverAddresses].filter((item, index, all) =>
           item?.address && item?.network &&
           all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
         );
@@ -615,25 +637,28 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
       } catch {
         if (!cancelled) {
-          const localExternalAddresses = getLocalExternalReceiveAddress();
+          const localReceiveAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress()];
           setAddresses(previous => {
             const serverAddresses = previous.filter(item => !item.local);
-            return [...serverAddresses, ...localExternalAddresses];
+            return [...localReceiveAddresses, ...serverAddresses];
           });
-          setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address.");
+          setAddressMessage(localReceiveAddresses.length ? "Showing the active wallet's locally derived public address. Server address sync can be retried." : "No wallet address is available yet. Create or import a self-custody wallet to generate your Receive addresses.");
         }
       }
     };
     loadAddresses();
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
   function persistExternalConnection(connection) {
     try {
-      const existing = getSavedExternalConnections();
-      if (connection?.address && Number.isFinite(Number(connection.chainId))) {
-        const next = [...existing.filter(item => !(Number(item.chainId) === Number(connection.chainId) && item.address.toLowerCase() === connection.address.toLowerCase())), connection];
+      const activeWalletId = String(wallet?.wallet_id || wallet?.id || getActiveLocalWalletId());
+      const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
+      const allConnections = Array.isArray(saved) ? saved : [];
+      if (connection?.address && activeWalletId && Number.isFinite(Number(connection.chainId))) {
+        const scopedConnection = { ...connection, walletId: activeWalletId };
+        const next = [...allConnections.filter(item => !(item.walletId === activeWalletId && Number(item.chainId) === Number(scopedConnection.chainId) && item.address?.toLowerCase() === scopedConnection.address.toLowerCase())), scopedConnection];
         localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
-        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(scopedConnection));
       }
     } catch {}
     window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));

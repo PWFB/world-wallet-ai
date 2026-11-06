@@ -11,7 +11,8 @@
     "cap:add:android": "cap add android",
     "cap:sync": "npm run build && cap sync android",
     "cap:open:android": "cap open android",
-    "test:wallet-safety": "node --test src/wallet-safety.test.js"
+    "test:wallet-safety": "node --test src/wallet-safety.test.js",
+    "test:wallet-addresses": "node --test src/wallet-addresses.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -20,7 +21,12 @@
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
     "@walletconnect/ethereum-provider": "^2.23.3",
-    "@capacitor/core": "^8.6.0"
+    "@capacitor/core": "^8.6.0",
+    "@scure/bip32": "2.4.0",
+    "@solana/web3.js": "1.99.0",
+    "ed25519-hd-key": "2.0.0",
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
