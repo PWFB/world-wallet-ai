@@ -69,7 +69,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   useEffect(() => {
     const onWalletSelected = event => {
       const nextWalletId = String(event?.detail?.walletId || "");
-      if (!nextWalletId || nextWalletId === String(selectedId)) return;
+      if (!nextWalletId || nextWalletId === String(selectedId) || String(generated?.walletId || "") === nextWalletId) return;
       setSelectedId(nextWalletId);
       setUnlocked(null);
       setGenerated(null);
@@ -93,7 +93,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     };
     window.addEventListener("world-wallet-wallet-selected", onWalletSelected);
     return () => window.removeEventListener("world-wallet-wallet-selected", onWalletSelected);
-  }, [selectedId]);
+  }, [selectedId, generated?.walletId]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -151,7 +151,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       // Persist only the encrypted EVM keystore and public addresses.
       // Recovery phrase/private key remain in memory for the one-time display.
       persistVault([localEntry, ...readVault()]);
-      setActiveLocalWalletId(walletId);
       setSelectedId(walletId);
       setUnlocked(null);
       setGenerated({
@@ -203,8 +202,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         }
 
         setGenerated(current => current ? { ...current, walletId: serverWalletId, walletNumber: serverWalletId } : current);
+        // Activate the local Receive address scope only after the API has also
+        // accepted this exact wallet number. A local-only wallet must not be
+        // displayed beside another server wallet's balances or transaction list.
+        setActiveLocalWalletId(serverWalletId);
         if (syncFailures.length) {
-          setMessage("Wallet " + walletId + " is created and encrypted locally. Some public addresses could not sync yet (" + syncFailures.join("; ") + "). Your local Receive addresses remain available; retry server sync from Wallets.");
+          setMessage("Wallet " + walletId + " is created and encrypted locally. Some public addresses could not sync yet (" + syncFailures.join("; ") + "). The active wallet remains separate; retry server sync from Wallets.");
         } else {
           setMessage("Wallet " + walletId + " is created. All mainnet and separate testnet/devnet addresses are saved to this wallet. Recovery material remains local; keep it safe.");
         }
