@@ -3,6 +3,7 @@ import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, 
 import { getNeonAccessToken } from "./auth-client.js";
 import { decryptRecoveryPhrase, deriveWalletAddressBundle, encryptRecoveryPhrase } from "./wallet-addresses.js";
 import { setActiveLocalWalletId } from "./receive-addresses.js";
+import { generateWalletNumber } from "./wallet-number.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -14,19 +15,6 @@ function readVault() {
   } catch {
     return [];
   }
-}
-
-function createWalletNumber(existingEntries) {
-  if (!globalThis.crypto?.getRandomValues) throw new Error("Secure random number generation is unavailable in this browser.");
-  const used = new Set((Array.isArray(existingEntries) ? existingEntries : []).map(item => String(item.walletId || "")));
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const random = new Uint32Array(2);
-    globalThis.crypto.getRandomValues(random);
-    const value = (BigInt(random[0]) << 32n) | BigInt(random[1]);
-    const walletNumber = String(10_000_000_000n + (value % 90_000_000_000n));
-    if (!used.has(walletNumber)) return walletNumber;
-  }
-  throw new Error("Could not allocate a unique 11-digit wallet number. Please retry.");
 }
 
 export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }) {
@@ -116,7 +104,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       const networkAddresses = deriveWalletAddressBundle(mnemonic);
       const encryptedJson = await signer.encrypt(password);
       const encryptedMnemonicJson = await encryptRecoveryPhrase(mnemonic, password);
-      const walletId = createWalletNumber(readVault());
+      const walletId = generateWalletNumber(readVault());
       const createdAt = new Date().toISOString();
       const localEntry = {
         walletId,
