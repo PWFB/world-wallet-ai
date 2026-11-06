@@ -174,8 +174,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(1)
             raise AssertionError("BNB balance must not be read on the wrong chain")
 
-        with patch.object(main, "db") as db, \\
-             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
+        with patch.object(main, "db") as db, \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             db.return_value.__enter__.return_value = fake_conn
             with self.assertRaises(main.HTTPException) as caught:
@@ -195,7 +195,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(1)
             raise AssertionError("Contract bytecode must not be read on the wrong chain")
 
-        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             with self.assertRaises(main.HTTPException) as caught:
                 main.verify_contract(
@@ -215,7 +215,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(1)
             raise AssertionError("Contract bytecode must not be read on the wrong chain")
 
-        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             with self.assertRaises(main.HTTPException) as caught:
                 main.inspect_contract(
@@ -238,7 +238,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         with patch.object(main, "configured_addresses", return_value=[
             {"network": "bnb", "address": address, "label": "primary"},
-        ]), patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
+        ]), patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
              patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
 
@@ -248,10 +248,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_signing_config_skips_bnb_token_metadata_on_wrong_chain(self):
         address = "0x" + "1" * 40
-        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "bnb" else None), \\
-             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
-             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "2" * 40), \\
-             patch.object(main, "rpc_call", return_value=hex(1)), \\
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "bnb" else None), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "2" * 40), \
+             patch.object(main, "rpc_call", return_value=hex(1)), \
              patch.object(main, "erc20_decimals") as decimals:
             result = main.wallet_signing_config({"wallet_id": "wallet_test"})
 
