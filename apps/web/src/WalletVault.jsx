@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { getNeonAccessToken } from "./auth-client.js";
+import { deriveWalletAddressBundle } from "./wallet-addresses.js";
+import { setActiveLocalWalletId } from "./receive-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -12,6 +14,19 @@ function readVault() {
   } catch {
     return [];
   }
+}
+
+function createWalletNumber(existingEntries) {
+  if (!globalThis.crypto?.getRandomValues) throw new Error("Secure random number generation is unavailable in this browser.");
+  const used = new Set((Array.isArray(existingEntries) ? existingEntries : []).map(item => String(item.walletId || "")));
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    const random = new Uint32Array(2);
+    globalThis.crypto.getRandomValues(random);
+    const value = (BigInt(random[0]) << 32n) | BigInt(random[1]);
+    const walletNumber = String(10_000_000_000n + (value % 90_000_000_000n));
+    if (!used.has(walletNumber)) return walletNumber;
+  }
+  throw new Error("Could not allocate a unique 11-digit wallet number. Please retry.");
 }
 
 export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }) {
@@ -93,82 +108,90 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setMessage("");
     setSignature("");
     try {
-      // Generate and securely encrypt locally first. A temporary API/auth outage must
-      // never prevent the user from seeing or saving the key material they just created.
+      // Every wallet receives a fresh BIP-39 recovery phrase. All public chain
+      // addresses are derived locally before any backend request is made.
       const signer = Wallet.createRandom();
+      const mnemonic = signer.mnemonic?.phrase;
+      if (!mnemonic) throw new Error("The browser wallet did not return a recovery phrase.");
+      const networkAddresses = deriveWalletAddressBundle(mnemonic);
       const encryptedJson = await signer.encrypt(password);
-      const localWalletId = "local-" + (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      const walletId = createWalletNumber(readVault());
       const createdAt = new Date().toISOString();
-      let walletId = localWalletId;
-      let profileWarning = "";
-      let addressWarning = "";
-
-      // Persist a recoverable encrypted local entry and show the generated keys before
-      // making optional backend calls. Neither password nor plaintext private key is sent.
       const localEntry = {
         walletId,
+        walletNumber: walletId,
         name: walletName.trim() || "New Wallet",
         address: signer.address,
         publicKey: signer.publicKey,
-        network,
+        network: "ethereum",
+        networkAddresses,
         encryptedJson,
         createdAt,
       };
+
+      // Persist only the encrypted EVM keystore and public addresses.
+      // Recovery phrase/private key remain in memory for the one-time display.
       persistVault([localEntry, ...readVault()]);
+      setActiveLocalWalletId(walletId);
       setSelectedId(walletId);
       setUnlocked(null);
       setGenerated({
         walletId,
+        walletNumber: walletId,
         name: localEntry.name,
         address: signer.address,
         publicKey: signer.publicKey,
         privateKey: signer.privateKey,
-        mnemonic: signer.mnemonic?.phrase || "",
-        network,
+        mnemonic,
+        network: "ethereum",
+        networkAddresses,
       });
       setPassword("");
-      setMessage("Wallet keys generated locally. Save the private key and recovery phrase securely now.");
+      setMessage("Wallet created locally. Its 11-digit wallet number and six public network addresses are ready. Save the recovery phrase securely before leaving.");
 
-      // Backend profile and address linking are best-effort follow-up operations.
+      // Sync only the wallet number, name and public addresses. Never send the
+      // phrase, private key, keystore, or vault password to the API.
       try {
         const freshToken = await getNeonAccessToken();
         const sessionToken = freshToken || accessToken;
-        if (!sessionToken) throw new Error("No valid sign-in session.");
+        if (!sessionToken) throw new Error("No valid sign-in session. The encrypted local wallet is saved; sign in to sync its public addresses.");
+
         const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-          body: JSON.stringify({ name: localEntry.name }),
+          body: JSON.stringify({ name: localEntry.name, wallet_id: walletId }),
         });
-        const profile = await profileResponse.json();
+        const profile = await profileResponse.json().catch(() => ({}));
         if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
-        const serverWalletId = profile.wallet?.id;
-        if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
-
-        const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-          body: JSON.stringify({ network, address: signer.address, label: "generated" }),
-        });
-        const addressData = await addressResponse.json();
-        if (!addressResponse.ok) {
-          walletId = serverWalletId;
-          addressWarning = addressData.detail || "Public address linking failed.";
-        } else {
-          walletId = serverWalletId;
+        const serverWalletId = String(profile.wallet?.id || "");
+        if (!/^\d{11}$/.test(serverWalletId) || serverWalletId !== walletId) {
+          throw new Error("The API did not preserve the generated 11-digit wallet number. The local wallet remains saved and has not been merged with another wallet.");
         }
-        const linkedEntry = { ...localEntry, walletId };
-        persistVault([linkedEntry, ...readVault().filter(item => item.address.toLowerCase() !== signer.address.toLowerCase())]);
-        setSelectedId(walletId);
-        setGenerated(current => current ? { ...current, walletId } : current);
-        if (!addressResponse.ok) {
-          setMessage("Wallet keys generated and saved locally, but the server could not link the public address: " + addressWarning + " You can connect it again later.");
+
+        const syncFailures = [];
+        for (const item of networkAddresses) {
+          try {
+            const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+              body: JSON.stringify({ network: item.network, address: item.address, label: item.label }),
+            });
+            const addressData = await addressResponse.json().catch(() => ({}));
+            if (!addressResponse.ok) syncFailures.push(item.network + ": " + (addressData.detail || "address sync failed"));
+          } catch (error) {
+            syncFailures.push(item.network + ": " + (error?.message || "address sync failed"));
+          }
+        }
+
+        setGenerated(current => current ? { ...current, walletId: serverWalletId, walletNumber: serverWalletId } : current);
+        if (syncFailures.length) {
+          setMessage("Wallet " + walletId + " is created and encrypted locally. Some public addresses could not sync yet (" + syncFailures.join("; ") + "). Your local Receive addresses remain available; retry server sync from Wallets.");
         } else {
-          setMessage("Wallet generated. Your public wallet address is saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
+          setMessage("Wallet " + walletId + " is created. All mainnet and separate testnet/devnet addresses are saved to this wallet. Recovery material remains local; keep it safe.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
-        profileWarning = error?.message || "The server profile could not be created.";
-        setMessage("Wallet keys generated and encrypted locally, but server sync failed: " + profileWarning + " Your local wallet is saved in this browser. Keep the recovery material safe; use the same browser and vault password to unlock it.");
+        setMessage("Wallet " + walletId + " is encrypted and saved locally. Server sync is pending: " + (error?.message || "unavailable") + " Your Receive page can still show the locally derived public addresses.");
       }
     } catch (error) {
       setMessage(error?.message || "Wallet generation failed.");
@@ -414,23 +437,25 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const selected = entries.find(item => item.walletId === selectedId);
   const shown = generated || (unlocked ? {
     walletId: selected?.walletId,
+    walletNumber: selected?.walletNumber || selected?.walletId,
     name: selected?.name,
     address: unlocked.address,
     publicKey: unlocked.publicKey,
     network: selected?.network,
+    networkAddresses: selected?.networkAddresses || [],
   } : null);
 
   return <section className="wallet-vault">
     <article className="panel action-panel">
-      <p className="feature-kicker">NON-CUSTODIAL WALLET VAULT</p>
-      <h2>Generate a signing wallet</h2>
-      <p className="muted">Wallet keys are generated in this browser. Only the wallet ID and public address are sent to the API. An encrypted keystore is stored locally; the vault password is never stored or transmitted.</p>
+      <p className="feature-kicker">NON-CUSTODIAL WEB3 WALLET</p>
+      <h2>Create a new wallet</h2>
+      <p className="muted">A unique wallet is generated in this browser. Each wallet has its own 11-digit number, recovery phrase, encrypted key and complete network address set. The server receives only the wallet number and public addresses.</p>
       <div className="feature-grid">
         <label>Wallet name<input value={walletName} onChange={event => setWalletName(event.target.value)} maxLength="80" placeholder="Personal Wallet" /></label>
-        <label>Default network<select value={network} onChange={event => setNetwork(event.target.value)}><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option></select></label>
+        <div className="security-note">Each wallet derives its own Ethereum and BNB mainnet account, Bitcoin and Solana mainnet addresses, plus separate Ethereum Sepolia and Solana Devnet addresses. No external wallet connection is required to receive.</div>
       </div>
       <label>Local vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder="At least 10 characters" /></label>
-      <button className="primary feature-submit" disabled={busy || !accessToken} onClick={createWallet}>{busy ? "Working…" : "Generate wallet + address →"}</button>
+      <button className="primary feature-submit" disabled={busy || !accessToken} onClick={createWallet}>{busy ? "Working…" : "Generate new Web3 wallet →"}</button>
       <div className="security-note">Sepolia RPC endpoint for public testnet access: {SEPOLIA_RPC}. CoinGecko supplies market prices, not blockchain RPC. For production, the server should use its configured WORLD_WALLET_SEPOLIA_RPC_URL.</div>
     </article>
 
@@ -440,7 +465,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <p className="feature-kicker">WALLET DETAILS</p>
       <h2>{shown.name || "Wallet"}</h2>
       <div className="wallet-detail-grid">
-        <div><small>Wallet ID</small><code>{shown.walletId}</code></div>
+        <div><small>Wallet number · 11 digits</small><code>{shown.walletNumber || shown.walletId}</code></div>
         <div><small>Network</small><b>{shown.network === "sepolia" ? "Ethereum Sepolia" : shown.network === "bnb" ? "BNB Chain" : "Ethereum"}</b></div>
         <div><small>Wallet address</small><code>{shown.address}</code></div>
       </div>
@@ -457,6 +482,14 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         </>}
       </div>}
       {shown.network === "sepolia" && nativeBalance !== "" && <div className="security-note">Live Sepolia ETH balance: <strong>{Number(nativeBalance).toLocaleString("en-US", { maximumFractionDigits: 8 })} ETH</strong> <span>(public RPC read; testnet funds only)</span></div>}
+      {shown.networkAddresses?.length > 0 && <div className="wallet-message-signing">
+        <h3>Receiving addresses · this wallet only</h3>
+        {shown.networkAddresses.map(item => <div className="tool-row" key={item.network}>
+          <div><b>{item.label}</b><small>{item.environment === "devnet" ? "DEVNET" : item.environment === "testnet" ? "TESTNET" : "MAINNET"}</small></div>
+          <code>{item.address}</code>
+          <button className="secondary" type="button" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setMessage(item.network + " address copied."); } catch { setMessage("Clipboard unavailable. Select the public address and copy it manually."); } }}>Copy</button>
+        </div>)}
+      </div>}
       <div className="security-note">Smart-contract addresses are managed separately. This panel shows your wallet address, not a token contract address.</div>
       <a className="secondary" href={shown.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + shown.address : shown.network === "bnb" ? "https://bscscan.com/address/" + shown.address : shown.network === "ethereum" ? "https://etherscan.io/address/" + shown.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
       <button className="secondary" onClick={async () => { try { if (!navigator.clipboard?.writeText) throw new Error("Clipboard unavailable"); await navigator.clipboard.writeText(shown.address); setMessage("Wallet address copied."); } catch { setMessage("Could not access clipboard. Select and copy the wallet address above manually."); } }}>Copy wallet address</button>
@@ -467,7 +500,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
       <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { setSelectedId(event.target.value); setPassword(""); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet number · 11 digits</small><code>{selected.walletNumber || selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
