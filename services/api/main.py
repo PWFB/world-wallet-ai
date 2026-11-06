@@ -1795,7 +1795,8 @@ def bnb_rpc_health():
         "read_only": True,
     }
     with _BNB_HEALTH_CACHE_LOCK:
-        _BNB_HEALTH_CACHE = {"checked_at": now, "result": result}
+        _BNB_HEALTH_CACHE["checked_at"] = now
+        _BNB_HEALTH_CACHE["result"] = result
     return dict(result)
 
 
