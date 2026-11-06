@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { getNeonAccessToken } from "./auth-client.js";
-import { deriveWalletAddressBundle } from "./wallet-addresses.js";
+import { decryptRecoveryPhrase, deriveWalletAddressBundle, encryptRecoveryPhrase } from "./wallet-addresses.js";
 import { setActiveLocalWalletId } from "./receive-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
@@ -115,6 +115,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       if (!mnemonic) throw new Error("The browser wallet did not return a recovery phrase.");
       const networkAddresses = deriveWalletAddressBundle(mnemonic);
       const encryptedJson = await signer.encrypt(password);
+      const encryptedMnemonicJson = await encryptRecoveryPhrase(mnemonic, password);
       const walletId = createWalletNumber(readVault());
       const createdAt = new Date().toISOString();
       const localEntry = {
@@ -126,6 +127,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
         network: "ethereum",
         networkAddresses,
         encryptedJson,
+        encryptedMnemonicJson,
         createdAt,
       };
 
@@ -218,6 +220,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     try {
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
+      if (entry.encryptedMnemonicJson && Array.isArray(entry.networkAddresses)) {
+        const recoveryPhrase = await decryptRecoveryPhrase(entry.encryptedMnemonicJson, password);
+        const derivedAddresses = deriveWalletAddressBundle(recoveryPhrase);
+        const expected = new Map(entry.networkAddresses.map(item => [item.network, String(item.address || "").toLowerCase()]));
+        const matches = derivedAddresses.every(item => expected.get(item.network) === item.address.toLowerCase());
+        if (!matches) throw new Error("Multi-chain address integrity check failed. The saved wallet bundle does not match its encrypted recovery phrase.");
+      }
       setUnlocked(signer);
       setKeyRevealPassword("");
       setRevealedPrivateKey("");
