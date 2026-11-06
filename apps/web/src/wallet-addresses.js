@@ -1,13 +1,10 @@
 import { HDNodeWallet, getBytes } from "ethers";
 import { HDKey } from "@scure/bip32";
-import { payments, networks as bitcoinNetworks, initEccLib } from "bitcoinjs-lib";
-import * as secp256k1 from "tiny-secp256k1";
+import { bech32 } from "@scure/base";
+import { sha256 } from "@noble/hashes/sha2.js";
+import { ripemd160 } from "@noble/hashes/legacy.js";
 import { derivePath as deriveEd25519Path } from "ed25519-hd-key";
 import { Keypair } from "@solana/web3.js";
-import { Buffer } from "buffer";
-
-initEccLib(secp256k1);
-
 const EVM_MAINNET_PATH = "m/44'/60'/0'/0/0";
 const EVM_TESTNET_PATH = "m/44'/60'/1'/0/0";
 const BITCOIN_MAINNET_PATH = "m/84'/0'/0'/0/0";
@@ -18,12 +15,10 @@ function deriveBitcoinMainnetAddress(seed) {
   const root = HDKey.fromMasterSeed(seed);
   const child = root.derive(BITCOIN_MAINNET_PATH);
   if (!child.publicKey) throw new Error("Bitcoin mainnet public key derivation failed.");
-  const payment = payments.p2wpkh({
-    pubkey: Buffer.from(child.publicKey),
-    network: bitcoinNetworks.bitcoin,
-  });
-  if (!payment.address) throw new Error("Bitcoin mainnet address derivation failed.");
-  return payment.address;
+  // BIP-84 native SegWit P2WPKH: HASH160(compressed public key),
+  // witness version 0, and the Bitcoin mainnet "bc" bech32 human prefix.
+  const publicKeyHash = ripemd160(sha256(child.publicKey));
+  return bech32.encode("bc", [0, ...bech32.toWords(publicKeyHash)]);
 }
 
 function deriveSolanaAddress(seedHex, derivationPath) {
