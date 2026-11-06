@@ -710,8 +710,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     try {
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [1],
-        optionalChains: [11155111, 56],
+        chains: [56],
+        optionalChains: [1, 11155111],
         showQrModal: true,
         methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
         events: ["accountsChanged", "chainChanged", "disconnect"],
