@@ -219,6 +219,43 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     }
   }
 
+  async function selectSavedWallet(nextWalletId) {
+    if (!nextWalletId || nextWalletId === selectedId) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      if (onWalletSelected) {
+        const switched = await onWalletSelected(nextWalletId);
+        if (switched === false) throw new Error("The selected wallet could not be activated. The current active wallet was kept.");
+      }
+      setActiveLocalWalletId(nextWalletId);
+      setSelectedId(nextWalletId);
+      setUnlocked(null);
+      setGenerated(null);
+      setPassword("");
+      setKeyRevealPassword("");
+      setRevealedPrivateKey("");
+      setNativeBalance("");
+      setRecipient("");
+      setSendAmount("");
+      setTokenRecipient("");
+      setTokenAmount("");
+      setTxHash("");
+      setTokenTxHash("");
+      setSignature("");
+      setSignMessage("");
+      setVerifyResult(null);
+      setVerifyAddressInput("");
+      setVerifyMessageInput("");
+      setVerifySignatureInput("");
+      setMessage("Wallet switched. Unlock this wallet to use its local signing key.");
+    } catch (error) {
+      setMessage(error?.message || "Could not switch wallet.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function unlockWallet() {
     const entry = entries.find(item => item.walletId === selectedId);
     if (!entry) return setMessage("Choose a locally saved wallet first.");
@@ -525,7 +562,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { setSelectedId(event.target.value); setPassword(""); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => selectSavedWallet(event.target.value)}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · #{item.walletNumber || item.walletId}</option>)}</select></label>
       {selected && <div className="wallet-detail-grid"><div><small>Wallet number · 11 digits</small><code>{selected.walletNumber || selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
