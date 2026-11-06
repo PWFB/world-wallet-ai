@@ -415,23 +415,16 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   return <section className="content feature-content">
     <div className="page-heading">
-      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
+      <div><p className="eyebrow">NON-CUSTODIAL WEB3 WALLET</p><h1>Wallets</h1><p className="muted">Create independent wallets, receive on supported networks, and switch each wallet’s separate activity and balances.</p></div>
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
     <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
-      <article className="panel action-panel">
-        <p className="feature-kicker">CREATE WALLET PROFILE</p>
-        <h2>New wallet</h2>
-        <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
-        <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
-        <button className="primary feature-submit" disabled={busy || !walletName.trim()} onClick={createWallet}>{busy ? "Creating…" : "Create wallet →"}</button>
-        <div className="security-note">For a non-custodial wallet, create or import the signing account in a compatible wallet app and connect only its public address here.</div>
-      </article>
-      <article className="panel action-panel">
-        <p className="feature-kicker">ACTIVE WALLET</p>
+      <article className="panel action-panel" style={{ gridColumn: "1 / -1" }}>
+        <p className="feature-kicker">ACTIVE WALLET · ISOLATED CONTEXT</p>
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
+        <p className="muted">Changing this selection changes the active address set, balances, transaction history and wallet context. Other wallets remain separate.</p>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
@@ -597,7 +590,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   useEffect(() => {
     const syncLocalReceiveAddresses = () => {
-      const localAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress()];
+      const localAddresses = [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(wallet?.wallet_id || wallet?.id || getActiveLocalWalletId())];
       setAddresses(previous => {
         const serverAddresses = previous.filter(item => !item.local);
         return [...localAddresses, ...serverAddresses].filter((item, index, all) =>
@@ -653,10 +646,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   function persistExternalConnection(connection) {
     try {
       const activeWalletId = String(wallet?.wallet_id || wallet?.id || getActiveLocalWalletId());
-      const existing = getSavedExternalConnections(activeWalletId);
-      if (connection?.address && Number.isFinite(Number(connection.chainId))) {
+      const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
+      const allConnections = Array.isArray(saved) ? saved : [];
+      if (connection?.address && activeWalletId && Number.isFinite(Number(connection.chainId))) {
         const scopedConnection = { ...connection, walletId: activeWalletId };
-        const next = [...existing.filter(item => !(Number(item.chainId) === Number(scopedConnection.chainId) && item.address.toLowerCase() === scopedConnection.address.toLowerCase())), scopedConnection];
+        const next = [...allConnections.filter(item => !(item.walletId === activeWalletId && Number(item.chainId) === Number(scopedConnection.chainId) && item.address?.toLowerCase() === scopedConnection.address.toLowerCase())), scopedConnection];
         localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
         localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(scopedConnection));
       }
