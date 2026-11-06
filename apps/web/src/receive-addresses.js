@@ -35,7 +35,11 @@ export function getLocalVaultReceiveAddresses(storage) {
     const entries = JSON.parse(store.getItem(VAULT_STORAGE_KEY) || "[]");
     if (!Array.isArray(entries) || entries.length === 0) return [];
     const activeWalletId = getActiveLocalWalletId(store);
-    const selected = entries.find(entry => String(entry?.walletId) === String(activeWalletId)) || entries[0];
+    // Never fall back to another wallet when the current account has no local
+    // vault entry: that could expose a different wallet's receiving addresses.
+    const selected = activeWalletId
+      ? entries.find(entry => String(entry?.walletId) === String(activeWalletId))
+      : entries.length === 1 ? entries[0] : null;
     if (!selected) return [];
     if (!Array.isArray(selected.networkAddresses)) {
       if (selected.address && selected.network) {
