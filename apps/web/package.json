@@ -24,10 +24,9 @@
     "@capacitor/core": "^8.6.0",
     "@scure/bip32": "2.4.0",
     "@solana/web3.js": "1.99.0",
-    "bitcoinjs-lib": "7.0.5",
     "ed25519-hd-key": "2.0.0",
-    "tiny-secp256k1": "2.2.4",
-    "buffer": "6.0.3"
+    "@noble/hashes": "2.4.0",
+    "@scure/base": "2.4.0"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
