@@ -17,7 +17,7 @@ function readVault() {
   }
 }
 
-export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }) {
+export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, onWalletSelected }) {
   const [entries, setEntries] = useState([]);
   const [walletName, setWalletName] = useState("Personal Wallet");
   const [password, setPassword] = useState("");
