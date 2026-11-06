@@ -762,7 +762,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(sepolia["balmz_decimals"], 18)
         self.assertEqual(sepolia["network_type"], "testnet")
         self.assertEqual(result["networks"]["ethereum"]["chain_id"], "0x1")
-        self.assertEqual(result["networks"]["bnb"]["chain_id"], "0x38")
+        self.assertFalse(result["networks"]["bnb"]["rpc_verified"])
+        self.assertIsNone(result["networks"]["bnb"]["chain_id"])
+        self.assertIsNone(result["networks"]["bnb"]["wallet_address"])
+        self.assertIsNone(result["networks"]["bnb"]["usdt_contract"])
 
 
     def test_wallet_sync_does_not_timestamp_transaction_history_with_warnings(self):
