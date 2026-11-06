@@ -1,4 +1,4 @@
-import { HDNodeWallet } from "ethers";
+import { HDNodeWallet, getBytes } from "ethers";
 import { HDKey } from "@scure/bip32";
 import { payments, networks as bitcoinNetworks, initEccLib } from "bitcoinjs-lib";
 import * as secp256k1 from "tiny-secp256k1";
@@ -13,10 +13,6 @@ const EVM_TESTNET_PATH = "m/44'/60'/1'/0/0";
 const BITCOIN_MAINNET_PATH = "m/84'/0'/0'/0/0";
 const SOLANA_MAINNET_PATH = "m/44'/501'/0'/0'";
 const SOLANA_DEVNET_PATH = "m/44'/501'/1'/0'";
-
-function bytesToHex(value) {
-  return Array.from(value, byte => byte.toString(16).padStart(2, "0")).join("");
-}
 
 function deriveBitcoinMainnetAddress(seed) {
   const root = HDKey.fromMasterSeed(seed);
@@ -49,8 +45,8 @@ export function deriveWalletAddressBundle(mnemonic) {
 
   const master = HDNodeWallet.fromPhrase(phrase);
   if (!master.mnemonic) throw new Error("The recovery phrase could not be loaded.");
-  const seed = master.mnemonic.computeSeed();
-  const seedHex = bytesToHex(seed);
+  const seed = getBytes(master.mnemonic.computeSeed());
+  const seedHex = Array.from(seed, byte => byte.toString(16).padStart(2, "0")).join("");
 
   const ethereum = HDNodeWallet.fromPhrase(phrase, "", EVM_MAINNET_PATH);
   const sepolia = HDNodeWallet.fromPhrase(phrase, "", EVM_TESTNET_PATH);
