@@ -105,20 +105,27 @@ const networksForAsset = symbol => ({
   "BALMZ-SOL-DEVNET": [{ value: "solana_devnet", label: "Solana Devnet (testnet)" }],
 }[symbol] || []);
 
-function getSavedExternalConnections() {
+function getSavedExternalConnections(activeWalletId = getActiveLocalWalletId()) {
   try {
     const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
     const legacy = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
     const list = [...(Array.isArray(saved) ? saved : []), ...(legacy ? [legacy] : [])];
-    return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
+    // Older WalletConnect links had no wallet binding. Bind them once to the
+    // wallet active when first loaded; never display them across every wallet.
+    const migrated = list.map(item => item && !item.walletId && activeWalletId ? { ...item, walletId: activeWalletId } : item);
+    if (activeWalletId && migrated.some((item, index) => item !== list[index])) {
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(migrated));
+      if (legacy && !legacy.walletId) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify({ ...legacy, walletId: activeWalletId }));
+    }
+    return migrated.filter(item => item?.walletId === activeWalletId && item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
       .filter((item, index, all) => all.findIndex(other => Number(other.chainId) === Number(item.chainId) && other.address.toLowerCase() === item.address.toLowerCase()) === index);
   } catch { return []; }
 }
-function getLocalExternalReceiveAddress() {
-  return getSavedExternalConnections().map(connection => {
+function getLocalExternalReceiveAddress(activeWalletId = getActiveLocalWalletId()) {
+  return getSavedExternalConnections(activeWalletId).map(connection => {
     const chainId = Number(connection.chainId);
     const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true };
+    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true, source: "walletconnect", walletId: connection.walletId };
   }).filter(item => item.network);
 }
 
@@ -173,7 +180,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
-    const connections = getSavedExternalConnections();
+    const connections = getSavedExternalConnections(walletId);
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
     let cancelled = false;
     (async () => {
@@ -469,7 +476,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState(() => [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress()]);
+  const [addresses, setAddresses] = useState(() => [...getLocalVaultReceiveAddresses(), ...getLocalExternalReceiveAddress(wallet?.wallet_id || wallet?.id)]);
   const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
   const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
@@ -645,11 +652,13 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
   function persistExternalConnection(connection) {
     try {
-      const existing = getSavedExternalConnections();
+      const activeWalletId = String(wallet?.wallet_id || wallet?.id || getActiveLocalWalletId());
+      const existing = getSavedExternalConnections(activeWalletId);
       if (connection?.address && Number.isFinite(Number(connection.chainId))) {
-        const next = [...existing.filter(item => !(Number(item.chainId) === Number(connection.chainId) && item.address.toLowerCase() === connection.address.toLowerCase())), connection];
+        const scopedConnection = { ...connection, walletId: activeWalletId };
+        const next = [...existing.filter(item => !(Number(item.chainId) === Number(scopedConnection.chainId) && item.address.toLowerCase() === scopedConnection.address.toLowerCase())), scopedConnection];
         localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
-        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(scopedConnection));
       }
     } catch {}
     window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));
