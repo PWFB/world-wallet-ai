@@ -6,6 +6,8 @@ export const WALLET_NAVIGATION = Object.freeze({
   "HELP & DOCS": Object.freeze(["Support Center", "Request Center", "Help & Docs"]),
 });
 
+export const ROOT_SHORTCUTS = Object.freeze(["Wallets", "Send", "Receive", "Transactions", "Portfolio", "Help & Docs"]);
+
 export const NAVIGATION_ICONS = Object.freeze({
   Dashboard: "⌂", Wallets: "◈", Portfolio: "▥", Send: "↗", Receive: "↙", Deposit: "↓", Withdraw: "↑", Swap: "⇄",
   Transactions: "↔", Profile: "◎", Markets: "⌁", Staking: "♧", NFTs: "◇", "BALMZ AI": "✦", "BALMZ Presale": "◉",
