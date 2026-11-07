@@ -444,6 +444,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     if (selectedId === walletId) {
       setSelectedId(next[0]?.walletId || "");
       setUnlocked(null);
+      setUnlockedAddresses(null);
       setPassword("");
       setRecipient("");
       setSendAmount("");
