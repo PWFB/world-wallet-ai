@@ -626,6 +626,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [adminSaveBusy, setAdminSaveBusy] = useState(false);
   const [adminSaveMessage, setAdminSaveMessage] = useState("");
+  const [nftProviderTest, setNftProviderTest] = useState(null);
+  const [nftProviderTestBusy, setNftProviderTestBusy] = useState(false);
+  const [nftProviderTestError, setNftProviderTestError] = useState("");
   const [supportTitle, setSupportTitle] = useState("");
   const [supportDetails, setSupportDetails] = useState("");
   const [supportSubmitBusy, setSupportSubmitBusy] = useState(false);
@@ -637,6 +640,11 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [nftBusy, setNftBusy] = useState(false);
   const [nftError, setNftError] = useState("");
   const [nftRefresh, setNftRefresh] = useState(0);
+  const [miningInterest, setMiningInterest] = useState(null);
+  const [miningBusy, setMiningBusy] = useState(false);
+  const [miningLoadBusy, setMiningLoadBusy] = useState(false);
+  const [miningMessage, setMiningMessage] = useState("");
+  const [miningError, setMiningError] = useState("");
   const requestKeyRef = useRef("");
 
   useEffect(() => {
@@ -738,6 +746,25 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       .catch(error => { if (!cancelled) setSupportLoadError(error.message || "Support requests could not be loaded."); });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "Token Mining" || !accessToken) return undefined;
+    let cancelled = false;
+    setMiningLoadBusy(true);
+    setMiningInterest(null);
+    setMiningError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Mining interest status could not be loaded.");
+        const requests = Array.isArray(data.requests) ? data.requests : [];
+        const existing = requests.find(item => item.kind === "other" && item.title === "BALMZ Token Mining early access") || null;
+        if (!cancelled) setMiningInterest(existing);
+      })
+      .catch(error => { if (!cancelled) setMiningError(error.message || "Mining interest status could not be loaded."); })
+      .finally(() => { if (!cancelled) setMiningLoadBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
 
   useEffect(() => {
     if (active !== "NFTs" || !accessToken) return undefined;
@@ -2415,9 +2442,23 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         {adminData?.users?.length?<div className="tool-list">{adminData.users.map(item=><div className="tool-row" key={item.id}><div><b>{item.name||"Unnamed account"}</b><small>{item.email}</small><small>{item.created_at?new Date(item.created_at).toLocaleDateString():"Creation date unavailable"}</small></div><strong>{item.wallet_count} wallet(s)</strong></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No matching account records.</div>:null}
         <p className="security-note">Account deletion, suspension, password reset and balance editing are not exposed here. Administrative access cannot be used to alter customer wallets or ledgers.</p>
       </article>}
-      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secrets are never returned</span></div></div>
+      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secret values are never returned</span></div></div>
         {adminData?.checks?.length?<div className="tool-list">{adminData.checks.map(item=><div className="tool-row" key={item.key}><div><b>{item.key}</b></div><strong className={item.configured?"positive":"neutral"}>{item.configured?"Configured":"Not configured"}</strong></div>)}</div>:null}
-        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Update secrets and infrastructure values through the Render environment, not this browser page.</div>
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Alchemy NFT API connectivity</h2><span>Live, read-only checks against Ethereum and BNB Mainnet</span></div><button className="secondary" disabled={nftProviderTestBusy} onClick={async()=>{
+          setNftProviderTestBusy(true);setNftProviderTest(null);setNftProviderTestError("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/admin/nft-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Alchemy connectivity test failed.");
+            setNftProviderTest(data);
+          } catch(error) { setNftProviderTestError(error.message||"Alchemy connectivity test failed."); }
+          finally { setNftProviderTestBusy(false); }
+        }}>{nftProviderTestBusy?"Testing…":"Test Alchemy API"}</button></div>
+        {nftProviderTestError&&<div className="feature-error" role="alert">{nftProviderTestError}</div>}
+        {nftProviderTest&&<><div className={nftProviderTest.success?"feature-success":"feature-error"} role="status">{nftProviderTest.success?"Alchemy NFT API is responding on both supported wallet networks.":"One or more Alchemy NFT API checks did not pass."}</div>
+          <div className="tool-list">{nftProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="eth-mainnet"?"Ethereum Mainnet":"BNB Chain Mainnet"}</b><small>{item.message}{item.ok?" · probe items: "+item.probe_items:""}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {nftProviderTest.tested_at?new Date(nftProviderTest.tested_at).toLocaleString():"just now"} · {nftProviderTest.notice}</small>
+        </>}
+        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Configuration changes still belong in Render. This button checks provider connectivity only; it does not read a customer wallet, modify assets or approve transactions.</div>
       </article>}
       {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
         {adminData?.events?.length?<div className="tool-list">{adminData.events.map(item=><div className="tool-row" key={item.id}><div><b>{item.action}</b><small>{item.actor_email} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small><small>{item.details}</small></div></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No administrative audit events have been recorded yet.</div>:null}
@@ -2441,6 +2482,86 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <p className="security-note">{nftData.notice}</p>
         </>}
       </article>
+    </section>;
+  }
+
+  if (active === "Token Mining") {
+    return <section className="content feature-content mining-page">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">WORLD WALLET AI / BALMZ ECOSYSTEM</p>
+          <h1>BALMZ Token Mining</h1>
+          <p className="muted">A transparent home for the upcoming BALMZ community rewards programme.</p>
+        </div>
+        <button className="secondary" onClick={() => setActive("BALMZ Presale")}>Explore BALMZ →</button>
+      </div>
+
+      <article className="panel action-panel mining-hero">
+        <div className="mining-hero-copy">
+          <span className="feature-kicker">COMMUNITY REWARDS · PRE-LAUNCH</span>
+          <h2>Be ready for the first verified BALMZ mining campaign.</h2>
+          <p>World Wallet AI is preparing a wallet-first place for official BALMZ participation and rewards information. Campaign rules, eligibility, supported networks, token allocations and claim mechanics will be published only after they are confirmed and independently verifiable.</p>
+          <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>Pre-launch</b><span>Registration of interest is open</span></div>
+        </div>
+        <div className="mining-hero-mark" aria-hidden="true"><span>⛏</span><b>BALMZ</b><small>MINING HUB</small></div>
+      </article>
+
+      <div className="feature-grid mining-status-grid">
+        <article className="panel action-panel mining-status-card"><small>PROGRAMME STATUS</small><strong>Pre-launch</strong><span>No active mining round is currently running.</span></article>
+        <article className="panel action-panel mining-status-card"><small>MINING RATE</small><strong>Not published</strong><span>No verified hash rate or earning rate is available yet.</span></article>
+        <article className="panel action-panel mining-status-card"><small>REWARD CLAIMS</small><strong>Not enabled</strong><span>No claimable BALMZ rewards are being represented.</span></article>
+      </div>
+
+      <article className="panel action-panel mining-interest-panel">
+        <div className="panel-head">
+          <div><h2>Join the BALMZ mining early-access list</h2><span>Your registration is linked to your signed-in wallet account.</span></div>
+          <span className="mining-interest-badge">FREE TO REGISTER</span>
+        </div>
+        {miningLoadBusy && <div className="feature-loading" role="status">Checking your registration…</div>}
+        {miningError && <div className="feature-error" role="alert">{miningError}</div>}
+        {miningInterest ? (
+          <div className="mining-registered" role="status">
+            <span className="mining-registered-icon">✓</span>
+            <div><b>Your interest is registered</b><p>Your early-access request is saved in Request Center for this wallet. You can review its status there.</p><small>Request status: {miningInterest.status || "open"} · Registered {miningInterest.created_at ? new Date(miningInterest.created_at).toLocaleString() : "successfully"}</small></div>
+            <button className="secondary" onClick={() => setActive("Request Center")}>View request →</button>
+          </div>
+        ) : (
+          <>
+            <p>Register once to record your interest in future BALMZ mining announcements and campaign information. This does not activate mining, reserve tokens, guarantee eligibility or promise rewards.</p>
+            {miningMessage && <div className="feature-success" role="status">{miningMessage}</div>}
+            <button className="primary feature-submit" disabled={miningBusy || miningLoadBusy || Boolean(miningError)} onClick={async () => {
+              setMiningBusy(true);setMiningMessage("");setMiningError("");
+              try {
+                const response = await fetch(apiBaseUrl + "/api/v1/request-center", {
+                  method: "POST",
+                  headers: {"Content-Type":"application/json", Authorization:"Bearer "+accessToken},
+                  body: JSON.stringify({
+                    kind: "other",
+                    title: "BALMZ Token Mining early access",
+                    details: "I would like to register interest in official BALMZ mining programme updates, verified campaign rules, eligibility requirements, supported networks and any future reward-claim instructions. I understand that no mining round or token reward is currently active or guaranteed."
+                  })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Your mining interest could not be registered.");
+                setMiningInterest(data.request || {kind:"other",title:"BALMZ Token Mining early access",status:"open"});
+                setMiningMessage("Your interest was saved successfully.");
+              } catch(error) {
+                setMiningError(error.message || "Your mining interest could not be registered.");
+              } finally {
+                setMiningBusy(false);
+              }
+            }}>{miningBusy ? "Registering…" : "Register my interest →"}</button>
+          </>
+        )}
+        <p className="security-note">No deposit, wallet signature, token approval or private key is required to register. Never share your recovery phrase. Registration is not a promise of token allocation or investment return.</p>
+      </article>
+
+      <div className="feature-grid mining-steps-grid">
+        <article className="panel action-panel"><span className="mining-step-number">01</span><h3>Official rules first</h3><p>Networks, eligibility, campaign dates and reward limits will be published before any campaign opens.</p></article>
+        <article className="panel action-panel"><span className="mining-step-number">02</span><h3>Wallet-specific eligibility</h3><p>Any future activity must be tied to a clearly identified wallet and verified participation criteria.</p></article>
+        <article className="panel action-panel"><span className="mining-step-number">03</span><h3>Verifiable reward claims</h3><p>Claims will be shown only after a real reward contract, allocation and on-chain claim process are verified.</p></article>
+      </div>
+      <div className="security-note">Important: this page is currently an early-access registration hub, not a CPU/GPU miner or a live yield product. No background mining runs on your phone or computer.</div>
     </section>;
   }
 

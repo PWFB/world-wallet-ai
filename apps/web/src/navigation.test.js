@@ -35,7 +35,7 @@ test("every sidebar page has a meaningful icon and appears only once", () => {
 
 test("Root hub shortcuts resolve to real sidebar pages", () => {
   const pages = new Set(Object.values(WALLET_NAVIGATION).flat());
-  assert.equal(ROOT_SHORTCUTS.length, 6, "Root hub should stay compact");
+  assert.equal(ROOT_SHORTCUTS.length, 7, "Root hub should remain compact while highlighting mining");
   for (const page of ROOT_SHORTCUTS) assert.ok(pages.has(page), "Root shortcut must resolve: " + page);
 });
 
@@ -63,4 +63,24 @@ test("admin destinations use server-backed restricted endpoints", () => {
     "/api/v1/admin/activity",
     "/api/v1/admin/roles",
   ]) assert.ok(featureSource.includes(endpoint), "missing admin endpoint: " + endpoint);
+});
+
+
+test("admin System Settings exposes Alchemy runtime verification without client-side secrets", () => {
+  assert.match(featureSource, /Alchemy NFT API connectivity/);
+  assert.match(featureSource, /Test Alchemy API/);
+  assert.match(featureSource, /api\/v1\/admin\/nft-provider\/test/);
+  assert.match(featureSource, /secret values are never returned/);
+});
+
+
+test("BALMZ Token Mining is discoverable and has a genuine early-access registration workflow", () => {
+  assert.ok(WALLET_NAVIGATION.EXPLORE.includes("Token Mining"));
+  assert.ok(ROOT_SHORTCUTS.includes("Token Mining"));
+  assert.ok(NAVIGATION_ICONS["Token Mining"]);
+  assert.match(featureSource, /BALMZ Token Mining/);
+  assert.match(featureSource, /Register my interest/);
+  assert.match(featureSource, /BALMZ Token Mining early access/);
+  assert.match(featureSource, /No background mining runs on your phone or computer/);
+  assert.match(featureSource, /No claimable BALMZ rewards are being represented/);
 });

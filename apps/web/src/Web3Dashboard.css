@@ -307,3 +307,59 @@
   .mobile-root-trigger>span:nth-child(2) small,.mobile-root-trigger-arrow{display:none}
   .mobile-root-trigger b{font-size:9px}
 }
+
+
+/* BALMZ Token Mining pre-launch registration */
+.mining-page{gap:16px}
+.mining-hero{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 190px;
+  align-items:center;
+  gap:20px;
+  min-height:230px;
+  padding:clamp(20px,3vw,34px);
+  border-color:#92552f;
+  background:
+    radial-gradient(circle at 88% 18%,rgba(255,122,24,.22),transparent 34%),
+    linear-gradient(125deg,#142640 0%,#101b2d 56%,#1d2635 100%);
+  overflow:hidden;
+}
+.mining-hero-copy{max-width:760px}
+.mining-hero-copy h2{max-width:660px;margin:10px 0 12px;color:#f4f7fb;font-size:clamp(24px,3.5vw,37px);line-height:1.12;letter-spacing:-.04em}
+.mining-hero-copy p{max-width:720px;margin:0;color:#b9c7d8;font-size:13px;line-height:1.7}
+.mining-status-line{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:20px;color:#e5edf7;font-size:11px}
+.mining-status-line>b{color:#ffb47c}
+.mining-status-line>span:last-child{color:#91a5bd}
+.mining-status-dot{width:8px;height:8px;border-radius:50%;background:#ff9b52;box-shadow:0 0 0 5px rgba(255,122,24,.12)}
+.mining-hero-mark{display:grid;justify-items:center;align-content:center;gap:6px;width:164px;height:164px;justify-self:center;border:1px solid rgba(255,156,91,.44);border-radius:30px;background:linear-gradient(145deg,rgba(255,122,24,.18),rgba(255,255,255,.025));box-shadow:0 14px 42px rgba(0,0,0,.2),inset 0 0 40px rgba(255,122,24,.06);transform:rotate(3deg)}
+.mining-hero-mark>span{display:grid;place-items:center;width:70px;height:70px;border-radius:22px;background:rgba(255,122,24,.18);color:#ffad72;font-size:38px}
+.mining-hero-mark>b{color:#f6f8fb;font-size:17px;letter-spacing:.12em}
+.mining-hero-mark>small{color:#ffb47c;font-size:8px;letter-spacing:.2em}
+.mining-status-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mining-status-card{display:grid;gap:8px;min-width:0}
+.mining-status-card>small{color:#91a5bd;font-size:9px;font-weight:750;letter-spacing:.12em}
+.mining-status-card>strong{color:#f3f6fb;font-size:20px;letter-spacing:-.02em}
+.mining-status-card>span{color:#9eb0c4;font-size:11px;line-height:1.5}
+.mining-interest-panel{border-color:#334960}
+.mining-interest-badge{flex:0 0 auto;padding:6px 9px;border:1px solid rgba(255,122,24,.38);border-radius:999px;color:#ffb47c;font-size:8px;font-weight:800;letter-spacing:.08em}
+.mining-interest-panel>p{max-width:780px;color:#aab9cb;font-size:12px;line-height:1.65}
+.mining-registered{display:flex;align-items:center;gap:13px;padding:14px;border:1px solid rgba(72,177,130,.32);border-radius:12px;background:rgba(41,128,91,.1)}
+.mining-registered-icon{display:grid;place-items:center;flex:0 0 35px;width:35px;height:35px;border-radius:50%;background:rgba(72,177,130,.15);color:#77d9a9;font-size:18px}
+.mining-registered>div{flex:1;min-width:0}
+.mining-registered b{color:#dcf7e8;font-size:13px}
+.mining-registered p{margin:4px 0;color:#a9cabb;font-size:11px;line-height:1.5}
+.mining-registered small{color:#85aa97;font-size:9px}
+.mining-steps-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.mining-steps-grid h3{margin:10px 0 5px;color:#e8eef7;font-size:14px}
+.mining-steps-grid p{margin:0;color:#9fb0c5;font-size:11px;line-height:1.6}
+.mining-step-number{display:grid;place-items:center;width:30px;height:30px;border:1px solid rgba(255,122,24,.35);border-radius:9px;background:rgba(255,122,24,.1);color:#ffb47c;font-size:10px;font-weight:800}
+@media(max-width:680px){
+  .mining-hero{grid-template-columns:minmax(0,1fr);gap:18px}
+  .mining-hero-mark{width:116px;height:116px;border-radius:23px;justify-self:start}
+  .mining-hero-mark>span{width:48px;height:48px;border-radius:15px;font-size:27px}
+  .mining-hero-mark>b{font-size:13px}
+  .mining-status-grid,.mining-steps-grid{grid-template-columns:minmax(0,1fr)}
+  .mining-registered{align-items:flex-start;flex-wrap:wrap}
+  .mining-registered>div{flex-basis:calc(100% - 55px)}
+  .mining-registered button{margin-left:48px}
+}
