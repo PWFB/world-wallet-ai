@@ -1528,6 +1528,7 @@ function App() {
           </div>}
         </section>
         <nav aria-label="Primary wallet navigation">
+          {rootSearch.trim() && filteredNav.length === 0 && <p className="mobile-root-no-results">No wallet page matches “{rootSearch}”.</p>}
           {filteredNav.map(([group, items]) => (
             <div className="nav-group" key={group}>
               <small>{group}</small>
