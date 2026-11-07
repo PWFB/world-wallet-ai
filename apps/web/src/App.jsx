@@ -1516,7 +1516,7 @@ function App() {
         </nav>
         <div className="sidebar-footer">
           <div className="secure"><span>✓</span><div><b>{user ? "Authenticated wallet" : "Wallet session"}</b><small>{user?.email || "Demo authentication"}</small></div></div>
-          <button className="profile" onClick={() => setActive("Profile")}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{visibleLocalWalletEntries[0]?.walletNumber || user?.wallet_id || "View wallet profile"}</small></div><span>›</span></button>
+          <button className="profile" onClick={() => setActive("Profile")}><span className="avatar">BA</span><div><b>{user?.name || "Wallet Owner"}</b><small>{visibleLocalWalletEntries[0]?.walletNumber || wallet?.wallet_number || "View wallet profile"}</small></div><span>›</span></button>
         </div>
       </aside>
 
