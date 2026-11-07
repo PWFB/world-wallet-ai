@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
+import "./Web3Dashboard.css";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
@@ -1308,11 +1309,21 @@ function App() {
     setUser(null);
   }
 
+  const navIcons = {
+    Dashboard: "⌂", Wallets: "◈", Portfolio: "▥", Send: "↗", Receive: "↙", Deposit: "↓", Withdraw: "↑", Swap: "⇄",
+    Transactions: "↔", Profile: "◎", Markets: "⌁", Staking: "♧", NFTs: "◇", "BALMZ AI": "✦", "BALMZ Presale": "◉",
+    "Wallet Connect": "⌘", "Wallet Safety": "⛨", Browser: "⌕", "Address Book": "▤", "Proof of Reserves": "✓",
+    "Sepolia Converter": "◇", "Address Converter": "⇄", "Contract Converter": "⌁", "Contract Generator": "✣",
+    "Verify Contract": "✓", "API Request": "⌘", "API Keys": "⚿", "Request Center": "◎", "Support Center": "?",
+    "Help & Docs": "i", "Admin Editor": "⚙", "User Management": "♙", "System Settings": "⚙",
+    "Logs & Activity": "≋", "Role Management": "♧", "GitHub Integration": "⌘", "Gemini Integration": "✦",
+  };
   const nav = useMemo(() => ({
-    Main: ["Dashboard", "BALMZ AI", "BALMZ Presale", "Wallets", "Portfolio", "Markets", "Send", "Receive", "Deposit", "Swap", "Staking", "NFTs", "Transactions", "Profile"],
-    Tools: ["Browser", "Wallet Connect", "Wallet Safety", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "API Request", "API Keys", "Withdraw", "Request Center", "Contract Generator", "Verify Contract", "Address Book"],
-    Admin: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
-    Support: ["Support Center", "Help & Docs"],
+    "MY WALLET": ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Deposit", "Withdraw", "Swap", "Transactions", "Profile"],
+    EXPLORE: ["Markets", "Staking", "NFTs", "BALMZ AI", "BALMZ Presale"],
+    "CONNECT & TOOLS": ["Wallet Connect", "Wallet Safety", "Browser", "Address Book", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "Contract Generator", "Verify Contract", "API Request", "API Keys"],
+    "HELP & DOCS": ["Support Center", "Request Center", "Help & Docs"],
+    ADMIN: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
   }), []);
 
   if (!accessToken && !showLogin) {
@@ -1496,7 +1507,7 @@ function App() {
 
 
 
-        <nav>
+        <nav aria-label="Primary wallet navigation">
           {Object.entries(nav).map(([group, items]) => (
             <div className="nav-group" key={group}>
               <small>{group}</small>
@@ -1508,7 +1519,7 @@ function App() {
                   setActive(item);
                   if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(false);
                 }}>
-                  <span className="nav-icon">{item.slice(0, 1)}</span><span className="nav-label">{item}</span>
+                  <span className="nav-icon" aria-hidden="true">{navIcons[item] || "•"}</span><span className="nav-label">{item}</span>
                 </button>
               ))}
             </div>
