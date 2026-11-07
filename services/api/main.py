@@ -2082,6 +2082,104 @@ def auth_me(user: dict = Depends(current_user)):
     return {"user":user,"mode":"neon_auth" if NEON_JWKS_CLIENT else "database"}
 
 
+
+
+def _decode_eip7702_designator(code: str):
+    """Return the delegated implementation from an EIP-7702 designator, if present."""
+    value = str(code or "").lower()
+    if re.fullmatch(r"0xef0100[0-9a-f]{40}", value):
+        return "0x" + value[8:]
+    return None
+
+
+def _decode_okx_storage_proxy(code: str):
+    """Decode the 77-byte OKX-style minimal proxy only when its full byte pattern matches."""
+    value = str(code or "").lower()
+    prefix = "0x363d3d373d3d3d363d73"
+    middle = "5af43d82803e903d91602b57fd5bf3"
+    owner_prefix = "000000000000000000000000"
+    if len(value) != 2 + 77 * 2 or not value.startswith(prefix):
+        return None
+    implementation = "0x" + value[len(prefix):len(prefix) + 40]
+    expected = prefix + implementation[2:] + middle + owner_prefix
+    if not value.startswith(expected) or len(value) != len(expected) + 40:
+        return None
+    return {"implementation": implementation, "embedded_owner": "0x" + value[-40:]}
+
+
+@app.get("/api/v1/wallet/erc7702-inspection")
+def wallet_erc7702_inspection(user: dict = Depends(current_user)):
+    """Read-only Ethereum Mainnet inspection of the active wallet's EIP-7702 delegation."""
+    owner = wallet_network_address(user, "ethereum")
+    if not owner or not re.fullmatch(r"0x[a-fA-F0-9]{40}", str(owner)):
+        raise HTTPException(status_code=404, detail="No valid Ethereum Mainnet address is attached to the active wallet")
+    if not ETH_RPC_URL:
+        raise HTTPException(status_code=503, detail="Ethereum Mainnet RPC is not configured")
+    try:
+        chain_id = require_ethereum_mainnet_rpc(ETH_RPC_URL)
+        owner_code = rpc_call(ETH_RPC_URL, "eth_getCode", [owner, "latest"])
+        delegation_target = _decode_eip7702_designator(owner_code)
+    except Exception as exc:
+        logger.warning("ERC-7702 inspection failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Ethereum Mainnet RPC could not complete the read-only wallet inspection")
+
+    if not delegation_target:
+        return {
+            "network": "ethereum", "chain_id": chain_id, "owner_address": owner,
+            "delegated": False, "delegation_target": None,
+            "delegation_target_code_bytes": None, "known_okx_walletcore": False,
+            "storage": {"status": "not_checked", "address": None, "proxy": None},
+            "inspection": "Wallet has no EIP-7702 delegation designator at the latest block.",
+        }
+
+    known_walletcore = {"0x80296ff8d1ed46f8e3c7992664d13b833504c2bb"}
+    known_storage_implementations = {"0x7daf91dfe55fcab363416a6e3bceb3da34ff1d30"}
+    try:
+        target_code = rpc_call(ETH_RPC_URL, "eth_getCode", [delegation_target, "latest"])
+        target_code_bytes = max(0, (len(target_code or "0x") - 2) // 2)
+    except Exception:
+        target_code_bytes = None
+
+    storage = {"status": "unavailable", "address": None, "proxy": None}
+    selector_hash = keccak.new(digest_bits=256)
+    selector_hash.update(b"getMainStorage()")
+    selector = "0x" + selector_hash.digest()[:4].hex()
+    try:
+        storage_result = rpc_call(ETH_RPC_URL, "eth_call", [{"to": owner, "data": selector}, "latest"])
+        if isinstance(storage_result, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", storage_result):
+            storage_address = "0x" + storage_result[-40:]
+            if int(storage_address[2:], 16) == 0:
+                storage = {"status": "zero_address", "address": None, "proxy": None}
+            else:
+                storage_code = rpc_call(ETH_RPC_URL, "eth_getCode", [storage_address, "latest"])
+                proxy = _decode_okx_storage_proxy(storage_code)
+                if storage_code == "0x":
+                    storage_status = "no_code"
+                elif proxy:
+                    storage_status = "proxy_detected"
+                else:
+                    storage_status = "contract_detected_unclassified"
+                storage = {
+                    "status": storage_status, "address": storage_address,
+                    "code_bytes": max(0, (len(storage_code) - 2) // 2), "proxy": proxy,
+                    "implementation_known_okx": bool(proxy and proxy["implementation"].lower() in known_storage_implementations),
+                    "embedded_owner_matches": bool(proxy and proxy["embedded_owner"].lower() == owner.lower()),
+                }
+        else:
+            storage = {"status": "unexpected_return_data", "address": None, "proxy": None}
+    except Exception as exc:
+        storage = {"status": "call_unavailable", "address": None, "proxy": None, "reason": type(exc).__name__}
+
+    return {
+        "network": "ethereum", "chain_id": chain_id, "owner_address": owner,
+        "delegated": True, "delegation_target": delegation_target,
+        "delegation_target_code_bytes": target_code_bytes,
+        "known_okx_walletcore": delegation_target.lower() in known_walletcore,
+        "storage": storage,
+        "inspection": "Read-only chain inspection. A recognized implementation address does not prove who authorized the delegation or establish wallet security.",
+    }
+
+
 @app.get("/api/v1/wallet")
 def wallet(user: dict = Depends(current_user)):
     assets,_,summary = wallet_snapshot(user)
