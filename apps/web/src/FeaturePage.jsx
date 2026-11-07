@@ -557,6 +557,11 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
   const [presaleStatusCheckedAt, setPresaleStatusCheckedAt] = useState(null);
   const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
+  const [presaleInterest, setPresaleInterest] = useState(null);
+  const [presaleInterestBusy, setPresaleInterestBusy] = useState(false);
+  const [presaleInterestLoading, setPresaleInterestLoading] = useState(false);
+  const [presaleInterestError, setPresaleInterestError] = useState("");
+  const [presaleInterestMessage, setPresaleInterestMessage] = useState("");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
@@ -674,6 +679,26 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "BALMZ Presale" || !accessToken) return undefined;
+    let cancelled = false;
+    setPresaleInterestLoading(true);
+    setPresaleInterest(null);
+    setPresaleInterestError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Presale interest status could not be loaded.");
+        const existing = (Array.isArray(data.requests) ? data.requests : []).find(item =>
+          item.kind === "other" && item.title === "BALMZ Presale early access"
+        ) || null;
+        if (!cancelled) setPresaleInterest(existing);
+      })
+      .catch(error => { if (!cancelled) setPresaleInterestError(error.message || "Presale interest status could not be loaded."); })
+      .finally(() => { if (!cancelled) setPresaleInterestLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
 
   useEffect(() => {
     if (active !== "API Keys" || !accessToken) return;
@@ -1403,6 +1428,37 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <button className="primary presale-disabled-cta" type="button" disabled aria-disabled="true">Presale not open</button>
           <p className="presale-order-note" id="presale-estimate-note">Planning estimate only. The SOL equivalent can change with the market and excludes network fees or slippage. No wallet is connected, no transaction is created, and payment acceptance remains disabled.</p>
         </aside>
+      </article>
+
+      <article className="panel action-panel presale-interest-panel">
+        <div className="panel-head"><div><h2>Register for BALMZ presale updates</h2><span>Early-access requests are saved to your signed-in wallet account.</span></div><span className="mining-interest-badge">FREE TO REGISTER</span></div>
+        {presaleInterestLoading && <div className="feature-loading" role="status">Checking your registration…</div>}
+        {presaleInterestError && <div className="feature-error" role="alert">{presaleInterestError}</div>}
+        {presaleInterest ? <div className="mining-registered" role="status"><span className="mining-registered-icon">✓</span><div><b>Your presale interest is registered</b><p>Your request is saved in Request Center for this wallet. This does not reserve tokens or guarantee an allocation.</p><small>Request status: {presaleInterest.status || "open"} · Registered {presaleInterest.created_at ? new Date(presaleInterest.created_at).toLocaleString() : "successfully"}</small></div><button className="secondary" onClick={() => setActive("Request Center")}>View request →</button></div> : <>
+          {presaleInterestMessage && <div className="feature-success" role="status">{presaleInterestMessage}</div>}
+          <p>Register to receive official sale-opening notices and verified payment instructions. This is not an order, payment, token reservation or investment commitment.</p>
+          <button className="primary feature-submit" disabled={presaleInterestBusy || presaleInterestLoading || Boolean(presaleInterestError)} onClick={async () => {
+            setPresaleInterestBusy(true); setPresaleInterestMessage(""); setPresaleInterestError("");
+            try {
+              const response = await fetch(apiBaseUrl + "/api/v1/request-center", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+                body: JSON.stringify({
+                  kind: "other",
+                  title: "BALMZ Presale early access",
+                  details: "I would like official BALMZ presale opening updates, verified production mint and treasury details, sale terms, supported payment networks and settlement instructions. I understand the presale is not open and this request does not reserve tokens or authorize payment."
+                })
+              });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.detail || "Presale interest could not be registered.");
+              setPresaleInterest(data.request || { kind: "other", title: "BALMZ Presale early access", status: "open" });
+              setPresaleInterestMessage("Your presale update request was saved successfully.");
+            } catch (error) {
+              setPresaleInterestError(error.message || "Presale interest could not be registered.");
+            } finally { setPresaleInterestBusy(false); }
+          }}>{presaleInterestBusy ? "Registering…" : "Register for presale updates →"}</button>
+        </>}
+        <p className="security-note">No deposit, wallet signature, token approval or private key is required. Presale payment acceptance remains disabled until production mint, treasury ownership and settlement verification are complete.</p>
       </article>
 
       <div className="presale-metrics-grid">
