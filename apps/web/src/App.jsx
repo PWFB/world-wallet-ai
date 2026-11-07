@@ -1847,16 +1847,28 @@ function App() {
                   <div className="dashboard-more-heading"><div><small>WALLET SHORTCUTS</small><h2>More</h2></div><button type="button" aria-label="Close more shortcuts" onClick={() => setShowDashboardMore(false)}>×</button></div>
                   <div className="dashboard-more-grid">
                     {[
-                      ["Wallets", "◈", "Manage wallets"],
                       ["Portfolio", "▥", "Assets and holdings"],
                       ["Transactions", "↔", "Transaction history"],
+                      ["Markets", "⌁", "Live market quotes"],
+                      ["Staking", "♧", "Staking workspace"],
+                      ["NFTs", "◇", "NFT workspace"],
+                      ["BALMZ AI", "✦", "Wallet intelligence"],
+                      ["BALMZ Presale", "◉", "Token presale workspace"],
+                      ["Wallet Safety", "⛨", "Security and recovery guidance"],
+                      ["Wallet Connect", "⌘", "Connected signing apps"],
                       ["Proof of Reserves", "✓", "Reserve snapshot"],
                       ["Browser", "⌕", "Search websites and explorers"],
-                      ["Wallet Connect", "⌘", "Connected addresses"],
+                      ["Address Book", "▤", "Saved trusted addresses"],
                       ["Address Converter", "⇄", "Compare addresses"],
-                      ["Sepolia Converter", "◇", "Sepolia testnet"],
-                      ["Contract Converter", "⌁", "Inspect contract"],
-                      ["Support Center", "?", "Help and support"],
+                      ["Sepolia Converter", "◇", "Sepolia testnet tools"],
+                      ["Contract Converter", "⌁", "Inspect contract data"],
+                      ["Contract Generator", "✣", "Draft smart contracts"],
+                      ["Verify Contract", "✓", "Verify deployed contracts"],
+                      ["API Request", "⌘", "API request workspace"],
+                      ["API Keys", "⚿", "Manage API credentials"],
+                      ["Support Center", "?", "Contact support"],
+                      ["Request Center", "◎", "Wallet requests"],
+                      ["Help & Docs", "i", "Guides and documentation"],
                     ].map(([page, icon, description]) => (
                       <button type="button" key={page} onClick={() => { setActive(page); setShowDashboardMore(false); }}>
                         <span>{icon}</span><div><b>{page}</b><small>{description}</small></div><i>›</i>
@@ -1870,17 +1882,17 @@ function App() {
               <button type="button" className="dashboard-tab active" aria-current="page" onClick={() => { setActive("Dashboard"); setShowDashboardMore(false); }}>
                 <span className="dashboard-tab-icon">⌂</span><small>Home</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Deposit"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">↓</span><small>Deposit</small>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Wallets"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">◈</span><small>Wallets</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Withdraw"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">↑</span><small>Withdrawal</small>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Receive"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">↙</span><small>Receive</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Swap"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">⇄</span><small>Convert</small>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Send"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">↗</span><small>Send</small>
               </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Profile"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">◎</span><small>Profile</small>
+              <button type="button" className="dashboard-tab" onClick={() => { setActive("Transactions"); setShowDashboardMore(false); }}>
+                <span className="dashboard-tab-icon">↔</span><small>Activity</small>
               </button>
               <button type="button" className={"dashboard-tab" + (showDashboardMore ? " selected" : "")} aria-expanded={showDashboardMore} onClick={() => setShowDashboardMore(value => !value)}>
                 <span className="dashboard-tab-icon">•••</span><small>More</small>
