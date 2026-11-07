@@ -92,7 +92,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     if (previousContext.activeWalletId === nextContext.activeWalletId && previousContext.userId === nextContext.userId) return;
     walletContextRef.current = nextContext;
     const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
+    const keepFreshlyGeneratedRecovery = Boolean(activeEntry && generated && String(generated.walletId) === String(activeEntry.walletId));
     setSelectedId(activeEntry?.walletId || "");
+    if (keepFreshlyGeneratedRecovery) return;
     setUnlocked(null);
     setUnlockedAddresses(null);
     setGenerated(null);
@@ -101,7 +103,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setTxHash("");
     setTokenTxHash("");
     setMessage("");
-  }, [activeWalletId, userId, entries]);
+  }, [activeWalletId, userId, entries, generated]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -118,8 +120,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       .catch(() => {});
   }, [accessToken, apiBaseUrl]);
 
-  function persistVault(next) {
+  function persistVault(next, removeWalletIds = []) {
     const managedIds = new Set([...entries, ...next].map(item => String(item.walletId || "")));
+    for (const id of removeWalletIds) managedIds.add(String(id));
     const preservedEntries = readVault().filter(item => !managedIds.has(String(item.walletId || "")));
     localStorage.setItem(VAULT_KEY, JSON.stringify([...next, ...preservedEntries]));
     setEntries(next);
@@ -210,7 +213,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
 
         const currentAccountEntries = readVaultForAccount(userId, allowedServerWalletIds)
           .filter(item => item.walletId !== localWalletId && item.walletId !== serverWalletId);
-        persistVault([linkedEntry, ...currentAccountEntries]);
+        persistVault([linkedEntry, ...currentAccountEntries], [localWalletId]);
         setSelectedId(serverWalletId);
         setGenerated(current => current ? { ...current, walletId: serverWalletId, walletNumber: serverWalletNumber } : current);
         if (attachmentFailures.length) {
