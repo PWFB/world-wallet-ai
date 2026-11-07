@@ -79,6 +79,7 @@ function tokenExplorerUrl(transaction) {
 }
 
 const RECEIVE_ASSET_OPTIONS = [
+  { symbol: "SOL", name: "Solana" },
   { symbol: "BTC", name: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum" },
   { symbol: "BNB", name: "BNB" },
@@ -94,6 +95,7 @@ const networksForAsset = symbol => ({
   BTC: [{ value: "bitcoin", label: "Bitcoin" }],
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
+  SOL: [{ value: "solana_mainnet", label: "Solana Mainnet" }],
   USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
@@ -108,18 +110,56 @@ function getSavedExternalConnections() {
     const legacy = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
     const list = [...(Array.isArray(saved) ? saved : []), ...(legacy ? [legacy] : [])];
     return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
-      .filter((item, index, all) => all.findIndex(other => Number(other.chainId) === Number(item.chainId) && other.address.toLowerCase() === item.address.toLowerCase()) === index);
+      .filter((item, index, all) => all.findIndex(other =>
+        String(other.walletId || "") === String(item.walletId || "") &&
+        Number(other.chainId) === Number(item.chainId) &&
+        other.address.toLowerCase() === item.address.toLowerCase()
+      ) === index);
   } catch { return []; }
 }
-function getLocalExternalReceiveAddress() {
-  return getSavedExternalConnections().map(connection => {
+function getLocalExternalReceiveAddress(walletId = "") {
+  if (!walletId) return [];
+  return getSavedExternalConnections().filter(connection => String(connection.walletId || "") === String(walletId)).map(connection => {
     const chainId = Number(connection.chainId);
     const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true };
+    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true, walletId };
   }).filter(item => item.network);
 }
+function getLocalVaultReceiveAddress(walletId = "", userId = "") {
+  if (!walletId) return [];
+  try {
+    const saved = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]");
+    if (!Array.isArray(saved)) return [];
+    const entry = saved.find(item => {
+      const serverWalletId = item?.serverWalletId || (String(item?.walletId || "").startsWith("wallet_") ? item.walletId : "");
+      const ownerMatches = !item?.ownerUserId || !userId || String(item.ownerUserId) === String(userId);
+      return String(serverWalletId) === String(walletId) && ownerMatches;
+    });
+    if (!entry) return [];
+    const addressSet = entry.addresses && typeof entry.addresses === "object"
+      ? entry.addresses
+      : { [entry.network || "ethereum"]: entry.address };
+    return Object.entries(addressSet).filter(([network, address]) =>
+      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet"].includes(network) && typeof address === "string" && address.length
+    ).map(([network, address]) => ({
+      network,
+      address,
+      label: (entry.name || "Wallet") + " · ID " + (entry.walletNumber || "legacy"),
+      walletNumber: entry.walletNumber || "",
+      walletId: entry.walletId,
+      local: true,
+      generated: true,
+    }));
+  } catch { return []; }
+}
+function getLocalReceiveAddresses(walletId = "", userId = "") {
+  return [...getLocalVaultReceiveAddress(walletId, userId), ...getLocalExternalReceiveAddress(walletId)]
+    .filter((item, index, all) => all.findIndex(other =>
+      other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()
+    ) === index);
+}
 
-function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId }) {
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId, accountUserId = "" }) {
   const [wallets, setWallets] = useState([]);
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
