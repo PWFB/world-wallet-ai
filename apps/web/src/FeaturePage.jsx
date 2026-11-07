@@ -504,7 +504,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
-export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
+  const activeWalletId = String(wallet?.wallet_id || wallet?.id || wallet?.walletId || "");
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [marketSearch, setMarketSearch] = useState("");
   const [presaleStatus, setPresaleStatus] = useState(null);
@@ -518,7 +519,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState(() => getLocalExternalReceiveAddress());
+  const [addresses, setAddresses] = useState(() => []);
   const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
   const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
@@ -638,27 +639,29 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [asset]);
 
   useEffect(() => {
-    const syncLocalExternalAddress = () => {
-      const localAddresses = getLocalExternalReceiveAddress();
-      setAddresses(previous => {
-        const serverAddresses = previous.filter(item => !item.local);
-        return [...serverAddresses, ...localAddresses].filter((item, index, all) =>
-          item?.address && item?.network &&
-          all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
-        );
-      });
+    const syncLocalReceiveAddresses = () => {
+      const localAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+      setAddresses(previous => [...localAddresses, ...previous.filter(item => !item.local)].filter((item, index, all) =>
+        item?.address && item?.network &&
+        all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
+      ));
     };
-    window.addEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-    window.addEventListener("storage", syncLocalExternalAddress);
+    syncLocalReceiveAddresses();
+    window.addEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+    window.addEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+    window.addEventListener("storage", syncLocalReceiveAddresses);
     return () => {
-      window.removeEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-      window.removeEventListener("storage", syncLocalExternalAddress);
+      window.removeEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("storage", syncLocalReceiveAddresses);
     };
-  }, []);
+  }, [activeWalletId, accountUserId]);
 
   useEffect(() => {
     if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
+    const initialLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+    setAddresses(initialLocalAddresses);
     const loadAddresses = async () => {
       try {
         const response = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", {
@@ -667,34 +670,40 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const { ok, data } = { ok: response.ok, data: await response.json() };
         if (cancelled) return;
         const serverAddresses = ok && Array.isArray(data.addresses) ? data.addresses : [];
-        const localExternalAddresses = getLocalExternalReceiveAddress();
-        const combined = [...serverAddresses, ...localExternalAddresses].filter((item, index, all) =>
+        const freshLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+        const combined = [...freshLocalAddresses, ...serverAddresses].filter((item, index, all) =>
           item?.address && item?.network &&
           all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
         );
         setAddresses(combined);
-        setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
+        setAddressMessage(ok
+          ? (freshLocalAddresses.length ? "Receiving addresses loaded for this wallet. Mainnet and testnet/devnet addresses remain separate." : (data.message || ""))
+          : (data.detail || "Showing locally generated addresses for the selected wallet; server sync is unavailable."));
       } catch {
         if (!cancelled) {
-          const localExternalAddresses = getLocalExternalReceiveAddress();
-          setAddresses(previous => {
-            const serverAddresses = previous.filter(item => !item.local);
-            return [...serverAddresses, ...localExternalAddresses];
-          });
-          setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address.");
+          const freshLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+          setAddresses(freshLocalAddresses);
+          setAddressMessage(freshLocalAddresses.length
+            ? "Showing the locally generated addresses for the selected wallet. Server address refresh is unavailable."
+            : "No generated wallet address is available yet. Create a complete self-custody wallet to generate its addresses.");
         }
       }
     };
     loadAddresses();
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, activeWalletId, accountUserId]);
   function persistExternalConnection(connection) {
     try {
       const existing = getSavedExternalConnections();
-      if (connection?.address && Number.isFinite(Number(connection.chainId))) {
-        const next = [...existing.filter(item => !(Number(item.chainId) === Number(connection.chainId) && item.address.toLowerCase() === connection.address.toLowerCase())), connection];
+      const scopedConnection = { ...connection, walletId: activeWalletId };
+      if (scopedConnection?.address && Number.isFinite(Number(scopedConnection.chainId)) && activeWalletId) {
+        const next = [...existing.filter(item => !(
+          String(item.walletId || "") === activeWalletId &&
+          Number(item.chainId) === Number(scopedConnection.chainId) &&
+          item.address.toLowerCase() === scopedConnection.address.toLowerCase()
+        )), scopedConnection];
         localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
-        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
+        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(scopedConnection));
       }
     } catch {}
     window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));
@@ -1682,7 +1691,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} accountUserId={accountUserId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
