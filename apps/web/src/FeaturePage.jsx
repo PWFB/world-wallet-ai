@@ -751,6 +751,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     if (active !== "Token Mining" || !accessToken) return undefined;
     let cancelled = false;
     setMiningLoadBusy(true);
+    setMiningInterest(null);
     setMiningError("");
     fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
       .then(async response => {
@@ -763,7 +764,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       .catch(error => { if (!cancelled) setMiningError(error.message || "Mining interest status could not be loaded."); })
       .finally(() => { if (!cancelled) setMiningLoadBusy(false); });
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
 
   useEffect(() => {
     if (active !== "NFTs" || !accessToken) return undefined;
