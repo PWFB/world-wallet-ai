@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
@@ -69,7 +69,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     window.addEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
     const activeEntry = saved.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
     if (activeEntry) setSelectedId(activeEntry.walletId);
-    else if (saved.length) setSelectedId(saved[0].walletId);
+    else if (!activeWalletId && saved.length) setSelectedId(saved[0].walletId);
+    else setSelectedId("");
     // Contract Generator can hand off a deployed token address to this page.
     try {
       const pending = JSON.parse(localStorage.getItem("world_wallet_pending_token_contract") || "null");
@@ -83,11 +84,15 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     return () => window.removeEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
   }, [userId, allowedServerWalletIdKey, serverWalletNumberKey]);
 
+  const walletContextRef = useRef({ activeWalletId: String(activeWalletId || ""), userId: String(userId || "") });
+
   useEffect(() => {
-    if (!activeWalletId) return;
+    const nextContext = { activeWalletId: String(activeWalletId || ""), userId: String(userId || "") };
+    const previousContext = walletContextRef.current;
+    if (previousContext.activeWalletId === nextContext.activeWalletId && previousContext.userId === nextContext.userId) return;
+    walletContextRef.current = nextContext;
     const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
-    if (!activeEntry || activeEntry.walletId === selectedId) return;
-    setSelectedId(activeEntry.walletId);
+    setSelectedId(activeEntry?.walletId || "");
     setUnlocked(null);
     setUnlockedAddresses(null);
     setGenerated(null);
@@ -95,7 +100,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setNativeBalance("");
     setTxHash("");
     setTokenTxHash("");
-  }, [activeWalletId, entries, selectedId]);
+    setMessage("");
+  }, [activeWalletId, userId, entries]);
 
   useEffect(() => {
     if (!accessToken) return;
