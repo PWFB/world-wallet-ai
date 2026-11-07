@@ -626,6 +626,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [announcementEnabled, setAnnouncementEnabled] = useState(false);
   const [adminSaveBusy, setAdminSaveBusy] = useState(false);
   const [adminSaveMessage, setAdminSaveMessage] = useState("");
+  const [nftProviderTest, setNftProviderTest] = useState(null);
+  const [nftProviderTestBusy, setNftProviderTestBusy] = useState(false);
+  const [nftProviderTestError, setNftProviderTestError] = useState("");
   const [supportTitle, setSupportTitle] = useState("");
   const [supportDetails, setSupportDetails] = useState("");
   const [supportSubmitBusy, setSupportSubmitBusy] = useState(false);
@@ -2415,9 +2418,23 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         {adminData?.users?.length?<div className="tool-list">{adminData.users.map(item=><div className="tool-row" key={item.id}><div><b>{item.name||"Unnamed account"}</b><small>{item.email}</small><small>{item.created_at?new Date(item.created_at).toLocaleDateString():"Creation date unavailable"}</small></div><strong>{item.wallet_count} wallet(s)</strong></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No matching account records.</div>:null}
         <p className="security-note">Account deletion, suspension, password reset and balance editing are not exposed here. Administrative access cannot be used to alter customer wallets or ledgers.</p>
       </article>}
-      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secrets are never returned</span></div></div>
+      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secret values are never returned</span></div></div>
         {adminData?.checks?.length?<div className="tool-list">{adminData.checks.map(item=><div className="tool-row" key={item.key}><div><b>{item.key}</b></div><strong className={item.configured?"positive":"neutral"}>{item.configured?"Configured":"Not configured"}</strong></div>)}</div>:null}
-        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Update secrets and infrastructure values through the Render environment, not this browser page.</div>
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Alchemy NFT API connectivity</h2><span>Live, read-only checks against Ethereum and BNB Mainnet</span></div><button className="secondary" disabled={nftProviderTestBusy} onClick={async()=>{
+          setNftProviderTestBusy(true);setNftProviderTest(null);setNftProviderTestError("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/admin/nft-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Alchemy connectivity test failed.");
+            setNftProviderTest(data);
+          } catch(error) { setNftProviderTestError(error.message||"Alchemy connectivity test failed."); }
+          finally { setNftProviderTestBusy(false); }
+        }}>{nftProviderTestBusy?"Testing…":"Test Alchemy API"}</button></div>
+        {nftProviderTestError&&<div className="feature-error" role="alert">{nftProviderTestError}</div>}
+        {nftProviderTest&&<><div className={nftProviderTest.success?"feature-success":"feature-error"} role="status">{nftProviderTest.success?"Alchemy NFT API is responding on both supported wallet networks.":"One or more Alchemy NFT API checks did not pass."}</div>
+          <div className="tool-list">{nftProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="eth-mainnet"?"Ethereum Mainnet":"BNB Chain Mainnet"}</b><small>{item.message}{item.ok?" · probe items: "+item.probe_items:""}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {nftProviderTest.tested_at?new Date(nftProviderTest.tested_at).toLocaleString():"just now"} · {nftProviderTest.notice}</small>
+        </>}
+        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Configuration changes still belong in Render. This button checks provider connectivity only; it does not read a customer wallet, modify assets or approve transactions.</div>
       </article>}
       {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
         {adminData?.events?.length?<div className="tool-list">{adminData.events.map(item=><div className="tool-row" key={item.id}><div><b>{item.action}</b><small>{item.actor_email} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small><small>{item.details}</small></div></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No administrative audit events have been recorded yet.</div>:null}
