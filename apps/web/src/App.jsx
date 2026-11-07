@@ -1636,16 +1636,40 @@ function App() {
             <div className="coin-detail-note">Only authenticated wallet data is displayed. Catalog entries never create balances, prices, or transaction history.</div>
           </section>;
         })() : active === "Dashboard" ? (
-          <section className="content">
-            <div className="page-heading">
-              <div><p className="eyebrow">OVERVIEW</p><h1>{active}</h1><p className="muted">Your global digital wallet, intelligently managed.</p></div>
+          <section className="content web3-dashboard">
+            <div className="page-heading web3-dashboard-heading">
+              <div><p className="eyebrow">MULTI-CHAIN SELF-CUSTODY</p><h1>Your Web3 wallet</h1><p className="muted">One wallet workspace for your on-chain assets, networks and activity.</p></div>
               <div className="page-actions">
-                <button className="primary" onClick={() => setActive("Send")}>+ Send funds</button>
+                <button className="secondary" onClick={() => setActive("Receive")}>Receive</button>
+                <button className="primary" onClick={() => setActive("Send")}>Send</button>
               </div>
+            </div>
+            <div className="web3-wallet-context" aria-label="Wallet and network status">
+              <div className="web3-context-item"><span>ACTIVE ENVIRONMENT</span><b>{networkEnvironment(selectedNetwork).toUpperCase()}</b><small>{["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? "Test network · no mainnet value" : "Production network"}</small></div>
+              <div className="web3-context-item"><span>SELECTED NETWORK</span><b>{({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain", bitcoin: "Bitcoin Mainnet", solana_mainnet: "Solana Mainnet", sepolia: "Ethereum Sepolia", solana_devnet: "Solana Devnet" })[selectedNetwork] || selectedNetwork}</b><small>{selectedNetworkBalance?.syncedAt ? "Last checked " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : selectedNetworkBalanceMessage || "Choose a chain to inspect its public address"}</small></div>
+              <div className="web3-context-item"><span>WALLET DATA</span><b>{apiStatus === "online" ? "Account connected" : apiStatus === "error" ? "API unavailable" : "Checking connection"}</b><small>Balances are shown only when verified by your account or chain RPC.</small></div>
+              <button type="button" className="web3-context-manage" onClick={() => setActive("Wallets")}>Manage wallets <span>→</span></button>
             </div>
 
             
-            <div className="balance-grid">
+            <section className="dashboard-chain-grid" aria-label="Supported blockchain networks">
+              {[
+                ["ethereum", "Ethereum", "Mainnet", "ETH"],
+                ["bnb", "BNB Chain", "Mainnet", "BNB"],
+                ["bitcoin", "Bitcoin", "Mainnet", "BTC"],
+                ["solana_mainnet", "Solana", "Mainnet", "SOL"],
+                ["sepolia", "Ethereum", "Sepolia testnet", "ETH"],
+                ["solana_devnet", "Solana", "Devnet testnet", "SOL"],
+              ].map(([chain, name, environment, ticker]) => (
+                <button type="button" key={chain} className={"dashboard-chain-card" + (selectedNetwork === chain ? " is-selected" : "") + (["sepolia", "solana_devnet"].includes(chain) ? " is-testnet" : "")} aria-pressed={selectedNetwork === chain} onClick={() => changeSelectedNetwork(chain)}>
+                  <span className="dashboard-chain-symbol">{({ ethereum: "Ξ", bnb: "◆", bitcoin: "₿", solana_mainnet: "◎", sepolia: "Ξ", solana_devnet: "◎" })[chain]}</span>
+                  <span className="dashboard-chain-copy"><b>{name}</b><small>{environment} · {ticker}</small></span>
+                  <span className="dashboard-chain-status">{selectedNetwork === chain ? "Selected" : ["sepolia", "solana_devnet"].includes(chain) ? "Test" : "Main"}</span>
+                </button>
+              ))}
+            </section>
+
+            <div className="balance-grid web3-balance-grid">
               <article className="hero-card">
                 <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "solana_mainnet" ? "SOLANA MAINNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM MAINNET BALANCE") : "AVAILABLE BALANCE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalance ? number(selectedNetworkBalance.balance) : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
@@ -1737,7 +1761,7 @@ function App() {
 
               <article className="panel assets-panel">
                 <div className="panel-head">
-                  <div><h2>Wallet coins & tokens</h2><span>{walletCoinCatalogWithRegistry.length} assets in catalog • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} network-ready • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
+                  <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} assets in catalog • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} network-ready • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
                   <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
                 </div>
                 <div className="coin-toolbar">
@@ -1769,7 +1793,7 @@ function App() {
               </article>
 
               <article className="panel activity-panel">
-                <div className="panel-head"><div><h2>Recent activity</h2><span>Latest wallet events</span></div><button className="text-btn" onClick={() => setActive("Transactions")}>View all →</button></div>
+                <div className="panel-head"><div><h2>On-chain activity</h2><span>Latest saved wallet transactions</span></div><button className="text-btn" onClick={() => setActive("Transactions")}>View all →</button></div>
                 <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
               </article>
             </div>
@@ -1784,68 +1808,15 @@ function App() {
 
 
 
-            <div className="quick-grid">
-              <button onClick={() => setActive("Browser")}><span>⌕</span><div><b>Open Browser</b><small>Search web &amp; explore Etherscan</small></div>→</button>
-              <button onClick={() => setActive("Wallet Connect")}><span>◈</span><div><b>Connect wallet</b><small>Manage connected accounts</small></div>→</button>
-              <button onClick={() => setActive("Withdraw")}><span>↗</span><div><b>Direct withdrawal</b><small>Move funds securely</small></div>→</button>
-              <button onClick={() => setActive("Request Center")}><span>◎</span><div><b>Request funds</b><small>Create a payment request</small></div>→</button>
-            </div>
-
-            <article className="panel wallet-functions-panel">
-              <div className="panel-head"><div><h2>All wallet functions</h2><span>Quick access to wallet, security, explorer, and account tools</span></div><span className="wallet-function-count">20 tools</span></div>
-              <div className="wallet-functions-grid">
-                {[
-                  ["Wallets","◈","Create and manage wallets"],
-                  ["Portfolio","▥","Assets and holdings"],
-                  ["Send","↗","Send crypto assets"],
-                  ["Receive","↙","Share a receiving address"],
-                  ["Deposit","↓","Fund wallet and check deposit steps"],
-                  ["Swap","⇄","Convert supported assets"],
-                  ["Staking","⌁","Staking tools"],
-                  ["NFTs","◇","NFT workspace"],
-                  ["Transactions","↔","Transaction history"],
-                  ["Browser","⌕","Search websites and explorers"],
-                  ["Wallet Connect","⌘","Connected wallet addresses"],
-                  ["Proof of Reserves","✓","On-chain reserve snapshot"],
-                  ["API Request","⌘","API request workspace"],
-                  ["API Keys","⚿","Manage API credentials"],
-                  ["Contract Generator","⌁","Generate contract drafts"],
-                  ["Verify Contract","✓","Verify deployed contracts"],
-                  ["Address Converter","⇄","Inspect and compare addresses"],
-                  ["Sepolia Converter","◇","Sepolia testnet tools"],
-                  ["Contract Converter","⌁","Inspect contract data"],
-                  ["Address Book","▤","Saved trusted addresses"],
-                  ["Request Center","◎","Requests and support"],
-                ].map(([page, icon, description]) => (
-                  <button type="button" key={page} className="wallet-function-card" onClick={() => setActive(page)}>
-                    <span className="wallet-function-icon">{icon}</span>
-                    <span className="wallet-function-copy"><b>{page}</b><small>{description}</small></span>
-                    <span className="wallet-function-arrow">›</span>
-                  </button>
-                ))}
+            <article className="panel dashboard-security-bridge">
+              <div><p className="feature-kicker">SELF-CUSTODY CONTROLS</p><h2>Wallet tools &amp; support</h2><span>Manage connected signing apps, verify addresses and get help without leaving your wallet workspace.</span></div>
+              <div className="dashboard-security-actions">
+                <button className="secondary" onClick={() => setActive("Wallet Safety")}>Wallet safety</button>
+                <button className="secondary" onClick={() => setActive("Wallet Connect")}>Connected apps</button>
+                <button className="secondary" onClick={() => setActive("Help & Docs")}>Help &amp; Docs</button>
               </div>
-              <p className="wallet-functions-note">Proof of Reserves is an on-chain snapshot only; it is not an audited solvency report and does not include all customer liabilities.</p>
+              <p className="dashboard-security-note">Mainnet and testnet balances remain separate. World Wallet AI never needs your recovery phrase or private key.</p>
             </article>
-
-            <div className="api-status">API: <strong>{apiStatus}</strong>{user ? <> • Signed in as <strong>{user.email}</strong></> : null}{syncMessage ? <> • {syncMessage}</> : null}{lastSyncedAt ? <> • Last sync {lastSyncedAt.toLocaleTimeString()}</> : null}</div>
-            <section className="feature-content" style={{ paddingTop: 0 }}>
-              <article className="panel action-panel">
-                <div className="panel-head"><div><p className="feature-kicker">LOCAL WALLET VAULT</p><h2>Your wallets</h2><span>Generated wallet IDs and public addresses are saved in this browser.</span></div><button className="secondary" onClick={() => setActive("Wallets")}>Manage wallets →</button></div>
-                {visibleLocalWalletEntries.length ? visibleLocalWalletEntries.slice(0,3).map(entry => <div className="tool-row" key={entry.walletId}><div><b>{entry.name || "Wallet"}</b><small>Wallet ID: {entry.walletNumber || "Legacy ID unavailable"}</small><small>Ethereum Mainnet · {entry.addresses?.ethereum || entry.address}</small></div><button className="secondary" onClick={() => navigator.clipboard?.writeText(entry.addresses?.ethereum || entry.address)}>Copy address</button></div>) : <div className="live-chart-empty">No local signing wallet yet. Create one from Wallets to show its address here automatically.</div>}
-                {localContracts.length > 0 && <><p className="feature-kicker" style={{ marginTop: 18 }}>SAVED CONTRACTS</p>{localContracts.slice(0,3).map(contract => <div className="tool-row" key={contract.address + contract.network}><div><b>{contract.name || contract.symbol || "Contract"} ({contract.network})</b><small>{contract.address}</small><small>{contract.status || "Saved locally"} · {contract.txHash || ""}</small></div><a href={contract.explorerUrl || (contract.network === "sepolia" ? "https://sepolia.etherscan.io/address/" : "https://etherscan.io/address/") + contract.address} target="_blank" rel="noreferrer">Verify / inspect ↗</a></div>)}</>}
-              </article>
-            </section>
-                    </section>
-        ) : (
-          active === "Profile" ? <section className="content feature-content ww-profile-page">
-            <div className="page-heading"><div><p className="eyebrow">ACCOUNT CENTER</p><h1>My Profile</h1><p className="muted">Your World Wallet AI identity, connected sign-in methods and wallet records.</p></div><button className="secondary" onClick={() => setActive("Wallets")}>Manage wallets →</button></div>
-            <article className="panel ww-profile-hero"><div className="ww-profile-avatar">{String(user?.name || user?.email || "W").trim().charAt(0).toUpperCase()}</div><div className="ww-profile-identity"><p className="eyebrow">WORLD WALLET AI ACCOUNT</p><h2>{user?.name || user?.displayName || "Wallet Owner"}</h2><p>{user?.email || "Email not provided by sign-in provider"}</p><small>Account ID: <code>{user?.id || user?.userId || "Available after account sync"}</code></small></div><span className="ww-profile-status">● Signed in</span></article>
-            <div className="feature-grid ww-profile-grid">
-              <article className="panel action-panel"><h2>Sign-in & linked accounts</h2><p className="muted">Use the provider you originally registered with to return to this account. Social providers must be enabled in Neon Auth before login can complete.</p><div className="ww-profile-provider"><b>Google</b><span>{user?.email ? "Account email available" : "Not confirmed"}</span></div><div className="ww-profile-provider"><div><b>X (Twitter)</b><span>OAuth 2.0 server setup required</span></div><button className="secondary" type="button" onClick={() => handleSocialSignIn("twitter")}>Connect X</button></div><div className="ww-profile-provider"><div><b>Telegram</b><span>Bot verification and server session setup required</span></div><button className="secondary" type="button" onClick={() => handleSocialSignIn("telegram")}>Connect Telegram</button></div>{loginError&&<div className="feature-error" role="status">{loginError}</div>}</article>
-              <article className="panel action-panel"><h2>Wallet identity</h2><p className="muted">Wallets are separate from your social sign-in account.</p>{visibleLocalWalletEntries.length ? visibleLocalWalletEntries.map(entry => <div className="ww-profile-wallet" key={entry.walletId}><b>{entry.name || "Wallet"}</b><small>Wallet ID</small><code>{entry.walletNumber || "Legacy ID unavailable"}</code><small>Ethereum Mainnet address</small><code>{entry.addresses?.ethereum || entry.address || "Not connected"}</code><div className="ww-profile-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(entry.walletNumber || "")}>Copy wallet ID</button><button className="secondary" onClick={() => navigator.clipboard?.writeText(entry.addresses?.ethereum || entry.address || "")}>Copy address</button></div></div>) : <div className="live-chart-empty">No wallet profile yet. Create a wallet in Wallets and its ID will appear here automatically.</div>}<button className="primary feature-submit" onClick={() => setActive("Wallets")}>Create or manage wallet →</button></article>
-              <article className="panel action-panel"><h2>Saved contract addresses</h2>{localContracts.length ? localContracts.map(contract => <div className="tool-row" key={contract.address + contract.network}><div><b>{contract.name || contract.symbol || "Contract"} · {contract.network}</b><small>Contract: <code>{contract.address}</code></small><small>Status: {contract.status || "Saved locally"} · Tx: {contract.txHash || "Not recorded"}</small></div><a href={contract.explorerUrl || (contract.network === "sepolia" ? "https://sepolia.etherscan.io/address/" : "https://etherscan.io/address/") + contract.address} target="_blank" rel="noreferrer">Inspect / verify ↗</a></div>) : <div className="live-chart-empty">No deployed contracts saved in this browser yet.</div>}<div className="ww-profile-actions"><button className="secondary" onClick={() => setActive("Contract Generator")}>Contract generator</button><button className="secondary" onClick={() => setActive("Verify Contract")}>Verify contract</button></div></article>
-              <article className="panel action-panel"><h2>Security & session</h2><p className="security-note">Your sign-in session is handled by Neon Auth. Private keys and recovery phrases are never shown in this profile or uploaded to the server. Signing out ends the app session on this device.</p><button className="ww-profile-logout" type="button" onClick={handleLogout}>↪ Log out of World Wallet AI</button></article>
-            </div>
           </section> : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
           <FeaturePage accountUserId={accountUserId} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); if (Array.isArray(data?.updates)) setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
