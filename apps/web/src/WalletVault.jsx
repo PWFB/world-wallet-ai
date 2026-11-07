@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { getNeonAccessToken } from "./auth-client.js";
+import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -14,14 +15,25 @@ function readVault() {
   }
 }
 
-export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }) {
+function readVaultForAccount(userId, allowedServerWalletIds = []) {
+  const allowed = new Set((Array.isArray(allowedServerWalletIds) ? allowedServerWalletIds : []).map(String));
+  const currentUserId = String(userId || "");
+  return readVault().filter(entry => {
+    if (entry?.ownerUserId) return currentUserId && String(entry.ownerUserId) === currentUserId;
+    const serverWalletId = entry?.serverWalletId || (String(entry?.walletId || "").startsWith("wallet_") ? entry.walletId : "");
+    return Boolean(serverWalletId && allowed.has(String(serverWalletId)));
+  });
+}
+
+export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, onWalletSelected, activeWalletId = "", allowedServerWalletIds = [], userId = "" }) {
   const [entries, setEntries] = useState([]);
   const [walletName, setWalletName] = useState("Personal Wallet");
   const [password, setPassword] = useState("");
-  const [network, setNetwork] = useState("sepolia");
+  const [network, setNetwork] = useState("ethereum");
   const [generated, setGenerated] = useState(null);
   const [selectedId, setSelectedId] = useState("");
   const [unlocked, setUnlocked] = useState(null);
+  const [unlockedAddresses, setUnlockedAddresses] = useState(null);
   const [keyRevealPassword, setKeyRevealPassword] = useState("");
   const [revealedPrivateKey, setRevealedPrivateKey] = useState("");
   const [signMessage, setSignMessage] = useState("");
@@ -43,13 +55,17 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
+  const allowedServerWalletIdKey = (Array.isArray(allowedServerWalletIds) ? allowedServerWalletIds : []).map(String).sort().join("|");
+
   useEffect(() => {
-    const saved = readVault();
+    const saved = readVaultForAccount(userId, allowedServerWalletIds);
     setEntries(saved);
     try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); }
     const refreshDeployedContracts = () => { try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); } };
     window.addEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
-    if (saved.length) setSelectedId(saved[0].walletId);
+    const activeEntry = saved.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
+    if (activeEntry) setSelectedId(activeEntry.walletId);
+    else if (saved.length) setSelectedId(saved[0].walletId);
     // Contract Generator can hand off a deployed token address to this page.
     try {
       const pending = JSON.parse(localStorage.getItem("world_wallet_pending_token_contract") || "null");
@@ -61,7 +77,21 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
       }
     } catch {}
     return () => window.removeEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
-  }, []);
+  }, [userId, allowedServerWalletIdKey]);
+
+  useEffect(() => {
+    if (!activeWalletId) return;
+    const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
+    if (!activeEntry || activeEntry.walletId === selectedId) return;
+    setSelectedId(activeEntry.walletId);
+    setUnlocked(null);
+    setUnlockedAddresses(null);
+    setGenerated(null);
+    setPassword("");
+    setNativeBalance("");
+    setTxHash("");
+    setTokenTxHash("");
+  }, [activeWalletId, entries, selectedId]);
 
   useEffect(() => {
     if (!accessToken) return;
@@ -79,7 +109,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
   }, [accessToken, apiBaseUrl]);
 
   function persistVault(next) {
-    localStorage.setItem(VAULT_KEY, JSON.stringify(next));
+    const managedIds = new Set([...entries, ...next].map(item => String(item.walletId || "")));
+    const preservedEntries = readVault().filter(item => !managedIds.has(String(item.walletId || "")));
+    localStorage.setItem(VAULT_KEY, JSON.stringify([...next, ...preservedEntries]));
     setEntries(next);
     try { window.dispatchEvent(new Event("world-wallet-local-vault-updated")); } catch {}
   }
@@ -92,44 +124,50 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
     setBusy(true);
     setMessage("");
     setSignature("");
+    setUnlocked(null);
+    setUnlockedAddresses(null);
     try {
-      // Generate and securely encrypt locally first. A temporary API/auth outage must
-      // never prevent the user from seeing or saving the key material they just created.
       const signer = Wallet.createRandom();
+      const mnemonic = signer.mnemonic?.phrase;
+      if (!mnemonic) throw new Error("The wallet provider did not return a recovery phrase. No incomplete wallet was saved.");
+      const addresses = await deriveWalletAddresses(mnemonic);
       const encryptedJson = await signer.encrypt(password);
-      const localWalletId = "local-" + (globalThis.crypto?.randomUUID?.() || (Date.now().toString(36) + Math.random().toString(36).slice(2)));
+      const encryptedMnemonic = await encryptMnemonic(mnemonic, password);
+      const walletNumber = createWalletNumber(readVault().map(item => item.walletNumber).filter(Boolean));
+      const localWalletId = "local-" + walletNumber;
       const createdAt = new Date().toISOString();
       let walletId = localWalletId;
-      let profileWarning = "";
-      let addressWarning = "";
-
-      // Persist a recoverable encrypted local entry and show the generated keys before
-      // making optional backend calls. Neither password nor plaintext private key is sent.
+      const primaryAddress = addresses[network] || addresses.ethereum;
       const localEntry = {
         walletId,
+        serverWalletId: "",
+        walletNumber,
+        ownerUserId: String(userId || ""),
         name: walletName.trim() || "New Wallet",
-        address: signer.address,
+        address: primaryAddress,
+        addresses,
         publicKey: signer.publicKey,
         network,
         encryptedJson,
+        encryptedMnemonic,
         createdAt,
       };
-      persistVault([localEntry, ...readVault()]);
+      persistVault([localEntry, ...entries]);
       setSelectedId(walletId);
-      setUnlocked(null);
       setGenerated({
         walletId,
+        walletNumber,
         name: localEntry.name,
-        address: signer.address,
+        address: primaryAddress,
+        addresses,
         publicKey: signer.publicKey,
         privateKey: signer.privateKey,
-        mnemonic: signer.mnemonic?.phrase || "",
+        mnemonic,
         network,
       });
       setPassword("");
-      setMessage("Wallet keys generated locally. Save the private key and recovery phrase securely now.");
+      setMessage("Wallet created locally. Mainnet and separate testnet/devnet receiving addresses are ready. Save the recovery phrase securely.");
 
-      // Backend profile and address linking are best-effort follow-up operations.
       try {
         const freshToken = await getNeonAccessToken();
         const sessionToken = freshToken || accessToken;
@@ -139,36 +177,40 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated }
           headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
           body: JSON.stringify({ name: localEntry.name }),
         });
-        const profile = await profileResponse.json();
+        const profile = await profileResponse.json().catch(() => ({}));
         if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
         const serverWalletId = profile.wallet?.id;
         if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
 
-        const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-          body: JSON.stringify({ network, address: signer.address, label: "generated" }),
-        });
-        const addressData = await addressResponse.json();
-        if (!addressResponse.ok) {
-          walletId = serverWalletId;
-          addressWarning = addressData.detail || "Public address linking failed.";
-        } else {
-          walletId = serverWalletId;
+        const linkedEntry = { ...localEntry, walletId: serverWalletId, serverWalletId };
+        const attachmentFailures = [];
+        for (const [addressNetwork, addressValue] of Object.entries(addresses)) {
+          try {
+            const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+              body: JSON.stringify({ network: addressNetwork, address: addressValue, label: "generated " + walletNumber }),
+            });
+            const addressData = await addressResponse.json().catch(() => ({}));
+            if (!addressResponse.ok) throw new Error(addressData.detail || "Address save failed.");
+          } catch (error) {
+            attachmentFailures.push(addressNetwork + ": " + (error?.message || "save failed"));
+          }
         }
-        const linkedEntry = { ...localEntry, walletId };
-        persistVault([linkedEntry, ...readVault().filter(item => item.address.toLowerCase() !== signer.address.toLowerCase())]);
-        setSelectedId(walletId);
-        setGenerated(current => current ? { ...current, walletId } : current);
-        if (!addressResponse.ok) {
-          setMessage("Wallet keys generated and saved locally, but the server could not link the public address: " + addressWarning + " You can connect it again later.");
+
+        const currentAccountEntries = readVaultForAccount(userId, allowedServerWalletIds)
+          .filter(item => item.walletId !== localWalletId && item.walletId !== serverWalletId);
+        persistVault([linkedEntry, ...currentAccountEntries]);
+        setSelectedId(serverWalletId);
+        setGenerated(current => current ? { ...current, walletId: serverWalletId } : current);
+        if (attachmentFailures.length) {
+          setMessage("Wallet " + walletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". The local Receive page still has all derived addresses.");
         } else {
-          setMessage("Wallet generated. Your public wallet address is saved; private key and recovery phrase are shown only in this session. Save them securely before leaving.");
+          setMessage("Wallet " + walletNumber + " created. All mainnet and separate testnet/devnet addresses are saved to this wallet.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
-        profileWarning = error?.message || "The server profile could not be created.";
-        setMessage("Wallet keys generated and encrypted locally, but server sync failed: " + profileWarning + " Your local wallet is saved in this browser. Keep the recovery material safe; use the same browser and vault password to unlock it.");
+        setMessage("Wallet " + walletNumber + " and its encrypted recovery material are saved locally, but account sync failed: " + (error?.message || "server unavailable") + ". Retry sync from Wallets after signing in.");
       }
     } catch (error) {
       setMessage(error?.message || "Wallet generation failed.");
