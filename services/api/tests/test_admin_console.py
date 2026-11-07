@@ -76,6 +76,51 @@ class AdminConsoleTests(unittest.TestCase):
                 main.require_world_wallet_admin({"id": "owner", "email": "owner@example.com"})
             self.assertEqual(unavailable.exception.status_code, 503)
 
+    def test_admin_settings_reports_admin_email_and_alchemy_key_presence_without_values(self):
+        user = {"id": "user_owner", "email": "owner@example.com"}
+        with patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "owner@example.com"), \
+             patch.object(main, "ALCHEMY_API_KEY", "private-test-key"), \
+             patch.object(main, "DATABASE_URL", "postgresql://test"), \
+             patch.object(main, "record_admin_event"):
+            result = main.admin_settings(user)
+        by_key = {item["key"]: item["configured"] for item in result["checks"]}
+        self.assertTrue(by_key["World Wallet admin email"])
+        self.assertTrue(by_key["Alchemy NFT API key"])
+        self.assertNotIn("private-test-key", str(result))
+        self.assertFalse(result["secrets_exposed"])
+
+    def test_alchemy_provider_probe_checks_both_mainnets_without_returning_key(self):
+        user = {"id": "user_owner", "email": "owner@example.com"}
+        with patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "owner@example.com"), \
+             patch.object(main, "DATABASE_URL", "postgresql://test"), \
+             patch.object(main, "ALCHEMY_API_KEY", "private-test-key"), \
+             patch.object(main, "record_admin_event"), \
+             patch.object(main.httpx, "get", side_effect=[FakeResponse(), FakeResponse()]) as fetch:
+            result = main.admin_test_nft_provider(user)
+        self.assertTrue(result["success"])
+        self.assertEqual([item["network"] for item in result["results"]], ["eth-mainnet", "bnb-mainnet"])
+        self.assertTrue(all(item["ok"] for item in result["results"]))
+        self.assertEqual(fetch.call_count, 2)
+        self.assertNotIn("private-test-key", str(result))
+        self.assertNotIn("owner", str(result).lower())
+
+    def test_alchemy_provider_probe_reports_rejected_key_without_leaking_response(self):
+        class RejectedResponse:
+            status_code = 401
+            is_error = True
+
+        user = {"id": "user_owner", "email": "owner@example.com"}
+        with patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "owner@example.com"), \
+             patch.object(main, "DATABASE_URL", "postgresql://test"), \
+             patch.object(main, "ALCHEMY_API_KEY", "private-test-key"), \
+             patch.object(main, "record_admin_event"), \
+             patch.object(main.httpx, "get", side_effect=[RejectedResponse(), FakeResponse()]):
+            result = main.admin_test_nft_provider(user)
+        self.assertFalse(result["success"])
+        self.assertFalse(result["results"][0]["ok"])
+        self.assertIn("rejected", result["results"][0]["message"].lower())
+        self.assertNotIn("private-test-key", str(result))
+
     def test_admin_announcement_requires_content_when_enabled(self):
         request = main.AdminAnnouncementUpdate(title="", body="", enabled=True)
         with patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "owner@example.com"), patch.object(main, "DATABASE_URL", "postgresql://test"):
