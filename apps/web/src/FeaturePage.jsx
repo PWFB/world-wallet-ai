@@ -132,7 +132,7 @@ function getLocalVaultReceiveAddress(walletId = "", userId = "") {
     if (!Array.isArray(saved)) return [];
     const entry = saved.find(item => {
       const serverWalletId = item?.serverWalletId || (String(item?.walletId || "").startsWith("wallet_") ? item.walletId : "");
-      const ownerMatches = !item?.ownerUserId || !userId || String(item.ownerUserId) === String(userId);
+      const ownerMatches = item?.ownerUserId ? Boolean(userId) && String(item.ownerUserId) === String(userId) : true;
       return String(serverWalletId) === String(walletId) && ownerMatches;
     });
     if (!entry) return [];
@@ -1857,7 +1857,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
               <code>{item.address}</code>
               {item.local && <small className="muted">{item.generated ? "Generated for this self-custody wallet" : "Connected external public address"}{item.walletNumber ? " · Wallet ID " + item.walletNumber : ""}. No private key is sent to the server.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
-            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Connect a public address for this asset's network in Wallets. This page will list it here after it is saved." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Connect an address →</button></div>}
+            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Create a complete self-custody wallet in Wallets. Its receiving addresses will be generated automatically and saved to this wallet; external wallet connection is optional." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Create or select wallet →</button></div>}
           </div>
         </article>
         <aside className="wallet-review-column">
