@@ -84,8 +84,8 @@ class AdminConsoleTests(unittest.TestCase):
         ddl = "\n".join(sql for sql, _ in connection.statements)
         self.assertIn("CREATE TABLE IF NOT EXISTS admin_audit_events", ddl)
         self.assertIn("CREATE TABLE IF NOT EXISTS wallet_announcements", ddl)
-        self.assertNotIn("DELETE FROM users", ddl.upper())
-        self.assertNotIn("DELETE FROM wallets", ddl.upper())
+        self.assertNotIn("DELETE FROM USERS", ddl.upper())
+        self.assertNotIn("DELETE FROM WALLETS", ddl.upper())
         self.assertNotIn("DROP TABLE", ddl.upper())
 
     def test_nft_endpoint_reads_provider_data_for_the_active_wallet(self):
