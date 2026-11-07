@@ -209,7 +209,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
-    const connections = getSavedExternalConnections();
+    const connections = getSavedExternalConnections().filter(connection => String(connection.walletId || "") === String(walletId));
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
     let cancelled = false;
     (async () => {
@@ -432,7 +432,29 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
-  const visibleAddresses = [...walletAddresses, ...localEntries.filter(entry => entry.address && (!selectedWallet || entry.walletId === selectedWallet.id || entry.walletId === walletId || entry.walletId.startsWith("local-"))).map(entry => ({ network: entry.network || "ethereum", address: entry.address, label: entry.name || "Local signing wallet", local: true, walletId: entry.walletId }))].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
+  const accountLocalEntries = localEntries.filter(entry => {
+    const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
+    const belongsToAccount = entry.ownerUserId
+      ? String(entry.ownerUserId) === String(accountUserId)
+      : Boolean(serverWalletId && wallets.some(item => item.id === serverWalletId));
+    return belongsToAccount && String(serverWalletId) === String(walletId);
+  });
+  const localWalletAddresses = accountLocalEntries.flatMap(entry => {
+    const addressSet = entry.addresses && typeof entry.addresses === "object"
+      ? entry.addresses
+      : { [entry.network || "ethereum"]: entry.address };
+    return Object.entries(addressSet).filter(([, value]) => typeof value === "string" && value.length).map(([addressNetwork, value]) => ({
+      network: addressNetwork,
+      address: value,
+      label: (entry.name || "Local signing wallet") + (entry.walletNumber ? " · ID " + entry.walletNumber : ""),
+      local: true,
+      walletId: entry.walletId,
+      walletNumber: entry.walletNumber || "",
+      generated: true,
+    }));
+  });
+  const visibleAddresses = [...walletAddresses, ...localWalletAddresses].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
+  const walletNumberFor = id => accountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || "Create a signing wallet";
 
   return <section className="content feature-content">
     <div className="page-heading">
@@ -440,21 +462,20 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel">
-        <p className="feature-kicker">CREATE WALLET PROFILE</p>
-        <h2>New wallet</h2>
-        <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
-        <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
-        <button className="primary feature-submit" disabled={busy || !walletName.trim()} onClick={createWallet}>{busy ? "Creating…" : "Create wallet →"}</button>
-        <div className="security-note">For a non-custodial wallet, create or import the signing account in a compatible wallet app and connect only its public address here.</div>
+        <p className="feature-kicker">WALLET STRUCTURE</p>
+        <h2>Independent self-custody wallets</h2>
+        <p className="muted">Use Generate complete wallet above. Each wallet has its own recovery phrase, encrypted key material, 11-digit wallet ID, public addresses, and separate account history.</p>
+        <div className="security-note">Ethereum and BNB Chain use the same EVM mainnet address within one wallet. Bitcoin and Solana have their own mainnet addresses. Sepolia and Solana Devnet use separate test-network derivations.</div>
       </article>
       <article className="panel action-panel">
         <p className="feature-kicker">ACTIVE WALLET</p>
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
+        <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
-          {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
+          {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} · ID {walletNumberFor(w.id)}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
           {visibleAddresses.length ? visibleAddresses.map(a => {
@@ -1825,7 +1846,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
               <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
-              {item.local && <small className="muted">Shown from this browser's connected wallet. Server attachment and balance verification may still be pending.</small>}
+              {item.local && <small className="muted">{item.generated ? "Generated for this self-custody wallet" : "Connected external public address"}{item.walletNumber ? " · Wallet ID " + item.walletNumber : ""}. No private key is sent to the server.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Connect a public address for this asset's network in Wallets. This page will list it here after it is saved." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Connect an address →</button></div>}
           </div>
