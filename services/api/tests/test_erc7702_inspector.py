@@ -1,6 +1,6 @@
 import unittest
 
-from services.api.main import _decode_eip7702_designator, _decode_okx_storage_proxy
+from main import _decode_eip7702_designator, _decode_okx_storage_proxy
 
 
 class Erc7702InspectorDecodeTests(unittest.TestCase):
