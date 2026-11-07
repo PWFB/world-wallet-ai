@@ -23,6 +23,9 @@ class FakeConnection:
         self.statements.append((sql, params))
         return FakeResult((1,))
 
+    def fetchall(self):
+        return []
+
     def commit(self):
         pass
 
