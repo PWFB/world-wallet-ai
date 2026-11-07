@@ -548,7 +548,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
-export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
+export default function FeaturePage({ accountName = "", accountEmail = "", selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
   const activeWalletId = String(wallet?.wallet_id || wallet?.id || wallet?.walletId || "");
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
   const [marketSearch, setMarketSearch] = useState("");
@@ -617,6 +617,26 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [walletProfiles, setWalletProfiles] = useState([]);
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
+  const [adminData, setAdminData] = useState(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminSearch, setAdminSearch] = useState("");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [adminSaveBusy, setAdminSaveBusy] = useState(false);
+  const [adminSaveMessage, setAdminSaveMessage] = useState("");
+  const [supportTitle, setSupportTitle] = useState("");
+  const [supportDetails, setSupportDetails] = useState("");
+  const [supportSubmitBusy, setSupportSubmitBusy] = useState(false);
+  const [supportSubmitMessage, setSupportSubmitMessage] = useState("");
+  const [supportItems, setSupportItems] = useState([]);
+  const [supportLoadError, setSupportLoadError] = useState("");
+  const [nftNetwork, setNftNetwork] = useState("ethereum");
+  const [nftData, setNftData] = useState(null);
+  const [nftBusy, setNftBusy] = useState(false);
+  const [nftError, setNftError] = useState("");
+  const [nftRefresh, setNftRefresh] = useState(0);
   const requestKeyRef = useRef("");
 
   useEffect(() => {
@@ -672,6 +692,68 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       .catch(error => { if (!cancelled) setCoingeckoKeyMessage(error.message || "CoinGecko key manager is unavailable."); });
     return () => { cancelled = true; };
   }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    const adminEndpoints = {
+      "Admin Editor": "/api/v1/admin/announcement",
+      "User Management": "/api/v1/admin/users",
+      "System Settings": "/api/v1/admin/settings",
+      "Logs & Activity": "/api/v1/admin/activity",
+      "Role Management": "/api/v1/admin/roles",
+    };
+    const endpoint = adminEndpoints[active];
+    if (!endpoint || !accessToken) return undefined;
+    let cancelled = false;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminSaveMessage("");
+    fetch(apiBaseUrl + endpoint, { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Administrative data could not be loaded.");
+        if (cancelled) return;
+        setAdminData(data);
+        if (active === "Admin Editor") {
+          const announcement = data.announcement || {};
+          setAnnouncementTitle(announcement.title || "");
+          setAnnouncementBody(announcement.body || "");
+          setAnnouncementEnabled(Boolean(announcement.enabled));
+        }
+      })
+      .catch(error => { if (!cancelled) setAdminError(error.message || "Administrative data could not be loaded."); })
+      .finally(() => { if (!cancelled) setAdminBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "Support Center" || !accessToken) return undefined;
+    let cancelled = false;
+    setSupportLoadError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Support requests could not be loaded.");
+        if (!cancelled) setSupportItems(Array.isArray(data.requests) ? data.requests.filter(item => item.kind === "support") : []);
+      })
+      .catch(error => { if (!cancelled) setSupportLoadError(error.message || "Support requests could not be loaded."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "NFTs" || !accessToken) return undefined;
+    let cancelled = false;
+    setNftBusy(true);
+    setNftError("");
+    fetch(apiBaseUrl + "/api/v1/wallet/nfts?network=" + encodeURIComponent(nftNetwork), { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "NFT collection could not be loaded.");
+        if (!cancelled) setNftData(data);
+      })
+      .catch(error => { if (!cancelled) { setNftData(null); setNftError(error.message || "NFT collection could not be loaded."); } })
+      .finally(() => { if (!cancelled) setNftBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, nftNetwork, nftRefresh]);
 
   useEffect(() => {
     if (selectedAsset && selectedAsset !== asset) setAsset(selectedAsset);
@@ -2281,6 +2363,93 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </section>;
   }
 
+  if (active === "Profile") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Profile</h1><p className="muted">Your authenticated World Wallet AI account and active wallet identity.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallets →</button></div>
+      <article className="panel action-panel"><div className="panel-head"><div><h2>Account details</h2><span>Read-only identity sourced from the signed-in session</span></div></div>
+        <div className="tool-list">
+          <div className="tool-row"><div><b>Display name</b><small>Account profile</small></div><strong>{accountName||"Not provided"}</strong></div>
+          <div className="tool-row"><div><b>Email address</b><small>Authenticated identity</small></div><strong>{accountEmail||"Unavailable"}</strong></div>
+          <div className="tool-row"><div><b>Account ID</b><small>Internal identifier · do not share publicly</small></div><code>{accountUserId||"Unavailable"}</code></div>
+          <div className="tool-row"><div><b>Active wallet ID</b><small>11-digit public wallet reference</small></div><strong>{wallet?.wallet_number||"Not assigned"}</strong></div>
+          <div className="tool-row"><div><b>Wallet name</b><small>Currently selected wallet</small></div><strong>{wallet?.name||"Primary wallet"}</strong></div>
+        </div>
+        <div className="security-note">Profile values are read-only here. Recovery phrases, private keys, passwords and one-time codes are never displayed on this page.</div>
+      </article>
+      <article className="panel action-panel"><h2>Account tools</h2><div className="page-actions"><button className="secondary" onClick={()=>setActive("API Keys")}>API keys</button><button className="secondary" onClick={()=>setActive("Wallet Safety")}>Wallet safety</button><button className="secondary" onClick={()=>setActive("Support Center")}>Contact support</button></div></article>
+    </section>;
+  }
+
+  if (["Admin Editor","User Management","System Settings","Logs & Activity","Role Management"].includes(active)) {
+    const reloadUsers = async () => {
+      setAdminBusy(true);setAdminError("");
+      try {
+        const response=await fetch(apiBaseUrl+"/api/v1/admin/users?q="+encodeURIComponent(adminSearch.trim()),{headers:{Authorization:"Bearer "+accessToken},cache:"no-store"});
+        const data=await response.json();if(!response.ok)throw new Error(data.detail||"User list could not be loaded.");setAdminData(data);
+      } catch(error) { setAdminError(error.message||"User list could not be loaded."); }
+      finally { setAdminBusy(false); }
+    };
+    const saveAnnouncement = async () => {
+      setAdminSaveBusy(true);setAdminSaveMessage("");setAdminError("");
+      try {
+        const response=await fetch(apiBaseUrl+"/api/v1/admin/announcement",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({title:announcementTitle,body:announcementBody,enabled:announcementEnabled})});
+        const data=await response.json();if(!response.ok)throw new Error(data.detail||"Announcement could not be saved.");
+        setAdminData({announcement:data.announcement});setAdminSaveMessage("Dashboard announcement saved.");
+      } catch(error) { setAdminError(error.message||"Announcement could not be saved."); }
+      finally { setAdminSaveBusy(false); }
+    };
+    const heading = active === "Admin Editor" ? "Dashboard announcement editor" : active;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">RESTRICTED ADMINISTRATION</p><h1>{heading}</h1><p className="muted">Every data endpoint verifies the configured owner account on the backend.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+      {adminBusy&&<div className="feature-loading" role="status">Loading authorized admin data…</div>}
+      {adminError&&<div className="feature-error" role="alert">{adminError}</div>}
+      {active==="Admin Editor"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Dashboard announcement</h2><span>Publish a short notice to signed-in wallet dashboards</span></div></div>
+        <label>Title<input value={announcementTitle} maxLength={120} onChange={event=>setAnnouncementTitle(event.target.value)} placeholder="Service notice"/></label>
+        <label>Message<textarea value={announcementBody} maxLength={600} rows={4} onChange={event=>setAnnouncementBody(event.target.value)} placeholder="Write a factual update for wallet users."/></label>
+        <label className="checkbox-label"><input type="checkbox" checked={announcementEnabled} onChange={event=>setAnnouncementEnabled(event.target.checked)}/> Show this announcement on the dashboard</label>
+        {adminSaveMessage&&<div className="feature-success" role="status">{adminSaveMessage}</div>}
+        <button className="primary feature-submit" disabled={adminSaveBusy||(announcementEnabled&&(!announcementTitle.trim()||!announcementBody.trim()))} onClick={saveAnnouncement}>{adminSaveBusy?"Saving…":"Save announcement"}</button>
+        <p className="security-note">Saving only changes the dashboard announcement. It does not change wallet balances, network configuration, payments or transaction permissions.</p>
+      </article>}
+      {active==="User Management"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Registered accounts</h2><span>{adminData?.total??"—"} account record(s) · read-only to protect customer data</span></div></div>
+        <div className="inline-form"><input value={adminSearch} onChange={event=>setAdminSearch(event.target.value)} placeholder="Search name or email"/><button className="secondary" disabled={adminBusy} onClick={reloadUsers}>Search</button></div>
+        {adminData?.users?.length?<div className="tool-list">{adminData.users.map(item=><div className="tool-row" key={item.id}><div><b>{item.name||"Unnamed account"}</b><small>{item.email}</small><small>{item.created_at?new Date(item.created_at).toLocaleDateString():"Creation date unavailable"}</small></div><strong>{item.wallet_count} wallet(s)</strong></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No matching account records.</div>:null}
+        <p className="security-note">Account deletion, suspension, password reset and balance editing are not exposed here. Administrative access cannot be used to alter customer wallets or ledgers.</p>
+      </article>}
+      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secrets are never returned</span></div></div>
+        {adminData?.checks?.length?<div className="tool-list">{adminData.checks.map(item=><div className="tool-row" key={item.key}><div><b>{item.key}</b></div><strong className={item.configured?"positive":"neutral"}>{item.configured?"Configured":"Not configured"}</strong></div>)}</div>:null}
+        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Update secrets and infrastructure values through the Render environment, not this browser page.</div>
+      </article>}
+      {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
+        {adminData?.events?.length?<div className="tool-list">{adminData.events.map(item=><div className="tool-row" key={item.id}><div><b>{item.action}</b><small>{item.actor_email} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small><small>{item.details}</small></div></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No administrative audit events have been recorded yet.</div>:null}
+        <p className="security-note">This view is an administrative audit trail, not a full raw server log stream. Render runtime and deployment logs remain in the Render Dashboard.</p>
+      </article>}
+      {active==="Role Management"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Authorization policy</h2><span>Server-enforced owner access model</span></div></div>
+        <div className="tool-list">{(adminData?.roles||[]).map(item=><div className="tool-row" key={item.name}><div><b>{item.name}</b><small>{item.description}</small></div><strong>{item.source}</strong></div>)}</div>
+        <div className="security-note">{adminData?.notice||"Role assignment is read-only until a persistent RBAC system is implemented."}</div>
+        <p className="muted">Configured owner: {adminData?.owner_email||"Not available"} · Editable assignments: {adminData?.assignments_editable?"Yes":"No"}</p>
+      </article>}
+    </section>;
+  }
+
+  if (active === "NFTs") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ON-CHAIN COLLECTIBLES</p><h1>NFTs</h1><p className="muted">Read-only NFTs owned by the active wallet.</p></div><button className="secondary" onClick={()=>setNftRefresh(value=>value+1)} disabled={nftBusy}>↻ Refresh</button></div>
+      <article className="panel action-panel"><div className="inline-form"><label>Network<select value={nftNetwork} onChange={event=>setNftNetwork(event.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option></select></label><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallet addresses</button></div>
+        {nftBusy&&<div className="feature-loading" role="status">Loading NFTs from the read-only provider…</div>}
+        {nftError&&<div className="feature-error" role="alert">{nftError}</div>}
+        {nftData&&<><div className="panel-head"><div><h2>{nftData.nft_count} NFT(s) found</h2><span>{nftData.network} · {nftData.source}</span></div></div>
+          {nftData.nfts?.length?<div className="feature-grid">{nftData.nfts.map((item,index)=><article className="panel action-panel" key={item.contract_address+":"+item.token_id+":"+index}>{item.image_url?<img src={item.image_url} alt={item.name} loading="lazy" style={{width:"100%",maxHeight:220,objectFit:"contain",borderRadius:12}}/>:<div className="feature-icon">◇</div>}<h3>{item.name}</h3><p>{item.collection||"Unlabelled collection"} · Token #{item.token_id||"unknown"}</p><small>{item.contract_address}</small></article>)}</div>:<div className="live-chart-empty">The provider returned no NFTs for this address and network.</div>}
+          <p className="security-note">{nftData.notice}</p>
+        </>}
+      </article>
+    </section>;
+  }
+
+  if (active === "Staking") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ON-CHAIN POSITIONS</p><h1>Staking</h1><p className="muted">Read-only staking status for supported protocols.</p></div><button className="secondary" onClick={()=>setActive("Support Center")}>Request an integration →</button></div>
+      <article className="panel action-panel"><h2>No verified staking provider is connected</h2><p>A wallet address alone cannot enumerate or value staking positions across arbitrary protocols. This workspace will show positions only after a verified protocol indexer and contract registry are configured.</p><div className="security-note">No sample positions, token balances, rewards, APRs or estimated returns are displayed. No staking approval or transaction signing is available here.</div><button className="primary" onClick={()=>{setSupportTitle("Staking integration request");setSupportDetails("Please enable read-only staking position discovery for supported networks and protocols.");setActive("Support Center");}}>Request staking support</button></article>
+    </section>;
+  }
+
   if (active === "Help & Docs") {
     const docs = [
       ["Getting started","Create a wallet profile or attach a public address from Wallets. A profile is not the same as a generated on-chain wallet.","Wallets"],
@@ -2292,7 +2461,30 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / DOCUMENTATION</p><h1>Help &amp; Docs</h1><p className="muted">Guidance for using the wallet safely and checking live data.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="feature-grid">{docs.map(([title,body,target],i)=><article className="panel action-panel" key={title}><p className="feature-kicker">GUIDE {String(i+1).padStart(2,"0")}</p><h2>{title}</h2><p>{body}</p><button className="secondary" onClick={()=>setActive(target)}>Open {target} →</button></article>)}</div></section>;
   }
   if (active === "Support Center") {
-    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / SUPPORT</p><h1>Support Center</h1><p className="muted">Choose a connected page to investigate an issue.</p></div><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs →</button></div><article className="panel action-panel"><h2>Troubleshooting</h2><p>These shortcuts open the relevant app pages. This screen does not submit a support ticket or claim that a service is healthy.</p>{[["Sign-in and account","Profile"],["Wallets and addresses","Wallets"],["Market prices and API keys","API Keys"],["Transaction history","Transactions"]].map(([label,target])=><div className="tool-row" key={target}><div><b>{label}</b></div><button className="secondary" onClick={()=>setActive(target)}>{target} →</button></div>)}<div className="security-note">Never provide support with a private key or seed phrase. A ticket submission channel is not configured on this page.</div></article></section>;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / SUPPORT</p><h1>Support Center</h1><p className="muted">Create and track a support request for this wallet account.</p></div><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs →</button></div>
+      <article className="panel action-panel">
+        <h2>Contact support</h2>
+        <label>Request subject<input value={supportTitle} maxLength={120} onChange={event=>setSupportTitle(event.target.value)} placeholder="Describe the issue in a few words"/></label>
+        <label>Details<textarea value={supportDetails} maxLength={1000} rows={5} onChange={event=>setSupportDetails(event.target.value)} placeholder="Include the affected page, network and approximate time. Never include passwords, API secrets, private keys or recovery phrases."/></label>
+        {supportSubmitMessage && <div className={/created|submitted/i.test(supportSubmitMessage)?"feature-success":"feature-error"} role="status">{supportSubmitMessage}</div>}
+        <button className="primary feature-submit" disabled={supportSubmitBusy||supportTitle.trim().length<2} onClick={async()=>{
+          setSupportSubmitBusy(true);setSupportSubmitMessage("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/request-center",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({kind:"support",title:supportTitle.trim(),details:supportDetails.trim()})});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Support request could not be submitted.");
+            setSupportItems(previous=>[data.request,...previous]);setSupportTitle("");setSupportDetails("");setSupportSubmitMessage("Support request submitted and saved to your Request Center.");
+          } catch(error) { setSupportSubmitMessage(error.message||"Support request could not be submitted."); }
+          finally { setSupportSubmitBusy(false); }
+        }}>{supportSubmitBusy?"Submitting…":"Submit support request →"}</button>
+        <div className="security-note">Requests are saved to your authenticated wallet account. Support never needs your password, seed phrase, private key or one-time code.</div>
+      </article>
+      <article className="panel action-panel">
+        <div className="panel-head"><div><h2>Your support requests</h2><span>Support-type requests saved for the active wallet</span></div><button className="secondary" onClick={async()=>{setSupportLoadError("");try{const response=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken},cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Could not refresh requests.");setSupportItems((data.requests||[]).filter(item=>item.kind==="support"));}catch(error){setSupportLoadError(error.message||"Could not refresh requests.");}}}>↻ Refresh</button></div>
+        {supportLoadError&&<div className="feature-error" role="alert">{supportLoadError}</div>}
+        {supportItems.length?<div className="tool-list">{supportItems.map(item=><div className="tool-row" key={item.id}><div><b>{item.title}</b><small>{item.created_at?new Date(item.created_at).toLocaleString():"Saved request"} · {item.status}</small><small>{item.details}</small></div><strong>{item.status}</strong></div>)}</div>:<div className="live-chart-empty">No support requests have been submitted for this wallet yet.</div>}
+      </article>
+    </section>;
   }
   const moduleGuidance = {
     "Admin Editor":"Editing tools are not connected to a verified backend workflow yet.",

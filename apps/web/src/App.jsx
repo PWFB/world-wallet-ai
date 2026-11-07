@@ -260,7 +260,6 @@ function App() {
     } catch {}
   }, [active]);
 
-  const [showDashboardMore, setShowDashboardMore] = useState(false);
   const [coinFilter, setCoinFilter] = useState("all");
   const [coinSearch, setCoinSearch] = useState("");
   const [selectedCoin, setSelectedCoin] = useState(null);
@@ -342,6 +341,7 @@ function App() {
     return [...catalog, ...additionalWalletAssets];
   }, [walletCoinCatalog, tokenRegistry, marketPrices, assets]);
   const [apiStatus, setApiStatus] = useState("loading");
+  const [walletAnnouncement, setWalletAnnouncement] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [dashboardAddresses, setDashboardAddresses] = useState([]);
@@ -382,6 +382,18 @@ function App() {
   const [accessToken, setAccessToken] = useState(() => {
     try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
   });
+  useEffect(() => {
+    if (!accessToken) { setWalletAnnouncement(null); return undefined; }
+    let cancelled = false;
+    fetch(API_BASE_URL + "/api/v1/announcement", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Announcement unavailable");
+        if (!cancelled) setWalletAnnouncement(data.announcement || null);
+      })
+      .catch(() => { if (!cancelled) setWalletAnnouncement(null); });
+    return () => { cancelled = true; };
+  }, [accessToken]);
   const [authRestoring, setAuthRestoring] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState("off");
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
@@ -1671,6 +1683,9 @@ function App() {
               <div className="web3-context-item"><span>WALLET DATA</span><b>{apiStatus === "online" ? "Account connected" : apiStatus === "error" ? "API unavailable" : "Checking connection"}</b><small>Balances are shown only when verified by your account or chain RPC.</small></div>
               <button type="button" className="web3-context-manage" onClick={() => setActive("Wallets")}>Manage wallets <span>→</span></button>
             </div>
+            {walletAnnouncement?.enabled && <article className="panel wallet-announcement" role="status">
+              <div><span className="feature-kicker">WORLD WALLET AI ANNOUNCEMENT</span><h2>{walletAnnouncement.title}</h2><p>{walletAnnouncement.body}</p></div>
+            </article>}
 
             
             <section className="dashboard-chain-grid" aria-label="Supported blockchain networks">
@@ -1839,7 +1854,7 @@ function App() {
               <p className="dashboard-security-note">Mainnet and testnet balances remain separate. World Wallet AI never needs your recovery phrase or private key.</p>
             </article>
           </section>) : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
-          <FeaturePage accountUserId={accountUserId} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); if (Array.isArray(data?.updates)) setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage accountUserId={accountUserId} accountName={user?.name || ""} accountEmail={user?.email || ""} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); if (Array.isArray(data?.updates)) setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             asset: tx.asset || tx.symbol || "",
@@ -1861,65 +1876,26 @@ function App() {
         }
 
         {active === "Dashboard" && !selectedCoin && (
-          <>
-            {showDashboardMore && (
-              <div className="dashboard-more-backdrop" onClick={() => setShowDashboardMore(false)}>
-                <section className="dashboard-more-sheet" aria-label="More wallet shortcuts" onClick={event => event.stopPropagation()}>
-                  <div className="dashboard-more-heading"><div><small>WALLET SHORTCUTS</small><h2>More</h2></div><button type="button" aria-label="Close more shortcuts" onClick={() => setShowDashboardMore(false)}>×</button></div>
-                  <div className="dashboard-more-grid">
-                    {[
-                      ["Portfolio", "▥", "Assets and holdings"],
-                      ["Transactions", "↔", "Transaction history"],
-                      ["Markets", "⌁", "Live market quotes"],
-                      ["Staking", "♧", "Staking workspace"],
-                      ["NFTs", "◇", "NFT workspace"],
-                      ["BALMZ AI", "✦", "Wallet intelligence"],
-                      ["BALMZ Presale", "◉", "Token presale workspace"],
-                      ["Wallet Safety", "⛨", "Security and recovery guidance"],
-                      ["Wallet Connect", "⌘", "Connected signing apps"],
-                      ["Proof of Reserves", "✓", "Reserve snapshot"],
-                      ["Browser", "⌕", "Search websites and explorers"],
-                      ["Address Book", "▤", "Saved trusted addresses"],
-                      ["Address Converter", "⇄", "Compare addresses"],
-                      ["Sepolia Converter", "◇", "Sepolia testnet tools"],
-                      ["Contract Converter", "⌁", "Inspect contract data"],
-                      ["Contract Generator", "✣", "Draft smart contracts"],
-                      ["Verify Contract", "✓", "Verify deployed contracts"],
-                      ["API Request", "⌘", "API request workspace"],
-                      ["API Keys", "⚿", "Manage API credentials"],
-                      ["Support Center", "?", "Contact support"],
-                      ["Request Center", "◎", "Wallet requests"],
-                      ["Help & Docs", "i", "Guides and documentation"],
-                    ].map(([page, icon, description]) => (
-                      <button type="button" key={page} onClick={() => { setActive(page); setShowDashboardMore(false); }}>
-                        <span>{icon}</span><div><b>{page}</b><small>{description}</small></div><i>›</i>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              </div>
-            )}
-            <nav className="dashboard-bottom-nav" aria-label="Dashboard shortcuts">
-              <button type="button" className="dashboard-tab active" aria-current="page" onClick={() => { setActive("Dashboard"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">⌂</span><small>Home</small>
-              </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Wallets"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">◈</span><small>Wallets</small>
-              </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Receive"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">↙</span><small>Receive</small>
-              </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Send"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">↗</span><small>Send</small>
-              </button>
-              <button type="button" className="dashboard-tab" onClick={() => { setActive("Transactions"); setShowDashboardMore(false); }}>
-                <span className="dashboard-tab-icon">↔</span><small>Activity</small>
-              </button>
-              <button type="button" className={"dashboard-tab" + (showDashboardMore ? " selected" : "")} aria-expanded={showDashboardMore} onClick={() => setShowDashboardMore(value => !value)}>
-                <span className="dashboard-tab-icon">•••</span><small>More</small>
-              </button>
-            </nav>
-          </>
+          <nav className="dashboard-bottom-nav" aria-label="Dashboard shortcuts">
+            <button type="button" className="dashboard-tab active" aria-current="page" onClick={() => setActive("Dashboard")}>
+              <span className="dashboard-tab-icon">⌂</span><small>Home</small>
+            </button>
+            <button type="button" className="dashboard-tab" onClick={() => setActive("Wallets")}>
+              <span className="dashboard-tab-icon">◈</span><small>Wallets</small>
+            </button>
+            <button type="button" className="dashboard-tab" onClick={() => setActive("Receive")}>
+              <span className="dashboard-tab-icon">↙</span><small>Receive</small>
+            </button>
+            <button type="button" className="dashboard-tab" onClick={() => setActive("Send")}>
+              <span className="dashboard-tab-icon">↗</span><small>Send</small>
+            </button>
+            <button type="button" className="dashboard-tab" onClick={() => setActive("Transactions")}>
+              <span className="dashboard-tab-icon">↔</span><small>Activity</small>
+            </button>
+            <button type="button" className="dashboard-tab" aria-label="Open all wallet pages and tools" onClick={() => { setRootSearch(""); setMobileMenuOpen(true); }}>
+              <span className="dashboard-tab-icon">•••</span><small>More</small>
+            </button>
+          </nav>
         )}
       </main>
     </div>
