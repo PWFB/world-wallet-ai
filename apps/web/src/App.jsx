@@ -371,7 +371,7 @@ function App() {
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [networkStatus, setNetworkStatus] = useState({});
   const [user, setUser] = useState(null);
-  const accountUserId = String(user?.id || user?.userId || user?.sub || "");
+  const accountUserId = String(user?.id || user?.userId || user?.user_id || user?.sub || "");
   const activeWalletServerId = String(wallet?.wallet_id || wallet?.id || "");
   const visibleLocalWalletEntries = localWalletEntries.filter(entry => entry.ownerUserId
     ? String(entry.ownerUserId) === accountUserId
