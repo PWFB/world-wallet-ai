@@ -458,7 +458,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     }));
   });
   const visibleAddresses = [...walletAddresses, ...localWalletAddresses].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
-  const walletNumberFor = id => allAccountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || "Create a signing wallet";
+  const walletNumberFor = id => allAccountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || String(wallets.find(item => item.id === id)?.wallet_number || "Create a signing wallet");
 
   return <section className="content feature-content">
     <div className="page-heading">
@@ -466,7 +466,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel">
         <p className="feature-kicker">WALLET STRUCTURE</p>
