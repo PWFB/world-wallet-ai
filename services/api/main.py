@@ -2094,6 +2094,65 @@ def wallet_addresses(user: dict = Depends(current_user)):
     return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "No production wallet address is configured yet"}
 
 
+@app.get("/api/v1/wallet/nfts")
+def wallet_nfts(network: str = "ethereum", user: dict = Depends(current_user)):
+    """Read the active wallet's NFTs using Alchemy; never fabricates empty holdings."""
+    normalized_network = str(network or "").strip().lower()
+    hosts = {"ethereum": "eth-mainnet", "bnb": "bnb-mainnet"}
+    if normalized_network not in hosts:
+        raise HTTPException(status_code=400, detail="NFT lookup currently supports Ethereum and BNB Chain mainnet only")
+    owner_address = wallet_network_address(user, normalized_network)
+    if not owner_address:
+        raise HTTPException(status_code=404, detail=f"No {normalized_network} public address is attached to the active wallet")
+    if not ALCHEMY_API_KEY:
+        raise HTTPException(status_code=503, detail="NFT indexing is not configured. Set ALCHEMY_API_KEY on the backend.")
+    url = f"https://{hosts[normalized_network]}.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getNFTsForOwner"
+    try:
+        response = httpx.get(url, params={"owner": owner_address, "withMetadata": "true", "pageSize": 100}, timeout=12)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="NFT provider timed out. Retry the read-only lookup.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="NFT provider could not be reached.") from exc
+    if response.status_code in (401, 403):
+        raise HTTPException(status_code=503, detail="The configured NFT provider key is invalid or lacks NFT API access.")
+    if response.status_code == 429:
+        raise HTTPException(status_code=503, detail="NFT provider rate limit reached. Retry later.")
+    if response.is_error:
+        raise HTTPException(status_code=502, detail=f"NFT provider returned HTTP {response.status_code}.")
+    try:
+        payload = response.json()
+        source_items = payload.get("ownedNfts", []) if isinstance(payload, dict) else []
+        nfts = []
+        for item in source_items if isinstance(source_items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            contract = item.get("contract") if isinstance(item.get("contract"), dict) else {}
+            image = item.get("image") if isinstance(item.get("image"), dict) else {}
+            image_url = image.get("cachedUrl") or image.get("thumbnailUrl") or image.get("originalUrl") or ""
+            if not str(image_url).startswith("https://"):
+                image_url = ""
+            nfts.append({
+                "name": str(item.get("name") or item.get("title") or "Unnamed NFT")[:160],
+                "description": str(item.get("description") or "")[:500],
+                "token_id": str(item.get("tokenId") or ""),
+                "contract_address": str(contract.get("address") or ""),
+                "collection": str(contract.get("name") or contract.get("symbol") or "")[:160],
+                "image_url": image_url,
+                "token_type": str(item.get("tokenType") or ""),
+            })
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=502, detail="NFT provider returned an invalid collection response.") from exc
+    return {
+        "network": normalized_network,
+        "owner_address": owner_address,
+        "source": "Alchemy NFT API",
+        "nft_count": len(nfts),
+        "nfts": nfts,
+        "has_more": bool(payload.get("pageKey")) if isinstance(payload, dict) else False,
+        "notice": "Read-only collection data. Images and metadata are supplied by the NFT provider and may be incomplete.",
+    }
+
+
 def _chain_heights():
     heights = {}
     try:
