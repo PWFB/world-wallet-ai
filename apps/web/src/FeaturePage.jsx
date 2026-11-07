@@ -432,12 +432,16 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
-  const accountLocalEntries = localEntries.filter(entry => {
+  const allAccountLocalEntries = localEntries.filter(entry => {
     const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
     const belongsToAccount = entry.ownerUserId
       ? String(entry.ownerUserId) === String(accountUserId)
       : Boolean(serverWalletId && wallets.some(item => item.id === serverWalletId));
-    return belongsToAccount && String(serverWalletId) === String(walletId);
+    return belongsToAccount;
+  });
+  const accountLocalEntries = allAccountLocalEntries.filter(entry => {
+    const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
+    return String(serverWalletId) === String(walletId);
   });
   const localWalletAddresses = accountLocalEntries.flatMap(entry => {
     const addressSet = entry.addresses && typeof entry.addresses === "object"
@@ -454,7 +458,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     }));
   });
   const visibleAddresses = [...walletAddresses, ...localWalletAddresses].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
-  const walletNumberFor = id => accountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || "Create a signing wallet";
+  const walletNumberFor = id => allAccountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || "Create a signing wallet";
 
   return <section className="content feature-content">
     <div className="page-heading">
