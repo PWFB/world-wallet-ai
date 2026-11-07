@@ -1896,7 +1896,7 @@ function App() {
               <span className="dashboard-tab-icon">•••</span><small>More</small>
             </button>
           </nav>
-        )}}
+        )}
       </main>
     </div>
   );
