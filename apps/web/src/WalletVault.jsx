@@ -236,7 +236,18 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setVerifySignatureInput("");
     try {
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
-      if (signer.address.toLowerCase() !== entry.address.toLowerCase()) throw new Error("Wallet address integrity check failed.");
+      const expectedEvmAddress = entry.addresses?.ethereum || entry.address;
+      if (signer.address.toLowerCase() !== String(expectedEvmAddress).toLowerCase()) throw new Error("Wallet address integrity check failed.");
+      const recoveredPhrase = entry.encryptedMnemonic ? await decryptMnemonic(entry.encryptedMnemonic, password) : (signer.mnemonic?.phrase || "");
+      const recoveredAddresses = recoveredPhrase
+        ? await deriveWalletAddresses(recoveredPhrase)
+        : (entry.addresses || { [entry.network || "ethereum"]: entry.address });
+      if (recoveredAddresses.ethereum && recoveredAddresses.ethereum.toLowerCase() !== signer.address.toLowerCase()) throw new Error("Recovery phrase does not match the encrypted EVM key.");
+      setUnlockedAddresses(recoveredAddresses);
+      if (recoveredPhrase && (!entry.encryptedMnemonic || !entry.addresses)) {
+        const updatedEntry = { ...entry, encryptedMnemonic: entry.encryptedMnemonic || await encryptMnemonic(recoveredPhrase, password), addresses: recoveredAddresses };
+        persistVault(entries.map(item => item.walletId === entry.walletId ? updatedEntry : item));
+      }
       setUnlocked(signer);
       setKeyRevealPassword("");
       setRevealedPrivateKey("");
@@ -256,6 +267,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       }
     } catch {
       setUnlocked(null);
+      setUnlockedAddresses(null);
       setKeyRevealPassword("");
       setRevealedPrivateKey("");
       setMessage("Could not unlock this wallet. Check the password; the vault cannot recover a lost password.");
@@ -456,8 +468,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const selected = entries.find(item => item.walletId === selectedId);
   const shown = generated || (unlocked ? {
     walletId: selected?.walletId,
+    walletNumber: selected?.walletNumber,
     name: selected?.name,
     address: unlocked.address,
+    addresses: unlockedAddresses || selected?.addresses || {},
     publicKey: unlocked.publicKey,
     network: selected?.network,
   } : null);
@@ -466,13 +480,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     <article className="panel action-panel">
       <p className="feature-kicker">NON-CUSTODIAL WALLET VAULT</p>
       <h2>Generate a signing wallet</h2>
-      <p className="muted">Wallet keys are generated in this browser. Only the wallet ID and public address are sent to the API. An encrypted keystore is stored locally; the vault password is never stored or transmitted.</p>
+      <p className="muted">A new independent wallet is generated in this browser. It derives the complete mainnet address set and separate testnet/devnet addresses. Only public addresses and an 11-digit wallet number are sent to your account; encrypted recovery material stays on this device.</p>
       <div className="feature-grid">
         <label>Wallet name<input value={walletName} onChange={event => setWalletName(event.target.value)} maxLength="80" placeholder="Personal Wallet" /></label>
-        <label>Default network<select value={network} onChange={event => setNetwork(event.target.value)}><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="ethereum">Ethereum mainnet</option><option value="bnb">BNB Chain</option></select></label>
+        <label>Initial activity network<select value={network} onChange={event => setNetwork(event.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option></select></label>
       </div>
       <label>Local vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="new-password" placeholder="At least 10 characters" /></label>
-      <button className="primary feature-submit" disabled={busy || !accessToken} onClick={createWallet}>{busy ? "Working…" : "Generate wallet + address →"}</button>
+      <button className="primary feature-submit" disabled={busy || !accessToken} onClick={createWallet}>{busy ? "Generating secure wallet…" : "Generate complete wallet →"}</button>
       <div className="security-note">Sepolia RPC endpoint for public testnet access: {SEPOLIA_RPC}. CoinGecko supplies market prices, not blockchain RPC. For production, the server should use its configured WORLD_WALLET_SEPOLIA_RPC_URL.</div>
     </article>
 
@@ -482,9 +496,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <p className="feature-kicker">WALLET DETAILS</p>
       <h2>{shown.name || "Wallet"}</h2>
       <div className="wallet-detail-grid">
-        <div><small>Wallet ID</small><code>{shown.walletId}</code></div>
-        <div><small>Network</small><b>{shown.network === "sepolia" ? "Ethereum Sepolia" : shown.network === "bnb" ? "BNB Chain" : "Ethereum"}</b></div>
-        <div><small>Wallet address</small><code>{shown.address}</code></div>
+        <div><small>Wallet ID</small><code>{shown.walletNumber || "Legacy ID unavailable"}</code></div>
+        <div><small>Wallet model</small><b>Self-custody · Mainnet + separate testnets</b></div>
+        <div><small>Selected address</small><code>{shown.address}</code></div>
+        {Object.entries(shown.addresses || {}).map(([addressNetwork, addressValue]) => <div key={addressNetwork}><small>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet",sepolia:"Ethereum Sepolia (testnet)",solana_devnet:"Solana Devnet (testnet)"})[addressNetwork] || addressNetwork}</small><code>{addressValue}</code></div>)}
       </div>
       {generated && <div className="wallet-secret-warning">
         {generated.secretsHidden ? <>
@@ -508,8 +523,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { setSelectedId(event.target.value); setPassword(""); setUnlocked(null); setGenerated(null); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} — {item.address.slice(0, 8)}… ({item.network})</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletId}</code></div><div><small>Address</small><code>{selected.address}</code></div></div>}
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div><div><small>Ethereum Mainnet</small><code>{selected.addresses?.ethereum || selected.address}</code></div></div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
@@ -538,7 +553,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
