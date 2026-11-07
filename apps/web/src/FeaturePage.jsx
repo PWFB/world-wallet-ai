@@ -459,6 +459,46 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   });
   const visibleAddresses = [...walletAddresses, ...localWalletAddresses].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
   const walletNumberFor = id => allAccountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || String(wallets.find(item => item.id === id)?.wallet_number || "Create a signing wallet");
+  const activeLocalEntry = accountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === walletId);
+  const activeLocalAddressSet = activeLocalEntry?.addresses && typeof activeLocalEntry.addresses === "object"
+    ? activeLocalEntry.addresses
+    : (activeLocalEntry?.address ? { [activeLocalEntry.network || "ethereum"]: activeLocalEntry.address } : {});
+  const localAddressSyncKey = Object.entries(activeLocalAddressSet).map(([networkName, value]) => networkName + ":" + value).sort().join("|");
+  const serverAddressSyncKey = walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()).sort().join("|");
+
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId || !accessToken || !activeLocalEntry || !localAddressSyncKey) return;
+    let cancelled = false;
+    (async () => {
+      const known = new Set(walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()));
+      const failures = [];
+      for (const [networkName, addressValue] of Object.entries(activeLocalAddressSet)) {
+        const key = networkName + ":" + String(addressValue).toLowerCase();
+        if (known.has(key)) continue;
+        try {
+          const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+            method: "POST",
+            headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ network: networkName, address: addressValue, label: "generated " + (activeLocalEntry.walletNumber || "wallet") }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Address sync failed.");
+          known.add(key);
+        } catch (error) {
+          failures.push(networkName + ": " + (error?.message || "sync failed"));
+        }
+        if (cancelled) return;
+      }
+      if (cancelled) return;
+      await loadAddresses(walletId);
+      if (failures.length) setMessage("Some generated receiving addresses still need sync: " + failures.join("; "));
+      else setMessage("The selected wallet's generated addresses are synced.");
+    })().catch(error => {
+      if (!cancelled) setMessage(error?.message || "Unable to sync generated wallet addresses.");
+    });
+    return () => { cancelled = true; };
+  }, [walletId, addressesLoadedForWallet, accessToken, apiBaseUrl, accountUserId, localAddressSyncKey, serverAddressSyncKey]);
+
 
   return <section className="content feature-content">
     <div className="page-heading">
