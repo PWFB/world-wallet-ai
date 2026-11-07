@@ -93,9 +93,10 @@ export default function DashboardWalletPanel({ accessToken, apiBaseUrl, onWallet
       <select id="dashboard-active-wallet-select" value={activeWalletId} disabled={loading || saving || !wallets.length}
         onChange={event => switchWallet(event.target.value)} aria-label="Choose active wallet">
         {!wallets.length && <option value="">No wallet available</option>}
-        {wallets.map(item => <option value={item.id} key={item.id}>{item.name || "Production Wallet"}{String(item.id) === String(activeWalletId) ? " · Active" : ""}</option>)}
+        {wallets.map(item => <option value={item.id} key={item.id}>{item.name || "Wallet"}{item.wallet_number ? " · ID " + item.wallet_number : ""}{String(item.id) === String(activeWalletId) ? " · Active" : ""}</option>)}
       </select>
-      <span className="dashboard-active-wallet-status">{saving ? "Switching…" : activeWallet ? (activeWallet.name || "Production Wallet") + " · Active" : loading ? "Loading wallet…" : "No active wallet"}</span>
+      <span className="dashboard-active-wallet-status">{saving ? "Switching…" : activeWallet ? (activeWallet.name || "Wallet") + (activeWallet.wallet_number ? " · ID " + activeWallet.wallet_number : " · Legacy wallet ID") : loading ? "Loading wallet…" : "No active wallet"}</span>
+      {activeWallet?.wallet_number && <button type="button" className="dashboard-wallet-id-copy" onClick={() => navigator.clipboard?.writeText(String(activeWallet.wallet_number))} aria-label={"Copy wallet ID " + activeWallet.wallet_number} title="Copy 11-digit wallet ID">Copy ID</button>}
     </div>
     {error && <p className="dashboard-active-wallet-error" role="alert">{error}</p>}
   </div>;
