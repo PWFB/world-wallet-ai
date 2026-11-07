@@ -62,7 +62,7 @@ class WalletPublicIdTests(unittest.TestCase):
         self.assertEqual(result["wallet"]["wallet_number"], "12345678901")
         self.assertRegex(result["wallet"]["wallet_number"], r"^\d{11}$")
         insert = next(sql for sql, _ in self.connection.statements if "INSERT INTO wallets" in sql)
-        self.assertIn("RETURNING wallet_number", insert.upper())
+        self.assertIn("RETURNING WALLET_NUMBER", insert.upper())
 
     def test_wallet_list_returns_stable_11_digit_id(self):
         with patch.object(main, "db", return_value=self.database):
