@@ -1677,33 +1677,11 @@ function App() {
                 <button className="primary" onClick={() => setActive("Send")}>Send</button>
               </div>
             </div>
-            <div className="web3-wallet-context" aria-label="Wallet and network status">
-              <div className="web3-context-item"><span>ACTIVE ENVIRONMENT</span><b>{networkEnvironment(selectedNetwork).toUpperCase()}</b><small>{["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? "Test network · no mainnet value" : "Production network"}</small></div>
-              <div className="web3-context-item"><span>SELECTED NETWORK</span><b>{({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain", bitcoin: "Bitcoin Mainnet", solana_mainnet: "Solana Mainnet", sepolia: "Ethereum Sepolia", solana_devnet: "Solana Devnet" })[selectedNetwork] || selectedNetwork}</b><small>{selectedNetworkBalance?.syncedAt ? "Last checked " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : selectedNetworkBalanceMessage || "Choose a chain to inspect its public address"}</small></div>
-              <div className="web3-context-item"><span>WALLET DATA</span><b>{apiStatus === "online" ? "Account connected" : apiStatus === "error" ? "API unavailable" : "Checking connection"}</b><small>Balances are shown only when verified by your account or chain RPC.</small></div>
-              <button type="button" className="web3-context-manage" onClick={() => setActive("Wallets")}>Manage wallets <span>→</span></button>
-            </div>
             {walletAnnouncement?.enabled && <article className="panel wallet-announcement" role="status">
               <div><span className="feature-kicker">WORLD WALLET AI ANNOUNCEMENT</span><h2>{walletAnnouncement.title}</h2><p>{walletAnnouncement.body}</p></div>
             </article>}
 
             
-            <section className="dashboard-chain-grid" aria-label="Supported blockchain networks">
-              {[
-                ["ethereum", "Ethereum", "Mainnet", "ETH"],
-                ["bnb", "BNB Chain", "Mainnet", "BNB"],
-                ["bitcoin", "Bitcoin", "Mainnet", "BTC"],
-                ["solana_mainnet", "Solana", "Mainnet", "SOL"],
-                ["sepolia", "Ethereum", "Sepolia testnet", "ETH"],
-                ["solana_devnet", "Solana", "Devnet testnet", "SOL"],
-              ].map(([chain, name, environment, ticker]) => (
-                <button type="button" key={chain} className={"dashboard-chain-card" + (selectedNetwork === chain ? " is-selected" : "") + (["sepolia", "solana_devnet"].includes(chain) ? " is-testnet" : "")} aria-pressed={selectedNetwork === chain} onClick={() => changeSelectedNetwork(chain)}>
-                  <span className="dashboard-chain-symbol">{({ ethereum: "Ξ", bnb: "◆", bitcoin: "₿", solana_mainnet: "◎", sepolia: "Ξ", solana_devnet: "◎" })[chain]}</span>
-                  <span className="dashboard-chain-copy"><b>{name}</b><small>{environment} · {ticker}</small></span>
-                  <span className="dashboard-chain-status">{selectedNetwork === chain ? "Selected" : ["sepolia", "solana_devnet"].includes(chain) ? "Test" : "Main"}</span>
-                </button>
-              ))}
-            </section>
 
             <div className="balance-grid web3-balance-grid">
               <article className="hero-card">
