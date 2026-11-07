@@ -363,3 +363,14 @@
   .mining-registered>div{flex-basis:calc(100% - 55px)}
   .mining-registered button{margin-left:48px}
 }
+
+/* Dashboard simplification: network selection stays in the wallet controls, not a duplicate dashboard catalogue. */
+.web3-balance-grid>.stat-card{min-height:88px;padding:11px 13px}
+.web3-balance-grid>.stat-card>span{font-size:8px;line-height:1.35}
+.web3-balance-grid>.stat-card strong{font-size:clamp(12px,1.2vw,15px)}
+.web3-balance-grid>.stat-card .stat-source{font-size:7px;line-height:1.35;margin-top:5px}
+@media(max-width:760px){
+  .web3-balance-grid>.stat-card{min-height:78px;padding:9px 10px}
+  .web3-balance-grid>.stat-card strong{font-size:11px}
+  .web3-balance-grid>.stat-card>span{font-size:7px}
+}
