@@ -2980,6 +2980,8 @@ def admin_roles(user: dict = Depends(current_user)):
 def admin_settings(user: dict = Depends(current_user)):
     require_world_wallet_admin(user)
     checks = [
+        {"key": "World Wallet admin email", "configured": bool(WORLD_WALLET_ADMIN_EMAIL)},
+        {"key": "Alchemy NFT API key", "configured": bool(ALCHEMY_API_KEY)},
         {"key": "PostgreSQL database", "configured": bool(DATABASE_URL)},
         {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
         {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
@@ -2992,6 +2994,68 @@ def admin_settings(user: dict = Depends(current_user)):
     ]
     record_admin_event(user, "view_admin_settings")
     return {"checks": checks, "payments_enabled": False, "transaction_broadcast": "external_wallet_only", "secrets_exposed": False}
+
+
+@app.post("/api/v1/admin/nft-provider/test")
+def admin_test_nft_provider(user: dict = Depends(current_user)):
+    """Make read-only owner-lookup probes against Alchemy without exposing its key or wallet data."""
+    require_world_wallet_admin(user)
+    if not ALCHEMY_API_KEY:
+        raise HTTPException(status_code=503, detail="ALCHEMY_API_KEY is not configured on the backend")
+
+    probe_owner = "0x000000000000000000000000000000000000dEaD"
+    results = []
+    for network in ("eth-mainnet", "bnb-mainnet"):
+        url = f"https://{network}.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getNFTsForOwner"
+        try:
+            response = httpx.get(
+                url,
+                params={"owner": probe_owner, "pageSize": 1, "withMetadata": "false"},
+                timeout=12,
+            )
+        except httpx.TimeoutException:
+            results.append({"network": network, "ok": False, "message": "Provider request timed out"})
+            continue
+        except httpx.HTTPError:
+            results.append({"network": network, "ok": False, "message": "Provider could not be reached"})
+            continue
+
+        if response.status_code in (401, 403):
+            results.append({"network": network, "ok": False, "message": "Alchemy rejected the configured key or its NFT API permissions"})
+            continue
+        if response.status_code == 429:
+            results.append({"network": network, "ok": False, "message": "Alchemy rate limit reached"})
+            continue
+        if response.is_error:
+            results.append({"network": network, "ok": False, "message": f"Alchemy returned HTTP {response.status_code}"})
+            continue
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict) or not isinstance(payload.get("ownedNfts"), list):
+            results.append({"network": network, "ok": False, "message": "Alchemy returned an unexpected NFT API response"})
+            continue
+        results.append({
+            "network": network,
+            "ok": True,
+            "message": "Alchemy NFT API responded successfully",
+            "probe_items": len(payload["ownedNfts"]),
+        })
+
+    success = bool(results) and all(item["ok"] for item in results)
+    record_admin_event(
+        user,
+        "test_alchemy_nft_provider",
+        "success=" + str(success).lower() + "; networks=" + ",".join(item["network"] for item in results if item["ok"]),
+    )
+    return {
+        "success": success,
+        "key_configured": True,
+        "results": results,
+        "notice": "Read-only provider connectivity test using a fixed public probe address. No customer wallet address, key, NFT content or private data was requested or returned.",
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.get("/api/v1/admin/activity")
