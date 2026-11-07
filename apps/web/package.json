@@ -11,7 +11,7 @@
     "cap:add:android": "cap add android",
     "cap:sync": "npm run build && cap sync android",
     "cap:open:android": "cap open android",
-    "test:wallet-safety": "node --test src/wallet-safety.test.js"
+    "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
