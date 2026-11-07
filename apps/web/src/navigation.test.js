@@ -64,3 +64,11 @@ test("admin destinations use server-backed restricted endpoints", () => {
     "/api/v1/admin/roles",
   ]) assert.ok(featureSource.includes(endpoint), "missing admin endpoint: " + endpoint);
 });
+
+
+test("admin System Settings exposes Alchemy runtime verification without client-side secrets", () => {
+  assert.match(featureSource, /Alchemy NFT API connectivity/);
+  assert.match(featureSource, /Test Alchemy API/);
+  assert.match(featureSource, /api\/v1\/admin\/nft-provider\/test/);
+  assert.match(featureSource, /secret values are never returned/);
+});
