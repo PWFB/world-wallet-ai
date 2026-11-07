@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import "./Web3Dashboard.css";
-import { NAVIGATION_ICONS, WALLET_NAVIGATION } from "./navigation.js";
+import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigation.js";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
@@ -247,6 +247,7 @@ function App() {
     try { return localStorage.getItem("ww_sidebar_collapsed") === "true"; } catch { return false; }
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [rootSearch, setRootSearch] = useState("");
   const [active, setActive] = useState(() => {
     try {
       const saved = localStorage.getItem("ww_active_page");
@@ -1311,6 +1312,22 @@ function App() {
   }
 
   const nav = WALLET_NAVIGATION;
+  const filteredNav = useMemo(() => {
+    const query = rootSearch.trim().toLocaleLowerCase();
+    if (!query) return Object.entries(nav);
+    return Object.entries(nav).map(([group, items]) => [
+      group,
+      items.filter(item => item.toLocaleLowerCase().includes(query) || group.toLocaleLowerCase().includes(query))
+    ]).filter(([, items]) => items.length > 0);
+  }, [nav, rootSearch]);
+
+  function navigateFromRoot(page) {
+    setSelectedCoin(null);
+    if (page !== "Transactions") setFocusedTransaction(null);
+    setActive(page);
+    setRootSearch("");
+    setMobileMenuOpen(false);
+  }
 
   if (!accessToken && !showLogin) {
     return (
@@ -1493,17 +1510,31 @@ function App() {
 
 
 
+        <section className="mobile-root-menu" aria-label="Root wallet and page hub">
+          <div className="mobile-root-card">
+            <span className="mobile-root-card-icon" aria-hidden="true">⌘</span>
+            <div><small>WORLD WALLET AI</small><b>Root</b><span>All wallet pages and tools in one place</span></div>
+            <span className="mobile-root-card-tag">HUB</span>
+          </div>
+          <label className="mobile-root-search">
+            <span aria-hidden="true">⌕</span>
+            <input type="search" value={rootSearch} onChange={event => setRootSearch(event.target.value)} placeholder="Search wallet pages and tools" aria-label="Search all wallet pages" />
+            {rootSearch && <button type="button" onClick={() => setRootSearch("")} aria-label="Clear page search">×</button>}
+          </label>
+          {!rootSearch.trim() && <div className="mobile-root-shortcuts" aria-label="Root quick shortcuts">
+            {ROOT_SHORTCUTS.map(page => <button type="button" key={page} onClick={() => navigateFromRoot(page)}>
+              <span>{NAVIGATION_ICONS[page] || "•"}</span><small>{page === "Transactions" ? "Activity" : page}</small>
+            </button>)}
+          </div>}
+        </section>
         <nav aria-label="Primary wallet navigation">
-          {Object.entries(nav).map(([group, items]) => (
+          {filteredNav.map(([group, items]) => (
             <div className="nav-group" key={group}>
               <small>{group}</small>
               {items.map(item => (
                 <button key={item} className={active === item ? "nav-item active" : "nav-item"} aria-current={active === item ? "page" : undefined} onClick={() => {
                   // A selected coin or transaction detail must not trap navigation on its detail screen.
-                  setSelectedCoin(null);
-                  if (item !== "Transactions") setFocusedTransaction(null);
-                  setActive(item);
-                  if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(false);
+                  navigateFromRoot(item);
                 }}>
                   <span className="nav-icon" aria-hidden="true">{NAVIGATION_ICONS[item] || "•"}</span><span className="nav-label">{item}</span>
                 </button>
@@ -1520,6 +1551,9 @@ function App() {
       <main className="main">
         <header className="topbar">
           <button type="button" className="mobile-brand" aria-label={mobileMenuOpen ? "Close wallet navigation" : "Open wallet navigation"} aria-expanded={mobileMenuOpen} onClick={() => setMobileMenuOpen(current => !current)}><span className="mobile-menu-glyph" aria-hidden="true">{mobileMenuOpen ? "×" : "☰"}</span><span className="mobile-brand-logo"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /></span><b>WORLD WALLET <span>AI</span></b></button>
+          <button type="button" className="mobile-root-trigger" aria-label="Open Root wallet hub" aria-expanded={mobileMenuOpen} onClick={() => { setRootSearch(""); setMobileMenuOpen(true); }}>
+            <span className="mobile-root-trigger-icon" aria-hidden="true">⌘</span><span><b>Root</b><small>All pages</small></span><span className="mobile-root-trigger-arrow" aria-hidden="true">›</span>
+          </button>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
             <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Select wallet environment" value={networkEnvironment(selectedNetwork)} onChange={event => changeNetworkEnvironment(event.target.value)}><option value="mainnet">Mainnet</option><option value="devnet">Devnet</option></select><select aria-label="Select blockchain network" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>{["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option></>}</select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
