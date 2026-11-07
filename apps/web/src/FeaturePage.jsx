@@ -126,7 +126,7 @@ function getLocalExternalReceiveAddress(walletId = "") {
   }).filter(item => item.network);
 }
 function getLocalVaultReceiveAddress(walletId = "", userId = "") {
-  if (!walletId) return [];
+  if (!walletId || !userId) return [];
   try {
     const saved = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]");
     if (!Array.isArray(saved)) return [];
