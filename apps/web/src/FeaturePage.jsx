@@ -462,7 +462,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   return <section className="content feature-content">
     <div className="page-heading">
-      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
+      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Generate full self-custody wallets, manage their receiving addresses, and switch the active wallet.</p></div>
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
