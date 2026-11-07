@@ -1823,7 +1823,7 @@ function App() {
             block_height: tx.block_height,
           }))) } />
           </Suspense>
-        )}
+        }
 
         {active === "Dashboard" && !selectedCoin && (
           <>
