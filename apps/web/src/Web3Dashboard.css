@@ -298,3 +298,12 @@
     line-height:1.5;
   }
 }
+
+@media(max-width:390px){
+  .app-shell .topbar .mobile-brand{gap:5px;flex:0 0 auto}
+  .app-shell .topbar .mobile-brand>b{display:none}
+  .app-shell .topbar .mobile-root-trigger{min-width:62px;gap:5px;padding:5px 7px}
+  .mobile-root-trigger-icon{width:25px;height:25px;flex-basis:25px;font-size:15px}
+  .mobile-root-trigger>span:nth-child(2) small,.mobile-root-trigger-arrow{display:none}
+  .mobile-root-trigger b{font-size:9px}
+}
