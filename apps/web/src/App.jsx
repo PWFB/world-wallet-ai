@@ -373,9 +373,9 @@ function App() {
   const [user, setUser] = useState(null);
   const accountUserId = String(user?.id || user?.userId || user?.user_id || user?.sub || "");
   const activeWalletServerId = String(wallet?.wallet_id || wallet?.id || "");
-  const visibleLocalWalletEntries = localWalletEntries.filter(entry => entry.ownerUserId
+  const visibleLocalWalletEntries = accountUserId ? localWalletEntries.filter(entry => entry.ownerUserId
     ? String(entry.ownerUserId) === accountUserId
-    : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId));
+    : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
   const [accessToken, setAccessToken] = useState(() => {
     try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
   });
