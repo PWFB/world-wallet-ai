@@ -43,7 +43,7 @@ test("Root hub shortcuts resolve to real sidebar pages", () => {
 test("dashboard More opens the Root shortcut hub instead of duplicating the sidebar catalogue", () => {
   assert.doesNotMatch(appSource, /dashboard-more-grid|dashboard-more-sheet/);
   assert.match(appSource, /aria-label="Open all wallet pages and tools"/);
-  assert.match(appSource, /setRootSearch\("";\)\s*setMobileMenuOpen\(true\)/);
+  assert.match(appSource, /setRootSearch\("")\s*;\s*setMobileMenuOpen\(true\)/);
   assert.match(appSource, /mobile-root-menu/);
 });
 
