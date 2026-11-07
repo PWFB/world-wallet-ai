@@ -395,12 +395,32 @@ def init_db():
           requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS phone_otp_requests_phone_time_idx ON phone_otp_requests(phone_number,requested_at DESC);
+        CREATE SEQUENCE IF NOT EXISTS wallets_wallet_number_seq
+          AS BIGINT MINVALUE 1 MAXVALUE 99999999999 START WITH 10000000000 INCREMENT BY 1 NO CYCLE;
         CREATE TABLE IF NOT EXISTS wallets(
           id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
           name TEXT NOT NULL DEFAULT 'Wallet', currency TEXT NOT NULL DEFAULT 'USD',
+          wallet_number BIGINT NOT NULL DEFAULT nextval('wallets_wallet_number_seq')
+            CHECK (wallet_number BETWEEN 10000000000 AND 99999999999),
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE wallets ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Wallet';
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS wallet_number BIGINT;
+        UPDATE wallets SET wallet_number=nextval('wallets_wallet_number_seq') WHERE wallet_number IS NULL;
+        ALTER TABLE wallets ALTER COLUMN wallet_number SET DEFAULT nextval('wallets_wallet_number_seq');
+        ALTER TABLE wallets ALTER COLUMN wallet_number SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_wallet_number_unique ON wallets(wallet_number);
+        DO $$
+        BEGIN
+          ALTER TABLE wallets ADD CONSTRAINT wallets_wallet_number_11_digits
+            CHECK (wallet_number BETWEEN 10000000000 AND 99999999999);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        SELECT setval(
+          'wallets_wallet_number_seq',
+          GREATEST(COALESCE((SELECT MAX(wallet_number) FROM wallets), 9999999999::BIGINT), 9999999999::BIGINT),
+          TRUE
+        );
         CREATE TABLE IF NOT EXISTS token_registry(
           id TEXT PRIMARY KEY,
           symbol TEXT NOT NULL,
@@ -3033,32 +3053,35 @@ def list_token_registry(user: dict = Depends(current_user)):
 @app.get("/api/v1/wallets")
 def list_wallets(user: dict = Depends(current_user)):
     with db() as conn:
-        rows=conn.execute("SELECT id,name,created_at FROM wallets WHERE owner_id=%s ORDER BY created_at ASC",(user["id"],)).fetchall()
-    return {"wallets":[{"id":r[0],"name":r[1],"created_at":r[2].isoformat() if r[2] else None,"active":r[0]==user.get("wallet_id")} for r in rows],"active_wallet_id":user.get("wallet_id")}
+        rows=conn.execute("SELECT id,name,created_at,wallet_number FROM wallets WHERE owner_id=%s ORDER BY created_at ASC",(user["id"],)).fetchall()
+    return {"wallets":[{"id":r[0],"name":r[1],"created_at":r[2].isoformat() if r[2] else None,"wallet_number":str(r[3]),"active":r[0]==user.get("wallet_id")} for r in rows],"active_wallet_id":user.get("wallet_id")}
 
 
 @app.post("/api/v1/wallets")
 def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user)):
     wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
     with db() as conn:
-        conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
+        wallet_row=conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) RETURNING wallet_number",(wallet_id,user["id"],request.name.strip())).fetchone()
+        if not wallet_row or wallet_row[0] is None:
+            raise HTTPException(status_code=500,detail="A unique wallet number could not be assigned.")
+        wallet_number=str(wallet_row[0])
         for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
         conn.commit()
     user["wallet_id"]=wallet_id
-    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
+    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"wallet_number":wallet_number,"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
 
 
 @app.post("/api/v1/wallets/active")
 def activate_wallet(request: WalletActivateRequest,user: dict = Depends(current_user)):
     with db() as conn:
-        row=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
+        row=conn.execute("SELECT id,name,wallet_number FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
         if not row: raise HTTPException(status_code=404, detail="Wallet not found")
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(row[0],user["id"]))
         conn.commit()
     user["wallet_id"]=row[0]
-    return {"wallet":{"id":row[0],"name":row[1],"active":True}}
+    return {"wallet":{"id":row[0],"name":row[1],"wallet_number":str(row[2]),"active":True}}
 
 
 @app.get("/api/v1/wallets/{wallet_id}/addresses")
