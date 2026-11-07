@@ -14,6 +14,9 @@ class FakeResult:
     def fetchone(self):
         return self.row
 
+    def fetchall(self):
+        return []
+
 
 class FakeConnection:
     def __init__(self):
