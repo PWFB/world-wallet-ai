@@ -248,6 +248,12 @@ class RequestStatusUpdate(BaseModel):
     status: str = Field(min_length=2, max_length=32)
 
 
+class AdminAnnouncementUpdate(BaseModel):
+    title: str = Field(default="", max_length=120)
+    body: str = Field(default="", max_length=600)
+    enabled: bool = False
+
+
 class AddressBookCreate(BaseModel):
     label: str = Field(min_length=1, max_length=80)
     address: str = Field(min_length=4, max_length=128)
@@ -494,6 +500,24 @@ def init_db():
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id),
           kind TEXT NOT NULL, title TEXT NOT NULL, details TEXT NOT NULL DEFAULT '',
           status TEXT NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS admin_audit_events(
+          id TEXT PRIMARY KEY,
+          actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          actor_email TEXT NOT NULL,
+          action TEXT NOT NULL,
+          details TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS admin_audit_events_created_idx
+          ON admin_audit_events(created_at DESC);
+        CREATE TABLE IF NOT EXISTS wallet_announcements(
+          id SMALLINT PRIMARY KEY CHECK(id=1),
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          enabled BOOLEAN NOT NULL DEFAULT FALSE,
+          updated_by TEXT NOT NULL REFERENCES users(id),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
@@ -2797,6 +2821,163 @@ def system_status(user: dict = Depends(current_user)):
         "transaction_broadcast": False,
         "transaction_broadcast_mode": "external_wallet_signed_by_client",
     }
+
+
+
+def require_world_wallet_admin(user):
+    """Protect administrative data with the explicitly configured owner identity."""
+    email = str((user or {}).get("email") or "").strip().lower()
+    configured_email = WORLD_WALLET_ADMIN_EMAIL.strip().lower()
+    if not configured_email:
+        raise HTTPException(status_code=503, detail="Set WORLD_WALLET_ADMIN_EMAIL in the backend environment before using the admin console")
+    if email != configured_email:
+        raise HTTPException(status_code=403, detail="This account is not the configured World Wallet AI administrator")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="The admin console requires the production database")
+    return email
+
+
+def record_admin_event(user, action: str, details: str = ""):
+    """Persist a minimal audit record; never store secrets or request payloads."""
+    event_id = "adm_" + secrets.token_urlsafe(18)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO admin_audit_events(id,actor_user_id,actor_email,action,details) VALUES(%s,%s,%s,%s,%s)",
+            (event_id, user["id"], str(user.get("email") or "").strip().lower(), action[:80], details[:240]),
+        )
+        conn.commit()
+
+
+@app.get("/api/v1/announcement")
+def get_wallet_announcement(user: dict = Depends(current_user)):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT title,body,enabled,updated_at FROM wallet_announcements WHERE id=1"
+        ).fetchone()
+    if not row or not row[2]:
+        return {"announcement": None}
+    return {"announcement": {"title": row[0], "body": row[1], "enabled": bool(row[2]), "updated_at": row[3].isoformat() if row[3] else None}}
+
+
+@app.get("/api/v1/admin/overview")
+def admin_overview(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    with db() as conn:
+        counts = {
+            "users": conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+            "wallets": conn.execute("SELECT COUNT(*) FROM wallets").fetchone()[0],
+            "transactions": conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+            "requests": conn.execute("SELECT COUNT(*) FROM wallet_requests").fetchone()[0],
+            "active_api_keys": conn.execute("SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL").fetchone()[0],
+        }
+    record_admin_event(user, "view_admin_overview")
+    return {"counts": counts, "payments_enabled": False, "transaction_signing": "external_wallet_only"}
+
+
+@app.get("/api/v1/admin/users")
+def admin_users(q: str = "", limit: int = 50, offset: int = 0, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    query = str(q or "").strip()[:100]
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    where = ""
+    params = []
+    if query:
+        where = "WHERE lower(u.email) LIKE lower(%s) OR lower(u.name) LIKE lower(%s)"
+        pattern = "%" + query + "%"
+        params.extend([pattern, pattern])
+    with db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM users u " + where, tuple(params)).fetchone()[0]
+        rows = conn.execute(
+            "SELECT u.id,u.name,u.email,u.created_at,COUNT(w.id) "
+            "FROM users u LEFT JOIN wallets w ON w.owner_id=u.id " + where +
+            " GROUP BY u.id,u.name,u.email,u.created_at ORDER BY u.created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        ).fetchall()
+    record_admin_event(user, "view_admin_users", "count=" + str(len(rows)))
+    return {"users": [
+        {"id": row[0], "name": row[1], "email": row[2], "created_at": row[3].isoformat() if row[3] else None, "wallet_count": int(row[4])}
+        for row in rows
+    ], "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.get("/api/v1/admin/roles")
+def admin_roles(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    record_admin_event(user, "view_admin_role_policy")
+    return {
+        "model": "single_owner_allowlist",
+        "owner_email": WORLD_WALLET_ADMIN_EMAIL.strip().lower(),
+        "assignments_editable": False,
+        "roles": [
+            {"name": "Owner Admin", "source": "WORLD_WALLET_ADMIN_EMAIL", "description": "Only this explicitly configured account can access administrative endpoints."},
+            {"name": "Standard User", "source": "default", "description": "All other authenticated accounts. No elevated permissions are implied."},
+        ],
+        "notice": "Role assignment is intentionally read-only until a persistent, audited RBAC policy is introduced. Do not grant admin access by changing client-side data.",
+    }
+
+
+@app.get("/api/v1/admin/settings")
+def admin_settings(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    checks = [
+        {"key": "PostgreSQL database", "configured": bool(DATABASE_URL)},
+        {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
+        {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
+        {"key": "BNB Chain Mainnet RPC", "configured": bool(BSC_RPC_URL)},
+        {"key": "Bitcoin address", "configured": bool(BTC_ADDRESS)},
+        {"key": "Solana Mainnet RPC", "configured": bool(SOLANA_MAINNET_RPC_URL)},
+        {"key": "Solana Devnet RPC", "configured": bool(SOLANA_DEVNET_RPC_URL)},
+        {"key": "CoinGecko server key", "configured": bool(COINGECKO_API_KEY)},
+        {"key": "BALMZ Solana Mainnet mint", "configured": bool(BALMZ_SOLANA_MAINNET_MINT)},
+    ]
+    record_admin_event(user, "view_admin_settings")
+    return {"checks": checks, "payments_enabled": False, "transaction_broadcast": "external_wallet_only", "secrets_exposed": False}
+
+
+@app.get("/api/v1/admin/activity")
+def admin_activity(limit: int = 50, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    limit = max(1, min(int(limit), 100))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,actor_email,action,details,created_at FROM admin_audit_events ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        ).fetchall()
+    record_admin_event(user, "view_admin_activity")
+    return {"events": [
+        {"id": row[0], "actor_email": row[1], "action": row[2], "details": row[3], "created_at": row[4].isoformat() if row[4] else None}
+        for row in rows
+    ]}
+
+
+@app.get("/api/v1/admin/announcement")
+def admin_get_announcement(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    with db() as conn:
+        row = conn.execute("SELECT title,body,enabled,updated_at FROM wallet_announcements WHERE id=1").fetchone()
+    record_admin_event(user, "view_admin_announcement")
+    return {"announcement": {"title": row[0], "body": row[1], "enabled": bool(row[2]), "updated_at": row[3].isoformat() if row[3] else None} if row else {"title": "", "body": "", "enabled": False, "updated_at": None}}
+
+
+@app.put("/api/v1/admin/announcement")
+def admin_update_announcement(request: AdminAnnouncementUpdate, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    title = request.title.strip()
+    body = request.body.strip()
+    if request.enabled and (not title or not body):
+        raise HTTPException(status_code=400, detail="An enabled announcement needs both a title and message")
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO wallet_announcements(id,title,body,enabled,updated_by) VALUES(1,%s,%s,%s,%s) "
+            "ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,body=EXCLUDED.body,enabled=EXCLUDED.enabled,updated_by=EXCLUDED.updated_by,updated_at=NOW()",
+            (title, body, request.enabled, user["id"]),
+        )
+        conn.commit()
+    record_admin_event(user, "update_wallet_announcement", "enabled=" + str(bool(request.enabled)).lower())
+    return {"status": "saved", "announcement": {"title": title, "body": body, "enabled": bool(request.enabled)}}
+
+
 
 @app.get("/api/v1/assets")
 def assets(user: dict = Depends(current_user)):
