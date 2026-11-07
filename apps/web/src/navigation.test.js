@@ -74,6 +74,20 @@ test("admin System Settings exposes Alchemy runtime verification without client-
 });
 
 
+test("dashboard omits duplicate environment and chain catalogue cards while keeping wallet balance", () => {
+  assert.doesNotMatch(appSource, /ACTIVE ENVIRONMENT/);
+  assert.doesNotMatch(appSource, /web3-wallet-context/);
+  assert.doesNotMatch(appSource, /dashboard-chain-grid/);
+  assert.match(appSource, /web3-balance-grid/);
+});
+
+test("BALMZ presale offers wallet-linked early-access registration without enabling payments", () => {
+  assert.match(featureSource, /BALMZ Presale early access/);
+  assert.match(featureSource, /Register for presale updates/);
+  assert.match(featureSource, /payment acceptance remains disabled/i);
+  assert.match(featureSource, /Presale not open/);
+});
+
 test("BALMZ Token Mining is discoverable and has a genuine early-access registration workflow", () => {
   assert.ok(WALLET_NAVIGATION.EXPLORE.includes("Token Mining"));
   assert.ok(ROOT_SHORTCUTS.includes("Token Mining"));
