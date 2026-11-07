@@ -439,7 +439,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   }
 
   function forgetLocalEntry(walletId) {
-    const next = readVault().filter(item => item.walletId !== walletId);
+    const next = entries.filter(item => item.walletId !== walletId);
     persistVault(next);
     if (selectedId === walletId) {
       setSelectedId(next[0]?.walletId || "");
