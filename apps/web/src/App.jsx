@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import "./App.css";
 import "./Web3Dashboard.css";
+import { NAVIGATION_ICONS, WALLET_NAVIGATION } from "./navigation.js";
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
@@ -1309,22 +1310,7 @@ function App() {
     setUser(null);
   }
 
-  const navIcons = {
-    Dashboard: "⌂", Wallets: "◈", Portfolio: "▥", Send: "↗", Receive: "↙", Deposit: "↓", Withdraw: "↑", Swap: "⇄",
-    Transactions: "↔", Profile: "◎", Markets: "⌁", Staking: "♧", NFTs: "◇", "BALMZ AI": "✦", "BALMZ Presale": "◉",
-    "Wallet Connect": "⌘", "Wallet Safety": "⛨", Browser: "⌕", "Address Book": "▤", "Proof of Reserves": "✓",
-    "Sepolia Converter": "◇", "Address Converter": "⇄", "Contract Converter": "⌁", "Contract Generator": "✣",
-    "Verify Contract": "✓", "API Request": "⌘", "API Keys": "⚿", "Request Center": "◎", "Support Center": "?",
-    "Help & Docs": "i", "Admin Editor": "⚙", "User Management": "♙", "System Settings": "⚙",
-    "Logs & Activity": "≋", "Role Management": "♧", "GitHub Integration": "⌘", "Gemini Integration": "✦",
-  };
-  const nav = useMemo(() => ({
-    "MY WALLET": ["Dashboard", "Wallets", "Portfolio", "Send", "Receive", "Deposit", "Withdraw", "Swap", "Transactions", "Profile"],
-    EXPLORE: ["Markets", "Staking", "NFTs", "BALMZ AI", "BALMZ Presale"],
-    "CONNECT & TOOLS": ["Wallet Connect", "Wallet Safety", "Browser", "Address Book", "Proof of Reserves", "Sepolia Converter", "Address Converter", "Contract Converter", "Contract Generator", "Verify Contract", "API Request", "API Keys"],
-    "HELP & DOCS": ["Support Center", "Request Center", "Help & Docs"],
-    ADMIN: ["Admin Editor", "User Management", "System Settings", "Logs & Activity", "Role Management", "GitHub Integration", "Gemini Integration"],
-  }), []);
+  const nav = WALLET_NAVIGATION;
 
   if (!accessToken && !showLogin) {
     return (
