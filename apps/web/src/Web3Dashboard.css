@@ -1,0 +1,127 @@
+/* World Wallet AI — Web3 wallet workspace */
+.sidebar{top:0;left:0;height:100vh;height:100dvh;overflow:hidden}
+.sidebar>nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 4px 12px 0;scrollbar-width:thin;scrollbar-color:#29425f transparent}
+.sidebar>nav::-webkit-scrollbar{width:5px}
+.sidebar>nav::-webkit-scrollbar-thumb{border-radius:8px;background:#29425f}
+.nav-group{margin-bottom:13px}
+.nav-group small{padding-top:3px;font-size:8px;letter-spacing:1.35px}
+.nav-item{min-height:34px;padding:8px 10px;font-size:10.5px}
+.nav-icon{width:18px;font-size:13px;line-height:1}
+.nav-label{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-footer{flex:0 0 auto;padding-top:8px;background:#091225}
+.web3-dashboard{max-width:1580px;padding-top:25px}
+.web3-dashboard-heading{align-items:center;margin-bottom:15px}
+.web3-dashboard-heading h1{font-size:27px;letter-spacing:-.035em}
+.web3-dashboard-heading .muted{margin:7px 0 0;max-width:580px;line-height:1.55}
+.web3-dashboard-heading .page-actions{display:flex;gap:8px;align-items:center}
+.web3-dashboard-heading .page-actions .secondary{border:1px solid #293c5b;border-radius:9px;background:#101d32;color:#d5dfef;padding:10px 16px;font-size:11px}
+.web3-wallet-context{display:grid;grid-template-columns:minmax(135px,.8fr) minmax(210px,1.2fr) minmax(245px,1.5fr) auto;gap:12px;align-items:center;margin:0 0 15px;padding:13px 15px;border:1px solid #1d304b;border-radius:13px;background:linear-gradient(115deg,#0b172a,#0c1b30 60%,#121d32);box-shadow:0 10px 30px rgba(0,0,0,.14)}
+.web3-context-item{display:grid;gap:5px;min-width:0}
+.web3-context-item>span{color:#7086a4;font-size:8px;font-weight:800;letter-spacing:1.25px}
+.web3-context-item>b{color:#e9f1fc;font-size:11px;font-weight:750;overflow-wrap:anywhere}
+.web3-context-item>small{color:#7589a6;font-size:9px;line-height:1.4;overflow-wrap:anywhere}
+.web3-context-item:first-child>b{color:#ffb477}
+.web3-context-manage{min-height:34px;display:flex;align-items:center;gap:10px;padding:0 12px;border:1px solid #59402d;border-radius:8px;background:rgba(255,122,24,.08);color:#ffad69;font-size:10px;font-weight:700;white-space:nowrap}
+.web3-context-manage span{font-size:15px}
+.dashboard-chain-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:9px;margin:0 0 14px}
+.dashboard-chain-card{display:flex;align-items:center;gap:9px;min-width:0;padding:11px 10px;border:1px solid #1b304b;border-radius:11px;background:linear-gradient(145deg,#0c192d,#0a1425);text-align:left;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.dashboard-chain-card:hover{border-color:#52759d;background:#102039;transform:translateY(-1px)}
+.dashboard-chain-card.is-selected{border-color:#b85b22;background:linear-gradient(145deg,rgba(255,122,24,.14),#101d32);box-shadow:inset 0 0 0 1px rgba(255,122,24,.1)}
+.dashboard-chain-card.is-testnet{border-style:dashed;border-color:#37435e;background:linear-gradient(145deg,#101a2c,#0b1527)}
+.dashboard-chain-card.is-testnet.is-selected{border-color:#bc7a48;background:linear-gradient(145deg,rgba(255,122,24,.09),#121b2d)}
+.dashboard-chain-symbol{flex:0 0 31px;width:31px;height:31px;display:grid;place-items:center;border:1px solid #2a4261;border-radius:10px;background:#122640;color:#ff9c52;font-size:16px;font-weight:750}
+.dashboard-chain-card.is-testnet .dashboard-chain-symbol{color:#aab8d2;border-color:#384662;background:#182338}
+.dashboard-chain-copy{display:grid;gap:4px;min-width:0;flex:1}
+.dashboard-chain-copy>b{color:#dce7f6;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dashboard-chain-copy>small{color:#7085a2;font-size:8px;white-space:nowrap}
+.dashboard-chain-status{align-self:flex-start;margin-left:auto;padding:3px 5px;border:1px solid #254465;border-radius:5px;color:#9bb4d2;font-size:7px;font-weight:800;letter-spacing:.45px;text-transform:uppercase;white-space:nowrap}
+.dashboard-chain-card.is-selected .dashboard-chain-status{border-color:#92512e;background:rgba(255,122,24,.1);color:#ffb477}
+.dashboard-chain-card.is-testnet .dashboard-chain-status{border-style:dashed}
+.web3-balance-grid{grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:15px}
+.web3-balance-grid>.hero-card{grid-column:span 2;grid-row:span 2;min-height:260px;display:flex;flex-direction:column;justify-content:space-between;padding:21px;background:radial-gradient(circle at 88% 10%,rgba(255,122,24,.22),transparent 35%),linear-gradient(140deg,#142b49,#0c172b 75%);border-color:#315174;box-shadow:0 14px 38px rgba(0,0,0,.18)}
+.web3-balance-grid>.hero-card .hero-balance{font-size:clamp(27px,3vw,39px);letter-spacing:-.04em;overflow-wrap:anywhere}
+.web3-balance-grid>.stat-card{min-width:0;min-height:119px;padding:15px;background:linear-gradient(145deg,#0e1b30,#0a1425)}
+.web3-balance-grid>.stat-card>span{font-size:9px;line-height:1.5}
+.web3-balance-grid>.stat-card strong{font-size:clamp(13px,1.4vw,17px);overflow-wrap:anywhere}
+.web3-balance-grid>.stat-card .stat-source{color:#687d99;font-size:8px;line-height:1.45;margin-top:7px}
+.web3-balance-grid .balance-meta{gap:10px;line-height:1.5}
+.web3-balance-grid .balance-meta span{max-width:65%}
+.web3-balance-grid .card-actions{margin-top:15px}
+.web3-dashboard .market-prices-panel{margin:0 0 14px;border-color:#1d304b;background:linear-gradient(145deg,#0d192d,#091426)}
+.web3-dashboard .market-price-grid{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:7px}
+.web3-dashboard .market-price-item{min-width:0;padding:10px;border:1px solid #1a2b43;border-radius:9px;background:rgba(7,16,30,.65)}
+.web3-dashboard .dashboard-grid{grid-template-columns:minmax(0,1.45fr) minmax(280px,1fr);gap:12px}
+.web3-dashboard .chart-panel,.web3-dashboard .ai-panel,.web3-dashboard .assets-panel,.web3-dashboard .activity-panel{min-width:0}
+.web3-dashboard .assets-panel{grid-column:1}
+.web3-dashboard .activity-panel{grid-column:2}
+.web3-dashboard .asset-row-button{width:100%;background:transparent;text-align:left}
+.web3-dashboard .asset-row-button:hover{background:rgba(255,122,24,.045)}
+.web3-dashboard .dashboard-connected-wallet{margin-top:13px;border-color:#1f3654;background:linear-gradient(145deg,#0d1c31,#0a1527)}
+.dashboard-security-bridge{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:12px;margin-top:13px;background:linear-gradient(145deg,#0d1b30,#0a1426)}
+.dashboard-security-bridge>div:first-child{min-width:0}
+.dashboard-security-bridge h2{font-size:13px;margin:0 0 5px}
+.dashboard-security-bridge>div:first-child>span{color:#758aa7;font-size:10px;line-height:1.5}
+.dashboard-security-actions{display:flex;flex-wrap:wrap;gap:7px}
+.dashboard-security-actions button{padding:8px 11px;border:1px solid #243b59;border-radius:8px;background:#101f34;color:#c3d0e2;font-size:9px}
+.dashboard-security-actions button:hover{border-color:#ff7a18;color:#ffb477}
+.dashboard-security-note{grid-column:1/-1;margin:0;padding-top:9px;border-top:1px solid #1a2b43;color:#7185a1;font-size:9px;line-height:1.5}
+.dashboard-active-wallet{max-width:290px}
+.dashboard-active-wallet-status{display:block;max-width:140px;color:#9aacbf;font-size:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dashboard-wallet-id-copy{flex:0 0 auto;padding:5px 7px;border:1px solid #344964;border-radius:6px;background:#12233a;color:#ffb477;font-size:8px;font-weight:700}
+.dashboard-wallet-id-copy:hover{border-color:#ff7a18}
+@media(max-width:1250px){
+  .dashboard-chain-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .web3-balance-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .web3-balance-grid>.hero-card{grid-column:span 2}
+  .web3-dashboard .market-price-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+}
+@media(max-width:980px){
+  .web3-wallet-context{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-chain-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .web3-balance-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .web3-balance-grid>.hero-card{grid-column:span 2;grid-row:auto;min-height:235px}
+  .web3-dashboard .dashboard-grid{grid-template-columns:1fr}
+  .web3-dashboard .assets-panel,.web3-dashboard .activity-panel{grid-column:auto}
+  .dashboard-security-bridge{grid-template-columns:1fr}
+}
+@media(max-width:760px){
+  .web3-dashboard{padding:18px 13px 28px}
+  .web3-dashboard-heading{align-items:flex-start;gap:10px;margin-bottom:12px}
+  .web3-dashboard-heading h1{font-size:20px}
+  .web3-dashboard-heading .muted{display:block;font-size:10px}
+  .web3-dashboard-heading .page-actions{gap:5px}
+  .web3-dashboard-heading .page-actions .secondary,.web3-dashboard-heading .page-actions .primary{padding:8px 10px;font-size:9px;white-space:nowrap}
+  .web3-wallet-context{grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:11px}
+  .web3-context-item>span{font-size:7px}
+  .web3-context-item>b{font-size:9px}
+  .web3-context-item>small{font-size:8px}
+  .web3-context-manage{grid-column:1/-1;justify-content:center}
+  .dashboard-chain-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+  .dashboard-chain-card{gap:7px;padding:9px 7px}
+  .dashboard-chain-symbol{width:27px;height:27px;flex-basis:27px;font-size:14px}
+  .dashboard-chain-copy>b{font-size:9px}
+  .dashboard-chain-copy>small{font-size:7px}
+  .dashboard-chain-status{padding:2px 3px;font-size:6px}
+  .web3-balance-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  .web3-balance-grid>.hero-card{grid-column:1/-1;min-height:220px;padding:16px}
+  .web3-balance-grid>.stat-card{min-height:108px;padding:11px}
+  .web3-balance-grid>.stat-card strong{font-size:12px}
+  .web3-balance-grid>.stat-card>span{font-size:8px}
+  .web3-dashboard .market-price-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .web3-dashboard .market-price-item{padding:8px}
+  .web3-dashboard .market-price-name b,.web3-dashboard .market-price-value b{font-size:9px}
+  .web3-dashboard .dashboard-grid{grid-template-columns:1fr}
+  .dashboard-security-bridge{gap:10px;padding:13px}
+  .dashboard-security-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .dashboard-security-actions button:last-child{grid-column:1/-1}
+  .dashboard-security-note{font-size:8px}
+  .dashboard-active-wallet{max-width:150px}
+  .dashboard-active-wallet-row select{width:100px}
+  .dashboard-active-wallet-status{display:none}
+  .dashboard-wallet-id-copy{padding:4px 5px;font-size:7px}
+}
+
+.dashboard-active-wallet-row{flex-wrap:nowrap;min-width:0}
+.dashboard-active-wallet-row select{flex:0 1 116px;width:116px}
+.dashboard-active-wallet-status{max-width:82px}
+.dashboard-wallet-id-copy{flex-shrink:0;cursor:pointer}

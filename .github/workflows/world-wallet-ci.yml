@@ -48,5 +48,7 @@ jobs:
         run: npm run test:network-selection
       - name: Run wallet security and multi-chain derivation tests
         run: npm run test:wallet-safety
+      - name: Run sidebar navigation regression tests
+        run: npm run test:navigation
       - name: Build World Wallet web app
         run: npm run build
