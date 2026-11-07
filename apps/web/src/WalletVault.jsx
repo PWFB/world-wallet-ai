@@ -25,7 +25,7 @@ function readVaultForAccount(userId, allowedServerWalletIds = []) {
   });
 }
 
-export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, onWalletSelected, activeWalletId = "", allowedServerWalletIds = [], userId = "" }) {
+export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, onWalletSelected, activeWalletId = "", allowedServerWalletIds = [], serverWalletNumberById = {}, userId = "" }) {
   const [entries, setEntries] = useState([]);
   const [walletName, setWalletName] = useState("Personal Wallet");
   const [password, setPassword] = useState("");
@@ -56,9 +56,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [message, setMessage] = useState("");
 
   const allowedServerWalletIdKey = (Array.isArray(allowedServerWalletIds) ? allowedServerWalletIds : []).map(String).sort().join("|");
+  const serverWalletNumberKey = Object.entries(serverWalletNumberById || {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, number]) => id + ":" + number).join("|");
 
   useEffect(() => {
-    const saved = readVaultForAccount(userId, allowedServerWalletIds);
+    const saved = readVaultForAccount(userId, allowedServerWalletIds).map(entry => ({
+      ...entry,
+      walletNumber: entry.walletNumber || String(serverWalletNumberById[entry.serverWalletId || entry.walletId] || ""),
+    }));
     setEntries(saved);
     try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); }
     const refreshDeployedContracts = () => { try { const deployed = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setDeployedContracts(Array.isArray(deployed) ? deployed : []); } catch { setDeployedContracts([]); } };
@@ -77,7 +81,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       }
     } catch {}
     return () => window.removeEventListener("world-wallet-contracts-updated", refreshDeployedContracts);
-  }, [userId, allowedServerWalletIdKey]);
+  }, [userId, allowedServerWalletIdKey, serverWalletNumberKey]);
 
   useEffect(() => {
     if (!activeWalletId) return;
@@ -181,15 +185,15 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
         const serverWalletId = profile.wallet?.id;
         if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
-
-        const linkedEntry = { ...localEntry, walletId: serverWalletId, serverWalletId };
+        const serverWalletNumber = String(profile.wallet?.wallet_number || walletNumber);
+        const linkedEntry = { ...localEntry, walletId: serverWalletId, serverWalletId, walletNumber: serverWalletNumber };
         const attachmentFailures = [];
         for (const [addressNetwork, addressValue] of Object.entries(addresses)) {
           try {
             const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
-              body: JSON.stringify({ network: addressNetwork, address: addressValue, label: "generated " + walletNumber }),
+              body: JSON.stringify({ network: addressNetwork, address: addressValue, label: "generated " + serverWalletNumber }),
             });
             const addressData = await addressResponse.json().catch(() => ({}));
             if (!addressResponse.ok) throw new Error(addressData.detail || "Address save failed.");
@@ -202,11 +206,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           .filter(item => item.walletId !== localWalletId && item.walletId !== serverWalletId);
         persistVault([linkedEntry, ...currentAccountEntries]);
         setSelectedId(serverWalletId);
-        setGenerated(current => current ? { ...current, walletId: serverWalletId } : current);
+        setGenerated(current => current ? { ...current, walletId: serverWalletId, walletNumber: serverWalletNumber } : current);
         if (attachmentFailures.length) {
-          setMessage("Wallet " + walletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". The local Receive page still has all derived addresses.");
+          setMessage("Wallet " + serverWalletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". The local Receive page still has all derived addresses.");
         } else {
-          setMessage("Wallet " + walletNumber + " created. All mainnet and separate testnet/devnet addresses are saved to this wallet.");
+          setMessage("Wallet " + serverWalletNumber + " created. All mainnet and separate testnet/devnet addresses are saved to this wallet.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
