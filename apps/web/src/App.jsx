@@ -1505,7 +1505,7 @@ function App() {
                   setActive(item);
                   if (window.matchMedia("(max-width: 760px)").matches) setMobileMenuOpen(false);
                 }}>
-                  <span className="nav-icon" aria-hidden="true">{navIcons[item] || "•"}</span><span className="nav-label">{item}</span>
+                  <span className="nav-icon" aria-hidden="true">{NAVIGATION_ICONS[item] || "•"}</span><span className="nav-label">{item}</span>
                 </button>
               ))}
             </div>
