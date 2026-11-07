@@ -125,3 +125,185 @@
 .dashboard-active-wallet-row select{flex:0 1 116px;width:116px}
 .dashboard-active-wallet-status{max-width:82px}
 .dashboard-wallet-id-copy{flex-shrink:0;cursor:pointer}
+
+
+/* Mobile-only Root navigation hub. Desktop keeps the original left sidebar. */
+.mobile-root-trigger,
+.mobile-root-menu{display:none}
+
+@media(max-width:760px){
+  .app-shell .topbar .mobile-brand{margin-right:0;min-width:0;flex:0 1 auto}
+  .app-shell .topbar .mobile-root-trigger{
+    display:inline-flex;
+    flex:0 0 auto;
+    align-items:center;
+    gap:7px;
+    min-width:77px;
+    min-height:42px;
+    margin-right:auto;
+    padding:6px 9px;
+    border:1px solid #bd662f;
+    border-radius:11px;
+    background:linear-gradient(135deg,rgba(255,122,24,.17),#10213a 78%);
+    color:#f5f8ff;
+    box-shadow:0 5px 18px rgba(0,0,0,.16),inset 0 0 0 1px rgba(255,122,24,.04);
+    text-align:left;
+  }
+  .mobile-root-trigger-icon{
+    display:grid;
+    place-items:center;
+    width:28px;
+    height:28px;
+    flex:0 0 28px;
+    border:1px solid #9c592e;
+    border-radius:8px;
+    background:rgba(255,122,24,.14);
+    color:#ffae72;
+    font-size:17px;
+  }
+  .mobile-root-trigger>span:nth-child(2){display:grid;gap:2px}
+  .mobile-root-trigger b{font-size:10px;line-height:1.1}
+  .mobile-root-trigger small{color:#a9b9ce;font-size:7px;line-height:1.1}
+  .mobile-root-trigger-arrow{margin-left:auto;color:#ffad72;font-size:18px;line-height:1}
+  .app-shell .mobile-root-menu{
+    display:block;
+    flex:0 0 auto;
+    margin:0 0 11px;
+    padding:0 0 11px;
+    border-bottom:1px solid #20334d;
+  }
+  .mobile-root-card{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:11px;
+    border:1px solid #a85b2e;
+    border-radius:12px;
+    background:radial-gradient(circle at 3% 4%,rgba(255,122,24,.19),transparent 45%),linear-gradient(135deg,#152742,#0d192c);
+    box-shadow:0 8px 25px rgba(0,0,0,.17),inset 0 0 0 1px rgba(255,122,24,.05);
+  }
+  .mobile-root-card-icon{
+    display:grid;
+    place-items:center;
+    width:38px;
+    height:38px;
+    flex:0 0 38px;
+    border:1px solid #965a35;
+    border-radius:11px;
+    background:rgba(255,122,24,.13);
+    color:#ffb47d;
+    font-size:20px;
+  }
+  .mobile-root-card>div{display:grid;gap:3px;min-width:0}
+  .mobile-root-card>div>small{color:#ffad72;font-size:7px;font-weight:800;letter-spacing:1.25px}
+  .mobile-root-card>div>b{color:#f5f8ff;font-size:14px;line-height:1.1}
+  .mobile-root-card>div>span{color:#8fa3bf;font-size:8px;line-height:1.35}
+  .mobile-root-card-tag{
+    margin-left:auto;
+    padding:4px 6px;
+    border:1px solid #765038;
+    border-radius:5px;
+    color:#ffb47f;
+    font-size:7px;
+    font-weight:800;
+    letter-spacing:.8px;
+  }
+  .mobile-root-search{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    min-height:42px;
+    margin-top:9px;
+    padding:0 11px;
+    border:1px solid #263d5b;
+    border-radius:9px;
+    background:#071426;
+    color:#ffad72;
+  }
+  .mobile-root-search>span{font-size:17px}
+  .mobile-root-search input{
+    width:100%;
+    min-width:0;
+    height:40px;
+    border:0;
+    outline:0;
+    background:transparent;
+    color:#f1f5fb;
+    font:500 10px Inter,system-ui,sans-serif;
+  }
+  .mobile-root-search input::placeholder{color:#7286a2}
+  .mobile-root-search button{
+    width:25px;
+    height:25px;
+    flex:0 0 25px;
+    border:1px solid #344b68;
+    border-radius:7px;
+    background:#13233a;
+    color:#d8e3f3;
+    font-size:17px;
+  }
+  .mobile-root-shortcuts{
+    display:grid;
+    grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:6px;
+    margin-top:8px;
+  }
+  .mobile-root-shortcuts button{
+    display:grid;
+    justify-items:center;
+    gap:5px;
+    min-width:0;
+    min-height:58px;
+    padding:7px 3px 6px;
+    border:1px solid #1e3551;
+    border-radius:9px;
+    background:linear-gradient(145deg,#11223a,#0b1729);
+    color:#cbd7e8;
+  }
+  .mobile-root-shortcuts button:active{border-color:#ff7a18;background:#1a2b41}
+  .mobile-root-shortcuts button>span{
+    display:grid;
+    place-items:center;
+    width:25px;
+    height:25px;
+    border-radius:7px;
+    background:rgba(255,122,24,.11);
+    color:#ffad72;
+    font-size:14px;
+  }
+  .mobile-root-shortcuts button>small{
+    max-width:100%;
+    color:#c3d0e1;
+    font-size:7px;
+    line-height:1.2;
+    text-align:center;
+    white-space:nowrap;
+    overflow:hidden;
+    text-overflow:ellipsis;
+  }
+  .app-shell .sidebar>nav{
+    flex:1 1 auto;
+    min-height:0;
+    overflow-y:auto;
+    overscroll-behavior:contain;
+    padding-bottom:12px;
+  }
+  .mobile-root-no-results{
+    margin:8px 4px;
+    padding:12px;
+    border:1px dashed #344b68;
+    border-radius:8px;
+    color:#92a6c0;
+    font-size:10px;
+    line-height:1.5;
+  }
+}
+
+@media(max-width:390px){
+  .app-shell .topbar .mobile-brand{gap:5px;flex:0 0 auto}
+  .app-shell .topbar .mobile-brand>b{display:none}
+  .app-shell .topbar .mobile-root-trigger{min-width:62px;gap:5px;padding:5px 7px}
+  .mobile-root-trigger-icon{width:25px;height:25px;flex-basis:25px;font-size:15px}
+  .mobile-root-trigger>span:nth-child(2) small,.mobile-root-trigger-arrow{display:none}
+  .mobile-root-trigger b{font-size:9px}
+}

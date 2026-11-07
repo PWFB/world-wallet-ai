@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { NAVIGATION_ICONS, WALLET_NAVIGATION } from "./navigation.js";
+import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigation.js";
 
 test("sidebar navigation starts with the wallet dashboard", () => {
   const groups = Object.entries(WALLET_NAVIGATION);
@@ -27,4 +27,10 @@ test("every sidebar page has a meaningful icon and appears only once", () => {
   for (const page of pages) {
     assert.ok(typeof NAVIGATION_ICONS[page] === "string" && NAVIGATION_ICONS[page].length > 0, "missing icon for " + page);
   }
+});
+
+test("Root hub shortcuts resolve to real sidebar pages", () => {
+  const pages = new Set(Object.values(WALLET_NAVIGATION).flat());
+  assert.equal(ROOT_SHORTCUTS.length, 6, "Root hub should stay compact");
+  for (const page of ROOT_SHORTCUTS) assert.ok(pages.has(page), "Root shortcut must resolve: " + page);
 });
