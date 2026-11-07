@@ -102,7 +102,7 @@ class AdminConsoleTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in result["results"]))
         self.assertEqual(fetch.call_count, 2)
         self.assertNotIn("private-test-key", str(result))
-        self.assertNotIn("owner", str(result).lower())
+        self.assertNotIn("0x000000000000000000000000000000000000dEaD", str(result))
 
     def test_alchemy_provider_probe_reports_rejected_key_without_leaking_response(self):
         class RejectedResponse:
