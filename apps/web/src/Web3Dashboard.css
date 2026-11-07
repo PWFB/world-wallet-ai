@@ -1,5 +1,5 @@
 /* World Wallet AI — Web3 wallet workspace */
-.sidebar{height:100vh;height:100dvh;overflow:hidden}
+.sidebar{top:0;left:0;height:100vh;height:100dvh;overflow:hidden}
 .sidebar>nav{flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;padding:0 4px 12px 0;scrollbar-width:thin;scrollbar-color:#29425f transparent}
 .sidebar>nav::-webkit-scrollbar{width:5px}
 .sidebar>nav::-webkit-scrollbar-thumb{border-radius:8px;background:#29425f}
@@ -121,5 +121,7 @@
   .dashboard-wallet-id-copy{padding:4px 5px;font-size:7px}
 }
 
-.dashboard-active-wallet-row{flex-wrap:nowrap}
+.dashboard-active-wallet-row{flex-wrap:nowrap;min-width:0}
+.dashboard-active-wallet-row select{flex:0 1 116px;width:116px}
+.dashboard-active-wallet-status{max-width:82px}
 .dashboard-wallet-id-copy{flex-shrink:0;cursor:pointer}
