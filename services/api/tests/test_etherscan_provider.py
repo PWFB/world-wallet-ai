@@ -24,9 +24,9 @@ class FakeEtherscanResponse:
 class EtherscanProviderTests(unittest.TestCase):
     def test_v2_request_uses_backend_key_and_chain_id(self):
         response = FakeEtherscanResponse({"status": "1", "message": "OK", "result": "0"})
-        with patch.object(main, "ETHERSCAN_API_KEY", "server-side-test-key"), \\
-             patch.object(main.httpx, "get", return_value=response) as fetch:
-            result = main.etherscan_v2_request(56, "account", "balance", {"address": "0x" + "0" * 40, "tag": "latest"})
+        with patch.object(main, "ETHERSCAN_API_KEY", "server-side-test-key"):
+            with patch.object(main.httpx, "get", return_value=response) as fetch:
+                result = main.etherscan_v2_request(56, "account", "balance", {"address": "0x" + "0" * 40, "tag": "latest"})
         self.assertEqual(result["status"], "1")
         self.assertEqual(fetch.call_args.args[0], "https://api.etherscan.io/v2/api")
         params = fetch.call_args.kwargs["params"]
@@ -58,9 +58,9 @@ class EtherscanProviderTests(unittest.TestCase):
                 "Implementation": "",
             }],
         })
-        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"), \\
-             patch.object(main.httpx, "get", return_value=response):
-            result = main.etherscan_contract_source(1, "0x" + "a" * 40)
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main.httpx, "get", return_value=response):
+                result = main.etherscan_contract_source(1, "0x" + "a" * 40)
         self.assertTrue(result["source_verified"])
         self.assertEqual(result["contract_name"], "Example")
         self.assertNotIn("SourceCode", result)
@@ -76,22 +76,33 @@ class EtherscanProviderTests(unittest.TestCase):
                 "ContractName": "",
             }],
         })
-        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"), \\
-             patch.object(main.httpx, "get", return_value=response):
-            result = main.etherscan_contract_source(1, "0x" + "a" * 40)
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main.httpx, "get", return_value=response):
+                result = main.etherscan_contract_source(1, "0x" + "a" * 40)
         self.assertFalse(result["source_verified"])
 
     def test_admin_probe_checks_ethereum_bnb_and_sepolia_without_exposing_key(self):
         response = FakeEtherscanResponse({"status": "1", "message": "OK", "result": "0"})
         user = {"id": "owner", "email": "owner@example.com"}
-        with patch.object(main, "require_world_wallet_admin"), \\
-             patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"), \\
-             patch.object(main, "record_admin_event"), \\
-             patch.object(main, "etherscan_v2_request", return_value=response) as request:
-            result = main.admin_test_etherscan_provider(user)
+        with patch.object(main, "require_world_wallet_admin"):
+            with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+                with patch.object(main, "record_admin_event"):
+                    with patch.object(main, "etherscan_v2_request", return_value=response) as request:
+                        result = main.admin_test_etherscan_provider(user)
         self.assertTrue(result["success"])
         self.assertEqual([item["chain_id"] for item in result["results"]], [1, 56, 11155111])
         self.assertEqual(request.call_count, 3)
+        self.assertNotIn("private-test-key", str(result))
+        self.assertFalse(result["secrets_exposed"])
+
+    def test_admin_settings_reports_only_etherscan_key_presence(self):
+        user = {"id": "owner", "email": "owner@example.com"}
+        with patch.object(main, "require_world_wallet_admin"):
+            with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+                with patch.object(main, "record_admin_event"):
+                    result = main.admin_settings(user)
+        checks = {item["key"]: item["configured"] for item in result["checks"]}
+        self.assertTrue(checks["Etherscan API V2 key"])
         self.assertNotIn("private-test-key", str(result))
         self.assertFalse(result["secrets_exposed"])
 
