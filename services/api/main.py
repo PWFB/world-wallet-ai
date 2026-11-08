@@ -532,6 +532,20 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS balmz_mining_sessions(
+          id TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          status TEXT NOT NULL CHECK(status IN ('active','completed')),
+          started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ended_at TIMESTAMPTZ,
+          duration_seconds BIGINT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK ((status='active' AND ended_at IS NULL) OR (status='completed' AND ended_at IS NOT NULL))
+        );
+        CREATE INDEX IF NOT EXISTS balmz_mining_sessions_wallet_started_idx
+          ON balmz_mining_sessions(wallet_id,started_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS balmz_mining_one_active_session_per_wallet
+          ON balmz_mining_sessions(wallet_id) WHERE status='active';
         CREATE TABLE IF NOT EXISTS admin_audit_events(
           id TEXT PRIMARY KEY,
           actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4105,6 +4119,92 @@ def wallet_connect(user: dict = Depends(current_user)):
         "addresses": addresses,
         "networks": sorted({a["network"] for a in addresses}),
         "message": None if addresses else "No production wallet address is configured yet",
+    }
+
+
+
+@app.get("/api/v1/mining/balmz")
+def balmz_mining_status(user: dict = Depends(current_user)):
+    """Return honest session status; no token rewards are accrued or credited by this tracker."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,status,started_at,ended_at,duration_seconds FROM balmz_mining_sessions "
+            "WHERE wallet_id=%s ORDER BY started_at DESC LIMIT 25",
+            (user["wallet_id"],),
+        ).fetchall()
+    active = next((row for row in rows if row[1] == "active"), None)
+    total_seconds = sum(int(row[4] or 0) for row in rows if row[1] == "completed")
+    if active:
+        total_seconds += max(0, int((datetime.now(timezone.utc) - active[2]).total_seconds()))
+    return {
+        "wallet_id": user["wallet_id"],
+        "program": "BALMZ Free Mining",
+        "mode": "session_tracking_only",
+        "active_session": None if not active else {
+            "id": active[0], "started_at": active[2].isoformat()
+        },
+        "completed_sessions": sum(1 for row in rows if row[1] == "completed"),
+        "total_session_seconds": total_seconds,
+        "reward_asset": "BALMZ",
+        "reward_amount": None,
+        "reward_status": "disabled_pending_verified_funded_allocation",
+        "claim_enabled": False,
+        "notice": "This records free participation sessions only. It does not perform proof-of-work, generate tokens, or credit BALMZ. Rewards remain disabled until a funded, authorized allocation and claim mechanism are verified.",
+        "recent_sessions": [{
+            "id": row[0], "status": row[1], "started_at": row[2].isoformat(),
+            "ended_at": row[3].isoformat() if row[3] else None,
+            "duration_seconds": int(row[4]) if row[4] is not None else None,
+        } for row in rows],
+    }
+
+
+@app.post("/api/v1/mining/balmz/start")
+def start_balmz_mining(user: dict = Depends(current_user)):
+    """Start a free session record; this endpoint never issues or credits tokens."""
+    session_id = "mine_" + secrets.token_hex(16)
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT id,started_at FROM balmz_mining_sessions WHERE wallet_id=%s AND status='active' FOR UPDATE",
+            (user["wallet_id"],),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="A free BALMZ participation session is already active")
+        conn.execute(
+            "INSERT INTO balmz_mining_sessions(id,wallet_id,status) VALUES(%s,%s,'active')",
+            (session_id, user["wallet_id"]),
+        )
+        conn.commit()
+    return {
+        "status": "started", "session_id": session_id,
+        "reward_status": "disabled_pending_verified_funded_allocation",
+        "claim_enabled": False,
+        "notice": "Free session tracking started. No BALMZ is mined, minted, or credited by this session tracker.",
+    }
+
+
+@app.post("/api/v1/mining/balmz/stop")
+def stop_balmz_mining(user: dict = Depends(current_user)):
+    """Complete the caller's active session without assigning a token reward."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id,started_at FROM balmz_mining_sessions WHERE wallet_id=%s AND status='active' FOR UPDATE",
+            (user["wallet_id"],),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=409, detail="There is no active BALMZ participation session")
+        ended_at = datetime.now(timezone.utc)
+        duration = max(0, int((ended_at - row[1]).total_seconds()))
+        conn.execute(
+            "UPDATE balmz_mining_sessions SET status='completed',ended_at=%s,duration_seconds=%s "
+            "WHERE id=%s AND wallet_id=%s AND status='active'",
+            (ended_at, duration, row[0], user["wallet_id"]),
+        )
+        conn.commit()
+    return {
+        "status": "completed", "session_id": row[0], "duration_seconds": duration,
+        "reward_amount": None, "claim_enabled": False,
+        "reward_status": "disabled_pending_verified_funded_allocation",
+        "notice": "Session recorded. No BALMZ reward was created or credited.",
     }
 
 
