@@ -45,7 +45,7 @@ Set these environment variables on the **World Wallet AI backend service only** 
 
 - `GEMINI_API_KEY`: your Google Gemini API key, stored as a secret.
 - `WORLD_WALLET_GEMINI_ADMIN_EMAIL`: the exact administrator email allowed to check and test Gemini. If omitted, the backend uses `WORLD_WALLET_GITHUB_ADMIN_EMAIL`.
-- `WORLD_WALLET_GEMINI_MODEL` (optional): model name; defaults to `gemini-2.5-flash`.
+- `WORLD_WALLET_GEMINI_MODEL` (optional): model name; defaults to `gemini-3.8-flash`. Use this only for model IDs enabled for your Google AI Studio project.
 
 Never add the key to frontend variables, source code, logs, or chat. After saving the Render variables, redeploy/restart the backend, sign in with the configured administrator account, open **Admin → Gemini Integration**, and select **Test Gemini connection**. The page reports a successful live request or a safe error message. A configured key alone does not prove the API works.
 
