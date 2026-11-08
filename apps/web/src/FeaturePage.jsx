@@ -635,6 +635,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [nftProviderTest, setNftProviderTest] = useState(null);
   const [nftProviderTestBusy, setNftProviderTestBusy] = useState(false);
   const [nftProviderTestError, setNftProviderTestError] = useState("");
+  const [etherscanProviderTest, setEtherscanProviderTest] = useState(null);
+  const [etherscanProviderTestBusy, setEtherscanProviderTestBusy] = useState(false);
+  const [etherscanProviderTestError, setEtherscanProviderTestError] = useState("");
   const [supportTitle, setSupportTitle] = useState("");
   const [supportDetails, setSupportDetails] = useState("");
   const [supportSubmitBusy, setSupportSubmitBusy] = useState(false);
@@ -2516,6 +2519,21 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="tool-list">{nftProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="eth-mainnet"?"Ethereum Mainnet":"BNB Chain Mainnet"}</b><small>{item.message}{item.ok?" · probe items: "+item.probe_items:""}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
           <small className="muted">Tested {nftProviderTest.tested_at?new Date(nftProviderTest.tested_at).toLocaleString():"just now"} · {nftProviderTest.notice}</small>
         </>}
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Etherscan API V2 connectivity</h2><span>Read-only API key checks for Ethereum, BNB Chain, and Sepolia</span></div><button className="secondary" disabled={etherscanProviderTestBusy} onClick={async()=>{
+          setEtherscanProviderTestBusy(true);setEtherscanProviderTest(null);setEtherscanProviderTestError("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/admin/etherscan-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Etherscan API connectivity test failed.");
+            setEtherscanProviderTest(data);
+          } catch(error) { setEtherscanProviderTestError(error.message||"Etherscan API connectivity test failed."); }
+          finally { setEtherscanProviderTestBusy(false); }
+        }}>{etherscanProviderTestBusy?"Testing…":"Test Etherscan API"}</button></div>
+        {etherscanProviderTestError&&<div className="feature-error" role="alert">{etherscanProviderTestError}</div>}
+        {etherscanProviderTest&&<><div className={etherscanProviderTest.success?"feature-success":"feature-error"} role="status">{etherscanProviderTest.success?"Etherscan API V2 is responding on all configured EVM networks.":"One or more Etherscan API V2 checks did not pass."}</div>
+          <div className="tool-list">{etherscanProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="ethereum"?"Ethereum Mainnet":item.network==="bnb"?"BNB Chain Mainnet":"Ethereum Sepolia"}</b><small>Chain ID {item.chain_id} · {item.message}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {etherscanProviderTest.tested_at?new Date(etherscanProviderTest.tested_at).toLocaleString():"just now"} · {etherscanProviderTest.notice}</small>
+        </>}
+        <div className="security-note">Etherscan is a read-only explorer provider. Its API key remains on the backend and is never returned to this page. It cannot sign wallet transactions, authorize deploys, or pay gas.</div>
         <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Configuration changes still belong in Render. This button checks provider connectivity only; it does not read a customer wallet, modify assets or approve transactions.</div>
       </article>}
       {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
