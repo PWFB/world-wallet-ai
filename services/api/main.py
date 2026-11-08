@@ -212,6 +212,7 @@ class NeonAuthRegistration(BaseModel):
     phone_number: str = Field(min_length=8, max_length=16)
     phone_otp: str = Field(min_length=4, max_length=10)
     password: str = Field(min_length=8, max_length=128)
+    mining_referral_code: str | None = Field(default=None, max_length=32)
 
 
 class PhoneOtpRequest(BaseModel):
@@ -572,6 +573,15 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS balmz_mining_reward_wallet_day_idx
           ON balmz_mining_reward_ledger(wallet_id,earned_at);
+        CREATE TABLE IF NOT EXISTS balmz_mining_referrals(
+          referred_wallet_id TEXT PRIMARY KEY REFERENCES wallets(id) ON DELETE CASCADE,
+          referrer_wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE RESTRICT,
+          referral_code TEXT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK(referred_wallet_id <> referrer_wallet_id)
+        );
+        CREATE INDEX IF NOT EXISTS balmz_mining_referrals_referrer_created_idx
+          ON balmz_mining_referrals(referrer_wallet_id,created_at DESC);
         CREATE TABLE IF NOT EXISTS admin_audit_events(
           id TEXT PRIMARY KEY,
           actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -2122,13 +2132,37 @@ def send_registration_phone_otp(request: PhoneOtpRequest):
     return {"ok": True, "message": "If the phone number can receive verification SMS, a code has been requested."}
 
 
+def record_mining_referral(referrer_wallet_id: str, referred_wallet_id: str, referral_code: str) -> bool:
+    """Record one immutable wallet-to-wallet mining referral; never create a reward."""
+    if not referrer_wallet_id or not referred_wallet_id or referrer_wallet_id == referred_wallet_id:
+        raise HTTPException(status_code=400, detail="A wallet cannot use its own mining referral code.")
+    with db() as conn:
+        row = conn.execute(
+            "INSERT INTO balmz_mining_referrals(referred_wallet_id,referrer_wallet_id,referral_code) "
+            "VALUES(%s,%s,%s) ON CONFLICT(referred_wallet_id) DO NOTHING RETURNING referred_wallet_id",
+            (referred_wallet_id, referrer_wallet_id, referral_code),
+        ).fetchone()
+        conn.commit()
+    return bool(row)
+
+
 @app.post("/api/v1/auth/neon/register")
 def neon_register(request: NeonAuthRegistration):
     name = request.name.strip()
     email = request.email.strip().lower()
     phone = _normalise_phone_number(request.phone_number)
+    referral_code = (request.mining_referral_code or "").strip().upper()
+    referrer_wallet_id = None
     if not name:
         raise HTTPException(status_code=400, detail="Enter your name")
+    if referral_code:
+        if not re.fullmatch(r"MINE-[A-Z0-9]{10}", referral_code):
+            raise HTTPException(status_code=400, detail="Enter a valid Mining referral code.")
+        with db() as conn:
+            referrer = conn.execute("SELECT id FROM wallets WHERE mining_referral_code=%s", (referral_code,)).fetchone()
+        if not referrer:
+            raise HTTPException(status_code=400, detail="That Mining referral code was not found.")
+        referrer_wallet_id = referrer[0]
     if not request.phone_otp.strip():
         raise HTTPException(status_code=400, detail="Enter the SMS verification code.")
     # Check conflicts before creating the external Neon Auth identity.
@@ -2157,6 +2191,12 @@ def neon_register(request: NeonAuthRegistration):
         refreshed = get_user(email)
         if refreshed:
             signed_in["user"] = refreshed
+            if referrer_wallet_id:
+                signed_in["mining_referral_applied"] = record_mining_referral(
+                    referrer_wallet_id, refreshed["wallet_id"], referral_code
+                )
+        elif referrer_wallet_id:
+            raise HTTPException(status_code=502, detail="The account was created but its referral could not be linked. Contact support before retrying registration.")
     else:
         raise HTTPException(status_code=502, detail="The authentication provider did not return a user identity.")
     return signed_in
@@ -4178,6 +4218,10 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             "SELECT mining_referral_code,world_wallet_code FROM wallets WHERE id=%s",
             (user["wallet_id"],),
         ).fetchone()
+        referral_count_row = conn.execute(
+            "SELECT COUNT(*) FROM balmz_mining_referrals WHERE referrer_wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
     active = next((row for row in rows if row[1] == "active"), None)
     total_seconds = int(totals[1] or 0)
     if active:
@@ -4186,6 +4230,7 @@ def balmz_mining_status(user: dict = Depends(current_user)):
         "wallet_id": user["wallet_id"],
         "mining_referral_code": code_row[0] if code_row else None,
         "world_wallet_code": code_row[1] if code_row else None,
+        "mining_referral_count": int(referral_count_row[0] or 0) if referral_count_row else 0,
         "program": "BALMZ Free Mining",
         "mode": "pending_reward_ledger",
         "active_session": None if not active else {

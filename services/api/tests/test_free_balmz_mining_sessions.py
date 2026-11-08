@@ -51,6 +51,8 @@ class FakeConnection:
             return FakeCursor(all_rows=self.reward_rows)
         if "SELECT mining_referral_code,world_wallet_code FROM wallets" in sql:
             return FakeCursor(one=("MINE-AB12CD34EF", "WWAI-9876FEDCBA"))
+        if "SELECT COUNT(*) FROM balmz_mining_referrals" in sql:
+            return FakeCursor(one=(3,))
         if "SELECT id,status,started_at,ended_at,duration_seconds" in sql:
             return FakeCursor(all_rows=[])
         if "COUNT(*) FILTER" in sql:
@@ -86,6 +88,7 @@ class FreeBalmzMiningSessionTests(unittest.TestCase):
         self.assertEqual(body["mining_referral_code"], "MINE-AB12CD34EF")
         self.assertEqual(body["world_wallet_code"], "WWAI-9876FEDCBA")
         self.assertNotEqual(body["mining_referral_code"], body["world_wallet_code"])
+        self.assertEqual(body["mining_referral_count"], 3)
         self.assertFalse(any("INSERT INTO balmz_mining_reward_ledger" in sql for sql, _ in fake.statements))
 
     def test_status_exposes_immutable_timestamp_receipt_fields(self):

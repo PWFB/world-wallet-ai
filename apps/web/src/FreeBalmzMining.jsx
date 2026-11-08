@@ -108,7 +108,8 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
         <div className="panel action-panel mining-status-card"><small>MINING REFERRAL CODE</small><strong>{data?.mining_referral_code || "Loading…"}</strong><span>Share this code for mining referrals.</span></div>
         <div className="panel action-panel mining-status-card"><small>WORLD WALLET AI CODE</small><strong>{data?.world_wallet_code || "Loading…"}</strong><span>Separate World Wallet AI account identifier.</span></div>
       </div>
-      <p className="security-note">These codes are different and permanently assigned to this wallet. Referral tracking or referral rewards are not activated by displaying a code.</p>
+      <p className="security-note">These codes are different and permanently assigned to this wallet. Referral attribution records the inviting wallet; no referral reward or payout is enabled.</p>
+      <div className="tool-row"><span>Accounts referred</span><strong>{data?.mining_referral_count ?? 0}</strong></div>
     </article>
 
     <article className="panel action-panel mining-hero">
