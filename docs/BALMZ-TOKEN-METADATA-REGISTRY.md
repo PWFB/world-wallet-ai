@@ -14,7 +14,9 @@ network identities and the evidence required before a contract or mint is treate
 | **BALMZ-SEP** | Ethereum Sepolia | EVM chain ID 11155111 | Testnet metadata only | Separate testnet record |
 | **BALMZ-SOL-DEVNET** | Solana Devnet | Devnet cluster | Existing Devnet-only mint metadata | Testnet/catalog-only record |
 
-The on-chain token symbol is BALMZ on Ethereum, BNB Chain, and Solana. The display aliases BALMZ-BNB and BALMZ-SOL are only internal network-qualified asset identifiers; the API preserves the on-chain symbol in its symbol field and returns asset_symbol separately.\n\nThe existing Devnet mint HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF is **not** a
+The on-chain token symbol is BALMZ on Ethereum, BNB Chain, and Solana. The display aliases BALMZ-BNB and BALMZ-SOL are only internal network-qualified asset identifiers; the API preserves the on-chain symbol in its symbol field and returns asset_symbol separately.
+
+The existing Devnet mint HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF is **not** a
 Solana Mainnet mint and is never copied into the Mainnet row.
 
 ## Backend configuration
