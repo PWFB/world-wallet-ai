@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { createWalletBackupPayload, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
+const GOOGLE_API_KEY = String(import.meta.env.VITE_GOOGLE_API_KEY || "").trim();
+const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+const GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 function readVault() {
   try {
@@ -54,6 +58,36 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [contracts, setContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [googleReady, setGoogleReady] = useState(false);
+  const [driveAccessToken, setDriveAccessToken] = useState("");
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [driveBusy, setDriveBusy] = useState(false);
+  const [importPassword, setImportPassword] = useState("");
+
+  useEffect(() => {
+    if (!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) return undefined;
+    if (window.google?.accounts?.oauth2) { setGoogleReady(true); return undefined; }
+    let cancelled = false;
+    let script = document.getElementById("world-wallet-google-identity-script");
+    const onLoad = () => { if (!cancelled) setGoogleReady(Boolean(window.google?.accounts?.oauth2)); };
+    const onError = () => { if (!cancelled) setMessage("Google sign-in could not load. Check the frontend Content Security Policy and try again."); };
+    if (!script) {
+      script = document.createElement("script");
+      script.id = "world-wallet-google-identity-script";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", onLoad);
+    script.addEventListener("error", onError);
+    if (window.google?.accounts?.oauth2) onLoad();
+    return () => {
+      cancelled = true;
+      script?.removeEventListener("load", onLoad);
+      script?.removeEventListener("error", onError);
+    };
+  }, []);
 
   const allowedServerWalletIdKey = (Array.isArray(allowedServerWalletIds) ? allowedServerWalletIds : []).map(String).sort().join("|");
   const serverWalletNumberKey = Object.entries(serverWalletNumberById || {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, number]) => id + ":" + number).join("|");
@@ -96,8 +130,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     if (previousContext.activeWalletId === nextContext.activeWalletId && previousContext.userId === nextContext.userId) return;
     walletContextRef.current = nextContext;
     const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
+    const localSelection = entries.find(item => item.walletId === selectedId && !item.serverWalletId);
     const keepFreshlyGeneratedRecovery = Boolean(activeEntry && generated && String(generated.walletId) === String(activeEntry.walletId));
-    setSelectedId(activeEntry?.walletId || "");
+    setSelectedId(activeEntry?.walletId || localSelection?.walletId || "");
     if (keepFreshlyGeneratedRecovery) return;
     setUnlocked(null);
     setUnlockedAddresses(null);
