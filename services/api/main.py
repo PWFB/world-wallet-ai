@@ -2192,8 +2192,9 @@ def neon_register(request: NeonAuthRegistration):
         if refreshed:
             signed_in["user"] = refreshed
             if referrer_wallet_id:
-                record_mining_referral(referrer_wallet_id, refreshed["wallet_id"], referral_code)
-                signed_in["mining_referral_applied"] = True
+                signed_in["mining_referral_applied"] = record_mining_referral(
+                    referrer_wallet_id, refreshed["wallet_id"], referral_code
+                )
         elif referrer_wallet_id:
             raise HTTPException(status_code=502, detail="The account was created but its referral could not be linked. Contact support before retrying registration.")
     else:
@@ -4217,6 +4218,10 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             "SELECT mining_referral_code,world_wallet_code FROM wallets WHERE id=%s",
             (user["wallet_id"],),
         ).fetchone()
+        referral_count_row = conn.execute(
+            "SELECT COUNT(*) FROM balmz_mining_referrals WHERE referrer_wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
     active = next((row for row in rows if row[1] == "active"), None)
     total_seconds = int(totals[1] or 0)
     if active:
@@ -4225,6 +4230,7 @@ def balmz_mining_status(user: dict = Depends(current_user)):
         "wallet_id": user["wallet_id"],
         "mining_referral_code": code_row[0] if code_row else None,
         "world_wallet_code": code_row[1] if code_row else None,
+        "mining_referral_count": int(referral_count_row[0] or 0) if referral_count_row else 0,
         "program": "BALMZ Free Mining",
         "mode": "pending_reward_ledger",
         "active_session": None if not active else {
