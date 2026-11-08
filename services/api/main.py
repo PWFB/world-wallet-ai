@@ -40,7 +40,7 @@ IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
-GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-3.8-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 # Etherscan V2 key is backend-only; never expose it through frontend build variables or API responses.
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "").strip()
