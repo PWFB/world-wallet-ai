@@ -58,20 +58,20 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     setBusy(true);
     setError("");
     try {
-      const [status, history] = await Promise.all([
-        request("/api/v1/mining/balmz"),
-        request("/api/v1/mining/balmz/referrals?limit=25&offset=0"),
-      ]);
+      const status = await request("/api/v1/mining/balmz");
       setData(status);
-      setReferrals(history.referrals || []);
-      setReferralTotal(Number(history.total || 0));
-      setReferralOffset((history.referrals || []).length);
-      setReferralError("");
+      try {
+        const history = await request("/api/v1/mining/balmz/referrals?limit=25&offset=0");
+        setReferrals(history.referrals || []);
+        setReferralTotal(Number(history.total || 0));
+        setReferralOffset((history.referrals || []).length);
+        setReferralError("");
+      } catch (historyErr) {
+        setReferralError(historyErr?.message || "Could not load referral history.");
+      }
     } catch (err) {
       setError(err?.message || "Could not load mining status.");
-    }
-
-    finally { setBusy(false); }
+    } finally { setBusy(false); }
   }, [request]);
 
   useEffect(() => { refresh(); }, [refresh]);
