@@ -11,15 +11,8 @@ import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
 
 function WorldGlobeLogo({ compact = false }) {
-  return <svg className={compact ? "ww-world-logo ww-world-logo-compact" : "ww-world-logo"} viewBox="0 0 64 64" role="img" aria-label="World Wallet AI globe logo">
-    <defs><linearGradient id="wwGlobeBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#ffb36b"/><stop offset="1" stopColor="#ff7a18"/></linearGradient><linearGradient id="wwGlobeGold" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="#fff1e5"/><stop offset="1" stopColor="#ff7a18"/></linearGradient></defs>
-    <circle cx="32" cy="30" r="25" fill="#041a32" stroke="url(#wwGlobeBlue)" strokeWidth="3"/>
-    <ellipse cx="32" cy="30" rx="11" ry="25" fill="none" stroke="#ff9b50" strokeWidth="1.8"/>
-    <ellipse cx="32" cy="30" rx="24" ry="9" fill="none" stroke="#ff9b50" strokeWidth="1.8"/>
-    <path d="M8 30H56M32 5V55M14 13Q32 22 50 13M14 47Q32 38 50 47" fill="none" stroke="#df6412" strokeWidth="1.5"/>
-    <path d="M12 43A25 25 0 0 0 29 54L20 61L8 53Z" fill="url(#wwGlobeGold)"/><path d="M9 44L21 49L16 56L5 51Z" fill="#ff7a18"/>
-    <path d="M20 6A25 25 0 0 1 51 15" fill="none" stroke="#fff1e5" strokeWidth="2.5" strokeLinecap="round"/>
-  </svg>;
+  return <img className={compact ? "ww-world-logo ww-world-logo-compact" : "ww-world-logo"}
+    src="/world-wallet-ai-logo.svg" alt="World Wallet AI gold W shield logo" />;
 }
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://world-wallet-ai-backend.onrender.com").replace(/\/$/, "");
