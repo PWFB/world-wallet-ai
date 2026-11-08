@@ -74,8 +74,13 @@ class FreeBalmzMiningSessionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.json()
         self.assertFalse(body["claim_enabled"])
-        self.assertIsNone(body["reward_amount"])
-        self.assertEqual(body["reward_status"], "disabled_pending_verified_funded_allocation")
+        self.assertFalse(body["withdrawal_enabled"])
+        self.assertEqual(body["pending_reward_amount"], "0")
+        self.assertEqual(body["pending_cycle_count"], 0)
+        self.assertEqual(body["reward_rate_per_cycle"], "0.5")
+        self.assertEqual(body["daily_reward_cap"], "4")
+        self.assertEqual(body["reward_status"], "pending_launch_not_spendable")
+        self.assertFalse(any("INSERT INTO balmz_mining_reward_ledger" in sql for sql, _ in fake.statements))
 
     def test_start_creates_free_session_but_no_token_reward(self):
         fake = FakeConnection()
