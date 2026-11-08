@@ -42,6 +42,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
 GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
+# Etherscan V2 key is backend-only; never expose it through frontend build variables or API responses.
+ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "").strip()
+ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
+ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111}
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 COINGECKO_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_COINGECKO_ADMIN_EMAIL") or GEMINI_ADMIN_EMAIL).strip().lower()
 WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
@@ -1239,6 +1243,54 @@ def erc20_balance(url: str, contract: str, address: str, decimals: int = 18):
 def evm_block_number(url: str):
     raw = rpc_call(url, "eth_blockNumber", [])
     return int(raw, 16) if raw else None
+
+
+def etherscan_v2_request(chain_id: int, module: str, action: str, params: dict | None = None):
+    """Perform a backend-only, read-only Etherscan API V2 GET request."""
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="Etherscan API key is not configured on the backend")
+    if int(chain_id) not in ETHERSCAN_CHAIN_IDS.values():
+        raise ValueError("Unsupported Etherscan chain ID")
+    if not re.fullmatch(r"[a-zA-Z]+", str(module or "")) or not re.fullmatch(r"[a-zA-Z]+", str(action or "")):
+        raise ValueError("Invalid Etherscan API module or action")
+    query = {
+        "chainid": int(chain_id),
+        "module": module,
+        "action": action,
+        "apikey": ETHERSCAN_API_KEY,
+    }
+    if params:
+        query.update(params)
+    response = httpx.get(ETHERSCAN_V2_API_URL, params=query, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Etherscan returned an unexpected response")
+    return payload
+
+
+def etherscan_contract_source(chain_id: int, address: str):
+    """Return safe contract verification metadata only; do not return source or API credentials."""
+    payload = etherscan_v2_request(
+        chain_id, "contract", "getsourcecode", {"address": address}
+    )
+    if str(payload.get("status")) != "1":
+        raise ValueError("Etherscan source lookup did not succeed")
+    results = payload.get("result")
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        raise ValueError("Etherscan source lookup returned no contract metadata")
+    item = results[0]
+    source_text = str(item.get("SourceCode") or "").strip()
+    abi_text = str(item.get("ABI") or "").strip()
+    verified = bool(source_text and abi_text and abi_text != "Contract source code not verified")
+    return {
+        "source_verified": verified,
+        "contract_name": str(item.get("ContractName") or "")[:160] or None,
+        "compiler_version": str(item.get("CompilerVersion") or "")[:100] or None,
+        "optimization_used": str(item.get("OptimizationUsed") or "")[:10] or None,
+        "proxy": str(item.get("Proxy") or "")[:10] or None,
+        "implementation": str(item.get("Implementation") or "")[:42] or None,
+    }
 
 
 def require_sepolia_rpc(url: str):
@@ -3106,6 +3158,7 @@ def admin_settings(user: dict = Depends(current_user)):
     checks = [
         {"key": "World Wallet admin email", "configured": bool(WORLD_WALLET_ADMIN_EMAIL)},
         {"key": "Alchemy NFT API key", "configured": bool(ALCHEMY_API_KEY)},
+        {"key": "Etherscan API V2 key", "configured": bool(ETHERSCAN_API_KEY)},
         {"key": "PostgreSQL database", "configured": bool(DATABASE_URL)},
         {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
         {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
@@ -3118,6 +3171,55 @@ def admin_settings(user: dict = Depends(current_user)):
     ]
     record_admin_event(user, "view_admin_settings")
     return {"checks": checks, "payments_enabled": False, "transaction_broadcast": "external_wallet_only", "secrets_exposed": False}
+
+
+@app.post("/api/v1/admin/etherscan-provider/test")
+def admin_test_etherscan_provider(user: dict = Depends(current_user)):
+    """Test the backend Etherscan V2 key on supported EVM networks without exposing it."""
+    require_world_wallet_admin(user)
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="ETHERSCAN_API_KEY is not configured on the backend")
+
+    probe_address = "0x000000000000000000000000000000000000dEaD"
+    results = []
+    for network, chain_id in ETHERSCAN_CHAIN_IDS.items():
+        try:
+            payload = etherscan_v2_request(
+                chain_id, "account", "balance",
+                {"address": probe_address, "tag": "latest"},
+            )
+            ok = str(payload.get("status")) == "1" and str(payload.get("result", "")).isdigit()
+            results.append({
+                "network": network,
+                "chain_id": chain_id,
+                "ok": ok,
+                "message": "Etherscan API V2 responded successfully" if ok else "Etherscan API V2 rejected or could not complete the read-only probe",
+            })
+        except Exception as exc:
+            logger.warning("Etherscan provider probe failed: network=%s error_type=%s", network, type(exc).__name__)
+            results.append({
+                "network": network,
+                "chain_id": chain_id,
+                "ok": False,
+                "message": "Etherscan API V2 request failed; check key permissions, network support, and provider limits",
+            })
+
+    success = bool(results) and all(item["ok"] for item in results)
+    record_admin_event(
+        user,
+        "test_etherscan_v2_provider",
+        "success=" + str(success).lower() + "; networks=" + ",".join(item["network"] for item in results if item["ok"]),
+    )
+    return {
+        "success": success,
+        "key_configured": True,
+        "api_version": "v2",
+        "results": results,
+        "read_only": True,
+        "secrets_exposed": False,
+        "notice": "Read-only balance probes use a fixed public address. No customer wallet, private key, or transaction signing request is involved.",
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @app.post("/api/v1/admin/nft-provider/test")
@@ -3761,13 +3863,24 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Blockchain RPC unavailable or chain identity mismatch") from exc
     has_code = bool(code and code not in {"0x","0x0"})
+    source_check = {"status": "not_checked", "source_verified": False}
+    if has_code and ETHERSCAN_API_KEY:
+        try:
+            source_metadata = etherscan_contract_source(ETHERSCAN_CHAIN_IDS[network], address)
+            source_check = {"status": "checked", **source_metadata}
+        except Exception as exc:
+            logger.warning("Etherscan contract source lookup failed: network=%s error_type=%s", network, type(exc).__name__)
+            source_check = {"status": "unavailable", "source_verified": False}
+    elif has_code:
+        source_check = {"status": "not_configured", "source_verified": False}
     return {
         "status": "contract" if has_code else "no_contract_code",
         "network": network,
         "address": address,
         "contract": has_code,
-        "source_verified": False,
-        "note": "This check confirms deployed bytecode only; it does not prove source-code verification or safety.",
+        "source_verified": bool(source_check.get("source_verified")),
+        "explorer_source": source_check,
+        "note": "Deployed bytecode and explorer source verification are separate checks. Etherscan source verification does not prove contract safety, ownership, reserves, or audit status.",
     }
 
 def _abi_text_value(raw):
