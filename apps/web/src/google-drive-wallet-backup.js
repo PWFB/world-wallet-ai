@@ -6,8 +6,7 @@ export function isWalletBackupFile(file) {
   const mimeType = String(file?.mimeType || file?.type || "").toLowerCase();
   const extensionAllowed = /\.(json|txt|wallet|backup)$/i.test(name);
   const nameRelevant = /(wallet|backup|keystore|recovery|seed|phrase)/i.test(name);
-  const textLike = mimeType === "application/json" || mimeType.startsWith("text/") || mimeType === "application/octet-stream";
-  return extensionAllowed && (nameRelevant || textLike);
+  return extensionAllowed && nameRelevant;
 }
 
 function asMnemonic(value) {
@@ -32,7 +31,7 @@ function validateEncryptedWallet(wallet) {
   try {
     const keyPayload = JSON.parse(wallet.encryptedJson);
     const phrasePayload = JSON.parse(wallet.encryptedMnemonic);
-    if (!keyPayload?.crypto || phrasePayload?.version !== 1 || phrasePayload?.kdf !== "PBKDF2-SHA256" ||
+    if (!(keyPayload?.crypto || keyPayload?.Crypto) || phrasePayload?.version !== 1 || phrasePayload?.kdf !== "PBKDF2-SHA256" ||
         phrasePayload?.cipher !== "AES-256-GCM") throw new Error("Unsupported encryption metadata.");
   } catch {
     throw new Error("The backup encryption metadata is invalid or unsupported.");
