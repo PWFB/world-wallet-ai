@@ -22,6 +22,34 @@ function ExplorerLink({ network, hash, children }) {
   return <a href={explorerBase(network) + "/tx/" + safeHash} target="_blank" rel="noreferrer">{children || safeHash.slice(0, 12) + "…"}</a>;
 }
 
+function mergeAuditPages(previous, next) {
+  if (!previous || !next || Number(next.page) <= 1) return next;
+  const mergedNetworks = (next.networks || []).map(network => {
+    const oldNetwork = (previous.networks || []).find(item => item.network === network.network);
+    const addresses = (network.addresses || []).map(address => {
+      const oldAddress = (oldNetwork?.addresses || []).find(item => item.address.toLowerCase() === address.address.toLowerCase());
+      const mergeUnique = (left, right, keyOf) => {
+        const seen = new Set();
+        return [...(left || []), ...(right || [])].filter(item => {
+          const key = keyOf(item);
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+      };
+      return {
+        ...address,
+        token_transfers: mergeUnique(oldAddress?.token_transfers, address.token_transfers, item => item.tx_hash || JSON.stringify(item)),
+        approvals: mergeUnique(oldAddress?.approvals, address.approvals, item => (item.tx_hash || "") + ":" + (item.log_index || "")),
+        current_allowance_checks: address.current_allowance_checks || oldAddress?.current_allowance_checks || [],
+        warnings: mergeUnique(oldAddress?.warnings, address.warnings, item => item),
+      };
+    });
+    return { ...network, addresses };
+  });
+  return { ...next, networks: mergedNetworks };
+}
+
 function Panel({ title, children, note }) {
   return <article className="panel action-panel" style={{ marginBottom: 16 }}>
     <h2 style={{ marginTop: 0 }}>{title}</h2>
@@ -56,7 +84,7 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
       });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.detail || "Token interaction discovery failed.");
-      setData(result);
+      setData(previous => mergeAuditPages(previous, result));
       setPage(nextPage);
     } catch (err) {
       setError(err?.message || "Token interaction discovery failed.");
@@ -80,7 +108,7 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         <h1>Token Interaction Audit</h1>
         <p className="muted">Discover ERC-20 transfers, historic approvals, current allowances and EIP-7702 delegation for the signature-verified addresses attached to your active wallet.</p>
       </div>
-      <button type="button" className="primary" disabled={busy || !accessToken} onClick={() => scan(1)}>{busy ? "Scanning…" : "Scan token history"}</button>
+      <button type="button" className="primary" disabled={busy} onClick={() => scan(1)}>{busy ? "Scanning…" : "Scan token history"}</button>
     </div>
 
     <Panel title="Scan scope" note="The backend reads only addresses already attached to your active World Wallet and marked ownership-verified. Unverified addresses are skipped rather than scanned as if they were confirmed yours.">
