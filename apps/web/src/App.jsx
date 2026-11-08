@@ -23,6 +23,8 @@ const fallbackWallet = { available_balance_usd: null, actual_balance_usd: null, 
 const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
+  { symbol: "BALMZ-BNB", name: "BALMZ Token (BNB Chain Mainnet)", icon: "B", status: "BNB Chain Mainnet • contract pending" },
+  { symbol: "BALMZ-SOL", name: "BALMZ Token (Solana Mainnet)", icon: "B", status: "Solana Mainnet • mint pending" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
@@ -300,6 +302,8 @@ function App() {
       const liveRecord = records.find(t => t.wallet_network_connected);
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
+      const bnbMainnetRecord = records.find(t => t.network === "bnb");
+      const solanaMainnetRecord = records.find(t => t.network === "solana_mainnet");
       const quote = marketPrices[coin.symbol] || {};
       return {
         ...coin,
@@ -307,8 +311,12 @@ function App() {
           ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
           : coin.symbol === "BALMZ-SEP"
             ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-            : coin.status,
-        registry: liveRecord || mainnetContract || sepoliaContract || records[0] || null,
+            : coin.symbol === "BALMZ-BNB"
+              ? (bnbMainnetRecord?.contract_address ? "BNB Chain Mainnet • configured • verification pending" : "BNB Chain Mainnet • contract pending")
+              : coin.symbol === "BALMZ-SOL"
+                ? (solanaMainnetRecord?.contract_address ? "Solana Mainnet • configured • verification pending" : "Solana Mainnet • mint pending")
+                : coin.status,
+        registry: liveRecord || mainnetContract || sepoliaContract || bnbMainnetRecord || solanaMainnetRecord || records[0] || null,
         connected: Boolean(liveRecord),
         price_usd: quote.usd == null ? null : Number(quote.usd),
         price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -1584,8 +1592,8 @@ function App() {
         {active === "BALMZ AI" ? <BalmzAI /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP";
-          const balanceKnown = Boolean(live && (!contractBasedBalmz || coin?.registry?.contract_address));
+          const contractBasedBalmz = ["BALMZ", "BALMZ-SEP", "BALMZ-BNB", "BALMZ-SOL"].includes(selectedCoin);
+          const balanceKnown = Boolean(live && (!contractBasedBalmz || (coin?.registry?.contract_address && coin?.registry?.status === "active")));
           const balance = balanceKnown ? Number(live?.balance || 0) : null;
           const value = live?.value_usd;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
