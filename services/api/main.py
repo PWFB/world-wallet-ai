@@ -2392,6 +2392,11 @@ def wallet_token_interactions(
                 # Etherscan documents a hard 1,000-log response cap for getLogs;
                 # it does not offer reliable page/offset pagination for this endpoint.
                 approval_logs_truncated = len(raw_approvals) >= 1000
+                approval_last_block = max(
+                    (int(str(log.get("blockNumber"))) for log in raw_approvals
+                     if str(log.get("blockNumber") or "").isdigit()),
+                    default=None,
+                )
             except Exception as exc:
                 warnings.append("ERC-20 Approval history unavailable (" + type(exc).__name__ + ")")
 
@@ -2456,6 +2461,7 @@ def wallet_token_interactions(
                     "approval_from_block": approval_from_block,
                     "approval_to_block": approval_to_block,
                     "approval_logs_truncated": approval_logs_truncated,
+                    "approval_last_block": approval_last_block,
                     "has_more": transfer_has_more,
                 },
                 "warnings": warnings,
