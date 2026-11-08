@@ -13,7 +13,7 @@ Sessions are account-scoped in PostgreSQL. A partial unique index prevents more 
 
 ## Three-hour wallet clock
 
-The frontend derives three-hour checkpoints from the server-persisted `active_session.started_at` timestamp. The start timestamp therefore survives refreshes and sign-ins, and each wallet's clock is independent. The UI displays elapsed three-hour checkpoints and the next checkpoint time. It does not reset the clock on refresh.
+The frontend derives three-hour checkpoints from the server-persisted `active_session.started_at` timestamp. The start timestamp therefore survives refreshes and sign-ins, and each wallet's clock is independent. The UI displays elapsed three-hour checkpoints and the next checkpoint time. It does not reset the clock on refresh. The mining dashboard also displays the wallet's persisted session history (active/completed status, start/end timestamps, and duration). This is session history only; it must not be presented as token claim or payout history.
 
 These checkpoints are schedule markers only in this change. They are not claimable token amounts, and the frontend does not submit a claim. A true claim feature requires server-side cycle accounting, idempotent reward ledger entries, verified funded allocation, eligibility/rate/cap rules, wallet ownership verification, and replay-protected on-chain distribution.
 
