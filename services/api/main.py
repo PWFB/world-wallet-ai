@@ -2360,6 +2360,7 @@ def wallet_token_interactions(
             approvals = []
             transfer_has_more = False
             approval_logs_truncated = False
+            approval_last_block = None
             try:
                 payload = etherscan_v2_request(
                     config["chain_id"], "account", "tokentx",
