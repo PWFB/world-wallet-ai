@@ -168,6 +168,241 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     try { window.dispatchEvent(new Event("world-wallet-local-vault-updated")); } catch {}
   }
 
+  async function importWalletBackupContent(content, sourceName = "backup file") {
+    setBusy(true);
+    setMessage("");
+    try {
+      const parsed = parseWalletBackupContent(content);
+      let walletData;
+      if (parsed.kind === "mnemonic") {
+        if (importPassword.length < 10) throw new Error("Enter a new local vault password of at least 10 characters before importing a recovery phrase.");
+        const phrase = parsed.phrase;
+        const signer = HDNodeWallet.fromPhrase(phrase);
+        const addresses = await deriveWalletAddresses(phrase);
+        walletData = {
+          name: String(sourceName || "Imported wallet").replace(/\.(json|txt|wallet|backup)$/i, "").slice(0, 80) || "Imported wallet",
+          address: addresses.ethereum,
+          addresses,
+          network: "ethereum",
+          encryptedJson: await signer.encrypt(importPassword),
+          encryptedMnemonic: await encryptMnemonic(phrase, importPassword),
+          publicKey: signer.publicKey,
+          createdAt: new Date().toISOString(),
+        };
+      } else {
+        walletData = parsed.wallet;
+      }
+
+      const importedAddress = walletData.address || walletData.addresses?.ethereum;
+      const duplicate = entries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase());
+      if (duplicate) {
+        setSelectedId(duplicate.walletId);
+        setMessage("This public wallet address is already saved in this browser. No duplicate wallet was added.");
+        return;
+      }
+
+      const walletNumber = createWalletNumber(readVault().map(item => item.walletNumber).filter(Boolean));
+      const localWalletId = "local-" + walletNumber;
+      const importedEntry = {
+        walletId: localWalletId,
+        serverWalletId: "",
+        walletNumber,
+        ownerUserId: String(userId || ""),
+        name: walletData.name || "Imported wallet",
+        address: importedAddress,
+        addresses: walletData.addresses || { ethereum: importedAddress },
+        publicKey: walletData.publicKey || "",
+        network: walletData.network || "ethereum",
+        encryptedJson: walletData.encryptedJson,
+        encryptedMnemonic: walletData.encryptedMnemonic,
+        createdAt: walletData.createdAt || new Date().toISOString(),
+        importedFrom: String(sourceName || "backup file").slice(0, 120),
+      };
+      persistVault([importedEntry, ...entries]);
+      setSelectedId(localWalletId);
+      setPassword("");
+      setImportPassword("");
+      setUnlocked(null);
+      setUnlockedAddresses(null);
+      setGenerated(null);
+      setMessage("Backup imported and encrypted in this browser. Public addresses are ready for review. Nothing was sent to the World Wallet AI backend; attach public addresses to your account only after reviewing them.");
+    } catch (error) {
+      setMessage(error?.message || "The selected backup could not be imported.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLocalBackupFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error("Backup file exceeds the 10 MB local import limit.");
+      const content = await file.text();
+      await importWalletBackupContent(content, file.name);
+    } catch (error) {
+      setMessage(error?.message || "Could not read the selected backup file.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function connectGoogleDrive() {
+    if (!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) {
+      setMessage("Google Drive is not configured. Add VITE_GOOGLE_API_KEY and VITE_GOOGLE_CLIENT_ID to the World Wallet AI frontend build environment, then rebuild the frontend.");
+      return;
+    }
+    if (!window.google?.accounts?.oauth2) {
+      setMessage("Google sign-in is still loading. Refresh this page and try Connect Google Drive again.");
+      return;
+    }
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_DRIVE_READONLY_SCOPE,
+        callback: async response => {
+          if (response?.error || !response?.access_token) {
+            setMessage("Google Drive authorization was not completed. No wallet data was imported.");
+            return;
+          }
+          const token = response.access_token;
+          setDriveAccessToken(token);
+          setDriveBusy(true);
+          setMessage("");
+          try {
+            const params = new URLSearchParams({
+              key: GOOGLE_API_KEY,
+              q: "trashed = false and mimeType != 'application/vnd.google-apps.folder' and (name contains 'wallet' or name contains 'backup' or name contains 'keystore' or name contains 'recovery' or name contains 'seed' or name contains 'phrase')",
+              pageSize: "100",
+              orderBy: "modifiedTime desc",
+              fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime)",
+            });
+            const response = await fetch("https://www.googleapis.com/drive/v3/files?" + params.toString(), {
+              headers: { Authorization: "Bearer " + token },
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error?.message || "Google Drive file listing failed.");
+            const files = Array.isArray(data.files) ? data.files : [];
+            setDriveFiles(files);
+            setMessage(files.length
+              ? "Google Drive connected with read-only access. Select a backup file to inspect locally."
+              : "Google Drive connected, but no matching wallet or backup filenames were found. You can still import a file from this device.");
+          } catch (error) {
+            setMessage("Google Drive file listing failed: " + (error?.message || "request error") + ". Reconnect and check the Drive API configuration.");
+          } finally {
+            setDriveBusy(false);
+          }
+        },
+      });
+      tokenClient.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
+    } catch (error) {
+      setMessage("Google Drive connection could not start: " + (error?.message || "Google sign-in unavailable"));
+    }
+  }
+
+  async function importGoogleDriveFile(file) {
+    if (!driveAccessToken || !file?.id) {
+      setMessage("Reconnect Google Drive before selecting a backup.");
+      return;
+    }
+    if (String(file.mimeType || "").startsWith("application/vnd.google-apps.")) {
+      setMessage("Google Docs-native files are not supported yet. Download the backup as JSON or TXT, then import that file.");
+      return;
+    }
+    setDriveBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(file.id) + "?alt=media&key=" + encodeURIComponent(GOOGLE_API_KEY), {
+        headers: { Authorization: "Bearer " + driveAccessToken },
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error?.message || (response.status === 401 ? "Google authorization expired; reconnect Drive." : "The selected file could not be downloaded."));
+      }
+      const content = await response.text();
+      await importWalletBackupContent(content, file.name);
+    } catch (error) {
+      setMessage("Could not read the selected Google Drive backup: " + (error?.message || "download failed"));
+    } finally {
+      setDriveBusy(false);
+    }
+  }
+
+  async function attachSelectedWalletToAccount() {
+    const entry = entries.find(item => item.walletId === selectedId);
+    if (!entry || entry.serverWalletId) {
+      setMessage("Choose an imported local wallet that is not already attached.");
+      return;
+    }
+    const addressPairs = Object.entries(entry.addresses || {}).filter(([, address]) => typeof address === "string" && address.trim());
+    if (!addressPairs.some(([networkName]) => networkName === "ethereum")) {
+      setMessage("This wallet has no verified Ethereum public address to attach.");
+      return;
+    }
+    if (!window.confirm("Attach this wallet to your World Wallet AI account? Only the wallet name, wallet ID, and public network addresses will be sent. Recovery phrases, private keys, and encrypted recovery files stay on this device.")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const freshToken = await getNeonAccessToken();
+      const sessionToken = freshToken || accessToken;
+      if (!sessionToken) throw new Error("No valid sign-in session.");
+      const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+        body: JSON.stringify({ name: entry.name || "Imported wallet" }),
+      });
+      const profile = await profileResponse.json().catch(() => ({}));
+      if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
+      const serverWalletId = profile.wallet?.id;
+      if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
+      const serverWalletNumber = String(profile.wallet?.wallet_number || entry.walletNumber);
+      const attachmentFailures = [];
+      for (const [addressNetwork, addressValue] of addressPairs) {
+        try {
+          const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+            body: JSON.stringify({ network: addressNetwork, address: addressValue, label: "imported " + serverWalletNumber }),
+          });
+          const addressData = await addressResponse.json().catch(() => ({}));
+          if (!addressResponse.ok) throw new Error(addressData.detail || "Address save failed.");
+        } catch (error) {
+          attachmentFailures.push(addressNetwork + ": " + (error?.message || "save failed"));
+        }
+      }
+      const linkedEntry = { ...entry, walletId: serverWalletId, serverWalletId, walletNumber: serverWalletNumber };
+      const currentEntries = entries.filter(item => item.walletId !== entry.walletId && item.walletId !== serverWalletId);
+      persistVault([linkedEntry, ...currentEntries], [entry.walletId]);
+      setSelectedId(serverWalletId);
+      try { await onWalletCreated?.(); } catch {}
+      setMessage(attachmentFailures.length
+        ? "Wallet profile attached, but some public addresses did not sync: " + attachmentFailures.join("; ") + ". Recovery material remains local; retry the missing address sync from Wallets."
+        : "Wallet attached to your account. All public addresses were submitted; encrypted recovery material remains on this device.");
+    } catch (error) {
+      setMessage("Wallet remains saved locally, but account attachment failed: " + (error?.message || "server unavailable"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadEncryptedBackup() {
+    const entry = entries.find(item => item.walletId === selectedId);
+    if (!entry) { setMessage("Choose a saved wallet before exporting its encrypted backup."); return; }
+    try {
+      const payload = createWalletBackupPayload(entry);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "world-wallet-" + String(entry.walletNumber || "backup") + "-encrypted-backup.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage("Encrypted backup downloaded. Upload that JSON file to Google Drive yourself; World Wallet AI does not upload it.");
+    } catch (error) {
+      setMessage(error?.message || "Encrypted backup export failed.");
+    }
+  }
+
   async function createWallet() {
     if (password.length < 10) {
       setMessage("Use a vault password of at least 10 characters. It is not sent to World Wallet AI.");
