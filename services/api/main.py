@@ -2265,7 +2265,7 @@ def _inspect_eip7702_for_network_address(rpc_url, network, address):
         elif network == "bnb":
             chain_id = require_bnb_rpc(rpc_url)
         else:
-            chain_id = require_sepolia_rpc(rpc_url)
+            chain_id = require_sepolia_rpc(rpc_url) or 11155111
         code = rpc_call(rpc_url, "eth_getCode", [address, "latest"])
         target = _decode_eip7702_designator(code)
         return {
