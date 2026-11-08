@@ -72,6 +72,16 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     finally { setBusy(false); }
   }
 
+  async function recordRewards() {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const result = await request("/api/v1/mining/balmz/record", "POST");
+      setMessage(result.notice || "Pending allocation ledger updated.");
+      setData(await request("/api/v1/mining/balmz"));
+    } catch (err) { setError(err?.message || "Could not record eligible cycles."); }
+    finally { setBusy(false); }
+  }
+
   const active = Boolean(data?.active_session);
   const cycle = useMemo(
     () => cycleState(data?.active_session?.started_at, nowMs),
@@ -120,11 +130,26 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     </article>
 
     <article className="panel action-panel mining-claim-panel">
-      <div className="panel-head"><div><h2>BALMZ claim</h2><span>Claim area is visible to every miner.</span></div><span className="mining-interest-badge">Every 3 hours</span></div>
-      <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>{active && cycle.completedCycles > 0 ? "Checkpoint reached — reward verification pending" : active ? "Mining cycle in progress" : "Start mining to begin your first cycle"}</b></div>
-      <p className="security-note">The Claim control is shown to all miners, but is not active yet. A checkpoint alone does not create a reward. Claims will only be enabled when a funded Mainnet reward pool and a verified reward ledger are live.</p>
-      <button className="primary feature-submit" type="button" disabled aria-disabled="true">Claim BALMZ — not yet enabled</button>
-      <p className="security-note">After Mainnet activation, the claim will send the verified net reward to this wallet only after wallet authorization and on-chain confirmation. Any network gas fee and any protocol fee will be disclosed separately before signing; fees must not be silently deducted from the reward. A successful deposit will be shown only after the transaction is confirmed.</p>
+      <div className="panel-head"><div><h2>Pending BALMZ allocation</h2><span>Server-recorded completed cycles; not an on-chain balance.</span></div><span className="mining-interest-badge">0.5 / 3 hours</span></div>
+      <div className="feature-grid mining-status-grid">
+        <article className="panel action-panel mining-status-card"><small>PENDING ALLOCATION</small><strong>{data?.pending_reward_amount ?? "0"} BALMZ</strong><span>Internal ledger only · not spendable</span></article>
+        <article className="panel action-panel mining-status-card"><small>RECORDED CYCLES</small><strong>{Number(data?.pending_cycle_count || 0).toLocaleString()}</strong><span>Maximum 8 cycles / 4 BALMZ per UTC day</span></article>
+      </div>
+      <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>{active && cycle.completedCycles > 0 ? "Completed checkpoints may be recorded" : active ? "Mining cycle in progress" : "Start mining to begin your first cycle"}</b></div>
+      <p className="security-note">Record completed three-hour cycles to your wallet's pending allocation ledger. The server enforces 0.5 BALMZ per completed cycle and a 4 BALMZ daily cap. Repeated requests do not create duplicate entries.</p>
+      <button className="primary feature-submit" type="button" disabled={busy || !data} onClick={recordRewards}>Record eligible cycles</button>
+      <p className="security-note">Withdrawals remain locked until the official BALMZ launch, verified Mainnet contract and funded allocation. This action does not mint, transfer, or credit an on-chain token. Mainnet, Sepolia and Solana Devnet balances remain separate.</p>
+    </article>
+
+    <article className="panel action-panel">
+      <h2>Recent pending allocations</h2>
+      {!data?.recent_rewards?.length ? <p className="muted">No pending allocations recorded.</p> :
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 480 }}>
+          <thead><tr><th>Recorded at</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody>{data.recent_rewards.map(reward => <tr key={reward.id}>
+            <td>{new Date(reward.earned_at).toLocaleString()}</td><td>{reward.amount} BALMZ</td><td>Pending launch</td>
+          </tr>)}</tbody>
+        </table></div>}
     </article>
 
     <article className="panel action-panel">
