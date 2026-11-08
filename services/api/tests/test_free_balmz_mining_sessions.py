@@ -30,6 +30,9 @@ class FakeConnection:
     def __exit__(self, *_args):
         return False
 
+    def commit(self):
+        return None
+
     def execute(self, sql, params=None):
         self.statements.append((sql, params))
         if "SELECT id,started_at FROM balmz_mining_sessions" in sql:
