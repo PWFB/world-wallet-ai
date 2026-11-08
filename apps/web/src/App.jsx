@@ -298,7 +298,7 @@ function App() {
   const [externalWalletConnection, setExternalWalletConnection] = useState(() => { try { return JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return null; } });
   const walletCoinCatalogWithRegistry = useMemo(() => {
     const catalog = walletCoinCatalog.map(coin => {
-      const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
+      const records = tokenRegistry.filter(t => (t.asset_symbol || t.symbol) === coin.symbol);
       const liveRecord = records.find(t => t.wallet_network_connected);
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
