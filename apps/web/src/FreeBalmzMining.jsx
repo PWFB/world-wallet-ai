@@ -33,6 +33,7 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [nowMs, setNowMs] = useState(Date.now());
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
 
   const request = useCallback(async (path, method = "GET") => {
     const fresh = await getNeonAccessToken({ forceRefresh: true });
@@ -142,15 +143,33 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     </article>
 
     <article className="panel action-panel">
-      <h2>Recent pending allocations</h2>
-      {!data?.recent_rewards?.length ? <p className="muted">No pending allocations recorded.</p> :
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 480 }}>
-          <thead><tr><th>Recorded at</th><th>Amount</th><th>Status</th></tr></thead>
+      <div className="panel-head"><div><h2>Mining receipt history</h2><span>Every recorded cycle has a permanent, view-only receipt.</span></div><span className="mining-interest-badge">{data?.recent_rewards?.length || 0} receipts</span></div>
+      {!data?.recent_rewards?.length ? <p className="muted">No receipts yet. A receipt is created when eligible three-hour cycles are recorded.</p> :
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 520 }}>
+          <thead><tr><th>Receipt timestamp</th><th>Amount</th><th>Status</th><th>Receipt</th></tr></thead>
           <tbody>{data.recent_rewards.map(reward => <tr key={reward.id}>
-            <td>{new Date(reward.earned_at).toLocaleString()}</td><td>{reward.amount} BALMZ</td><td>Pending launch</td>
+            <td>{new Date(reward.recorded_at || reward.earned_at).toLocaleString()}</td><td>{reward.amount} BALMZ</td><td>Pending launch</td>
+            <td><button className="secondary" type="button" onClick={() => setSelectedReceipt(reward)}>View receipt</button></td>
           </tr>)}</tbody>
         </table></div>}
     </article>
+
+    {selectedReceipt && <div role="presentation" onClick={() => setSelectedReceipt(null)} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,.68)", display: "grid", placeItems: "center", padding: 16 }}>
+      <section role="dialog" aria-modal="true" aria-labelledby="balmz-receipt-title" onClick={event => event.stopPropagation()} className="panel action-panel" style={{ width: "min(100%, 520px)", maxHeight: "85vh", overflowY: "auto" }}>
+        <div className="panel-head"><div><span className="feature-kicker">WORLD WALLET AI · BALMZ</span><h2 id="balmz-receipt-title">Mining receipt</h2></div><button className="secondary" type="button" onClick={() => setSelectedReceipt(null)}>Close</button></div>
+        <p className="security-note">Permanent view-only record. Receipt details cannot be edited or deleted from this page.</p>
+        <div className="tool-list">
+          <div className="tool-row"><span>Receipt ID</span><strong style={{ overflowWrap: "anywhere" }}>{selectedReceipt.id}</strong></div>
+          <div className="tool-row"><span>Recorded timestamp</span><strong>{new Date(selectedReceipt.recorded_at || selectedReceipt.earned_at).toLocaleString()}</strong></div>
+          <div className="tool-row"><span>Cycle earned timestamp</span><strong>{new Date(selectedReceipt.earned_at).toLocaleString()}</strong></div>
+          <div className="tool-row"><span>Cycle number</span><strong>{selectedReceipt.cycle_number ?? "—"}</strong></div>
+          <div className="tool-row"><span>Mining session</span><strong style={{ overflowWrap: "anywhere" }}>{selectedReceipt.session_id || "—"}</strong></div>
+          <div className="tool-row"><span>Allocation</span><strong>{selectedReceipt.amount} BALMZ</strong></div>
+          <div className="tool-row"><span>Status</span><strong>Pending official launch · not spendable</strong></div>
+        </div>
+        <p className="security-note">This receipt confirms an internal pending allocation only. It is not an on-chain transaction or proof of a token transfer.</p>
+      </section>
+    </div>}
 
     <article className="panel action-panel">
       <h2>Recent sessions</h2>
