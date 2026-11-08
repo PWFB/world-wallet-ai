@@ -173,13 +173,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setMessage("");
     try {
       const parsed = parseWalletBackupContent(content);
-      let walletData;
+      let walletDataList;
       if (parsed.kind === "mnemonic") {
         if (importPassword.length < 10) throw new Error("Enter a new local vault password of at least 10 characters before importing a recovery phrase.");
         const phrase = parsed.phrase;
         const signer = HDNodeWallet.fromPhrase(phrase);
         const addresses = await deriveWalletAddresses(phrase);
-        walletData = {
+        walletDataList = [{
           name: String(sourceName || "Imported wallet").replace(/\.(json|txt|wallet|backup)$/i, "").slice(0, 80) || "Imported wallet",
           address: addresses.ethereum,
           addresses,
@@ -188,44 +188,53 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           encryptedMnemonic: await encryptMnemonic(phrase, importPassword),
           publicKey: signer.publicKey,
           createdAt: new Date().toISOString(),
-        };
+        }];
       } else {
-        walletData = parsed.wallet;
+        walletDataList = parsed.kind === "encrypted_batch" ? parsed.wallets : [parsed.wallet];
       }
 
-      const importedAddress = walletData.address || walletData.addresses?.ethereum;
-      const duplicate = entries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase());
-      if (duplicate) {
-        setSelectedId(duplicate.walletId);
-        setMessage("This public wallet address is already saved in this browser. No duplicate wallet was added.");
+      const importedEntries = [];
+      let duplicateCount = 0;
+      for (const walletData of walletDataList) {
+        const importedAddress = walletData.address || walletData.addresses?.ethereum;
+        const duplicate = entries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase())
+          || importedEntries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase());
+        if (duplicate) {
+          duplicateCount += 1;
+          if (!importedEntries.length) setSelectedId(duplicate.walletId);
+          continue;
+        }
+
+        const walletNumber = createWalletNumber(readVault().map(item => item.walletNumber).filter(Boolean).concat(importedEntries.map(item => item.walletNumber)));
+        const localWalletId = "local-" + walletNumber;
+        importedEntries.push({
+          walletId: localWalletId,
+          serverWalletId: "",
+          walletNumber,
+          ownerUserId: String(userId || ""),
+          name: walletData.name || "Imported wallet",
+          address: importedAddress,
+          addresses: walletData.addresses || { ethereum: importedAddress },
+          publicKey: walletData.publicKey || "",
+          network: walletData.network || "ethereum",
+          encryptedJson: walletData.encryptedJson,
+          encryptedMnemonic: walletData.encryptedMnemonic,
+          createdAt: walletData.createdAt || new Date().toISOString(),
+          importedFrom: String(sourceName || "backup file").slice(0, 120),
+        });
+      }
+      if (!importedEntries.length) {
+        setMessage("All wallet addresses in this backup are already saved in this browser. No duplicates were added.");
         return;
       }
-
-      const walletNumber = createWalletNumber(readVault().map(item => item.walletNumber).filter(Boolean));
-      const localWalletId = "local-" + walletNumber;
-      const importedEntry = {
-        walletId: localWalletId,
-        serverWalletId: "",
-        walletNumber,
-        ownerUserId: String(userId || ""),
-        name: walletData.name || "Imported wallet",
-        address: importedAddress,
-        addresses: walletData.addresses || { ethereum: importedAddress },
-        publicKey: walletData.publicKey || "",
-        network: walletData.network || "ethereum",
-        encryptedJson: walletData.encryptedJson,
-        encryptedMnemonic: walletData.encryptedMnemonic,
-        createdAt: walletData.createdAt || new Date().toISOString(),
-        importedFrom: String(sourceName || "backup file").slice(0, 120),
-      };
-      persistVault([importedEntry, ...entries]);
-      setSelectedId(localWalletId);
+      persistVault([...importedEntries, ...entries]);
+      setSelectedId(importedEntries[0].walletId);
       setPassword("");
       setImportPassword("");
       setUnlocked(null);
       setUnlockedAddresses(null);
       setGenerated(null);
-      setMessage("Backup imported and encrypted in this browser. Public addresses are ready for review. Nothing was sent to the World Wallet AI backend; attach public addresses to your account only after reviewing them.");
+      setMessage(importedEntries.length + " wallet(s) imported locally" + (duplicateCount ? "; " + duplicateCount + " duplicate(s) skipped" : "") + ". Public addresses are ready for review. Nothing was sent to the World Wallet AI backend; attach each wallet's public addresses only after reviewing them.");
     } catch (error) {
       setMessage(error?.message || "The selected backup could not be imported.");
     } finally {
@@ -338,7 +347,13 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       setMessage("Choose an imported local wallet that is not already attached.");
       return;
     }
-    const addressPairs = Object.entries(entry.addresses || {}).filter(([, address]) => typeof address === "string" && address.trim());
+    const addressPairs = Object.entries(entry.addresses || {}).filter(([networkName, address]) => {
+      if (typeof address !== "string" || !address.trim()) return false;
+      if (["ethereum", "bnb", "sepolia"].includes(networkName)) return /^0x[a-fA-F0-9]{40}$/.test(address.trim());
+      if (networkName === "bitcoin") return /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/i.test(address.trim());
+      if (["solana_mainnet", "solana_devnet"].includes(networkName)) return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address.trim());
+      return false;
+    });
     if (!addressPairs.some(([networkName]) => networkName === "ethereum")) {
       setMessage("This wallet has no verified Ethereum public address to attach.");
       return;
@@ -840,7 +855,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
       <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); else if (nextEntry && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); if (nextEntry && !nextEntry.serverWalletId && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); else setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div><div><small>Ethereum Mainnet</small><code>{selected.addresses?.ethereum || selected.address}</code></div></div>}
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div>{Object.entries(selected.addresses || { ethereum: selected.address }).map(([addressNetwork, addressValue]) => <div key={addressNetwork}><small>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[addressNetwork] || addressNetwork}</small><code>{addressValue}</code></div>)}</div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
