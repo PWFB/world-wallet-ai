@@ -82,7 +82,7 @@ class EtherscanProviderTests(unittest.TestCase):
         self.assertFalse(result["source_verified"])
 
     def test_admin_probe_checks_ethereum_bnb_and_sepolia_without_exposing_key(self):
-        response = FakeEtherscanResponse({"status": "1", "message": "OK", "result": "0"})
+        response = {"status": "1", "message": "OK", "result": "0"}
         user = {"id": "owner", "email": "owner@example.com"}
         with patch.object(main, "require_world_wallet_admin"):
             with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
