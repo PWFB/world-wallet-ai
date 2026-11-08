@@ -43,6 +43,7 @@ function validateEncryptedWallet(wallet) {
     network: ["ethereum", "bnb", "sepolia"].includes(wallet.network) ? wallet.network : "ethereum",
     encryptedJson: wallet.encryptedJson,
     encryptedMnemonic: wallet.encryptedMnemonic,
+    publicKey: String(wallet.publicKey || ""),
     createdAt: String(wallet.createdAt || new Date().toISOString()),
   };
 }
@@ -54,7 +55,13 @@ export function parseWalletBackupContent(content) {
   let parsed;
   try { parsed = JSON.parse(raw); } catch { parsed = null; }
 
-  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+  if (Array.isArray(parsed)) {
+    const wallets = parsed.map(validateEncryptedWallet);
+    if (!wallets.length) throw new Error("The selected wallet backup contains no wallet records.");
+    return wallets.length === 1 ? { kind: "encrypted", wallet: wallets[0] } : { kind: "encrypted_batch", wallets };
+  }
+
+  if (parsed && typeof parsed === "object") {
     if (parsed.format === BACKUP_FORMAT && parsed.version === 1) {
       return { kind: "encrypted", wallet: validateEncryptedWallet(parsed.wallet) };
     }
@@ -63,6 +70,9 @@ export function parseWalletBackupContent(content) {
       value => value && typeof value === "object" && !Array.isArray(value)
     );
     for (const candidate of candidates) {
+      if (candidate.encryptedJson && candidate.encryptedMnemonic) {
+        return { kind: "encrypted", wallet: validateEncryptedWallet(candidate) };
+      }
       for (const field of SECRET_FIELDS) {
         const phrase = asMnemonic(candidate[field]);
         if (phrase) return { kind: "mnemonic", phrase };
