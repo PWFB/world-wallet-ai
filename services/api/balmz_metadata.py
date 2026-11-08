@@ -60,7 +60,8 @@ def additional_balmz_registry_entries(
     return [
         {
             "id": "token-balmz-bnb",
-            "symbol": "BALMZ-BNB",
+            "symbol": "BALMZ",
+            "asset_symbol": "BALMZ-BNB",
             "name": "BALMZ Token (BNB Chain Mainnet)",
             "network": "bnb",
             "contract_address": bnb_value if bnb_valid else None,
@@ -75,7 +76,8 @@ def additional_balmz_registry_entries(
         },
         {
             "id": "token-balmz-solana-mainnet",
-            "symbol": "BALMZ-SOL",
+            "symbol": "BALMZ",
+            "asset_symbol": "BALMZ-SOL",
             "name": "BALMZ Token (Solana Mainnet)",
             "network": "solana_mainnet",
             "contract_address": solana_value if solana_valid else None,
