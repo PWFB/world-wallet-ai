@@ -186,6 +186,11 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         <p className="muted">{data.claim_readiness?.reason}</p>
         <p className="security-note">Transfers and approval permissions are not proof of an unclaimed allocation. One-signature batch claims remain unavailable until each network's verified claim contract, allocation source, replay protection and wallet execution path are reviewed.</p>
       </Panel>
+      <Panel title="Indexing coverage limits">
+        <p className="muted">{data.provider_limits?.token_transfers}</p>
+        <p className="muted">{data.provider_limits?.approval_logs}</p>
+        <p className="muted" style={{ marginBottom: 0 }}>A clean page does not prove that an address has no older or off-indexer activity.</p>
+      </Panel>
       <p className="muted">{data.warning}</p>
     </>}
 
