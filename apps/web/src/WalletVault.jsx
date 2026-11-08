@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
-import { createWalletBackupPayload, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
+import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
 
@@ -282,7 +282,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok) throw new Error(data.error?.message || "Google Drive file listing failed.");
-            const files = Array.isArray(data.files) ? data.files : [];
+            const files = (Array.isArray(data.files) ? data.files : []).filter(isWalletBackupFile);
             setDriveFiles(files);
             setMessage(files.length
               ? "Google Drive connected with read-only access. Select a backup file to inspect locally."
@@ -808,10 +808,34 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     </article>}
 
     <article className="panel action-panel">
+      <p className="feature-kicker">GOOGLE DRIVE WALLET BACKUPS</p>
+      <h2>Connect and import an existing wallet</h2>
+      <p className="muted">Google Drive access is read-only. The app lists likely wallet-backup files; only a file you select is downloaded and inspected locally in this browser. Recovery phrases and private keys are never sent to the World Wallet AI backend.</p>
+      {(!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) ? (
+        <div className="security-note">Google Drive setup is required on the World Wallet AI frontend build: add <code>VITE_GOOGLE_API_KEY</code> and <code>VITE_GOOGLE_CLIENT_ID</code>. Enable the Google Drive API, restrict the API key to that API and your frontend origin, and use a Web OAuth client ID with this site's JavaScript origin.</div>
+      ) : (
+        <div className="feature-grid">
+          <button type="button" className="primary" disabled={!googleReady || driveBusy} onClick={connectGoogleDrive}>{driveBusy ? "Connecting / reading Drive…" : driveAccessToken ? "Refresh Google Drive backups" : googleReady ? "Connect Google Drive →" : "Loading Google sign-in…"}</button>
+          {driveAccessToken && <button type="button" className="secondary" onClick={() => { setDriveAccessToken(""); setDriveFiles([]); setMessage("Google Drive access token cleared from this page session."); }}>Disconnect Drive</button>}
+        </div>
+      )}
+      {driveFiles.length > 0 && <div className="wallet-detail-grid">
+        {driveFiles.map(file => <div key={file.id}>
+          <small>{file.name} · {file.mimeType || "file"}{file.modifiedTime ? " · " + new Date(file.modifiedTime).toLocaleDateString() : ""}</small>
+          <button type="button" className="secondary" disabled={driveBusy || busy} onClick={() => importGoogleDriveFile(file)}>Inspect and import this backup</button>
+        </div>)}
+      </div>}
+      <label>Import a backup from this device (.json or .txt)<input type="file" accept=".json,.txt,.wallet,.backup,application/json,text/plain,application/octet-stream" onChange={handleLocalBackupFile} disabled={busy || driveBusy} /></label>
+      <label>New local vault password for a plain 12/24-word phrase<input type="password" value={importPassword} onChange={event => setImportPassword(event.target.value)} autoComplete="new-password" placeholder="At least 10 characters; used only on this device" /></label>
+      <div className="security-note">Supported formats: World Wallet AI encrypted backup JSON, or a TXT/JSON file containing one 12- or 24-word recovery phrase. Image/photo OCR and Google Docs-native files are not enabled. Plain phrases are encrypted immediately in this browser before they are saved.</div>
+      {selected && !selected.serverWalletId && <div className="feature-grid">
+        <button type="button" className="primary" disabled={busy} onClick={attachSelectedWalletToAccount}>Attach selected wallet to account (public addresses only)</button>
+        <button type="button" className="secondary" disabled={busy} onClick={downloadEncryptedBackup}>Download encrypted backup</button>
+      </div>}
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); if (nextEntry && activeWalletId && !nextEntry.serverWalletId) { setMessage("This local wallet is not linked to an account wallet yet. The active wallet's balances and history remain separate."); return; } setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId} disabled={Boolean(activeWalletId && !item.serverWalletId)}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); else if (nextEntry && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
       {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div><div><small>Ethereum Mainnet</small><code>{selected.addresses?.ethereum || selected.address}</code></div></div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
