@@ -36,6 +36,25 @@ test("round-trips the encrypted World Wallet AI backup format", () => {
   assert.equal(parsed.wallet.encryptedMnemonic, encryptedWallet.encryptedMnemonic);
 });
 
+test("imports legacy single-wallet encrypted vault records", () => {
+  const parsed = parseWalletBackupContent(JSON.stringify(encryptedWallet));
+  assert.equal(parsed.kind, "encrypted");
+  assert.equal(parsed.wallet.address, encryptedWallet.address);
+});
+
+test("imports arrays of legacy encrypted wallet records without losing wallet separation", () => {
+  const second = {
+    ...encryptedWallet,
+    name: "Second wallet",
+    address: "0x" + "1".repeat(40),
+    addresses: { ethereum: "0x" + "1".repeat(40), bnb: "0x" + "1".repeat(40) },
+  };
+  const parsed = parseWalletBackupContent(JSON.stringify([encryptedWallet, second]));
+  assert.equal(parsed.kind, "encrypted_batch");
+  assert.equal(parsed.wallets.length, 2);
+  assert.equal(parsed.wallets[1].name, "Second wallet");
+});
+
 test("rejects unsupported or incomplete backup content", () => {
   assert.throws(() => parseWalletBackupContent("hello world"), /Unsupported backup/);
   assert.throws(() => parseWalletBackupContent(JSON.stringify({
