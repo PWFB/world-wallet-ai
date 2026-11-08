@@ -128,10 +128,10 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     </article>
 
     <article className="panel action-panel">
-      <h2>Recent sessions</h2>
-      {!data?.recent_sessions?.length ? <p className="muted">No sessions recorded yet.</p> :
+      <h2>Mining history</h2>
+      {!data?.recent_sessions?.length ? <p className="muted">No mining sessions recorded for this wallet yet. Completed and active session records will appear here.</p> :
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 560 }}>
-          <thead><tr><th>Status</th><th>Started</th><th>Ended</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Status</th><th>Mining started</th><th>Mining ended</th><th>Duration</th></tr></thead>
           <tbody>{data.recent_sessions.map(session => <tr key={session.id}>
             <td>{session.status === "active" ? "Active" : "Completed"}</td>
             <td>{new Date(session.started_at).toLocaleString()}</td>
