@@ -4262,6 +4262,34 @@ def balmz_mining_status(user: dict = Depends(current_user)):
     }
 
 
+@app.get("/api/v1/mining/balmz/referrals")
+def balmz_mining_referral_history(limit: int = 25, offset: int = 0, user: dict = Depends(current_user)):
+    """Return only the authenticated referrer's attributed wallet IDs and timestamps."""
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    with db() as conn:
+        total_row = conn.execute(
+            "SELECT COUNT(*) FROM balmz_mining_referrals WHERE referrer_wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
+        rows = conn.execute(
+            "SELECT referred_wallet_id,referral_code,created_at "
+            "FROM balmz_mining_referrals WHERE referrer_wallet_id=%s "
+            "ORDER BY created_at DESC,referred_wallet_id LIMIT %s OFFSET %s",
+            (user["wallet_id"], limit, offset),
+        ).fetchall()
+    return {
+        "total": int(total_row[0] or 0) if total_row else 0,
+        "limit": limit,
+        "offset": offset,
+        "referrals": [{
+            "referred_wallet_id": row[0],
+            "referral_code": row[1],
+            "referred_at": row[2].isoformat(),
+        } for row in rows],
+    }
+
+
 @app.post("/api/v1/mining/balmz/record")
 def record_balmz_mining_rewards(user: dict = Depends(current_user)):
     """Idempotently record completed 3-hour cycles as pending allocations only."""
