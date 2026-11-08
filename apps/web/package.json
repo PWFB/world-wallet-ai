@@ -12,7 +12,8 @@
     "cap:sync": "npm run build && cap sync android",
     "cap:open:android": "cap open android",
     "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js",
-    "test:navigation": "node --test src/navigation.test.js"
+    "test:navigation": "node --test src/navigation.test.js",
+    "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",

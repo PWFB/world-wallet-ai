@@ -76,17 +76,22 @@ class AdminConsoleTests(unittest.TestCase):
                 main.require_world_wallet_admin({"id": "owner", "email": "owner@example.com"})
             self.assertEqual(unavailable.exception.status_code, 503)
 
-    def test_admin_settings_reports_admin_email_and_alchemy_key_presence_without_values(self):
+    def test_admin_settings_reports_provider_key_presence_without_secret_values(self):
         user = {"id": "user_owner", "email": "owner@example.com"}
         with patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "owner@example.com"), \
-             patch.object(main, "ALCHEMY_API_KEY", "private-test-key"), \
+             patch.object(main, "ALCHEMY_API_KEY", "private-alchemy-test-key"), \
+             patch.object(main, "ETHERSCAN_API_KEY", "private-etherscan-test-key"), \
+             patch.object(main, "GEMINI_API_KEY", "private-gemini-test-key"), \
              patch.object(main, "DATABASE_URL", "postgresql://test"), \
              patch.object(main, "record_admin_event"):
             result = main.admin_settings(user)
         by_key = {item["key"]: item["configured"] for item in result["checks"]}
         self.assertTrue(by_key["World Wallet admin email"])
         self.assertTrue(by_key["Alchemy NFT API key"])
-        self.assertNotIn("private-test-key", str(result))
+        self.assertTrue(by_key["Etherscan API V2 key"])
+        self.assertTrue(by_key["Google Gemini API key"])
+        for secret in ("private-alchemy-test-key", "private-etherscan-test-key", "private-gemini-test-key"):
+            self.assertNotIn(secret, str(result))
         self.assertFalse(result["secrets_exposed"])
 
     def test_alchemy_provider_probe_checks_both_mainnets_without_returning_key(self):

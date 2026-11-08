@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
+const GOOGLE_API_KEY = String(import.meta.env.VITE_GOOGLE_API_KEY || "").trim();
+const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+const GOOGLE_DRIVE_READONLY_SCOPE = "https://www.googleapis.com/auth/drive.readonly";
 
 function readVault() {
   try {
@@ -54,6 +58,36 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [contracts, setContracts] = useState([]);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [googleReady, setGoogleReady] = useState(false);
+  const [driveAccessToken, setDriveAccessToken] = useState("");
+  const [driveFiles, setDriveFiles] = useState([]);
+  const [driveBusy, setDriveBusy] = useState(false);
+  const [importPassword, setImportPassword] = useState("");
+
+  useEffect(() => {
+    if (!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) return undefined;
+    if (window.google?.accounts?.oauth2) { setGoogleReady(true); return undefined; }
+    let cancelled = false;
+    let script = document.getElementById("world-wallet-google-identity-script");
+    const onLoad = () => { if (!cancelled) setGoogleReady(Boolean(window.google?.accounts?.oauth2)); };
+    const onError = () => { if (!cancelled) setMessage("Google sign-in could not load. Check the frontend Content Security Policy and try again."); };
+    if (!script) {
+      script = document.createElement("script");
+      script.id = "world-wallet-google-identity-script";
+      script.src = "https://accounts.google.com/gsi/client";
+      script.async = true;
+      script.defer = true;
+      document.head.appendChild(script);
+    }
+    script.addEventListener("load", onLoad);
+    script.addEventListener("error", onError);
+    if (window.google?.accounts?.oauth2) onLoad();
+    return () => {
+      cancelled = true;
+      script?.removeEventListener("load", onLoad);
+      script?.removeEventListener("error", onError);
+    };
+  }, []);
 
   const allowedServerWalletIdKey = (Array.isArray(allowedServerWalletIds) ? allowedServerWalletIds : []).map(String).sort().join("|");
   const serverWalletNumberKey = Object.entries(serverWalletNumberById || {}).sort(([a], [b]) => a.localeCompare(b)).map(([id, number]) => id + ":" + number).join("|");
@@ -96,8 +130,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     if (previousContext.activeWalletId === nextContext.activeWalletId && previousContext.userId === nextContext.userId) return;
     walletContextRef.current = nextContext;
     const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
+    const localSelection = entries.find(item => item.walletId === selectedId && !item.serverWalletId);
     const keepFreshlyGeneratedRecovery = Boolean(activeEntry && generated && String(generated.walletId) === String(activeEntry.walletId));
-    setSelectedId(activeEntry?.walletId || "");
+    setSelectedId(activeEntry?.walletId || localSelection?.walletId || "");
     if (keepFreshlyGeneratedRecovery) return;
     setUnlocked(null);
     setUnlockedAddresses(null);
@@ -131,6 +166,264 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     localStorage.setItem(VAULT_KEY, JSON.stringify([...next, ...preservedEntries]));
     setEntries(next);
     try { window.dispatchEvent(new Event("world-wallet-local-vault-updated")); } catch {}
+  }
+
+  async function importWalletBackupContent(content, sourceName = "backup file") {
+    setBusy(true);
+    setMessage("");
+    try {
+      const parsed = parseWalletBackupContent(content);
+      let walletDataList;
+      if (parsed.kind === "mnemonic") {
+        if (importPassword.length < 10) throw new Error("Enter a new local vault password of at least 10 characters before importing a recovery phrase.");
+        const phrase = parsed.phrase;
+        const signer = HDNodeWallet.fromPhrase(phrase);
+        const addresses = await deriveWalletAddresses(phrase);
+        walletDataList = [{
+          name: String(sourceName || "Imported wallet").replace(/\.(json|txt|wallet|backup)$/i, "").slice(0, 80) || "Imported wallet",
+          address: addresses.ethereum,
+          addresses,
+          network: "ethereum",
+          encryptedJson: await signer.encrypt(importPassword),
+          encryptedMnemonic: await encryptMnemonic(phrase, importPassword),
+          publicKey: signer.publicKey,
+          createdAt: new Date().toISOString(),
+        }];
+      } else {
+        walletDataList = parsed.kind === "encrypted_batch" ? parsed.wallets : [parsed.wallet];
+      }
+
+      const importedEntries = [];
+      let duplicateCount = 0;
+      for (const walletData of walletDataList) {
+        const importedAddress = walletData.address || walletData.addresses?.ethereum;
+        const duplicate = entries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase())
+          || importedEntries.find(item => String(item.address || item.addresses?.ethereum || "").toLowerCase() === String(importedAddress || "").toLowerCase());
+        if (duplicate) {
+          duplicateCount += 1;
+          if (!importedEntries.length) setSelectedId(duplicate.walletId);
+          continue;
+        }
+
+        const walletNumber = createWalletNumber(readVault().map(item => item.walletNumber).filter(Boolean).concat(importedEntries.map(item => item.walletNumber)));
+        const localWalletId = "local-" + walletNumber;
+        importedEntries.push({
+          walletId: localWalletId,
+          serverWalletId: "",
+          walletNumber,
+          ownerUserId: String(userId || ""),
+          name: walletData.name || "Imported wallet",
+          address: importedAddress,
+          addresses: walletData.addresses || { ethereum: importedAddress },
+          publicKey: walletData.publicKey || "",
+          network: walletData.network || "ethereum",
+          encryptedJson: walletData.encryptedJson,
+          encryptedMnemonic: walletData.encryptedMnemonic,
+          createdAt: walletData.createdAt || new Date().toISOString(),
+          importedFrom: String(sourceName || "backup file").slice(0, 120),
+        });
+      }
+      if (!importedEntries.length) {
+        setMessage("All wallet addresses in this backup are already saved in this browser. No duplicates were added.");
+        return;
+      }
+      persistVault([...importedEntries, ...entries]);
+      setSelectedId(importedEntries[0].walletId);
+      setPassword("");
+      setImportPassword("");
+      setUnlocked(null);
+      setUnlockedAddresses(null);
+      setGenerated(null);
+      setMessage(importedEntries.length + " wallet(s) imported locally" + (duplicateCount ? "; " + duplicateCount + " duplicate(s) skipped" : "") + ". Public addresses are ready for review. Nothing was sent to the World Wallet AI backend; attach each wallet's public addresses only after reviewing them.");
+    } catch (error) {
+      setMessage(error?.message || "The selected backup could not be imported.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleLocalBackupFile(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      if (file.size > 10 * 1024 * 1024) throw new Error("Backup file exceeds the 10 MB local import limit.");
+      const content = await file.text();
+      await importWalletBackupContent(content, file.name);
+    } catch (error) {
+      setMessage(error?.message || "Could not read the selected backup file.");
+    } finally {
+      event.target.value = "";
+    }
+  }
+
+  function connectGoogleDrive() {
+    if (!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) {
+      setMessage("Google Drive is not configured. Add VITE_GOOGLE_API_KEY and VITE_GOOGLE_CLIENT_ID to the World Wallet AI frontend build environment, then rebuild the frontend.");
+      return;
+    }
+    if (!window.google?.accounts?.oauth2) {
+      setMessage("Google sign-in is still loading. Refresh this page and try Connect Google Drive again.");
+      return;
+    }
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: GOOGLE_CLIENT_ID,
+        scope: GOOGLE_DRIVE_READONLY_SCOPE,
+        callback: async response => {
+          if (response?.error || !response?.access_token) {
+            setMessage("Google Drive authorization was not completed. No wallet data was imported.");
+            return;
+          }
+          const token = response.access_token;
+          setDriveAccessToken(token);
+          setDriveBusy(true);
+          setMessage("");
+          try {
+            const params = new URLSearchParams({
+              key: GOOGLE_API_KEY,
+              q: "trashed = false and mimeType != 'application/vnd.google-apps.folder' and (name contains 'wallet' or name contains 'backup' or name contains 'keystore' or name contains 'recovery' or name contains 'seed' or name contains 'phrase')",
+              pageSize: "100",
+              orderBy: "modifiedTime desc",
+              fields: "nextPageToken,files(id,name,mimeType,size,modifiedTime)",
+            });
+            const response = await fetch("https://www.googleapis.com/drive/v3/files?" + params.toString(), {
+              headers: { Authorization: "Bearer " + token },
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(data.error?.message || "Google Drive file listing failed.");
+            const files = (Array.isArray(data.files) ? data.files : []).filter(isWalletBackupFile);
+            setDriveFiles(files);
+            setMessage(files.length
+              ? "Google Drive connected with read-only access. Select a backup file to inspect locally."
+              : "Google Drive connected, but no matching wallet or backup filenames were found. You can still import a file from this device.");
+          } catch (error) {
+            setMessage("Google Drive file listing failed: " + (error?.message || "request error") + ". Reconnect and check the Drive API configuration.");
+          } finally {
+            setDriveBusy(false);
+          }
+        },
+      });
+      tokenClient.requestAccessToken({ prompt: driveAccessToken ? "" : "consent" });
+    } catch (error) {
+      setMessage("Google Drive connection could not start: " + (error?.message || "Google sign-in unavailable"));
+    }
+  }
+
+  async function importGoogleDriveFile(file) {
+    if (!driveAccessToken || !file?.id) {
+      setMessage("Reconnect Google Drive before selecting a backup.");
+      return;
+    }
+    if (String(file.mimeType || "").startsWith("application/vnd.google-apps.")) {
+      setMessage("Google Docs-native files are not supported yet. Download the backup as JSON or TXT, then import that file.");
+      return;
+    }
+    if (Number(file.size || 0) > 10 * 1024 * 1024) {
+      setMessage("This Google Drive backup exceeds the 10 MB import limit. Download a smaller backup or split the file.");
+      return;
+    }
+    setDriveBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(file.id) + "?alt=media&key=" + encodeURIComponent(GOOGLE_API_KEY), {
+        headers: { Authorization: "Bearer " + driveAccessToken },
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error?.message || (response.status === 401 ? "Google authorization expired; reconnect Drive." : "The selected file could not be downloaded."));
+      }
+      const content = await response.text();
+      await importWalletBackupContent(content, file.name);
+    } catch (error) {
+      setMessage("Could not read the selected Google Drive backup: " + (error?.message || "download failed"));
+    } finally {
+      setDriveBusy(false);
+    }
+  }
+
+  async function attachSelectedWalletToAccount() {
+    const entry = entries.find(item => item.walletId === selectedId);
+    if (!entry || entry.serverWalletId) {
+      setMessage("Choose an imported local wallet that is not already attached.");
+      return;
+    }
+    if (!unlocked || !unlockedAddresses || unlocked.address.toLowerCase() !== String(entry.addresses?.ethereum || entry.address || "").toLowerCase()) {
+      setMessage("Unlock this imported wallet with its vault password before attaching it. This verifies the saved addresses against locally decrypted recovery material.");
+      return;
+    }
+    const addressPairs = Object.entries(unlockedAddresses).filter(([networkName, address]) => {
+      if (typeof address !== "string" || !address.trim()) return false;
+      if (["ethereum", "bnb", "sepolia"].includes(networkName)) return /^0x[a-fA-F0-9]{40}$/.test(address.trim());
+      if (networkName === "bitcoin") return /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/i.test(address.trim());
+      if (["solana_mainnet", "solana_devnet"].includes(networkName)) return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address.trim());
+      return false;
+    });
+    if (!addressPairs.some(([networkName]) => networkName === "ethereum")) {
+      setMessage("This wallet has no verified Ethereum public address to attach.");
+      return;
+    }
+    if (!window.confirm("Attach this wallet to your World Wallet AI account? Only the wallet name, wallet ID, and public network addresses will be sent. Recovery phrases, private keys, and encrypted recovery files stay on this device.")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const freshToken = await getNeonAccessToken();
+      const sessionToken = freshToken || accessToken;
+      if (!sessionToken) throw new Error("No valid sign-in session.");
+      const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+        body: JSON.stringify({ name: entry.name || "Imported wallet" }),
+      });
+      const profile = await profileResponse.json().catch(() => ({}));
+      if (!profileResponse.ok) throw new Error(profile.detail || "Wallet profile request failed.");
+      const serverWalletId = profile.wallet?.id;
+      if (!serverWalletId) throw new Error("The API did not return a wallet ID.");
+      const serverWalletNumber = String(profile.wallet?.wallet_number || entry.walletNumber);
+      const attachmentFailures = [];
+      for (const [addressNetwork, addressValue] of addressPairs) {
+        try {
+          const addressResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+            body: JSON.stringify({ network: addressNetwork, address: addressValue, label: "imported " + serverWalletNumber }),
+          });
+          const addressData = await addressResponse.json().catch(() => ({}));
+          if (!addressResponse.ok) throw new Error(addressData.detail || "Address save failed.");
+        } catch (error) {
+          attachmentFailures.push(addressNetwork + ": " + (error?.message || "save failed"));
+        }
+      }
+      const linkedEntry = { ...entry, walletId: serverWalletId, serverWalletId, walletNumber: serverWalletNumber };
+      const currentEntries = entries.filter(item => item.walletId !== entry.walletId && item.walletId !== serverWalletId);
+      persistVault([linkedEntry, ...currentEntries], [entry.walletId]);
+      setSelectedId(serverWalletId);
+      try { await onWalletCreated?.(); } catch {}
+      setMessage(attachmentFailures.length
+        ? "Wallet profile attached, but some public addresses did not sync: " + attachmentFailures.join("; ") + ". Recovery material remains local; retry the missing address sync from Wallets."
+        : "Wallet attached to your account. All public addresses were submitted; encrypted recovery material remains on this device.");
+    } catch (error) {
+      setMessage("Wallet remains saved locally, but account attachment failed: " + (error?.message || "server unavailable"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function downloadEncryptedBackup() {
+    const entry = entries.find(item => item.walletId === selectedId);
+    if (!entry) { setMessage("Choose a saved wallet before exporting its encrypted backup."); return; }
+    try {
+      const payload = createWalletBackupPayload(entry);
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = "world-wallet-" + String(entry.walletNumber || "backup") + "-encrypted-backup.json";
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setMessage("Encrypted backup downloaded. Upload that JSON file to Google Drive yourself; World Wallet AI does not upload it.");
+    } catch (error) {
+      setMessage(error?.message || "Encrypted backup export failed.");
+    }
   }
 
   async function createWallet() {
@@ -260,6 +553,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         ? await deriveWalletAddresses(recoveredPhrase)
         : (entry.addresses || { [entry.network || "ethereum"]: entry.address });
       if (recoveredAddresses.ethereum && recoveredAddresses.ethereum.toLowerCase() !== signer.address.toLowerCase()) throw new Error("Recovery phrase does not match the encrypted EVM key.");
+      for (const [addressNetwork, storedAddress] of Object.entries(entry.addresses || {})) {
+        const derivedAddress = recoveredAddresses[addressNetwork];
+        if (derivedAddress && String(storedAddress).toLowerCase() !== String(derivedAddress).toLowerCase()) {
+          throw new Error("Saved " + addressNetwork + " address does not match the locally decrypted recovery phrase. The wallet was not attached.");
+        }
+      }
       setUnlockedAddresses(recoveredAddresses);
       if (recoveredPhrase && (!entry.encryptedMnemonic || !entry.addresses)) {
         const updatedEntry = { ...entry, encryptedMnemonic: entry.encryptedMnemonic || await encryptMnemonic(recoveredPhrase, password), addresses: recoveredAddresses };
@@ -538,11 +837,36 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     </article>}
 
     <article className="panel action-panel">
+      <p className="feature-kicker">GOOGLE DRIVE WALLET BACKUPS</p>
+      <h2>Connect and import an existing wallet</h2>
+      <p className="muted">Google Drive access is read-only. The app lists likely wallet-backup files; only a file you select is downloaded and inspected locally in this browser. Recovery phrases and private keys are never sent to the World Wallet AI backend.</p>
+      {(!GOOGLE_API_KEY || !GOOGLE_CLIENT_ID) ? (
+        <div className="security-note">Google Drive setup is required on the World Wallet AI frontend build: add <code>VITE_GOOGLE_API_KEY</code> and <code>VITE_GOOGLE_CLIENT_ID</code>. Enable the Google Drive API, restrict the API key to that API and your frontend origin, and use a Web OAuth client ID with this site's JavaScript origin.</div>
+      ) : (
+        <div className="feature-grid">
+          <button type="button" className="primary" disabled={!googleReady || driveBusy} onClick={connectGoogleDrive}>{driveBusy ? "Connecting / reading Drive…" : driveAccessToken ? "Refresh Google Drive backups" : googleReady ? "Connect Google Drive →" : "Loading Google sign-in…"}</button>
+          {driveAccessToken && <button type="button" className="secondary" onClick={() => { setDriveAccessToken(""); setDriveFiles([]); setMessage("Google Drive access token cleared from this page session."); }}>Disconnect Drive</button>}
+        </div>
+      )}
+      {driveFiles.length > 0 && <div className="wallet-detail-grid">
+        {driveFiles.map(file => <div key={file.id}>
+          <small>{file.name} · {file.mimeType || "file"}{file.modifiedTime ? " · " + new Date(file.modifiedTime).toLocaleDateString() : ""}</small>
+          <button type="button" className="secondary" disabled={driveBusy || busy} onClick={() => importGoogleDriveFile(file)}>Inspect and import this backup</button>
+        </div>)}
+      </div>}
+      <label>Import a backup from this device (.json or .txt)<input type="file" accept=".json,.txt,.wallet,.backup,application/json,text/plain,application/octet-stream" onChange={handleLocalBackupFile} disabled={busy || driveBusy} /></label>
+      <label>New local vault password for a plain 12/24-word phrase<input type="password" value={importPassword} onChange={event => setImportPassword(event.target.value)} autoComplete="new-password" placeholder="At least 10 characters; used only on this device" /></label>
+      <div className="security-note">Supported formats: World Wallet AI encrypted backup JSON, or a TXT/JSON file containing one 12- or 24-word recovery phrase. Image/photo OCR and Google Docs-native files are not enabled. Plain phrases are encrypted immediately in this browser before they are saved.</div>
+      {selected && !selected.serverWalletId && <div className="feature-grid">
+        <button type="button" className="primary" disabled={busy || !unlocked || !unlockedAddresses} onClick={attachSelectedWalletToAccount}>Attach verified wallet to account (public addresses only)</button>
+        <button type="button" className="secondary" disabled={busy} onClick={downloadEncryptedBackup}>Download encrypted backup</button>
+        {!unlocked && <small className="muted">Unlock this wallet below first. World Wallet AI checks the decrypted recovery material against the saved public addresses before attachment.</small>}
+      </div>}
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); if (nextEntry && activeWalletId && !nextEntry.serverWalletId) { setMessage("This local wallet is not linked to an account wallet yet. The active wallet's balances and history remain separate."); return; } setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId} disabled={Boolean(activeWalletId && !item.serverWalletId)}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
-      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div><div><small>Ethereum Mainnet</small><code>{selected.addresses?.ethereum || selected.address}</code></div></div>}
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); else if (nextEntry && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); if (nextEntry && !nextEntry.serverWalletId && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); else setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
+      {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div>{Object.entries(selected.addresses || { ethereum: selected.address }).map(([addressNetwork, addressValue]) => <div key={addressNetwork}><small>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[addressNetwork] || addressNetwork}</small><code>{addressValue}</code></div>)}</div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
       <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
