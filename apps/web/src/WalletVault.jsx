@@ -347,7 +347,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       setMessage("Choose an imported local wallet that is not already attached.");
       return;
     }
-    const addressPairs = Object.entries(entry.addresses || {}).filter(([networkName, address]) => {
+    if (!unlocked || !unlockedAddresses || unlocked.address.toLowerCase() !== String(entry.addresses?.ethereum || entry.address || "").toLowerCase()) {
+      setMessage("Unlock this imported wallet with its vault password before attaching it. This verifies the saved addresses against locally decrypted recovery material.");
+      return;
+    }
+    const addressPairs = Object.entries(unlockedAddresses).filter(([networkName, address]) => {
       if (typeof address !== "string" || !address.trim()) return false;
       if (["ethereum", "bnb", "sepolia"].includes(networkName)) return /^0x[a-fA-F0-9]{40}$/.test(address.trim());
       if (networkName === "bitcoin") return /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/i.test(address.trim());
@@ -549,6 +553,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         ? await deriveWalletAddresses(recoveredPhrase)
         : (entry.addresses || { [entry.network || "ethereum"]: entry.address });
       if (recoveredAddresses.ethereum && recoveredAddresses.ethereum.toLowerCase() !== signer.address.toLowerCase()) throw new Error("Recovery phrase does not match the encrypted EVM key.");
+      for (const [addressNetwork, storedAddress] of Object.entries(entry.addresses || {})) {
+        const derivedAddress = recoveredAddresses[addressNetwork];
+        if (derivedAddress && String(storedAddress).toLowerCase() !== String(derivedAddress).toLowerCase()) {
+          throw new Error("Saved " + addressNetwork + " address does not match the locally decrypted recovery phrase. The wallet was not attached.");
+        }
+      }
       setUnlockedAddresses(recoveredAddresses);
       if (recoveredPhrase && (!entry.encryptedMnemonic || !entry.addresses)) {
         const updatedEntry = { ...entry, encryptedMnemonic: entry.encryptedMnemonic || await encryptMnemonic(recoveredPhrase, password), addresses: recoveredAddresses };
@@ -848,8 +858,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <label>New local vault password for a plain 12/24-word phrase<input type="password" value={importPassword} onChange={event => setImportPassword(event.target.value)} autoComplete="new-password" placeholder="At least 10 characters; used only on this device" /></label>
       <div className="security-note">Supported formats: World Wallet AI encrypted backup JSON, or a TXT/JSON file containing one 12- or 24-word recovery phrase. Image/photo OCR and Google Docs-native files are not enabled. Plain phrases are encrypted immediately in this browser before they are saved.</div>
       {selected && !selected.serverWalletId && <div className="feature-grid">
-        <button type="button" className="primary" disabled={busy} onClick={attachSelectedWalletToAccount}>Attach selected wallet to account (public addresses only)</button>
+        <button type="button" className="primary" disabled={busy || !unlocked || !unlockedAddresses} onClick={attachSelectedWalletToAccount}>Attach verified wallet to account (public addresses only)</button>
         <button type="button" className="secondary" disabled={busy} onClick={downloadEncryptedBackup}>Download encrypted backup</button>
+        {!unlocked && <small className="muted">Unlock this wallet below first. World Wallet AI checks the decrypted recovery material against the saved public addresses before attachment.</small>}
       </div>}
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
