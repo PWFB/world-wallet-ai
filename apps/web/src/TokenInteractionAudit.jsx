@@ -60,6 +60,8 @@ function Panel({ title, children, note }) {
 
 export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
   const [networkSelection, setNetworkSelection] = useState(NETWORK_OPTIONS[0].value);
+  const [approvalFromBlock, setApprovalFromBlock] = useState("0");
+  const [approvalToBlock, setApprovalToBlock] = useState("latest");
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -76,6 +78,8 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         networks: networkSelection,
         page: String(nextPage),
         offset: "100",
+        approval_from_block: approvalFromBlock,
+        approval_to_block: approvalToBlock.trim() || "latest",
       });
       const response = await fetch(apiBaseUrl + "/api/v1/wallet/token-interactions?" + query.toString(), {
         method: "GET",
@@ -117,8 +121,13 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         <select id="token-audit-networks" value={networkSelection} onChange={event => { setNetworkSelection(event.target.value); setData(null); setPage(1); }} disabled={busy}>
           {NETWORK_OPTIONS.map(option => <option value={option.value} key={option.value}>{option.label}</option>)}
         </select>
-        <button type="button" className="secondary" disabled={busy || !data || !hasMore} onClick={() => scan(page + 1)}>{busy ? "Loading…" : "Load next page"}</button>
+        <label htmlFor="approval-from-block">Approval start block</label>
+        <input id="approval-from-block" type="number" min="0" value={approvalFromBlock} onChange={event => setApprovalFromBlock(event.target.value)} disabled={busy} style={{ maxWidth: 130 }} />
+        <label htmlFor="approval-to-block">Approval end block</label>
+        <input id="approval-to-block" type="text" value={approvalToBlock} onChange={event => setApprovalToBlock(event.target.value)} disabled={busy} placeholder="latest" style={{ maxWidth: 130 }} />
+        <button type="button" className="secondary" disabled={busy || !data || !hasMore} onClick={() => scan(page + 1)}>{busy ? "Loading…" : "Load next transfer page"}</button>
       </div>
+      <p className="muted" style={{ marginBottom: 0 }}>Token transfers use provider pagination. Approval logs use the selected block range because Etherscan caps each log query at 1,000 results.</p>
       {error && <p role="alert" style={{ color: "#ff8f8f", marginBottom: 0 }}>{error}</p>}
     </Panel>
 
@@ -166,6 +175,7 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
               </tr>)}</tbody>
             </table></div>}
           {address.allowance_checks_truncated && <p className="muted">Current allowance checks were capped at 50 unique token/spender pairs for this address. History remains paginated.</p>}
+          {address.pagination?.approval_logs_truncated && <p className="security-note">Approval results reached the 1,000-log provider cap. The last returned block is {address.pagination.approval_last_block ?? "unavailable"}. Set a narrower range above and rescan; use the last returned block as the next range's starting point to avoid skipping same-block events.</p>}
           {address.warnings?.map((warning, index) => <p className="security-note" key={index}>{warning}</p>)}
           {address.pagination?.has_more && <p className="muted">More records are available. Select “Load next page”.</p>}
         </div>)}
