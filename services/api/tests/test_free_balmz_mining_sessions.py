@@ -7,9 +7,10 @@ import main
 
 
 class FakeCursor:
-    def __init__(self, one=None, all_rows=None):
+    def __init__(self, one=None, all_rows=None, rowcount=1):
         self.one = one
         self.all_rows = all_rows or []
+        self.rowcount = rowcount
 
     def fetchone(self):
         return self.one
@@ -35,6 +36,8 @@ class FakeConnection:
             return FakeCursor(one=self.active)
         if "SELECT id,status,started_at,ended_at,duration_seconds" in sql:
             return FakeCursor(all_rows=[])
+        if "COUNT(*) FILTER" in sql:
+            return FakeCursor(one=(0, 0))
         return FakeCursor()
 
 
