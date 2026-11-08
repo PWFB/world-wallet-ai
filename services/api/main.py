@@ -2303,10 +2303,10 @@ def wallet_token_interactions(
         raise HTTPException(status_code=400, detail="Page must be between 1 and 100")
     if offset < 1 or offset > 1000:
         raise HTTPException(status_code=400, detail="Page size must be between 1 and 1000")
-    if approval_from_block < 0:
-        raise HTTPException(status_code=400, detail="Approval start block must be zero or greater")
+    if approval_from_block < 0 or approval_from_block > 1000000000000:
+        raise HTTPException(status_code=400, detail="Approval start block is outside the supported range")
     approval_to_block = str(approval_to_block or "latest").strip().lower()
-    if approval_to_block != "latest" and not approval_to_block.isdigit():
+    if approval_to_block != "latest" and (not approval_to_block.isdigit() or len(approval_to_block) > 16):
         raise HTTPException(status_code=400, detail="Approval end block must be a block number or latest")
     if approval_to_block != "latest" and int(approval_to_block) < approval_from_block:
         raise HTTPException(status_code=400, detail="Approval end block must not precede its start block")
