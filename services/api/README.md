@@ -27,6 +27,24 @@ The web app starts Google OAuth through Neon Auth (`authClient.signIn.social({ p
 
 The legacy backend `GOOGLE_CLIENT_ID` setting is used only by the separate `/api/v1/auth/google` credential-verification endpoint; it does not replace configuring the Neon Auth Google provider.
 
+
+## BALMZ token metadata registry
+
+The authenticated GET /api/v1/tokens response includes separate network-qualified
+BALMZ records for Ethereum Mainnet, BNB Chain Mainnet, Solana Mainnet, Sepolia, and
+Solana Devnet. Configure the production contract/mint identifiers only on the backend:
+
+- WORLD_WALLET_BALMZ_ETH_CONTRACT — Ethereum Mainnet ERC-20.
+- WORLD_WALLET_BALMZ_BNB_CONTRACT — BNB Chain Mainnet BEP-20.
+- WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT — Solana Mainnet SPL mint.
+
+BNB and Solana Mainnet entries remain pending when unset. Valid-format values are marked
+configured_unverified until their chain, token identity, decimals, and supply are
+independently checked. Invalid values are not returned as addresses. A configured
+address alone does not activate balance accounting or establish token ownership.
+See docs/BALMZ-TOKEN-METADATA-REGISTRY.md for the verification gates and separation
+from Devnet/Sepolia.
+
 ## Sepolia wallet
 
 Sepolia uses the same EVM public address as Ethereum for a given wallet. The API exposes a separate `sepolia` address record and network status when a valid EVM address is configured. Set `WORLD_WALLET_EVM_ADDRESS` to the user's public address and `WORLD_WALLET_SEPOLIA_RPC_URL` to a Sepolia RPC endpoint. Do not invent an address or put private keys in the API.
