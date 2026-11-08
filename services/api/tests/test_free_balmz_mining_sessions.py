@@ -20,8 +20,9 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, active=None):
+    def __init__(self, active=None, sessions=None):
         self.active = active
+        self.sessions = sessions or []
         self.statements = []
 
     def __enter__(self):
@@ -37,6 +38,16 @@ class FakeConnection:
         self.statements.append((sql, params))
         if "SELECT id,started_at FROM balmz_mining_sessions" in sql:
             return FakeCursor(one=self.active)
+        if "SELECT id FROM wallets WHERE id=%s FOR UPDATE" in sql:
+            return FakeCursor(one=("wallet-test",))
+        if "SELECT id,started_at,COALESCE(ended_at,%s)" in sql:
+            return FakeCursor(all_rows=self.sessions)
+        if "SELECT session_id,cycle_number,earned_at FROM balmz_mining_reward_ledger" in sql:
+            return FakeCursor(all_rows=[])
+        if "COALESCE(SUM(reward_amount),0),COUNT(*)" in sql:
+            return FakeCursor(one=(0, 0))
+        if "SELECT id,earned_at,reward_amount,status FROM balmz_mining_reward_ledger" in sql:
+            return FakeCursor(all_rows=[])
         if "SELECT id,status,started_at,ended_at,duration_seconds" in sql:
             return FakeCursor(all_rows=[])
         if "COUNT(*) FILTER" in sql:
@@ -80,6 +91,20 @@ class FreeBalmzMiningSessionTests(unittest.TestCase):
         with patch.object(main, "db", return_value=fake):
             response = self.client.post("/api/v1/mining/balmz/start")
         self.assertEqual(response.status_code, 409)
+
+
+    def test_record_creates_one_pending_entry_per_completed_cycle(self):
+        started = datetime.now(timezone.utc) - timedelta(hours=9, minutes=1)
+        fake = FakeConnection(sessions=[("mine_test", started, datetime.now(timezone.utc))])
+        with patch.object(main, "db", return_value=fake):
+            response = self.client.post("/api/v1/mining/balmz/record")
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["new_cycles_recorded"], 3)
+        self.assertEqual(body["allocation_status"], "pending_launch_not_spendable")
+        self.assertFalse(body["withdrawal_enabled"])
+        inserts = [sql for sql, _ in fake.statements if "INSERT INTO balmz_mining_reward_ledger" in sql]
+        self.assertEqual(len(inserts), 3)
 
     def test_stop_completes_session_without_credit(self):
         started = datetime.now(timezone.utc) - timedelta(seconds=60)
