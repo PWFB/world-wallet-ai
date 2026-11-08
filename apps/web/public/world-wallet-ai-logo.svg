@@ -1,9 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
-  <title id="title">World Wallet AI Secure W Shield</title>
+  <title id="title">World Wallet AI Gold W Shield</title>
+  <defs>
+    <linearGradient id="walletGold" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fff4c2"/>
+      <stop offset="0.28" stop-color="#e8c75a"/>
+      <stop offset="0.62" stop-color="#c99b2e"/>
+      <stop offset="1" stop-color="#8c6417"/>
+    </linearGradient>
+  </defs>
   <path d="M50 5 88 20V45C88 68 72 85 50 96 28 85 12 68 12 45V20Z"
-        fill="#101a2b" stroke="#ff7a18" stroke-width="5" stroke-linejoin="round"/>
+        fill="#101a2b" stroke="url(#walletGold)" stroke-width="5" stroke-linejoin="round"/>
   <path d="M27 30 37 67 50 45 63 67 73 30"
-        fill="none" stroke="#ffffff" stroke-width="7"
+        fill="none" stroke="url(#walletGold)" stroke-width="7"
         stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M17 22 27 18" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/>
+  <path d="M17 22 27 18" stroke="#fff4c2" stroke-width="3" stroke-linecap="round"/>
 </svg>
