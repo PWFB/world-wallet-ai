@@ -2292,6 +2292,8 @@ def wallet_token_interactions(
     networks: str = "ethereum,bnb,sepolia",
     page: int = 1,
     offset: int = 100,
+    approval_from_block: int = 0,
+    approval_to_block: str = "latest",
     user: dict = Depends(current_user),
 ):
     """Read-only, paginated token history and Approval discovery for verified active-wallet addresses."""
@@ -2301,6 +2303,13 @@ def wallet_token_interactions(
         raise HTTPException(status_code=400, detail="Page must be between 1 and 100")
     if offset < 1 or offset > 1000:
         raise HTTPException(status_code=400, detail="Page size must be between 1 and 1000")
+    if approval_from_block < 0:
+        raise HTTPException(status_code=400, detail="Approval start block must be zero or greater")
+    approval_to_block = str(approval_to_block or "latest").strip().lower()
+    if approval_to_block != "latest" and not approval_to_block.isdigit():
+        raise HTTPException(status_code=400, detail="Approval end block must be a block number or latest")
+    if approval_to_block != "latest" and int(approval_to_block) < approval_from_block:
+        raise HTTPException(status_code=400, detail="Approval end block must not precede its start block")
 
     allowed_networks = {"ethereum", "bnb", "sepolia"}
     requested_networks = list(dict.fromkeys(part.strip().lower() for part in str(networks or "").split(",") if part.strip()))
@@ -2350,7 +2359,7 @@ def wallet_token_interactions(
             transfers = []
             approvals = []
             transfer_has_more = False
-            approval_has_more = False
+            approval_logs_truncated = False
             try:
                 payload = etherscan_v2_request(
                     config["chain_id"], "account", "tokentx",
@@ -2370,9 +2379,9 @@ def wallet_token_interactions(
                 payload = etherscan_v2_request(
                     config["chain_id"], "logs", "getLogs",
                     {
-                        "fromBlock": "0", "toBlock": "latest",
+                        "fromBlock": str(approval_from_block), "toBlock": approval_to_block,
                         "topic0": ERC20_APPROVAL_TOPIC, "topic1": owner_topic,
-                        "topic0_1_opr": "and", "page": page, "offset": offset, "sort": "desc",
+                        "topic0_1_opr": "and",
                     },
                 )
                 raw_approvals = _etherscan_result_list(payload, "ERC-20 Approval history")
@@ -2380,10 +2389,14 @@ def wallet_token_interactions(
                     normalized = _format_approval_interaction(log, network, owner)
                     if normalized:
                         approvals.append(normalized)
-                approval_has_more = len(raw_approvals) >= offset
+                # Etherscan documents a hard 1,000-log response cap for getLogs;
+                # it does not offer reliable page/offset pagination for this endpoint.
+                approval_logs_truncated = len(raw_approvals) >= 1000
             except Exception as exc:
                 warnings.append("ERC-20 Approval history unavailable (" + type(exc).__name__ + ")")
 
+            if approval_logs_truncated:
+                warnings.append("Approval history reached Etherscan's 1,000-log cap for this block range; narrow the block range and rescan.")
             proxy = _inspect_eip7702_for_network_address(config["rpc"], network, owner) if config["rpc"] else {
                 "rpc_chain_verified": False, "delegated": None, "delegation_target": None,
                 "known_okx_walletcore": False, "note": "Network RPC is not configured; delegation was not checked.",
@@ -2440,8 +2453,10 @@ def wallet_token_interactions(
                 "pagination": {
                     "page": page, "page_size": offset,
                     "token_transfers_has_more": transfer_has_more,
-                    "approvals_has_more": approval_has_more,
-                    "has_more": transfer_has_more or approval_has_more,
+                    "approval_from_block": approval_from_block,
+                    "approval_to_block": approval_to_block,
+                    "approval_logs_truncated": approval_logs_truncated,
+                    "has_more": transfer_has_more,
                 },
                 "warnings": warnings,
             })
