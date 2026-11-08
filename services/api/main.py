@@ -546,6 +546,20 @@ def init_db():
           ON balmz_mining_sessions(wallet_id,started_at DESC);
         CREATE UNIQUE INDEX IF NOT EXISTS balmz_mining_one_active_session_per_wallet
           ON balmz_mining_sessions(wallet_id) WHERE status='active';
+        CREATE TABLE IF NOT EXISTS balmz_mining_reward_ledger(
+          id TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          session_id TEXT NOT NULL REFERENCES balmz_mining_sessions(id) ON DELETE CASCADE,
+          cycle_number BIGINT NOT NULL CHECK(cycle_number > 0),
+          earned_at TIMESTAMPTZ NOT NULL,
+          reward_amount NUMERIC(36,18) NOT NULL CHECK(reward_amount = 0.5),
+          status TEXT NOT NULL DEFAULT 'pending_launch'
+            CHECK(status IN ('pending_launch','paid')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(wallet_id,session_id,cycle_number)
+        );
+        CREATE INDEX IF NOT EXISTS balmz_mining_reward_wallet_day_idx
+          ON balmz_mining_reward_ledger(wallet_id,earned_at);
         CREATE TABLE IF NOT EXISTS admin_audit_events(
           id TEXT PRIMARY KEY,
           actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -4125,7 +4139,7 @@ def wallet_connect(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/mining/balmz")
 def balmz_mining_status(user: dict = Depends(current_user)):
-    """Return honest session status; no token rewards are accrued or credited by this tracker."""
+    """Return wallet-scoped mining sessions and pending, non-spendable allocations."""
     with db() as conn:
         rows = conn.execute(
             "SELECT id,status,started_at,ended_at,duration_seconds FROM balmz_mining_sessions "
@@ -4137,6 +4151,16 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             "FROM balmz_mining_sessions WHERE wallet_id=%s",
             (user["wallet_id"],),
         ).fetchone()
+        reward_totals = conn.execute(
+            "SELECT COALESCE(SUM(reward_amount),0),COUNT(*) "
+            "FROM balmz_mining_reward_ledger WHERE wallet_id=%s AND status='pending_launch'",
+            (user["wallet_id"],),
+        ).fetchone()
+        reward_rows = conn.execute(
+            "SELECT id,earned_at,reward_amount,status FROM balmz_mining_reward_ledger "
+            "WHERE wallet_id=%s ORDER BY earned_at DESC LIMIT 50",
+            (user["wallet_id"],),
+        ).fetchall()
     active = next((row for row in rows if row[1] == "active"), None)
     total_seconds = int(totals[1] or 0)
     if active:
@@ -4144,22 +4168,97 @@ def balmz_mining_status(user: dict = Depends(current_user)):
     return {
         "wallet_id": user["wallet_id"],
         "program": "BALMZ Free Mining",
-        "mode": "session_tracking_only",
+        "mode": "pending_reward_ledger",
         "active_session": None if not active else {
             "id": active[0], "started_at": active[2].isoformat()
         },
         "completed_sessions": int(totals[0] or 0),
         "total_session_seconds": total_seconds,
         "reward_asset": "BALMZ",
-        "reward_amount": None,
-        "reward_status": "disabled_pending_verified_funded_allocation",
+        "reward_rate_per_cycle": "0.5",
+        "cycle_seconds": 10800,
+        "daily_reward_cap": "4",
+        "pending_reward_amount": str(reward_totals[0] or 0),
+        "pending_cycle_count": int(reward_totals[1] or 0),
+        "reward_status": "pending_launch_not_spendable",
+        "record_enabled": True,
+        "withdrawal_enabled": False,
         "claim_enabled": False,
-        "notice": "This records free participation sessions only. It does not perform proof-of-work, generate tokens, or credit BALMZ. Rewards remain disabled until a funded, authorized allocation and claim mechanism are verified.",
+        "notice": "Eligible cycles can be recorded as pending BALMZ allocations only. No token is minted, transferred, or spendable before the official launch and funding verification.",
+        "recent_rewards": [{
+            "id": row[0], "earned_at": row[1].isoformat(),
+            "amount": str(row[2]), "status": row[3]
+        } for row in reward_rows],
         "recent_sessions": [{
             "id": row[0], "status": row[1], "started_at": row[2].isoformat(),
             "ended_at": row[3].isoformat() if row[3] else None,
             "duration_seconds": int(row[4]) if row[4] is not None else None,
         } for row in rows],
+    }
+
+
+@app.post("/api/v1/mining/balmz/record")
+def record_balmz_mining_rewards(user: dict = Depends(current_user)):
+    """Idempotently record completed 3-hour cycles as pending allocations only."""
+    now = datetime.now(timezone.utc)
+    recorded = 0
+    with db() as conn:
+        # Serialize all claims for this wallet, including across old/new sessions.
+        wallet = conn.execute(
+            "SELECT id FROM wallets WHERE id=%s FOR UPDATE", (user["wallet_id"],)
+        ).fetchone()
+        if not wallet:
+            raise HTTPException(status_code=404, detail="Mining wallet was not found")
+        sessions = conn.execute(
+            "SELECT id,started_at,COALESCE(ended_at,%s) FROM balmz_mining_sessions "
+            "WHERE wallet_id=%s ORDER BY started_at",
+            (now, user["wallet_id"]),
+        ).fetchall()
+        existing_rows = conn.execute(
+            "SELECT session_id,cycle_number,earned_at FROM balmz_mining_reward_ledger "
+            "WHERE wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchall()
+        existing = {(row[0], int(row[1])) for row in existing_rows}
+        daily_counts = {}
+        for row in existing_rows:
+            day = row[2].astimezone(timezone.utc).date()
+            daily_counts[day] = daily_counts.get(day, 0) + 1
+
+        for session_id, started_at, ended_at in sessions:
+            elapsed_seconds = max(0, int((min(ended_at, now) - started_at).total_seconds()))
+            completed_cycles = elapsed_seconds // 10800
+            for cycle_number in range(1, completed_cycles + 1):
+                if (session_id, cycle_number) in existing:
+                    continue
+                earned_at = started_at + timedelta(seconds=cycle_number * 10800)
+                earned_day = earned_at.astimezone(timezone.utc).date()
+                if daily_counts.get(earned_day, 0) >= 8:
+                    continue
+                ledger_id = "balmz_reward_" + sha(
+                    user["wallet_id"] + ":" + session_id + ":" + str(cycle_number)
+                )[:32]
+                inserted = conn.execute(
+                    "INSERT INTO balmz_mining_reward_ledger"
+                    "(id,wallet_id,session_id,cycle_number,earned_at,reward_amount,status) "
+                    "VALUES(%s,%s,%s,%s,%s,0.5,'pending_launch') "
+                    "ON CONFLICT(wallet_id,session_id,cycle_number) DO NOTHING",
+                    (ledger_id, user["wallet_id"], session_id, cycle_number, earned_at),
+                )
+                if inserted.rowcount:
+                    recorded += 1
+                    daily_counts[earned_day] = daily_counts.get(earned_day, 0) + 1
+                    existing.add((session_id, cycle_number))
+        conn.commit()
+
+    return {
+        "status": "recorded",
+        "new_cycles_recorded": recorded,
+        "reward_per_cycle": "0.5",
+        "daily_cap": "4",
+        "allocation_status": "pending_launch_not_spendable",
+        "withdrawal_enabled": False,
+        "notice": "Eligible cycles were recorded as pending allocations only. No BALMZ was minted, transferred, or made spendable.",
     }
 
 
