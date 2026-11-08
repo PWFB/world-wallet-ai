@@ -1253,14 +1253,14 @@ def etherscan_v2_request(chain_id: int, module: str, action: str, params: dict |
         raise ValueError("Unsupported Etherscan chain ID")
     if not re.fullmatch(r"[a-zA-Z]+", str(module or "")) or not re.fullmatch(r"[a-zA-Z]+", str(action or "")):
         raise ValueError("Invalid Etherscan API module or action")
-    query = {
+    query = dict(params or {})
+    # Reserved authentication/routing fields cannot be overridden by endpoint parameters.
+    query.update({
         "chainid": int(chain_id),
         "module": module,
         "action": action,
         "apikey": ETHERSCAN_API_KEY,
-    }
-    if params:
-        query.update(params)
+    })
     response = httpx.get(ETHERSCAN_V2_API_URL, params=query, timeout=12)
     response.raise_for_status()
     payload = response.json()
