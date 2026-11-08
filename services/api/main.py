@@ -3609,7 +3609,12 @@ def list_token_registry(user: dict = Depends(current_user)):
                 token_decimals = None
             if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
                 token_name = "Binance-Peg BSC-USD"
-        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        asset_symbol = (
+            "BALMZ-BNB" if r[0] == "BALMZ" and registry_network == "bnb"
+            else "BALMZ-SOL" if r[0] == "BALMZ" and registry_network == "solana_mainnet"
+            else r[0]
+        )
+        tokens.append({"symbol":r[0],"asset_symbol":asset_symbol,"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
