@@ -9,10 +9,11 @@ from balmz_metadata import additional_balmz_registry_entries
 class BalmzMetadataRegistryTests(unittest.TestCase):
     def test_missing_mainnet_addresses_remain_pending_without_decimals(self):
         entries = additional_balmz_registry_entries()
-        self.assertEqual([entry["symbol"] for entry in entries], ["BALMZ-BNB", "BALMZ-SOL"])
+        self.assertEqual([entry["symbol"] for entry in entries], ["BALMZ", "BALMZ"])
         self.assertEqual([entry["status"] for entry in entries], ["pending_contract", "pending_contract"])
         self.assertTrue(all(entry["contract_address"] is None for entry in entries))
         self.assertTrue(all(entry["decimals"] is None for entry in entries))
+        self.assertEqual([entry["asset_symbol"] for entry in entries], ["BALMZ-BNB", "BALMZ-SOL"])
         self.assertEqual([entry["network"] for entry in entries], ["bnb", "solana_mainnet"])
 
     def test_valid_format_addresses_are_published_as_unverified_only(self):
