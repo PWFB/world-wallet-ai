@@ -2296,7 +2296,7 @@ def wallet_token_interactions(
     approval_to_block: str = "latest",
     user: dict = Depends(current_user),
 ):
-    """Read-only, paginated token history and Approval discovery for verified active-wallet addresses."""
+    """Read-only token transfer history and block-ranged Approval discovery for verified active-wallet addresses."""
     if not ETHERSCAN_API_KEY:
         raise HTTPException(status_code=503, detail="Etherscan API V2 is not configured on the backend")
     if page < 1 or page > 100:
@@ -2484,6 +2484,10 @@ def wallet_token_interactions(
         "page": page,
         "page_size": offset,
         "networks": scanned_networks,
+        "provider_limits": {
+            "token_transfers": "Etherscan account/tokentx may return only the last 10,000 records for an address; page through available results and use an independent indexer for older completeness guarantees.",
+            "approval_logs": "Etherscan logs/getLogs returns at most 1,000 matching logs per query; narrow the block range and rescan when the cap is reached.",
+        },
         "claim_readiness": {
             "claim_execution_enabled": False,
             "claimable_balmz_amount": None,
