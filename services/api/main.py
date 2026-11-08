@@ -4132,8 +4132,13 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             "WHERE wallet_id=%s ORDER BY started_at DESC LIMIT 25",
             (user["wallet_id"],),
         ).fetchall()
+        totals = conn.execute(
+            "SELECT COUNT(*) FILTER (WHERE status='completed'),COALESCE(SUM(duration_seconds),0) "
+            "FROM balmz_mining_sessions WHERE wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
     active = next((row for row in rows if row[1] == "active"), None)
-    total_seconds = sum(int(row[4] or 0) for row in rows if row[1] == "completed")
+    total_seconds = int(totals[1] or 0)
     if active:
         total_seconds += max(0, int((datetime.now(timezone.utc) - active[2]).total_seconds()))
     return {
@@ -4143,7 +4148,7 @@ def balmz_mining_status(user: dict = Depends(current_user)):
         "active_session": None if not active else {
             "id": active[0], "started_at": active[2].isoformat()
         },
-        "completed_sessions": sum(1 for row in rows if row[1] == "completed"),
+        "completed_sessions": int(totals[0] or 0),
         "total_session_seconds": total_seconds,
         "reward_asset": "BALMZ",
         "reward_amount": None,
@@ -4169,10 +4174,13 @@ def start_balmz_mining(user: dict = Depends(current_user)):
         ).fetchone()
         if existing:
             raise HTTPException(status_code=409, detail="A free BALMZ participation session is already active")
-        conn.execute(
-            "INSERT INTO balmz_mining_sessions(id,wallet_id,status) VALUES(%s,%s,'active')",
+        inserted = conn.execute(
+            "INSERT INTO balmz_mining_sessions(id,wallet_id,status) VALUES(%s,%s,'active') "
+            "ON CONFLICT (wallet_id) WHERE status='active' DO NOTHING",
             (session_id, user["wallet_id"]),
         )
+        if inserted.rowcount == 0:
+            raise HTTPException(status_code=409, detail="A free BALMZ participation session is already active")
         conn.commit()
     return {
         "status": "started", "session_id": session_id,
