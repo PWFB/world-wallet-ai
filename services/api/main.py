@@ -4157,8 +4157,9 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             (user["wallet_id"],),
         ).fetchone()
         reward_rows = conn.execute(
-            "SELECT id,earned_at,reward_amount,status FROM balmz_mining_reward_ledger "
-            "WHERE wallet_id=%s ORDER BY earned_at DESC LIMIT 50",
+            "SELECT id,session_id,cycle_number,earned_at,created_at,reward_amount,status "
+            "FROM balmz_mining_reward_ledger WHERE wallet_id=%s "
+            "ORDER BY created_at DESC,id DESC LIMIT 100",
             (user["wallet_id"],),
         ).fetchall()
     active = next((row for row in rows if row[1] == "active"), None)
@@ -4186,8 +4187,9 @@ def balmz_mining_status(user: dict = Depends(current_user)):
         "claim_enabled": False,
         "notice": "Eligible cycles can be recorded as pending BALMZ allocations only. No token is minted, transferred, or spendable before the official launch and funding verification.",
         "recent_rewards": [{
-            "id": row[0], "earned_at": row[1].isoformat(),
-            "amount": str(row[2]), "status": row[3]
+            "id": row[0], "session_id": row[1], "cycle_number": int(row[2]),
+            "earned_at": row[3].isoformat(), "recorded_at": row[4].isoformat(),
+            "amount": str(row[5]), "status": row[6]
         } for row in reward_rows],
         "recent_sessions": [{
             "id": row[0], "status": row[1], "started_at": row[2].isoformat(),
