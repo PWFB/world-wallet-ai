@@ -99,6 +99,7 @@ USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
 BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
+BALMZ_BNB_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_BNB_CONTRACT", "").strip()
 
 DEFAULT_TRUSTED_ORIGINS = [
     "https://world-wallet-ai-frontend.onrender.com",
@@ -2153,6 +2154,349 @@ def google_login(request: GoogleLoginRequest):
         raise HTTPException(status_code=403, detail="This Google account is not linked to this World Wallet")
     user = provision_identity(email, name=claims.get("name") or "World Wallet User", google_subject=claims.get("sub"))
     return {**session(user),"mode":"google","provider":"google"}
+
+
+# Historical ERC-20 Approval(owner, spender, value) event.
+ERC20_APPROVAL_TOPIC = "0x" + _keccak_hex("Approval(address,address,uint256)")
+KNOWN_OKX_WALLETCORE_TARGETS = {"0x80296ff8d1ed46f8e3c7992664d13b833504c2bb"}
+
+
+def _etherscan_result_list(payload, operation):
+    """Normalize Etherscan V2 list responses without treating empty history as an error."""
+    if not isinstance(payload, dict):
+        raise ValueError("Etherscan returned an invalid " + operation + " response")
+    result = payload.get("result")
+    if str(payload.get("status")) == "1" and isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    message = str(result or payload.get("message") or "").strip().lower()
+    if any(phrase in message for phrase in ("no transactions found", "no records found", "no logs found", "no transactions")):
+        return []
+    raise ValueError("Etherscan could not complete the " + operation + " lookup")
+
+
+def _format_token_interaction(item, network, owner, balmz_contract):
+    """Return only public ERC-20 transfer fields; amounts remain exact decimal strings."""
+    contract = str(item.get("contractAddress") or "").strip()
+    raw_value = str(item.get("value") or "0")
+    decimals_raw = item.get("tokenDecimal")
+    try:
+        raw_integer = int(raw_value)
+        decimals = int(decimals_raw)
+        if raw_integer < 0 or decimals < 0 or decimals > 36:
+            raise ValueError
+        amount = format(Decimal(raw_integer) / (Decimal(10) ** decimals), "f")
+    except (TypeError, ValueError, ArithmeticError):
+        raw_integer = None
+        decimals = None
+        amount = None
+    return {
+        "network": network,
+        "owner_address": owner,
+        "token_contract_address": contract or None,
+        "token_name": str(item.get("tokenName") or "")[:120] or None,
+        "token_symbol": str(item.get("tokenSymbol") or "")[:32] or None,
+        "token_decimals": decimals,
+        "amount_raw": str(raw_integer) if raw_integer is not None else raw_value[:120],
+        "amount": amount,
+        "from_address": str(item.get("from") or "") or None,
+        "to_address": str(item.get("to") or "") or None,
+        "tx_hash": str(item.get("hash") or "") or None,
+        "block_number": str(item.get("blockNumber") or "") or None,
+        "timestamp": str(item.get("timeStamp") or "") or None,
+        "confirmations": str(item.get("confirmations") or "") or None,
+        "balmz_contract_match": bool(
+            balmz_contract and contract and contract.lower() == balmz_contract.lower()
+        ),
+    }
+
+
+def _format_approval_interaction(item, network, owner):
+    """Validate and normalize an indexed ERC-20 Approval log for the connected owner."""
+    topics = item.get("topics") or []
+    if len(topics) < 3 or str(topics[0]).lower() != ERC20_APPROVAL_TOPIC.lower():
+        return None
+    owner_topic = str(topics[1] or "").lower()
+    spender_topic = str(topics[2] or "").lower()
+    expected_owner = "0x" + str(owner)[2:].lower().rjust(64, "0")
+    if owner_topic != expected_owner or not re.fullmatch(r"0x[0-9a-f]{64}", spender_topic):
+        return None
+    contract = str(item.get("address") or "").strip()
+    if not valid_evm_address(contract):
+        return None
+    raw_data = str(item.get("data") or "")
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw_data):
+        return None
+    return {
+        "network": network,
+        "owner_address": owner,
+        "token_contract_address": contract,
+        "spender_address": "0x" + spender_topic[-40:],
+        "amount_raw": str(int(raw_data, 16)),
+        "tx_hash": str(item.get("transactionHash") or "") or None,
+        "block_number": str(item.get("blockNumber") or "") or None,
+        "log_index": str(item.get("logIndex") or "") or None,
+    }
+
+
+def _erc20_allowance_call_data(owner, spender):
+    """Encode allowance(owner, spender) for a read-only eth_call."""
+    if not valid_evm_address(owner) or not valid_evm_address(spender):
+        raise ValueError("Invalid ERC-20 allowance address")
+    return "0xdd62ed3e" + owner[2:].lower().rjust(64, "0") + spender[2:].lower().rjust(64, "0")
+
+
+def _read_current_erc20_allowance(rpc_url, contract, owner, spender):
+    """Read current allowance from the selected chain; return raw units only."""
+    if not rpc_url or not valid_evm_address(contract):
+        return None
+    raw = rpc_call(rpc_url, "eth_call", [
+        {"to": contract, "data": _erc20_allowance_call_data(owner, spender)}, "latest"
+    ])
+    if not isinstance(raw, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw):
+        return None
+    return str(int(raw, 16))
+
+
+def _inspect_eip7702_for_network_address(rpc_url, network, address):
+    """Inspect delegated account code only after the RPC chain identity is verified."""
+    try:
+        if network == "ethereum":
+            chain_id = require_ethereum_mainnet_rpc(rpc_url)
+        elif network == "bnb":
+            chain_id = require_bnb_rpc(rpc_url)
+        else:
+            chain_id = require_sepolia_rpc(rpc_url) or 11155111
+        code = rpc_call(rpc_url, "eth_getCode", [address, "latest"])
+        target = _decode_eip7702_designator(code)
+        return {
+            "rpc_chain_verified": True,
+            "chain_id": chain_id,
+            "delegated": bool(target),
+            "delegation_target": target,
+            "known_okx_walletcore": bool(target and target.lower() in KNOWN_OKX_WALLETCORE_TARGETS),
+            "note": "EIP-7702 delegation is not the same as an ERC-20 allowance or a claim authorization.",
+        }
+    except Exception as exc:
+        return {
+            "rpc_chain_verified": False,
+            "delegated": None,
+            "delegation_target": None,
+            "known_okx_walletcore": False,
+            "error_type": type(exc).__name__,
+            "note": "Delegation could not be verified against the selected network RPC.",
+        }
+
+
+@app.get("/api/v1/wallet/token-interactions")
+def wallet_token_interactions(
+    networks: str = "ethereum,bnb,sepolia",
+    page: int = 1,
+    offset: int = 100,
+    approval_from_block: int = 0,
+    approval_to_block: str = "latest",
+    user: dict = Depends(current_user),
+):
+    """Read-only token transfer history and block-ranged Approval discovery for verified active-wallet addresses."""
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="Etherscan API V2 is not configured on the backend")
+    if page < 1 or page > 100:
+        raise HTTPException(status_code=400, detail="Page must be between 1 and 100")
+    if offset < 1 or offset > 1000:
+        raise HTTPException(status_code=400, detail="Page size must be between 1 and 1000")
+    if approval_from_block < 0 or approval_from_block > 1000000000000:
+        raise HTTPException(status_code=400, detail="Approval start block is outside the supported range")
+    approval_to_block = str(approval_to_block or "latest").strip().lower()
+    if approval_to_block != "latest" and (not approval_to_block.isdigit() or len(approval_to_block) > 16):
+        raise HTTPException(status_code=400, detail="Approval end block must be a block number or latest")
+    if approval_to_block != "latest" and int(approval_to_block) < approval_from_block:
+        raise HTTPException(status_code=400, detail="Approval end block must not precede its start block")
+
+    allowed_networks = {"ethereum", "bnb", "sepolia"}
+    requested_networks = list(dict.fromkeys(part.strip().lower() for part in str(networks or "").split(",") if part.strip()))
+    if not requested_networks or any(network not in allowed_networks for network in requested_networks):
+        raise HTTPException(status_code=400, detail="Supported networks are ethereum, bnb, and sepolia")
+
+    # Discover only addresses already attached to the signed-in user's active wallet.
+    # Unverified addresses are reported but never queried for private wallet history.
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT network,address,label,ownership_verified FROM wallet_addresses "
+            "WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",
+            (user["wallet_id"],),
+        ).fetchall()
+
+    attached = [
+        {"network": str(row[0] or "").strip().lower(), "address": str(row[1] or "").strip(),
+         "label": str(row[2] or "")[:80], "ownership_verified": bool(row[3])}
+        for row in rows
+        if str(row[0] or "").strip().lower() in requested_networks and valid_evm_address(str(row[1] or "").strip())
+    ]
+    network_config = {
+        "ethereum": {"chain_id": 1, "rpc": ETH_RPC_URL, "balmz_contract": BALMZ_ETH_CONTRACT},
+        "bnb": {"chain_id": 56, "rpc": BSC_RPC_URL, "balmz_contract": BALMZ_BNB_CONTRACT},
+        "sepolia": {"chain_id": 11155111, "rpc": SEPOLIA_RPC_URL, "balmz_contract": BALMZ_SEPOLIA_CONTRACT},
+    }
+
+    scanned_networks = []
+    for network in requested_networks:
+        config = network_config[network]
+        network_addresses = [item for item in attached if item["network"] == network]
+        verified_addresses = [item for item in network_addresses if item["ownership_verified"]][:10]
+        address_results = []
+        skipped = [
+            {"address": item["address"], "label": item["label"], "reason": "Wallet address ownership is not signature-verified"}
+            for item in network_addresses if not item["ownership_verified"]
+        ]
+        if len(network_addresses) > 10:
+            skipped.extend(
+                {"address": item["address"], "label": item["label"], "reason": "Per-network scan limit reached; retry after reviewing earlier results"}
+                for item in network_addresses[10:]
+            )
+
+        for item in verified_addresses:
+            owner = item["address"]
+            warnings = []
+            transfers = []
+            approvals = []
+            transfer_has_more = False
+            approval_logs_truncated = False
+            approval_last_block = None
+            try:
+                payload = etherscan_v2_request(
+                    config["chain_id"], "account", "tokentx",
+                    {"address": owner, "page": page, "offset": offset, "sort": "desc"},
+                )
+                raw_transfers = _etherscan_result_list(payload, "ERC-20 transfer history")
+                transfers = [
+                    _format_token_interaction(tx, network, owner, config["balmz_contract"])
+                    for tx in raw_transfers
+                ]
+                transfer_has_more = len(raw_transfers) >= offset
+            except Exception as exc:
+                warnings.append("ERC-20 transfer history unavailable (" + type(exc).__name__ + ")")
+
+            try:
+                owner_topic = "0x" + owner[2:].lower().rjust(64, "0")
+                payload = etherscan_v2_request(
+                    config["chain_id"], "logs", "getLogs",
+                    {
+                        "fromBlock": str(approval_from_block), "toBlock": approval_to_block,
+                        "topic0": ERC20_APPROVAL_TOPIC, "topic1": owner_topic,
+                        "topic0_1_opr": "and",
+                    },
+                )
+                raw_approvals = _etherscan_result_list(payload, "ERC-20 Approval history")
+                for log in raw_approvals:
+                    normalized = _format_approval_interaction(log, network, owner)
+                    if normalized:
+                        approvals.append(normalized)
+                # Etherscan documents a hard 1,000-log response cap for getLogs;
+                # it does not offer reliable page/offset pagination for this endpoint.
+                approval_logs_truncated = len(raw_approvals) >= 1000
+                approval_last_block = max(
+                    (int(str(log.get("blockNumber"))) for log in raw_approvals
+                     if str(log.get("blockNumber") or "").isdigit()),
+                    default=None,
+                )
+            except Exception as exc:
+                warnings.append("ERC-20 Approval history unavailable (" + type(exc).__name__ + ")")
+
+            if approval_logs_truncated:
+                warnings.append("Approval history reached Etherscan's 1,000-log cap for this block range; narrow the block range and rescan.")
+            proxy = _inspect_eip7702_for_network_address(config["rpc"], network, owner) if config["rpc"] else {
+                "rpc_chain_verified": False, "delegated": None, "delegation_target": None,
+                "known_okx_walletcore": False, "note": "Network RPC is not configured; delegation was not checked.",
+            }
+
+            # Historical Approval events do not reveal whether an allowance is still active.
+            # Read the current allowance for the newest distinct token/spender pairs only.
+            current_allowances = []
+            seen_pairs = set()
+            allowance_checks_truncated = False
+            for approval in approvals:
+                pair = (approval["token_contract_address"].lower(), approval["spender_address"].lower())
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if len(current_allowances) >= 50:
+                    allowance_checks_truncated = True
+                    continue
+                allowance_raw = None
+                if proxy.get("rpc_chain_verified") and config["rpc"]:
+                    try:
+                        allowance_raw = _read_current_erc20_allowance(
+                            config["rpc"], approval["token_contract_address"], owner, approval["spender_address"]
+                        )
+                    except Exception:
+                        allowance_raw = None
+                current_allowances.append({
+                    "token_contract_address": approval["token_contract_address"],
+                    "spender_address": approval["spender_address"],
+                    "current_allowance_raw": allowance_raw,
+                    "status": "verified_zero" if allowance_raw == "0" else (
+                        "verified_nonzero" if allowance_raw is not None else "not_verified"
+                    ),
+                })
+
+            allowance_lookup = {
+                (entry["token_contract_address"].lower(), entry["spender_address"].lower()): entry
+                for entry in current_allowances
+            }
+            for approval in approvals:
+                current = allowance_lookup.get((approval["token_contract_address"].lower(), approval["spender_address"].lower()))
+                approval["current_allowance_raw"] = current["current_allowance_raw"] if current else None
+                approval["current_allowance_status"] = current["status"] if current else "not_checked"
+
+            address_results.append({
+                "address": owner,
+                "label": item["label"],
+                "ownership_verified": True,
+                "delegation": proxy,
+                "token_transfers": transfers,
+                "approvals": approvals,
+                "current_allowance_checks": current_allowances,
+                "allowance_checks_truncated": allowance_checks_truncated,
+                "pagination": {
+                    "page": page, "page_size": offset,
+                    "token_transfers_has_more": transfer_has_more,
+                    "approval_from_block": approval_from_block,
+                    "approval_to_block": approval_to_block,
+                    "approval_logs_truncated": approval_logs_truncated,
+                    "approval_last_block": approval_last_block,
+                    "has_more": transfer_has_more,
+                },
+                "warnings": warnings,
+            })
+
+        scanned_networks.append({
+            "network": network,
+            "chain_id": config["chain_id"],
+            "address_count": len(verified_addresses),
+            "skipped_addresses": skipped,
+            "addresses": address_results,
+            "status": "scanned" if address_results else ("ownership_verification_required" if skipped else "no_attached_address"),
+        })
+
+    return {
+        "scope": "Authenticated active wallet; signature-verified EVM addresses only",
+        "read_only": True,
+        "secrets_exposed": False,
+        "page": page,
+        "page_size": offset,
+        "networks": scanned_networks,
+        "provider_limits": {
+            "token_transfers": "Etherscan account/tokentx may return only the last 10,000 records for an address; page through available results and use an independent indexer for older completeness guarantees.",
+            "approval_logs": "Etherscan logs/getLogs returns at most 1,000 matching logs per query; narrow the block range and rescan when the cap is reached.",
+        },
+        "claim_readiness": {
+            "claim_execution_enabled": False,
+            "claimable_balmz_amount": None,
+            "status": "not_established",
+            "reason": "Token transfers and ERC-20 approvals are not proof of an unclaimed BALMZ allocation. No verified network-specific BALMZ claim contract, allocation registry, issuer authorization, and replay-protected batch-claim interface are configured for this wallet.",
+            "next_requirement": "Verify the canonical BALMZ claim contract and allocation records on each network before enabling a wallet-signed claim.",
+        },
+        "warning": "EIP-7702 delegation, ERC-20 allowances, and BALMZ claim eligibility are separate checks. No transaction was signed, broadcast, or credited.",
+    }
 
 
 @app.get("/api/v1/auth/me")
