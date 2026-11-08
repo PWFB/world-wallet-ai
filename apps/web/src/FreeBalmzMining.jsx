@@ -117,7 +117,14 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
           ? <button className="primary feature-submit" type="button" disabled={busy || !data} onClick={() => act("start")}>Start free mining</button>
           : <button className="secondary feature-submit" type="button" disabled={busy} onClick={() => act("stop")}>Stop mining clock</button>}
       </div>
-      <p className="security-note">Important: this update calculates and displays 3-hour checkpoints from the saved start time. It does not yet create token rewards or enable an on-chain claim. Claiming remains disabled until the verified funded Mainnet allocation, reward rules, server-side claim ledger and replay-protected wallet-signature mechanism are implemented. No BALMZ amount is implied by elapsed time.</p>
+    </article>
+
+    <article className="panel action-panel mining-claim-panel">
+      <div className="panel-head"><div><h2>BALMZ claim</h2><span>Claim area is visible to every miner.</span></div><span className="mining-interest-badge">Every 3 hours</span></div>
+      <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>{active && cycle.completedCycles > 0 ? "Checkpoint reached — reward verification pending" : active ? "Mining cycle in progress" : "Start mining to begin your first cycle"}</b></div>
+      <p className="security-note">The Claim control is shown to all miners, but is not active yet. A checkpoint alone does not create a reward. Claims will only be enabled when a funded Mainnet reward pool and a verified reward ledger are live.</p>
+      <button className="primary feature-submit" type="button" disabled aria-disabled="true">Claim BALMZ — not yet enabled</button>
+      <p className="security-note">After Mainnet activation, the claim will send the verified net reward to this wallet only after wallet authorization and on-chain confirmation. Any network gas fee and any protocol fee will be disclosed separately before signing; fees must not be silently deducted from the reward. A successful deposit will be shown only after the transaction is confirmed.</p>
     </article>
 
     <article className="panel action-panel">
