@@ -20,9 +20,10 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, active=None, sessions=None):
+    def __init__(self, active=None, sessions=None, reward_rows=None):
         self.active = active
         self.sessions = sessions or []
+        self.reward_rows = reward_rows or []
         self.statements = []
 
     def __enter__(self):
@@ -46,8 +47,8 @@ class FakeConnection:
             return FakeCursor(all_rows=[])
         if "COALESCE(SUM(reward_amount),0),COUNT(*)" in sql:
             return FakeCursor(one=(0, 0))
-        if "SELECT id,earned_at,reward_amount,status FROM balmz_mining_reward_ledger" in sql:
-            return FakeCursor(all_rows=[])
+        if "FROM balmz_mining_reward_ledger WHERE wallet_id=%s" in sql and "ORDER BY created_at DESC" in sql:
+            return FakeCursor(all_rows=self.reward_rows)
         if "SELECT id,status,started_at,ended_at,duration_seconds" in sql:
             return FakeCursor(all_rows=[])
         if "COUNT(*) FILTER" in sql:
@@ -82,6 +83,22 @@ class FreeBalmzMiningSessionTests(unittest.TestCase):
         self.assertEqual(body["reward_status"], "pending_launch_not_spendable")
         self.assertFalse(any("INSERT INTO balmz_mining_reward_ledger" in sql for sql, _ in fake.statements))
 
+    def test_status_exposes_immutable_timestamp_receipt_fields(self):
+        earned_at = datetime.now(timezone.utc) - timedelta(hours=3)
+        recorded_at = datetime.now(timezone.utc)
+        receipt = ("balmz_reward_receipt1", "mine_test", 1, earned_at, recorded_at, "0.5", "pending_launch")
+        fake = FakeConnection(reward_rows=[receipt])
+        with patch.object(main, "db", return_value=fake):
+            response = self.client.get("/api/v1/mining/balmz")
+        self.assertEqual(response.status_code, 200)
+        item = response.json()["recent_rewards"][0]
+        self.assertEqual(item["id"], receipt[0])
+        self.assertEqual(item["session_id"], receipt[1])
+        self.assertEqual(item["cycle_number"], 1)
+        self.assertEqual(item["earned_at"], earned_at.isoformat())
+        self.assertEqual(item["recorded_at"], recorded_at.isoformat())
+        self.assertEqual(item["amount"], "0.5")
+        self.assertEqual(item["status"], "pending_launch")
     def test_start_creates_free_session_but_no_token_reward(self):
         fake = FakeConnection()
         with patch.object(main, "db", return_value=fake):
