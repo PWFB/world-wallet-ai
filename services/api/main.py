@@ -3159,6 +3159,7 @@ def admin_settings(user: dict = Depends(current_user)):
         {"key": "World Wallet admin email", "configured": bool(WORLD_WALLET_ADMIN_EMAIL)},
         {"key": "Alchemy NFT API key", "configured": bool(ALCHEMY_API_KEY)},
         {"key": "Etherscan API V2 key", "configured": bool(ETHERSCAN_API_KEY)},
+        {"key": "Google Gemini API key", "configured": bool(GEMINI_API_KEY)},
         {"key": "PostgreSQL database", "configured": bool(DATABASE_URL)},
         {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
         {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
