@@ -442,7 +442,19 @@ def init_db():
         );
         ALTER TABLE wallets ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Wallet';
         ALTER TABLE wallets ADD COLUMN IF NOT EXISTS wallet_number BIGINT;
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS mining_referral_code TEXT;
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS world_wallet_code TEXT;
         UPDATE wallets SET wallet_number=nextval('wallets_wallet_number_seq') WHERE wallet_number IS NULL;
+        UPDATE wallets SET
+          mining_referral_code=COALESCE(NULLIF(mining_referral_code,''),'MINE-' || upper(substr(md5(id || random()::text || clock_timestamp()::text),1,10))),
+          world_wallet_code=COALESCE(NULLIF(world_wallet_code,''),'WWAI-' || upper(substr(md5(random()::text || clock_timestamp()::text || id),1,10)))
+        WHERE mining_referral_code IS NULL OR mining_referral_code='' OR world_wallet_code IS NULL OR world_wallet_code='';
+        ALTER TABLE wallets ALTER COLUMN mining_referral_code SET DEFAULT ('MINE-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,10)));
+        ALTER TABLE wallets ALTER COLUMN world_wallet_code SET DEFAULT ('WWAI-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,10)));
+        ALTER TABLE wallets ALTER COLUMN mining_referral_code SET NOT NULL;
+        ALTER TABLE wallets ALTER COLUMN world_wallet_code SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_mining_referral_code_unique ON wallets(mining_referral_code);
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_world_wallet_code_unique ON wallets(world_wallet_code);
         ALTER TABLE wallets ALTER COLUMN wallet_number SET DEFAULT nextval('wallets_wallet_number_seq');
         ALTER TABLE wallets ALTER COLUMN wallet_number SET NOT NULL;
         CREATE UNIQUE INDEX IF NOT EXISTS wallets_wallet_number_unique ON wallets(wallet_number);
@@ -4162,12 +4174,18 @@ def balmz_mining_status(user: dict = Depends(current_user)):
             "ORDER BY created_at DESC,id DESC LIMIT 100",
             (user["wallet_id"],),
         ).fetchall()
+        code_row = conn.execute(
+            "SELECT mining_referral_code,world_wallet_code FROM wallets WHERE id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
     active = next((row for row in rows if row[1] == "active"), None)
     total_seconds = int(totals[1] or 0)
     if active:
         total_seconds += max(0, int((datetime.now(timezone.utc) - active[2]).total_seconds()))
     return {
         "wallet_id": user["wallet_id"],
+        "mining_referral_code": code_row[0] if code_row else None,
+        "world_wallet_code": code_row[1] if code_row else None,
         "program": "BALMZ Free Mining",
         "mode": "pending_reward_ledger",
         "active_session": None if not active else {
