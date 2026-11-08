@@ -1,13 +1,30 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 
+const CLAIM_INTERVAL_SECONDS = 3 * 60 * 60;
+
 function formatDuration(value) {
-  const seconds = Math.max(0, Number(value) || 0);
+  const seconds = Math.max(0, Math.floor(Number(value) || 0));
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
   const remainder = seconds % 60;
   return [hours ? hours + "h" : "", minutes ? minutes + "m" : "", remainder + "s"].filter(Boolean).join(" ");
+}
+
+function cycleState(startedAt, nowMs) {
+  if (!startedAt) return { elapsed: 0, completedCycles: 0, remaining: CLAIM_INTERVAL_SECONDS, nextAt: null };
+  const startMs = new Date(startedAt).getTime();
+  if (!Number.isFinite(startMs)) return { elapsed: 0, completedCycles: 0, remaining: CLAIM_INTERVAL_SECONDS, nextAt: null };
+  const elapsed = Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  const completedCycles = Math.floor(elapsed / CLAIM_INTERVAL_SECONDS);
+  const remaining = CLAIM_INTERVAL_SECONDS - (elapsed % CLAIM_INTERVAL_SECONDS);
+  return {
+    elapsed,
+    completedCycles,
+    remaining,
+    nextAt: new Date(startMs + (completedCycles + 1) * CLAIM_INTERVAL_SECONDS * 1000),
+  };
 }
 
 export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
@@ -15,6 +32,7 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [nowMs, setNowMs] = useState(Date.now());
 
   const request = useCallback(async (path, method = "GET") => {
     const fresh = await getNeonAccessToken({ forceRefresh: true });
@@ -39,6 +57,10 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   }, [request]);
 
   useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
 
   async function act(action) {
     setBusy(true); setError(""); setMessage("");
@@ -51,6 +73,14 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   }
 
   const active = Boolean(data?.active_session);
+  const cycle = useMemo(
+    () => cycleState(data?.active_session?.started_at, nowMs),
+    [data?.active_session?.started_at, nowMs]
+  );
+  const nextClaimTime = cycle.nextAt
+    ? cycle.nextAt.toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : "Starts when mining starts";
+
   return <section className="content feature-content mining-page">
     <div className="page-heading">
       <div>
@@ -64,9 +94,9 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     <article className="panel action-panel mining-hero">
       <div className="mining-hero-copy">
         <span className="feature-kicker">FREE COMMUNITY PARTICIPATION</span>
-        <h2>Start or stop your free mining participation session.</h2>
-        <p>Sessions are securely recorded against your signed-in World Wallet account. This release tracks participation only; it does not run proof-of-work, mint tokens, or create spendable BALMZ.</p>
-        <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>{active ? "Session active" : "Ready to start"}</b><span>No deposit required</span></div>
+        <h2>One wallet, one saved mining clock.</h2>
+        <p>Your mining start time is saved on the server against this wallet. The 3-hour schedule continues from that exact timestamp after refresh or sign-in.</p>
+        <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>{active ? "Mining clock active" : "Ready to start"}</b><span>No deposit required</span></div>
       </div>
       <div className="mining-hero-mark" aria-hidden="true"><span>⛏</span><b>BALMZ</b><small>FREE MINING</small></div>
     </article>
@@ -75,19 +105,19 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     {message && <div className="feature-success" role="status">{message}</div>}
 
     <div className="feature-grid mining-status-grid">
-      <article className="panel action-panel mining-status-card"><small>SESSION STATUS</small><strong>{busy ? "Updating…" : active ? "Active" : "Inactive"}</strong><span>{active ? "Started " + new Date(data.active_session.started_at).toLocaleString() : "No active session"}</span></article>
-      <article className="panel action-panel mining-status-card"><small>COMPLETED SESSIONS</small><strong>{Number(data?.completed_sessions || 0).toLocaleString()}</strong><span>Recorded for this wallet</span></article>
-      <article className="panel action-panel mining-status-card"><small>TOTAL PARTICIPATION</small><strong>{formatDuration(data?.total_session_seconds)}</strong><span>Session time, not token earnings</span></article>
+      <article className="panel action-panel mining-status-card"><small>WALLET MINING START</small><strong>{active ? new Date(data.active_session.started_at).toLocaleString() : "Not started"}</strong><span>Persisted wallet-specific timestamp</span></article>
+      <article className="panel action-panel mining-status-card"><small>NEXT 3-HOUR CHECKPOINT</small><strong>{active ? formatDuration(cycle.remaining) : "—"}</strong><span>{active ? "Scheduled for " + nextClaimTime : "Start mining to begin the clock"}</span></article>
+      <article className="panel action-panel mining-status-card"><small>COMPLETED 3-HOUR CYCLES</small><strong>{active ? cycle.completedCycles.toLocaleString() : "0"}</strong><span>Elapsed checkpoints only; not token earnings</span></article>
     </div>
 
     <article className="panel action-panel mining-interest-panel">
-      <div className="panel-head"><div><h2>Your free session</h2><span>One active session per wallet.</span></div><span className="mining-interest-badge">0 USDT</span></div>
+      <div className="panel-head"><div><h2>Your free mining schedule</h2><span>One active mining clock per wallet.</span></div><span className="mining-interest-badge">0 USDT</span></div>
       <div className="inline-form">
         {!active
-          ? <button className="primary feature-submit" type="button" disabled={busy || !data} onClick={() => act("start")}>Start free session</button>
-          : <button className="primary feature-submit" type="button" disabled={busy} onClick={() => act("stop")}>Stop session</button>}
+          ? <button className="primary feature-submit" type="button" disabled={busy || !data} onClick={() => act("start")}>Start free mining</button>
+          : <button className="secondary feature-submit" type="button" disabled={busy} onClick={() => act("stop")}>Stop mining clock</button>}
       </div>
-      <p className="security-note">BALMZ rewards and withdrawals are not enabled in this release. They can only be activated after the authorized Mainnet reward allocation, available treasury balance, distribution rules and replay-protected claim mechanism are independently verified. Devnet tokens are never counted as Mainnet rewards.</p>
+      <p className="security-note">Important: this update calculates and displays 3-hour checkpoints from the saved start time. It does not yet create token rewards or enable an on-chain claim. Claiming remains disabled until the verified funded Mainnet allocation, reward rules, server-side claim ledger and replay-protected wallet-signature mechanism are implemented. No BALMZ amount is implied by elapsed time.</p>
     </article>
 
     <article className="panel action-panel">
