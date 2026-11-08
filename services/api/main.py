@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from threading import Lock
+from anyio import to_thread
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -328,6 +329,30 @@ class ApiKeyImportRequest(BaseModel):
 # connections. Render currently runs one API worker; keep this limit conservative.
 _DB_POOL = None
 _DB_POOL_LOCK = Lock()
+
+
+def configure_api_thread_limit():
+    """Bound synchronous FastAPI work to protect the small Render instance from RAM spikes."""
+    raw_limit = os.getenv("WORLD_WALLET_API_THREAD_LIMIT", "8").strip()
+    try:
+        requested_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        logger.warning("Invalid WORLD_WALLET_API_THREAD_LIMIT; using the safe default")
+        requested_limit = 8
+
+    # Keep a small but useful pool, and never allow an environment override to
+    # expand AnyIO's default worker capacity beyond a conservative ceiling.
+    requested_limit = max(2, min(requested_limit, 16))
+    try:
+        limiter = to_thread.current_default_thread_limiter()
+        effective_limit = min(int(limiter.total_tokens), requested_limit)
+        limiter.total_tokens = effective_limit
+        logger.info("API synchronous request capacity configured: %s", effective_limit)
+        return effective_limit
+    except Exception as exc:
+        # A failed tuning step must not prevent the API from starting.
+        logger.warning("Could not configure API thread capacity: error_type=%s", type(exc).__name__)
+        return None
 
 
 def db():
@@ -1870,6 +1895,7 @@ def wallet_snapshot(user):
 
 @app.on_event("startup")
 def startup():
+    configure_api_thread_limit()
     init_db()
     if DATABASE_URL and IDENTITY_EMAIL and IDENTITY_PASSWORD:
         provision_identity(IDENTITY_EMAIL, IDENTITY_PASSWORD)
@@ -2548,7 +2574,7 @@ def _coinbase_spot_price_fallback():
             return symbol, None
         return symbol, {"usd": value, "usd_24h_change": None, "listed": True}
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {pool.submit(fetch, symbol, product): symbol for symbol, product in pairs.items()}
         for future in as_completed(futures):
             symbol = futures[future]
