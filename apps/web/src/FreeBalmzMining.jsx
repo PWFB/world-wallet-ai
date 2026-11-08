@@ -102,6 +102,15 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
       <button className="secondary" type="button" disabled={busy} onClick={refresh}>↻ Refresh</button>
     </div>
 
+    <article className="panel action-panel mining-code-panel">
+      <div className="panel-head"><div><h2>Your account codes</h2><span>Two separate, permanent codes for this wallet.</span></div></div>
+      <div className="feature-grid mining-status-grid">
+        <div className="panel action-panel mining-status-card"><small>MINING REFERRAL CODE</small><strong>{data?.mining_referral_code || "Loading…"}</strong><span>Share this code for mining referrals.</span></div>
+        <div className="panel action-panel mining-status-card"><small>WORLD WALLET AI CODE</small><strong>{data?.world_wallet_code || "Loading…"}</strong><span>Separate World Wallet AI account identifier.</span></div>
+      </div>
+      <p className="security-note">These codes are different and permanently assigned to this wallet. Referral tracking or referral rewards are not activated by displaying a code.</p>
+    </article>
+
     <article className="panel action-panel mining-hero">
       <div className="mining-hero-copy">
         <span className="feature-kicker">FREE COMMUNITY PARTICIPATION</span>
@@ -160,6 +169,8 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
         <p className="security-note">Permanent view-only record. Receipt details cannot be edited or deleted from this page.</p>
         <div className="tool-list">
           <div className="tool-row"><span>Receipt ID</span><strong style={{ overflowWrap: "anywhere" }}>{selectedReceipt.id}</strong></div>
+          <div className="tool-row"><span>Mining referral code</span><strong>{data?.mining_referral_code || "—"}</strong></div>
+          <div className="tool-row"><span>World Wallet AI code</span><strong>{data?.world_wallet_code || "—"}</strong></div>
           <div className="tool-row"><span>Recorded timestamp</span><strong>{new Date(selectedReceipt.recorded_at || selectedReceipt.earned_at).toLocaleString()}</strong></div>
           <div className="tool-row"><span>Cycle earned timestamp</span><strong>{new Date(selectedReceipt.earned_at).toLocaleString()}</strong></div>
           <div className="tool-row"><span>Cycle number</span><strong>{selectedReceipt.cycle_number ?? "—"}</strong></div>
