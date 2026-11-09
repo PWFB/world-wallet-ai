@@ -343,16 +343,17 @@ _DB_POOL_LOCK = Lock()
 
 def configure_api_thread_limit():
     """Bound synchronous FastAPI work to protect the small Render instance from RAM spikes."""
-    raw_limit = os.getenv("WORLD_WALLET_API_THREAD_LIMIT", "8").strip()
+    raw_limit = os.getenv("WORLD_WALLET_API_THREAD_LIMIT", "4").strip()
     try:
         requested_limit = int(raw_limit)
     except (TypeError, ValueError):
         logger.warning("Invalid WORLD_WALLET_API_THREAD_LIMIT; using the safe default")
-        requested_limit = 8
+        requested_limit = 4
 
-    # Keep a small but useful pool, and never allow an environment override to
-    # expand AnyIO's default worker capacity beyond a conservative ceiling.
-    requested_limit = max(2, min(requested_limit, 16))
+    # Keep synchronous request concurrency conservative on the 512 MiB Render
+    # instance. Operators may lower this value, but cannot raise it above eight.
+    # AnyIO's default worker capacity beyond a conservative ceiling.
+    requested_limit = max(2, min(requested_limit, 8))
     try:
         limiter = to_thread.current_default_thread_limiter()
         effective_limit = min(int(limiter.total_tokens), requested_limit)
@@ -376,7 +377,7 @@ def db():
                 _DB_POOL = ConnectionPool(
                     conninfo=DATABASE_URL,
                     min_size=1,
-                    max_size=5,
+                    max_size=3,
                     timeout=5,
                     max_idle=300,
                     max_lifetime=1800,
