@@ -36,6 +36,8 @@ class FakeConnection:
             return Result(rowcount=1)
         if normalized.startswith("select ownership_verified from wallet_addresses"):
             return Result((False,))
+        if normalized.startswith("insert into wallet_audit_events"):
+            return Result()
         raise AssertionError("Unexpected SQL: " + normalized)
 
     def commit(self):

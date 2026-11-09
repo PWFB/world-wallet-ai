@@ -591,6 +591,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [syncMessage, setSyncMessage] = useState("");
   const [historyTransactions, setHistoryTransactions] = useState([]);
   const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+  const [walletReconciliation, setWalletReconciliation] = useState(null);
+  const [walletReconciliationBusy, setWalletReconciliationBusy] = useState(false);
+  const [walletReconciliationError, setWalletReconciliationError] = useState("");
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
@@ -627,6 +630,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
   const [adminData, setAdminData] = useState(null);
+  const [walletAuditData, setWalletAuditData] = useState(null);
+  const [walletAuditBusy, setWalletAuditBusy] = useState(false);
+  const [walletAuditError, setWalletAuditError] = useState("");
   const [adminBusy, setAdminBusy] = useState(false);
   const [adminError, setAdminError] = useState("");
   const [adminSearch, setAdminSearch] = useState("");
@@ -658,6 +664,54 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [miningMessage, setMiningMessage] = useState("");
   const [miningError, setMiningError] = useState("");
   const requestKeyRef = useRef("");
+  const walletReconciliationRequestRef = useRef(0);
+  const walletAuditRequestRef = useRef(0);
+
+  async function loadWalletReconciliation() {
+    if (!accessToken) return;
+    const requestId = ++walletReconciliationRequestRef.current;
+    setWalletReconciliation(null);
+    setWalletReconciliationBusy(true);
+    setWalletReconciliationError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallet/reconciliation", {
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Wallet reconciliation could not be loaded.");
+      if (requestId === walletReconciliationRequestRef.current) setWalletReconciliation(data);
+    } catch (error) {
+      if (requestId === walletReconciliationRequestRef.current) {
+        setWalletReconciliationError(error.message || "Wallet reconciliation could not be loaded.");
+      }
+    } finally {
+      if (requestId === walletReconciliationRequestRef.current) setWalletReconciliationBusy(false);
+    }
+  }
+
+  async function loadAdminWalletAudit() {
+    if (!accessToken) return;
+    const requestId = ++walletAuditRequestRef.current;
+    setWalletAuditData(null);
+    setWalletAuditBusy(true);
+    setWalletAuditError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/admin/wallet-audit?limit=50&offset=0", {
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Wallet audit events could not be loaded.");
+      if (requestId === walletAuditRequestRef.current) setWalletAuditData(data);
+    } catch (error) {
+      if (requestId === walletAuditRequestRef.current) {
+        setWalletAuditError(error.message || "Wallet audit events could not be loaded.");
+      }
+    } finally {
+      if (requestId === walletAuditRequestRef.current) setWalletAuditBusy(false);
+    }
+  }
 
   useEffect(() => {
     const activeWalletId = wallet?.wallet_id || wallet?.id;
@@ -1134,6 +1188,16 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }, [active, accessToken, apiBaseUrl]);
 
   useEffect(() => {
+    if (active !== "Transactions" || !accessToken) return;
+    loadWalletReconciliation();
+  }, [active, accessToken, apiBaseUrl, wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
+    if (active !== "Logs & Activity" || !accessToken) return;
+    loadAdminWalletAudit();
+  }, [active, accessToken, apiBaseUrl]);
+
+  useEffect(() => {
     if (active !== "Request Center" || !accessToken) return;
     let cancelled = false;
     setRequestBusy(true);
@@ -1170,7 +1234,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved deposit history…</div> : selectedIncomingHistory.length ? selectedIncomingHistory.map((item, index) => (
         <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={item.tx_hash || item.id || index} onClick={() => setFocusedTransaction?.(item)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(item); } }} aria-label={"View received transaction details for " + (item.asset || asset)}>
           <span className="activity-icon">↓</span>
-          <div className="transaction-main"><b>{item.asset || item.symbol || asset} received</b><small>{item.description || "Incoming wallet transaction"}</small>{item.tx_hash && <code title={item.tx_hash}>{item.tx_hash}</code>}</div>
+          <div className="transaction-main"><b>{item.asset || item.symbol || asset} received</b><small>{item.description || "Incoming wallet transaction"}</small>{item.reference && <small>Receipt reference: <code>{item.reference}</code></small>}{item.tx_hash && <code title={item.tx_hash}>{item.tx_hash}</code>}</div>
           <strong className="positive">{Number(item.raw_amount ?? item.amount) >= 0 ? "+" : ""}{number(Math.abs(Number(item.raw_amount ?? item.amount)))} {item.asset || item.symbol || asset}</strong>
           <div className="transaction-meta"><span className={item.status === "confirmed" || item.status === "settled" ? "positive" : item.status === "failed" || item.status === "reorged" ? "negative" : "neutral"}>{item.status || "recorded"}{item.confirmations ? " · " + item.confirmations + " confirmations" : ""}</span>{item.network && <small>{item.network}</small>}{transactionExplorerUrl(item) && <a href={transactionExplorerUrl(item)} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>View on explorer ↗</a>}<small>{item.time || "Time unavailable"}</small></div>
         </div>
@@ -2152,6 +2216,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       <article className="panel transaction-detail-card">
         <div className="transaction-detail-amount"><small>AMOUNT</small><strong>{transaction.amount || "—"}</strong></div>
         <div className="transaction-detail-grid">
+          <div className="transaction-detail-wide"><small>World Wallet AI reference</small>{transaction.reference ? <code>{transaction.reference}</code> : <span>Not assigned</span>}</div>
           <div><small>Asset</small><b>{symbol}</b></div><div><small>Status</small><b className={transaction.status === "confirmed" || transaction.status === "settled" ? "positive" : transaction.status === "failed" || transaction.status === "reorged" ? "negative" : "neutral"}>{transaction.status || "Recorded"}</b></div>
           <div><small>Network</small><b>{transaction.network || "Not supplied by transaction record"}</b></div><div><small>Time</small><b>{transaction.time || "—"}</b></div>
           <div><small>Confirmations</small><b>{transaction.confirmations == null ? "—" : Number(transaction.confirmations).toLocaleString()}</b></div><div><small>Block height</small><b>{transaction.block_height == null ? "—" : Number(transaction.block_height).toLocaleString()}</b></div>
@@ -2171,7 +2236,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const type = String(item.type || "").toLowerCase();
       const status = String(item.status || "recorded").toLowerCase();
       const term = historySearch.trim().toLowerCase();
-      const searchable = [item.type, item.asset, item.symbol, item.description, item.tx_hash, item.network, item.status, item.amount].join(" ").toLowerCase();
+      const searchable = [item.reference, item.type, item.asset, item.symbol, item.description, item.tx_hash, item.network, item.status, item.amount].join(" ").toLowerCase();
       const typeMatches = historyTypeFilter === "all" || type.includes(historyTypeFilter);
       const statusMatches = historyStatusFilter === "all"
         || (historyStatusFilter === "pending" && ["pending", "pending_review", "broadcast_pending", "unconfirmed"].includes(status))
@@ -2249,17 +2314,53 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       </div>
       {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       {historyError && <div role="status" className="feature-error">{historyError} <button className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
+      <article className="panel action-panel">
+        <div className="panel-head">
+          <div><h2>Wallet reconciliation</h2><span>Internal reservation, transaction-record and chain-sync cursor checks</span></div>
+          <button className="secondary" onClick={loadWalletReconciliation} disabled={walletReconciliationBusy}>{walletReconciliationBusy ? "Checking…" : "↻ Recheck"}</button>
+        </div>
+        {walletReconciliationError && <div role="alert" className="feature-error">{walletReconciliationError}</div>}
+        {walletReconciliation && <>
+          <div className={walletReconciliation.status === "CLEAR" ? "feature-success" : "feature-error"} role="status">
+            {walletReconciliation.status === "CLEAR" ? "Internal records are consistent in the checks performed." : "Review required: one or more internal wallet records need attention."}
+          </div>
+          <div className="tool-list">
+            {(walletReconciliation.asset_checks || []).map(item => <div className="tool-row" key={item.asset}>
+              <div><b>{item.asset} reservation</b><small>Reserved {item.reserved_balance} · Pending requests {item.pending_request_reservation}</small></div>
+              <strong className={item.matches ? "positive" : "negative"}>{item.matches ? "Matched" : "Mismatch"}</strong>
+            </div>)}
+            {(walletReconciliation.transaction_status_counts || []).map(item => <div className="tool-row" key={item.status}>
+              <div><b>{item.status} transactions</b><small>Recorded in this wallet</small></div><strong>{Number(item.count).toLocaleString()}</strong>
+            </div>)}
+            {(walletReconciliation.chain_sync_cursors || []).map(item => <div className="tool-row" key={item.source}>
+              <div><b>{item.source} sync cursor</b><small>Block {Number(item.last_block).toLocaleString()} · {item.updated_at ? new Date(item.updated_at).toLocaleString() : "Timestamp unavailable"}</small></div>
+              <strong>{item.age_seconds == null ? "Age unknown" : Math.floor(item.age_seconds / 60) + " min ago"}</strong>
+            </div>)}
+          </div>
+          {(walletReconciliation.exceptions || []).length > 0 && <div className="security-note">
+            <b>Exceptions</b>
+            {(walletReconciliation.exceptions || []).map((item,index) => <div key={(item.type || "exception") + index}>
+              {item.type === "reservation_mismatch"
+                ? item.asset + ": reserved " + item.reserved_balance + ", expected " + item.pending_request_reservation
+                : (item.reference || item.transaction_id || "Transaction") + ": " + item.type + " · " + (item.network || "network unavailable")}
+            </div>)}
+          </div>}
+          <small className="muted">Checked {walletReconciliation.checked_at ? new Date(walletReconciliation.checked_at).toLocaleString() : "time unavailable"} · Source: internal records only.</small>
+        </>}
+        {!walletReconciliation && !walletReconciliationBusy && !walletReconciliationError && <div className="live-chart-empty">No reconciliation snapshot loaded yet.</div>}
+        <p className="security-note">This report does not query blockchain RPCs, change balances, release reservations, or prove current chain finality. Use live wallet sync and the matching chain explorer for on-chain verification.</p>
+      </article>
       <article className="panel transaction-panel">
         <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>Showing {visibleHistoryTransactions.length} of {historyTransactions.length} loaded · {historyPagination.total} total</small></div>
         <div className="transaction-controls" aria-label="Filter transaction history">
-          <input type="search" value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search asset, hash, network or description…" aria-label="Search transactions"/>
+          <input type="search" value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search reference, asset, hash, network or description…" aria-label="Search transactions"/>
           <select value={historyTypeFilter} onChange={event => setHistoryTypeFilter(event.target.value)} aria-label="Filter transaction type"><option value="all">All types</option><option value="received">Received</option><option value="sent">Sent</option><option value="deposit">Deposits</option><option value="withdraw">Withdrawals</option><option value="swap">Swaps</option></select>
           <select value={historyStatusFilter} onChange={event => setHistoryStatusFilter(event.target.value)} aria-label="Filter transaction status"><option value="all">All statuses</option><option value="confirmed">Confirmed</option><option value="pending">Pending</option><option value="failed">Failed / reorged</option></select>
           <button type="button" className="secondary" onClick={() => { setHistorySearch(""); setHistoryTypeFilter("all"); setHistoryStatusFilter("all"); }}>Clear filters</button>
         </div>
         {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : visibleHistoryTransactions.length ? visibleHistoryTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
           <span className="activity-icon">{String(a.type || "T").slice(0,1).toUpperCase()}</span>
-          <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
+          <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.reference && <small>Reference: <code>{a.reference}</code></small>}{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
             <span className={a.status === "confirmed" ? "positive" : a.status === "failed" || a.status === "reorged" ? "negative" : "neutral"}>{a.status || "recorded"}{a.confirmations ? ` • ${a.confirmations} confirmations` : ""}</span>
@@ -2541,10 +2642,23 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         <div className="security-note">Etherscan is a read-only explorer provider. Its API key remains on the backend and is never returned to this page. It cannot sign wallet transactions, authorize deploys, or pay gas.</div>
         <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Configuration changes still belong in Render. This button checks provider connectivity only; it does not read a customer wallet, modify assets or approve transactions.</div>
       </article>}
-      {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
+      {active==="Logs & Activity"&&<>
+      <article className="panel action-panel"><div className="panel-head"><div><h2>Wallet operations audit</h2><span>Wallet creation, address ownership, transaction references and settlement events</span></div><button className="secondary" onClick={loadAdminWalletAudit} disabled={walletAuditBusy}>{walletAuditBusy ? "Loading…" : "↻ Refresh"}</button></div>
+        {walletAuditError&&<div role="alert" className="feature-error">{walletAuditError}</div>}
+        {walletAuditData?.events?.length?<div className="tool-list">{walletAuditData.events.map(item=><div className="tool-row" key={item.id}>
+          <div><b>{item.action}</b><small>{item.actor_email} · Wallet {item.wallet_number} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small>
+            <small>{item.resource}{item.resource_id?" · "+item.resource_id:""}{item.network?" · "+item.network:""}</small>
+            {item.reference&&<small>Reference: <code>{item.reference}</code></small>}
+            {item.details&&<small>{JSON.stringify(item.details)}</small>}
+          </div>
+        </div>)}</div>:!walletAuditBusy&&!walletAuditError?<div className="live-chart-empty">No wallet audit events have been recorded yet.</div>:null}
+        <p className="security-note">Audit events are written with the wallet operation in the same database transaction. Sensitive signing credentials are excluded. This view is read-only.</p>
+      </article>
+      <article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
         {adminData?.events?.length?<div className="tool-list">{adminData.events.map(item=><div className="tool-row" key={item.id}><div><b>{item.action}</b><small>{item.actor_email} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small><small>{item.details}</small></div></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No administrative audit events have been recorded yet.</div>:null}
         <p className="security-note">This view is an administrative audit trail, not a full raw server log stream. Render runtime and deployment logs remain in the Render Dashboard.</p>
-      </article>}
+      </article>
+      </>}
       {active==="Role Management"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Authorization policy</h2><span>Server-enforced owner access model</span></div></div>
         <div className="tool-list">{(adminData?.roles||[]).map(item=><div className="tool-row" key={item.name}><div><b>{item.name}</b><small>{item.description}</small></div><strong>{item.source}</strong></div>)}</div>
         <div className="security-note">{adminData?.notice||"Role assignment is read-only until a persistent RBAC system is implemented."}</div>

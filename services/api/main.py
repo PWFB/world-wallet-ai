@@ -23,6 +23,11 @@ from jwt import PyJWKClient
 from Crypto.Hash import keccak
 from Crypto.Cipher import AES
 try:
+    from services.api.wallet_workflows import generate_transaction_reference, record_wallet_audit_event
+except ModuleNotFoundError:
+    from wallet_workflows import generate_transaction_reference, record_wallet_audit_event
+
+try:
     from services.api.market_price_cache import MarketPriceCache
 except ModuleNotFoundError:
     # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
@@ -582,6 +587,23 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS admin_audit_events_created_idx
           ON admin_audit_events(created_at DESC);
+        CREATE TABLE IF NOT EXISTS wallet_audit_events(
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          actor_email TEXT NOT NULL,
+          action TEXT NOT NULL,
+          resource TEXT NOT NULL,
+          resource_id TEXT,
+          network TEXT,
+          reference TEXT,
+          details JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS wallet_audit_wallet_time_idx
+          ON wallet_audit_events(wallet_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS wallet_audit_owner_time_idx
+          ON wallet_audit_events(owner_id,created_at DESC);
         CREATE TABLE IF NOT EXISTS wallet_announcements(
           id SMALLINT PRIMARY KEY CHECK(id=1),
           title TEXT NOT NULL,
@@ -596,6 +618,15 @@ def init_db():
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_hash TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS log_index INTEGER;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reference TEXT;
+        UPDATE transactions
+          SET reference='WWTX-' || upper(substr(md5(id || random()::text || clock_timestamp()::text),1,24))
+          WHERE reference IS NULL OR reference='';
+        ALTER TABLE transactions ALTER COLUMN reference
+          SET DEFAULT ('WWTX-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,24)));
+        ALTER TABLE transactions ALTER COLUMN reference SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS transactions_reference_unique
+          ON transactions(reference);
         ALTER TABLE assets ADD COLUMN IF NOT EXISTS reserved_balance NUMERIC(36,18) NOT NULL DEFAULT 0;
         CREATE TABLE IF NOT EXISTS accounting_migrations(
           wallet_id TEXT NOT NULL REFERENCES wallets(id),
@@ -687,15 +718,22 @@ def get_user(email: str):
         row = conn.execute("SELECT id,email,name,active_wallet_id,phone_number,phone_verified_at FROM users WHERE lower(email)=lower(%s)", (email,)).fetchone()
         if not row:
             return None
-        wallet = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (row[3],row[0])).fetchone() if row[3] else None
+        wallet = conn.execute("SELECT id,wallet_number FROM wallets WHERE id=%s AND owner_id=%s", (row[3],row[0])).fetchone() if row[3] else None
         if not wallet:
-            wallet = conn.execute("SELECT id FROM wallets WHERE owner_id=%s ORDER BY created_at ASC LIMIT 1", (row[0],)).fetchone()
-        return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": wallet[0] if wallet else None, "phone_number": row[4], "phone_verified": bool(row[5])}
+            wallet = conn.execute("SELECT id,wallet_number FROM wallets WHERE owner_id=%s ORDER BY created_at ASC LIMIT 1", (row[0],)).fetchone()
+        return {
+            "id": row[0], "email": row[1], "name": row[2],
+            "wallet_id": wallet[0] if wallet else None,
+            "wallet_number": str(wallet[1]) if wallet and wallet[1] is not None else None,
+            "phone_number": row[4], "phone_verified": bool(row[5]),
+        }
 
 
 def provision_identity(email: str, password: str | None = None, name: str = "World Wallet User", google_subject: str | None = None):
     user = get_user(email)
     with db() as conn:
+        wallet_provisioned = False
+        owner_id = user["id"] if user else "usr_" + sha(email.lower())[:24]
         if user:
             conn.execute("UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s", (name, google_subject, user["id"]))
             wallet_id = user["wallet_id"]
@@ -708,13 +746,15 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                     (wallet_id, user["id"], "Production Wallet"),
                 )
                 conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id, user["id"]))
+                wallet_provisioned = True
         else:
-            user_id = "usr_" + sha(email.lower())[:24]
+            user_id = owner_id
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)", (wallet_id,user_id,"Production Wallet"))
             conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id,user_id))
+            wallet_provisioned = True
         for symbol,asset_name in [
             ("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
             ("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")
@@ -722,6 +762,17 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
             conn.execute(
                 "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0) ON CONFLICT(wallet_id,symbol) DO NOTHING",
                 (wallet_id,symbol,asset_name)
+            )
+        if wallet_provisioned:
+            record_wallet_audit_event(
+                conn,
+                owner_id=owner_id,
+                wallet_id=wallet_id,
+                actor_email=email.strip().lower(),
+                action="wallet_provisioned",
+                resource="wallet",
+                resource_id=wallet_id,
+                details={"provisioning_source": "account_registration_or_legacy_repair"},
             )
         conn.commit()
     return get_user(email)
@@ -823,14 +874,15 @@ def current_user(authorization: str | None = Header(default=None)):
         try:
             with db() as conn:
                 row = conn.execute("""
-                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id
+                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id,w.wallet_number
                     FROM api_keys k JOIN users u ON u.id=k.owner_id
+                    LEFT JOIN wallets w ON w.id=u.active_wallet_id
                     WHERE k.key_hash=%s AND k.revoked_at IS NULL
                 """, (sha(token),)).fetchone()
                 if row:
                     conn.execute("UPDATE api_keys SET last_used_at=NOW() WHERE id=%s", (row[6],))
                     conn.commit()
-                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "phone_number": row[4], "phone_verified": bool(row[5])}
+                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "wallet_number": str(row[7]) if row[7] is not None else None, "phone_number": row[4], "phone_verified": bool(row[5])}
         except HTTPException:
             raise
         except Exception as exc:
@@ -1969,8 +2021,8 @@ def wallet_snapshot(user):
                 "value_usd":float(available*p) if price_available else None,
                 "actual_value_usd":float(actual*p) if price_available else None,"change_24h":None})
         txs=[]
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
-            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
+        for row in conn.execute("SELECT id,reference,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
+            txs.append({"id":row[0],"reference":row[1],"type":row[2],"asset":row[3],"description":row[4],"amount":float(row[5]),"status":row[6],"tx_hash":row[7],"confirmations":int(row[8] or 0),"block_height":row[9],"network":row[10],"block_hash":row[11],"log_index":row[12],"time":row[13].isoformat()})
         # Dashboard activity remains capped at 100 records, but the received/sent
         # valuation summaries must cover all recorded rows, not only that page.
         transaction_totals=[]
@@ -1984,6 +2036,116 @@ def wallet_snapshot(user):
         """,(user["wallet_id"],)):
             transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0),"count":int(row[3] or 0)})
     return assets,txs,wallet_valuation_summary(assets,transaction_totals)
+
+
+def wallet_reconciliation_snapshot(user):
+    """Read-only internal-ledger controls; this does not re-query chain RPCs."""
+    wallet_id = user["wallet_id"]
+    with db() as conn:
+        reservation_rows = conn.execute(
+            """
+            SELECT a.symbol, a.reserved_balance,
+                   COALESCE(SUM(
+                     CASE WHEN t.description IN ('Transfer request','Withdrawal request')
+                               AND t.status IN ('pending','pending_review','broadcast_pending')
+                          THEN -t.amount ELSE 0 END
+                   ), 0)
+            FROM assets a
+            LEFT JOIN transactions t
+              ON t.wallet_id=a.wallet_id AND t.asset=a.symbol
+            WHERE a.wallet_id=%s
+            GROUP BY a.symbol,a.reserved_balance
+            ORDER BY a.symbol
+            """,
+            (wallet_id,),
+        ).fetchall()
+        status_rows = conn.execute(
+            "SELECT status,COUNT(*) FROM transactions WHERE wallet_id=%s GROUP BY status ORDER BY status",
+            (wallet_id,),
+        ).fetchall()
+        missing_hash_rows = conn.execute(
+            """
+            SELECT id,reference,type,asset,network,status
+            FROM transactions
+            WHERE wallet_id=%s AND status IN ('confirmed','settled')
+              AND (tx_hash IS NULL OR btrim(tx_hash)='')
+            ORDER BY created_at DESC LIMIT 50
+            """,
+            (wallet_id,),
+        ).fetchall()
+        cursor_rows = conn.execute(
+            "SELECT source,last_block,updated_at FROM chain_sync_cursors WHERE wallet_id=%s ORDER BY source",
+            (wallet_id,),
+        ).fetchall()
+
+    exceptions = []
+    asset_checks = []
+    total_reserved = Decimal("0")
+    total_expected = Decimal("0")
+    for symbol, reserved_value, expected_value in reservation_rows:
+        reserved = Decimal(str(reserved_value or 0))
+        expected = Decimal(str(expected_value or 0))
+        total_reserved += reserved
+        total_expected += expected
+        matches = reserved == expected
+        asset_checks.append({
+            "asset": symbol,
+            "reserved_balance": str(reserved),
+            "pending_request_reservation": str(expected),
+            "matches": matches,
+        })
+        if not matches:
+            exceptions.append({
+                "type": "reservation_mismatch",
+                "asset": symbol,
+                "reserved_balance": str(reserved),
+                "pending_request_reservation": str(expected),
+            })
+
+    for row in missing_hash_rows:
+        exceptions.append({
+            "type": "confirmed_transaction_missing_chain_hash",
+            "transaction_id": row[0],
+            "reference": row[1],
+            "transaction_type": row[2],
+            "asset": row[3],
+            "network": row[4],
+            "status": row[5],
+        })
+
+    now = datetime.now(timezone.utc)
+    cursors = []
+    for source, last_block, updated_at in cursor_rows:
+        updated = updated_at
+        if updated is not None and updated.tzinfo is None:
+            updated = updated.replace(tzinfo=timezone.utc)
+        age_seconds = max(0, int((now - updated).total_seconds())) if updated is not None else None
+        cursors.append({
+            "source": source,
+            "last_block": int(last_block),
+            "updated_at": updated.isoformat() if updated is not None else None,
+            "age_seconds": age_seconds,
+        })
+
+    return {
+        "status": "REVIEW_REQUIRED" if exceptions else "CLEAR",
+        "wallet_id": wallet_id,
+        "wallet_number": user.get("wallet_number"),
+        "scope": "active_wallet",
+        "source": "internal_transaction_and_reservation_records",
+        "chain_rpc_requeried": False,
+        "totals": {
+            "reserved_balance": str(total_reserved),
+            "pending_request_reservation": str(total_expected),
+        },
+        "asset_checks": asset_checks,
+        "transaction_status_counts": [
+            {"status": row[0], "count": int(row[1])} for row in status_rows
+        ],
+        "chain_sync_cursors": cursors,
+        "exceptions": exceptions,
+        "checked_at": now.isoformat(),
+    }
 
 
 @app.on_event("startup")
@@ -2645,13 +2807,52 @@ def wallet_erc7702_inspection(user: dict = Depends(current_user)):
 @app.get("/api/v1/wallet")
 def wallet(user: dict = Depends(current_user)):
     assets,_,summary = wallet_snapshot(user)
-    return {"user":user,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets}
+    return {"user":user,"wallet":{**summary,"wallet_id":user["wallet_id"],"wallet_number":user.get("wallet_number"),"owner_id":user["id"]},"assets":assets}
 
 
 @app.get("/api/v1/wallet/addresses")
 def wallet_addresses(user: dict = Depends(current_user)):
     addresses = configured_addresses(user)
     return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "No production wallet address is configured yet"}
+
+
+@app.get("/api/v1/wallet/reconciliation")
+def wallet_reconciliation(user: dict = Depends(current_user)):
+    return wallet_reconciliation_snapshot(user)
+
+
+@app.get("/api/v1/wallet/audit")
+def wallet_audit(limit: int = 50, offset: int = 0, user: dict = Depends(current_user)):
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    with db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM wallet_audit_events WHERE owner_id=%s AND wallet_id=%s",
+            (user["id"], user["wallet_id"]),
+        ).fetchone()[0]
+        rows = conn.execute(
+            """
+            SELECT id,action,resource,resource_id,network,reference,details,created_at
+            FROM wallet_audit_events
+            WHERE owner_id=%s AND wallet_id=%s
+            ORDER BY created_at DESC LIMIT %s OFFSET %s
+            """,
+            (user["id"], user["wallet_id"], limit, offset),
+        ).fetchall()
+    return {
+        "events": [
+            {
+                "id": row[0], "action": row[1], "resource": row[2],
+                "resource_id": row[3], "network": row[4], "reference": row[5],
+                "details": row[6], "created_at": row[7].isoformat() if row[7] else None,
+            }
+            for row in rows
+        ],
+        "pagination": {
+            "limit": limit, "offset": offset, "total": int(total),
+            "has_more": offset + len(rows) < int(total),
+        },
+    }
 
 
 @app.get("/api/v1/wallet/nfts")
@@ -3685,6 +3886,58 @@ def admin_activity(limit: int = 50, user: dict = Depends(current_user)):
     ]}
 
 
+@app.get("/api/v1/admin/wallet-audit")
+def admin_wallet_audit(
+    limit: int = 50,
+    offset: int = 0,
+    wallet_id: str | None = None,
+    actor_email: str | None = None,
+    user: dict = Depends(current_user),
+):
+    require_world_wallet_admin(user)
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    clauses = []
+    params = []
+    if wallet_id and wallet_id.strip():
+        clauses.append("e.wallet_id=%s")
+        params.append(wallet_id.strip())
+    if actor_email and actor_email.strip():
+        clauses.append("lower(e.actor_email)=lower(%s)")
+        params.append(actor_email.strip()[:254])
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM wallet_audit_events e" + where,
+            tuple(params),
+        ).fetchone()[0]
+        rows = conn.execute(
+            """
+            SELECT e.id,e.actor_email,e.wallet_id,w.wallet_number,e.action,e.resource,
+                   e.resource_id,e.network,e.reference,e.details,e.created_at
+            FROM wallet_audit_events e
+            JOIN wallets w ON w.id=e.wallet_id
+            """ + where + " ORDER BY e.created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        ).fetchall()
+    record_admin_event(user, "view_wallet_audit")
+    return {
+        "events": [
+            {
+                "id": row[0], "actor_email": row[1], "wallet_id": row[2],
+                "wallet_number": str(row[3]), "action": row[4], "resource": row[5],
+                "resource_id": row[6], "network": row[7], "reference": row[8],
+                "details": row[9], "created_at": row[10].isoformat() if row[10] else None,
+            }
+            for row in rows
+        ],
+        "pagination": {
+            "limit": limit, "offset": offset, "total": int(total),
+            "has_more": offset + len(rows) < int(total),
+        },
+    }
+
+
 @app.get("/api/v1/admin/announcement")
 def admin_get_announcement(user: dict = Depends(current_user)):
     require_world_wallet_admin(user)
@@ -3983,8 +4236,14 @@ def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user
         for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=wallet_id, actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="wallet_created", resource="wallet", resource_id=wallet_id,
+            details={"wallet_number": wallet_number, "name": request.name.strip()},
+        )
         conn.commit()
     user["wallet_id"]=wallet_id
+    user["wallet_number"]=wallet_number
     return {"wallet":{"id":wallet_id,"name":request.name.strip(),"wallet_number":wallet_number,"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
 
 
@@ -3994,8 +4253,14 @@ def activate_wallet(request: WalletActivateRequest,user: dict = Depends(current_
         row=conn.execute("SELECT id,name,wallet_number FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
         if not row: raise HTTPException(status_code=404, detail="Wallet not found")
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(row[0],user["id"]))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=row[0], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="wallet_activated", resource="wallet", resource_id=row[0],
+            details={"wallet_number": str(row[2]), "name": row[1]},
+        )
         conn.commit()
     user["wallet_id"]=row[0]
+    user["wallet_number"]=str(row[2])
     return {"wallet":{"id":row[0],"name":row[1],"wallet_number":str(row[2]),"active":True}}
 
 
@@ -4026,6 +4291,11 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
         else:
             conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified) VALUES(%s,%s,%s,%s,FALSE) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
         saved=conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=wallet_id, actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="wallet_address_attached", resource="wallet_address", resource_id=address,
+            network=network, details={"label": request.label.strip(), "ownership_verified": bool(saved and saved[0])},
+        )
         conn.commit()
     return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip(),"ownership_verified":bool(saved and saved[0])}}
 
@@ -4050,6 +4320,11 @@ def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallen
         attached=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
         if not attached: raise HTTPException(status_code=404,detail="Attach this address before verifying ownership")
         conn.execute("INSERT INTO wallet_address_challenges(id,wallet_id,owner_id,network,address,message,expires_at) VALUES(%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",(challenge_id,wallet_id,user["id"],network,address,message))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=wallet_id, actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="address_verification_challenge_issued", resource="wallet_address",
+            resource_id=address, network=network, details={"expires_in_seconds": 600},
+        )
         conn.commit()
     return {"challenge_id":challenge_id,"message":message,"expires_in_seconds":600}
 
@@ -4141,6 +4416,11 @@ def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,use
         if updated.rowcount != 1: raise HTTPException(status_code=409,detail="Attached address no longer exists")
         consumed=conn.execute("UPDATE wallet_address_challenges SET used_at=NOW() WHERE id=%s AND used_at IS NULL AND expires_at>NOW()",(request.challenge_id,))
         if consumed.rowcount != 1: raise HTTPException(status_code=409,detail="Verification challenge was already consumed or expired")
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=wallet_id, actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="address_ownership_verified", resource="wallet_address", resource_id=address,
+            network=network, details={"method": "network_native_message_signature"},
+        )
         conn.commit()
     return {"status":"verified","wallet_id":wallet_id,"network":network,"address":address,"ownership_verified":True}
 
@@ -5015,7 +5295,7 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
         if not asset_row:
             raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
-            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status,t.reference "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
             "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
@@ -5024,20 +5304,27 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
             if existing[0] != fingerprint:
                 raise HTTPException(status_code=409,detail="Idempotency key was already used for a different transfer")
             return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
-                    "replayed":True,"transfer":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
+                    "replayed":True,"transfer":{"id":existing[1],"reference":existing[7],"asset":existing[2],"amount":float(abs(existing[3])),
                     "recipient":existing[4],"network":existing[5]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
         if not ok:
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network,source_address))
+        transaction_reference = generate_transaction_reference()
+        conn.execute("INSERT INTO transactions(id,wallet_id,reference,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,%s,'sent',%s,%s,%s,'pending',%s,%s,%s)",
+                     (txid,user["wallet_id"],transaction_reference,symbol,"Transfer request",-request.amount,request.recipient,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="transfer_requested", resource="transaction", resource_id=txid,
+            network=network, reference=transaction_reference,
+            details={"asset": symbol, "amount": str(request.amount), "status": "pending"},
+        )
         conn.commit()
     return {"status":"pending","mode":"database","accounting":"reserved","broadcast":False,
-            "transfer":{"id":txid,"asset":symbol,"amount":float(request.amount),"recipient":request.recipient,"network":network}}
+            "transfer":{"id":txid,"reference":transaction_reference,"asset":symbol,"amount":float(request.amount),"recipient":request.recipient,"network":network}}
 
 @app.post("/api/v1/withdrawals")
 def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
@@ -5061,7 +5348,7 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
         if not asset_row:
             raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
-            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status,t.from_address "
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status,t.from_address,t.reference "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
             "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
@@ -5070,20 +5357,27 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
             if existing[0] != fingerprint:
                 raise HTTPException(status_code=409,detail="Idempotency key was already used for a different withdrawal")
             return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
-                    "replayed":True,"withdrawal":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
+                    "replayed":True,"withdrawal":{"id":existing[1],"reference":existing[8],"asset":existing[2],"amount":float(abs(existing[3])),
                     "destination":existing[4],"network":existing[5],"source_address":existing[7]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
         if not ok:
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network,source_address))
+        transaction_reference = generate_transaction_reference()
+        conn.execute("INSERT INTO transactions(id,wallet_id,reference,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s,%s)",
+                     (txid,user["wallet_id"],transaction_reference,symbol,"Withdrawal request",-request.amount,request.destination,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="withdrawal_requested", resource="transaction", resource_id=txid,
+            network=network, reference=transaction_reference,
+            details={"asset": symbol, "amount": str(request.amount), "status": "pending_review"},
+        )
         conn.commit()
     return {"status":"pending_review","mode":"database","accounting":"reserved","broadcast":False,
-            "withdrawal":{"id":txid,"asset":symbol,"amount":float(request.amount),"destination":request.destination,"network":network}}
+            "withdrawal":{"id":txid,"reference":transaction_reference,"asset":symbol,"amount":float(request.amount),"destination":request.destination,"network":network}}
 
 class TransactionCancelRequest(BaseModel):
     transaction_id: str = Field(min_length=4,max_length=80)
@@ -5651,10 +5945,16 @@ def verify_solana_devnet_deposit_request(
                    SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
                 (user["wallet_id"], live_balance),
             )
+            deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
+            reference_row = conn.execute(
+                "SELECT reference FROM transactions WHERE id=%s AND wallet_id=%s",
+                (deposit_id, user["wallet_id"]),
+            ).fetchone()
             conn.commit()
             return {
                 "status": "confirmed",
                 "recorded": True,
+                "reference": reference_row[0] if reference_row else None,
                 "replayed": True,
                 "network": "solana-devnet",
                 "asset": "BALMZ-SOL-DEVNET",
@@ -5674,21 +5974,30 @@ def verify_solana_devnet_deposit_request(
             (user["wallet_id"], live_balance),
         )
         deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
+        transaction_reference = generate_transaction_reference()
         conn.execute(
             """INSERT INTO transactions(
-                 id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height
-               ) VALUES(%s,%s,'received','BALMZ-SOL-DEVNET','BALMZ Devnet deposit',%s,'confirmed',%s,
+                 id,wallet_id,reference,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height
+               ) VALUES(%s,%s,%s,'received','BALMZ-SOL-DEVNET','BALMZ Devnet deposit',%s,'confirmed',%s,
                         'solana-devnet',%s,1,%s)""",
             (
-                deposit_id, user["wallet_id"], amount, destination_wallet, tx_signature,
+                deposit_id, user["wallet_id"], transaction_reference, amount,
+                destination_wallet, tx_signature,
                 slot if isinstance(slot, int) and slot <= 2147483647 else None,
             ),
+        )
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="deposit_verified", resource="transaction", resource_id=deposit_id,
+            network="solana-devnet", reference=transaction_reference,
+            details={"asset": "BALMZ-SOL-DEVNET", "amount": str(amount), "slot": slot, "finality": "finalized", "mainnet_funding": False},
         )
         conn.commit()
 
     return {
         "status": "confirmed",
         "recorded": True,
+        "reference": transaction_reference,
         "replayed": False,
         "network": "solana-devnet",
         "asset": "BALMZ-SOL-DEVNET",
@@ -5761,14 +6070,14 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (user["wallet_id"],symbol),
         ).fetchone()
         row=conn.execute(
-            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address,type FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address,type,reference FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
             (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,destination,network,existing_hash,source_address,transaction_type=row
+        txid,symbol,amount,status,destination,network,existing_hash,source_address,transaction_type,transaction_reference=row
         if status in {"confirmed","settled"}:
-            return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
+            return {"status":"confirmed","transaction_id":txid,"reference":transaction_reference,"tx_hash":existing_hash,"replayed":True}
         if status == "cancelled":
             raise HTTPException(status_code=409,detail="Cancelled transaction cannot be settled")
         if status not in {"pending","pending_review","broadcast_pending"}:
@@ -5807,8 +6116,15 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
                 "UPDATE transactions SET tx_hash=%s,status='broadcast_pending',confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
                 (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
             )
+            if not existing_hash:
+                record_wallet_audit_event(
+                    conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+                    action="chain_transaction_observed", resource="transaction", resource_id=txid,
+                    network=network, reference=transaction_reference,
+                    details={"asset": symbol, "tx_hash": tx_hash, "confirmations": verification.get("confirmations", 0), "status": "broadcast_pending"},
+                )
             conn.commit()
-            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"finality":verification.get("finality"),"broadcast":False}
+            return {"status":"broadcast_pending","transaction_id":txid,"reference":transaction_reference,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"finality":verification.get("finality"),"broadcast":False}
 
         hold=abs(Decimal(amount))
         if not asset or Decimal(asset[0] or 0) < hold:
@@ -5822,10 +6138,17 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
         )
         reconcile_settled_asset(conn,user,symbol,network,source_address)
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="transaction_settled", resource="transaction", resource_id=txid,
+            network=network, reference=transaction_reference,
+            details={"asset": symbol, "tx_hash": tx_hash, "confirmations": verification.get("confirmations", 0), "block_height": verification.get("block_height")},
+        )
         conn.commit()
         return {
             "status":"confirmed",
             "transaction_id":txid,
+            "reference":transaction_reference,
             "tx_hash":tx_hash,
             "confirmations":verification.get("confirmations",0),
             "finality":verification.get("finality"),
@@ -5842,16 +6165,22 @@ def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(cu
         if not initial: raise HTTPException(status_code=404,detail="Transaction not found")
         txid,symbol=initial
         asset=conn.execute("SELECT reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",(user["wallet_id"],symbol)).fetchone()
-        row=conn.execute("SELECT id,asset,amount,status,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(txid,user["wallet_id"])).fetchone()
+        row=conn.execute("SELECT id,asset,amount,status,tx_hash,reference FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(txid,user["wallet_id"])).fetchone()
         if not row: raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,tx_hash=row
+        txid,symbol,amount,status,tx_hash,transaction_reference=row
         if status not in {"pending","pending_review"} or tx_hash: raise HTTPException(status_code=409,detail="Only unbroadcast pending requests can be cancelled")
         hold=-Decimal(amount)
         if not asset or Decimal(asset[0] or 0)<hold: raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
         conn.execute("UPDATE assets SET reserved_balance=reserved_balance-%s WHERE wallet_id=%s AND symbol=%s",(hold,user["wallet_id"],symbol))
         conn.execute("UPDATE transactions SET status='cancelled' WHERE id=%s AND wallet_id=%s",(txid,user["wallet_id"]))
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="transaction_cancelled", resource="transaction", resource_id=txid,
+            reference=transaction_reference,
+            details={"asset": symbol, "released": str(hold), "status": "cancelled"},
+        )
         conn.commit()
-    return {"status":"cancelled","transaction_id":txid,"asset":symbol,"released":float(hold)}
+    return {"status":"cancelled","transaction_id":txid,"reference":transaction_reference,"asset":symbol,"released":float(hold)}
 
 
 # GitHub account OAuth: tokens are encrypted at rest and never returned to the browser.

@@ -110,11 +110,25 @@ class FakeConnection:
         if sql.startswith("SELECT wallet_id,amount FROM solana_devnet_deposits"):
             row = self.store.deposits.get(params[0])
             return FakeCursor((row[0], row[1]) if row else None)
+        if sql.startswith("SELECT reference FROM transactions"):
+            transaction_id, wallet_id = params
+            row = next(
+                (
+                    stored_params
+                    for stored_sql, stored_params in self.store.transactions
+                    if stored_params[0] == transaction_id
+                    and stored_params[1] == wallet_id
+                ),
+                None,
+            )
+            return FakeCursor((row[2],) if row else None)
         if sql.startswith("INSERT INTO assets"):
             self.store.asset_updates.append(params)
             return FakeCursor()
         if sql.startswith("INSERT INTO transactions"):
             self.store.transactions.append((sql, params))
+            return FakeCursor()
+        if sql.startswith("INSERT INTO wallet_audit_events"):
             return FakeCursor()
         raise AssertionError(f"Unexpected SQL in test fake: {sql}")
 
