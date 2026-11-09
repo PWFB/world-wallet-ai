@@ -471,6 +471,20 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const localAddressSyncKey = Object.entries(activeLocalAddressSet).map(([networkName, value]) => networkName + ":" + value).sort().join("|");
   const serverAddressSyncKey = walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()).sort().join("|");
 
+  // Read every attached public address when the selected wallet is loaded so
+  // ETH and BNB balances (and any additional address on those chains) appear
+  // together without requiring a separate manual balance check.
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId || !accessToken) return undefined;
+    const generation = balanceRequestGeneration.current;
+    for (const item of visibleAddresses) {
+      if (!item.local) void checkAddressBalance(item);
+    }
+    return () => {
+      if (balanceRequestGeneration.current === generation) balanceRequestGeneration.current += 1;
+    };
+  }, [walletId, addressesLoadedForWallet, accessToken, serverAddressSyncKey]);
+
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId || !accessToken || !activeLocalEntry || !localAddressSyncKey) return;
     let cancelled = false;
