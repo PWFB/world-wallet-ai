@@ -44,7 +44,7 @@ async function main() {
   console.log("Total supply:", formattedSupply, "BALMZ");
   console.log("Deployer balance:", hre.ethers.formatUnits(balance, 18), "BALMZ");
   console.log("Reserve recipient:", reserveRecipient);
-  console.log("Reserve allocation:", hre.ethers.formatUnits(await token.RESERVE_SUPPLY(), 18), "BALMZ");
+  console.log("Reserve allocation:", hre.ethers.formatUnits(await token.RESERVE_MINTED_SUPPLY(), 18), "BALMZ");
 
   const contractEnv = chainId === "1"
     ? "WORLD_WALLET_BALMZ_ETH_CONTRACT"
