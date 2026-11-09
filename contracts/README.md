@@ -35,7 +35,7 @@ The Solana 10-billion allocation is a separate SPL mint/program and is **not dep
 Use the existing OKX EOA. Do not export a private key, seed phrase, or recovery phrase.
 
 1. Open Remix at https://remix.ethereum.org in a browser with the OKX wallet provider available.
-2. Create or open `BalmzToken.sol` and paste the exact source from this repository: https://github.com/PWFB/world-wallet-ai/blob/main/contracts/BalmzToken.sol
+2. Create or open `BalmzToken.sol` and paste the exact source from this repository: https://github.com/PWFB/world-wallet-ai/blob/main/contracts/contracts/BalmzToken.sol
 3. Install/resolve the pinned OpenZeppelin dependency `@openzeppelin/contracts@5.4.0` in Remix.
 4. Compile with Solidity **0.8.24**, optimizer disabled, and the exact source/imports from this repository.
 5. In Deploy & Run, select **Injected Provider - OKX Wallet**. Confirm the network is Ethereum Mainnet (chain ID 1) and the active account is exactly the reserve recipient above.
