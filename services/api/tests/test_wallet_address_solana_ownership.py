@@ -116,9 +116,6 @@ class SolanaWalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 410)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BitcoinWalletAddressOwnershipTests(unittest.TestCase):
     def test_valid_recoverable_signature_verifies_native_segwit_address(self):
@@ -178,3 +175,7 @@ class BitcoinWalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
         self.assertTrue(result["ownership_verified"])
         self.assertIsNotNone(connection.challenge[4])
+
+
+if __name__ == "__main__":
+    unittest.main()
