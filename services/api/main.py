@@ -1152,6 +1152,8 @@ def validate_asset_network(asset: str, network: str):
     # request label so reservations never debit Ethereum USDT by accident.
     if symbol == "USDT" and net == "bnb":
         symbol = "USDT-BNB"
+    if symbol == "BALMZ" and net == "bnb":
+        symbol = "BALMZ-BNB"
     allowed = {
         "ETH": {"ethereum"},
         "BNB": {"bnb"},
@@ -1159,6 +1161,7 @@ def validate_asset_network(asset: str, network: str):
         "USDT-BNB": {"bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
+        "BALMZ-BNB": {"bnb"},
         "BALMZ-SEP": {"sepolia"},
         "BALMZ-SOL-DEVNET": {"solana-devnet"},
     }
@@ -5633,6 +5636,9 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if asset == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 label = "BALMZ"
+            elif asset == "BALMZ-BNB":
+                contract = BALMZ_BNB_CONTRACT if network == "bnb" else ""
+                label = "BALMZ on BNB Chain"
             elif asset == "BALMZ-SEP":
                 contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
                 label = "BALMZ Sepolia"
