@@ -87,7 +87,7 @@ class PortfolioPerformanceSnapshotTests(unittest.TestCase):
 
         database.assert_not_called()
         self.assertFalse(result["recorded"])
-        self.assertIsNone(result["timestamp"])
+        self.assertIn("complete verified USD valuation", result["reason"])
 
 
 if __name__ == "__main__":
