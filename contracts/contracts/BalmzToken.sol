@@ -27,7 +27,7 @@ contract BalmzToken is ERC20 {
 
     // Existing OKX EOA approved as the BALMZ reserve recipient.
     address public constant RESERVE_RECIPIENT =
-        0xbbdb482ae0895e496676ec84501d2945a404ff2c;
+        0xBbDb482aE0895e496676ec84501d2945a404FF2C;
 
     // Chain-specific immutable supplies minted once during construction.
     uint256 public immutable INITIAL_SUPPLY;
