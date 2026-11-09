@@ -197,6 +197,8 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
         self.assertIsNone(warning)
         self.assertEqual(len(imported), 1)
         self.assertEqual(imported[0]["amount"], 1.0)
+        self.assertEqual(imported[0]["from_address"], "0x" + "1" * 40)
+        self.assertEqual(imported[0]["to_address"], address)
         self.assertEqual(_Connection.active, 0)
 
 
