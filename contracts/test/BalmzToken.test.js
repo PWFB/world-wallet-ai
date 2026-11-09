@@ -44,10 +44,16 @@ describe("BalmzToken fixed-supply deployment", function () {
   it("does not expose a public mint or owner-controlled supply function", async function () {
     const { token } = await deployToken();
 
-    expect(token.interface.getFunction("mint")).to.equal(null);
-    expect(token.interface.getFunction("owner")).to.equal(null);
-    expect(token.interface.getFunction("pause")).to.equal(null);
-    expect(token.interface.getFunction("upgradeTo")).to.equal(null);
+    const functionNames = new Set(
+      token.interface.fragments
+        .filter((fragment) => fragment.type === "function")
+        .map((fragment) => fragment.name)
+    );
+
+    expect(functionNames.has("mint")).to.equal(false);
+    expect(functionNames.has("owner")).to.equal(false);
+    expect(functionNames.has("pause")).to.equal(false);
+    expect(functionNames.has("upgradeTo")).to.equal(false);
   });
 
   it("keeps the reserve recipient pinned to the approved OKX EOA", async function () {
