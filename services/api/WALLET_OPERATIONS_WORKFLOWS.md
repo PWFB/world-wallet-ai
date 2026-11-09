@@ -14,7 +14,7 @@ This backend integration adapts useful PWFB Microfinance patterns without import
 ## Added workflow controls
 
 - Every transaction row receives a stable `WWTX-...` reference, including transactions imported by chain synchronizers. Existing rows are backfilled during the backend's existing additive startup schema initialization.
-- Wallet actions create privacy-filtered `wallet_audit_events` in the same database transaction as the action they describe.
+- Initial wallet provisioning, legacy wallet repair, and later wallet actions create privacy-filtered `wallet_audit_events` in the same database transaction as the action they describe.
 - `GET /api/v1/wallet/audit` returns the authenticated user's active-wallet audit trail.
 - `GET /api/v1/admin/wallet-audit` is restricted to the configured World Wallet administrator.
 - `GET /api/v1/wallet/reconciliation` performs read-only internal controls: reserved amount versus pending request amounts, confirmed/settled records missing chain hashes, transaction status counts, and chain-sync cursor timestamps.
