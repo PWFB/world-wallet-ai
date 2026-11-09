@@ -87,6 +87,46 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
         self.assertEqual(result["updates"], [{"network": "bnb", "asset": "BNB", "balance": 0.75}])
         self.assertEqual(_Connection.active, 0)
 
+
+    def test_wallet_sync_adds_canonical_ethereum_usdt_when_registry_is_catalog_only(self):
+        user = {"id": "user-1", "wallet_id": "wallet-1"}
+        address = "0x" + "1" * 40
+        contract = main.ETHEREUM_USDT_MAINNET_CONTRACT
+
+        def verify_ethereum(_url):
+            self._assert_no_database_connection_during_network()
+            return 1
+
+        def token_balance(_url, token_contract, owner, decimals):
+            self._assert_no_database_connection_during_network()
+            self.assertEqual(token_contract.lower(), contract.lower())
+            self.assertEqual(owner, address)
+            self.assertEqual(decimals, 6)
+            return 12.345678
+
+        with patch.object(main, "db", side_effect=lambda: _Connection()), \
+             patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "ethereum" else None), \
+             patch.object(main, "ETH_RPC_URL", "https://ethereum-rpc.invalid"), \
+             patch.object(main, "USDT_ETH_CONTRACT", contract), \
+             patch.object(main, "require_ethereum_mainnet_rpc", side_effect=verify_ethereum), \
+             patch.object(main, "evm_balance", return_value=0.125), \
+             patch.object(main, "verified_erc20_decimals", return_value=6), \
+             patch.object(main, "erc20_balance", side_effect=token_balance), \
+             patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
+             patch.object(main, "_network_sync_status", return_value={}):
+            result = main._sync_wallet_impl(user, include_transactions=False)
+
+        self.assertIn({"network": "ethereum", "asset": "ETH", "balance": 0.125}, result["updates"])
+        self.assertIn({"network": "ethereum", "asset": "USDT", "balance": 12.345678,
+                       "contract_address": contract, "decimals": 6}, result["updates"])
+        self.assertEqual(_Connection.active, 0)
+
+    def test_wallet_sync_does_not_duplicate_active_ethereum_usdt_registry_row(self):
+        contract = main.ETHEREUM_USDT_MAINNET_CONTRACT
+        rows = [("USDT", "Tether USD", "ethereum", contract, 6, "active")]
+        self.assertEqual(main.wallet_sync_token_rows(rows, "0x" + "1" * 40), rows)
+        self.assertEqual(main.wallet_sync_token_rows(rows, None), rows)
+
     def test_wallet_snapshot_does_not_acquire_a_nested_connection(self):
         user = {"id": "user-1", "wallet_id": "wallet-1"}
         with patch.object(main, "db", side_effect=lambda: _Connection()), \
