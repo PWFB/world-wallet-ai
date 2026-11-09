@@ -4033,14 +4033,19 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
 @app.post("/api/v1/wallets/{wallet_id}/addresses/challenge")
 def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallengeRequest,user: dict = Depends(current_user)):
     network=normalize_wallet_network(request.network); address=request.address.strip()
-    if network not in {"ethereum","bnb","sepolia"}: raise HTTPException(status_code=400,detail="EVM signature verification supports Ethereum, BNB, and Sepolia only")
-    if not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address):
+        raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network in {"solana_mainnet","solana_devnet"} and not valid_solana_address(address):
+        raise HTTPException(status_code=400,detail="Invalid Solana address")
+    if network not in {"ethereum","bnb","sepolia","solana_mainnet","solana_devnet"}:
+        raise HTTPException(status_code=400,detail="Native ownership challenges support EVM and Solana networks")
     challenge_id="wac_"+secrets.token_urlsafe(24); issued=int(datetime.now(timezone.utc).timestamp())
     message=(f"World Wallet AI address ownership verification\nWallet: {wallet_id}\nNetwork: {network}\nAddress: {address}\nChallenge: {challenge_id}\nIssued: {issued}\nSign this message only to prove control of this address. This does not authorize a transaction.")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        attached=conn.execute("SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)",(wallet_id,network,address)).fetchone()
+        comparison = "lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+        attached=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
         if not attached: raise HTTPException(status_code=404,detail="Attach this address before verifying ownership")
         conn.execute("INSERT INTO wallet_address_challenges(id,wallet_id,owner_id,network,address,message,expires_at) VALUES(%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",(challenge_id,wallet_id,user["id"],network,address,message))
         conn.commit()
@@ -4049,25 +4054,49 @@ def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallen
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses/verify")
 def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,user: dict = Depends(current_user)):
-    try:
-        from eth_account import Account
-        from eth_account.messages import encode_defunct
-    except ImportError as exc:
-        raise HTTPException(status_code=503,detail="EVM signature verification dependency is not installed") from exc
     with db() as conn:
         challenge=conn.execute("SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges WHERE id=%s AND wallet_id=%s AND owner_id=%s FOR UPDATE",(request.challenge_id,wallet_id,user["id"])).fetchone()
         if not challenge: raise HTTPException(status_code=404,detail="Verification challenge not found")
         if challenge[4] is not None: raise HTTPException(status_code=409,detail="Verification challenge already used")
         if challenge[3] <= datetime.now(timezone.utc): raise HTTPException(status_code=410,detail="Verification challenge expired")
-        try: recovered=Account.recover_message(encode_defunct(text=challenge[2]),signature=request.signature)
-        except Exception as exc: raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature") from exc
-        if recovered.lower()!=challenge[1].lower(): raise HTTPException(status_code=400,detail="Signature does not match attached address")
-        updated=conn.execute("UPDATE wallet_addresses SET ownership_verified=TRUE WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)",(wallet_id,challenge[0],challenge[1]))
+        network,address,message=challenge[0],challenge[1],challenge[2]
+        if network in {"ethereum","bnb","sepolia"}:
+            try:
+                from eth_account import Account
+                from eth_account.messages import encode_defunct
+                recovered=Account.recover_message(encode_defunct(text=message),signature=request.signature)
+            except Exception as exc:
+                raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature") from exc
+            if recovered.lower()!=address.lower():
+                raise HTTPException(status_code=400,detail="Signature does not match attached address")
+            comparison="lower(address)=lower(%s)"
+        elif network in {"solana_mainnet","solana_devnet"}:
+            try:
+                signature_bytes=base64.b64decode(request.signature,validate=True)
+                alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+                decoded=0
+                for character in address:
+                    digit=alphabet.find(character)
+                    if digit<0: raise ValueError("Invalid base58 character")
+                    decoded=decoded*58+digit
+                public_key=decoded.to_bytes((decoded.bit_length()+7)//8,"big") if decoded else b""
+                leading_zeroes=len(address)-len(address.lstrip("1"))
+                public_key=(b"\x00"*leading_zeroes)+public_key
+                if len(public_key)!=32 or len(signature_bytes)!=64:
+                    raise ValueError("Invalid Ed25519 key or signature length")
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                Ed25519PublicKey.from_public_bytes(public_key).verify(signature_bytes,message.encode("utf-8"))
+            except Exception as exc:
+                raise HTTPException(status_code=400,detail="Invalid Solana Ed25519 ownership signature") from exc
+            comparison="address=%s"
+        else:
+            raise HTTPException(status_code=400,detail="Unsupported ownership proof network")
+        updated=conn.execute(f"UPDATE wallet_addresses SET ownership_verified=TRUE WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address))
         if updated.rowcount != 1: raise HTTPException(status_code=409,detail="Attached address no longer exists")
         consumed=conn.execute("UPDATE wallet_address_challenges SET used_at=NOW() WHERE id=%s AND used_at IS NULL AND expires_at>NOW()",(request.challenge_id,))
         if consumed.rowcount != 1: raise HTTPException(status_code=409,detail="Verification challenge was already consumed or expired")
         conn.commit()
-    return {"status":"verified","wallet_id":wallet_id,"network":challenge[0],"address":challenge[1],"ownership_verified":True}
+    return {"status":"verified","wallet_id":wallet_id,"network":network,"address":address,"ownership_verified":True}
 
 
 @app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
