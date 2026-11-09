@@ -732,6 +732,8 @@ def get_user(email: str):
 def provision_identity(email: str, password: str | None = None, name: str = "World Wallet User", google_subject: str | None = None):
     user = get_user(email)
     with db() as conn:
+        wallet_provisioned = False
+        owner_id = user["id"] if user else "usr_" + sha(email.lower())[:24]
         if user:
             conn.execute("UPDATE users SET name=%s, google_subject=COALESCE(%s,google_subject) WHERE id=%s", (name, google_subject, user["id"]))
             wallet_id = user["wallet_id"]
@@ -744,13 +746,15 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                     (wallet_id, user["id"], "Production Wallet"),
                 )
                 conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id, user["id"]))
+                wallet_provisioned = True
         else:
-            user_id = "usr_" + sha(email.lower())[:24]
+            user_id = owner_id
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
                          (user_id,email,name,sha(password) if password else None,google_subject))
             wallet_id = "wallet_" + sha(user_id)[:24]
             conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)", (wallet_id,user_id,"Production Wallet"))
             conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id,user_id))
+            wallet_provisioned = True
         for symbol,asset_name in [
             ("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),
             ("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")
@@ -758,6 +762,17 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
             conn.execute(
                 "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0) ON CONFLICT(wallet_id,symbol) DO NOTHING",
                 (wallet_id,symbol,asset_name)
+            )
+        if wallet_provisioned:
+            record_wallet_audit_event(
+                conn,
+                owner_id=owner_id,
+                wallet_id=wallet_id,
+                actor_email=email.strip().lower(),
+                action="wallet_provisioned",
+                resource="wallet",
+                resource_id=wallet_id,
+                details={"provisioning_source": "account_registration_or_legacy_repair"},
             )
         conn.commit()
     return get_user(email)
