@@ -18,9 +18,15 @@ permissions:
 jobs:
   hardhat:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chain_id: [31337, 1, 56, 11155111]
     defaults:
       run:
         working-directory: contracts
+    env:
+      HARDHAT_CHAIN_ID: ${{ matrix.chain_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
