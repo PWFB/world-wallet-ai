@@ -1,2 +1,8 @@
 # Google App Engine generated folder
 appengine-generated/
+# Node dependencies and Hardhat build output
+**/node_modules/
+contracts/artifacts/
+contracts/cache/
+# Contract deployment secrets
+contracts/.env
