@@ -312,7 +312,30 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             "wallet_address": address,
             "usdt_contract": contract,
             "usdt_decimals": 18,
+            "balmz_contract": None,
+            "balmz_decimals": None,
         })
+
+
+    def test_balmz_mainnet_contracts_are_added_only_when_configured_per_chain(self):
+        eth_address = "0x" + "1" * 40
+        bnb_address = "0x" + "2" * 40
+        eth_contract = "0x" + "3" * 40
+        bnb_contract = "0x" + "4" * 40
+        with patch.object(main, "BALMZ_ETH_CONTRACT", eth_contract), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", bnb_contract):
+            rows = main.wallet_sync_token_rows([], eth_address, bnb_address)
+
+        self.assertIn(("BALMZ", "BALMZ Token", "ethereum", eth_contract, None, "active"), rows)
+        self.assertIn(("BALMZ", "BALMZ Token", "bnb", bnb_contract, None, "active"), rows)
+        self.assertEqual(main.wallet_asset_symbol("BALMZ", "ethereum"), "BALMZ")
+        self.assertEqual(main.wallet_asset_symbol("BALMZ", "bnb"), "BALMZ-BNB")
+
+    def test_balmz_mainnet_contract_is_not_invented_when_unconfigured(self):
+        with patch.object(main, "BALMZ_ETH_CONTRACT", ""), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", ""):
+            rows = main.wallet_sync_token_rows([], "0x" + "1" * 40, "0x" + "2" * 40)
+        self.assertFalse(any(str(row[0]).upper() == "BALMZ" for row in rows))
 
     def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
         address = "0x" + "1" * 40
