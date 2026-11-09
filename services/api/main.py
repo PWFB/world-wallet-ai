@@ -1341,11 +1341,9 @@ def wallet_snapshot(user):
                 "live_price_usd":float(p),"value_usd":float(available*p),
                 "actual_value_usd":float(actual*p),"change_24h":0})
         txs=[]
-        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
-            txs.append({"id":row[0],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
+        for row in conn.execute("SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at,reference FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 100",(user["wallet_id"],)):
+            txs.append({"id":row[0],"reference":row[13],"type":row[1],"asset":row[2],"description":row[3],"amount":float(row[4]),"status":row[5],"tx_hash":row[6],"confirmations":int(row[7] or 0),"block_height":row[8],"network":row[9],"block_hash":row[10],"log_index":row[11],"time":row[12].isoformat()})
     prices={x["symbol"]:x["price_usd"] for x in assets}
-    for tx in txs:
-        tx["reference"] = transaction_public_reference(tx["id"])
     return assets,txs,{"available_balance_usd":sum(x["value_usd"] for x in assets),"actual_balance_usd":sum(x["actual_value_usd"] for x in assets),
         "reserved_balance_usd":sum(x["reserved_balance"]*x["price_usd"] for x in assets),
         "total_received_usd":sum(abs(x["amount"])*prices.get(x["asset"],0) for x in txs if x["type"]=="received"),
@@ -2874,6 +2872,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
                 "UPDATE transactions SET tx_hash=%s,status='broadcast_pending',confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
                 (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
             )
+            write_wallet_audit(conn,user,user["wallet_id"],"transaction.broadcast_observed","transaction",txid,{"network":network,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0)})
             conn.commit()
             return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"broadcast":False}
 
@@ -2889,6 +2888,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
         )
         reconcile_settled_asset(conn,user,symbol,network)
+        write_wallet_audit(conn,user,user["wallet_id"],"transaction.settled","transaction",txid,{"network":network,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0)})
         conn.commit()
         return {
             "status":"confirmed",
@@ -2916,5 +2916,6 @@ def cancel_transaction(request: TransactionCancelRequest,user: dict = Depends(cu
         if not asset or Decimal(asset[0] or 0)<hold: raise HTTPException(status_code=409,detail="Reservation state is inconsistent; manual review required")
         conn.execute("UPDATE assets SET reserved_balance=reserved_balance-%s WHERE wallet_id=%s AND symbol=%s",(hold,user["wallet_id"],symbol))
         conn.execute("UPDATE transactions SET status='cancelled' WHERE id=%s AND wallet_id=%s",(txid,user["wallet_id"]))
+        write_wallet_audit(conn,user,user["wallet_id"],"transaction.cancelled","transaction",txid,{"asset":symbol,"released":str(hold)})
         conn.commit()
     return {"status":"cancelled","transaction_id":txid,"asset":symbol,"released":float(hold)}
