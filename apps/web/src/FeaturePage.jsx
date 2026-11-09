@@ -1371,7 +1371,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT" || asset === "BALMZ" || asset === "BALMZ-SEP") {
+    } else if (asset === "USDT" || asset === "USDT-BNB" || asset === "BALMZ" || asset === "BALMZ-SEP") {
       const isBalmz = asset === "BALMZ" || asset === "BALMZ-SEP";
       const contract = isBalmz ? networkConfig.balmz_contract : networkConfig.usdt_contract;
       const configuredDecimals = isBalmz ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
@@ -1430,7 +1430,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "BALMZ", "BALMZ-SEP"].includes(asset);
+      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
@@ -2250,8 +2250,10 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const tokenUrl = tokenExplorerUrl(transaction);
     const symbol = transaction.asset || transaction.symbol || String(transaction.description || "").split(" • ")[0] || "Unknown asset";
     const network = String(transaction.network || "").toLowerCase();
-    const explorerName = network === "bitcoin" || symbol === "BTC" ? "Blockstream" : network === "bnb" || symbol === "BNB" ? "BscScan" : network === "sepolia" || symbol === "BALMZ-SEP" ? "Sepolia Etherscan" : "Explorer";
+    const explorerName = network === "bitcoin" || symbol === "BTC" ? "Blockstream" : network === "bnb" || symbol === "BNB" || symbol === "USDT-BNB" ? "BscScan" : network === "sepolia" || symbol === "BALMZ-SEP" ? "Sepolia Etherscan" : "Etherscan";
     const balmzFallback = symbol === "BALMZ-SEP" || network === "sepolia" ? "https://sepolia.etherscan.io/" : network === "bnb" ? "https://bscscan.com/" : "https://etherscan.io/tokens";
+    const receiptState = transaction.receipt_state || (["confirmed", "settled"].includes(transaction.status) ? "confirmed" : transaction.status === "failed" && transaction.tx_hash ? "failed" : transaction.status === "reorged" ? "reorged" : transaction.tx_hash ? "pending" : "not_broadcast");
+    const receiptLabel = receiptState === "confirmed" ? "Verified on-chain" : receiptState === "failed" ? "Failed on-chain" : receiptState === "reorged" ? "Reorganisation detected" : receiptState === "pending" ? "Waiting for chain confirmation" : "No blockchain receipt";
     return <section className="content feature-content transaction-detail-view">
       <div className="page-heading"><div><button className="back-btn" onClick={() => setFocusedTransaction?.(null)}>← Back to transaction history</button><p className="eyebrow">TRANSACTION DETAILS</p><h1>{transaction.type || "Transfer"}</h1><p className="muted">{symbol} · {transaction.status || "Recorded"}</p></div>
         <div className="page-actions">{explorerUrl && <a className="primary explorer-button" href={explorerUrl} target="_blank" rel="noopener noreferrer">View on {explorerName} ↗</a>}</div>
@@ -2266,10 +2268,18 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="transaction-detail-wide"><small>Transaction hash</small>{transaction.tx_hash ? <code>{transaction.tx_hash}</code> : <span>Not available — this record may not have been broadcast to a blockchain.</span>}</div>
           <div className="transaction-detail-wide"><small>From address</small>{transaction.from_address || transaction.from ? <code>{transaction.from_address || transaction.from}</code> : <span>Not supplied</span>}</div>
           <div className="transaction-detail-wide"><small>To address</small>{transaction.to_address || transaction.to ? <code>{transaction.to_address || transaction.to}</code> : <span>Not supplied</span>}</div>
+          {transaction.token_contract_address && <div className="transaction-detail-wide"><small>Token contract</small><code>{transaction.token_contract_address}</code></div>}
+          {transaction.block_hash && <div className="transaction-detail-wide"><small>Receipt block hash</small><code>{transaction.block_hash}</code></div>}
+          {transaction.log_index != null && <div><small>Token transfer log index</small><b>{Number(transaction.log_index).toLocaleString()}</b></div>}
           {transaction.description && <div className="transaction-detail-wide"><small>Description</small><span>{transaction.description}</span></div>}
         </div>
-        {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. A missing transaction hash cannot be searched as a confirmed transfer.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
-        {String(symbol).toUpperCase().startsWith("BALMZ") && <div className="token-explorer-row"><div><b>BALMZ token explorer</b><small>{transaction.token_contract_address || transaction.contract_address ? "Open the recorded token contract on its network explorer." : "No token contract address was included in this record; open the network explorer to search for the verified BALMZ token."}</small></div><a href={tokenUrl || balmzFallback} target="_blank" rel="noopener noreferrer">Open token explorer ↗</a></div>}
+        <div className="token-explorer-row"><div><b>On-chain transaction receipt</b><small>{receiptLabel}{transaction.confirmations ? " · " + Number(transaction.confirmations).toLocaleString() + " confirmations" : ""}{transaction.block_height != null ? " · Block " + Number(transaction.block_height).toLocaleString() : ""}</small></div>
+          {explorerUrl ? <a href={explorerUrl} target="_blank" rel="noopener noreferrer">Open receipt on {explorerName} ↗</a> : <span>Receipt link unavailable</span>}
+        </div>
+        {transaction.reference && <div className="security-note">World Wallet AI receipt reference: <code>{transaction.reference}</code>. The explorer is the source for the blockchain receipt and token transfer logs; this reference links the record inside wallet history.</div>}
+        {tokenUrl && <div className="token-explorer-row"><div><b>Token contract explorer</b><small>Open the token contract on the same network as this transaction.</small></div><a href={tokenUrl} target="_blank" rel="noopener noreferrer">Open token contract ↗</a></div>}
+        {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. Pending, failed, or reorged records are not shown as confirmed.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
+        {String(symbol).toUpperCase().startsWith("BALMZ") && !tokenUrl && <div className="token-explorer-row"><div><b>BALMZ token explorer</b><small>No verified contract address was included in this record.</small></div><a href={balmzFallback} target="_blank" rel="noopener noreferrer">Open network explorer ↗</a></div>}
       </article>
     </section>;
   }
