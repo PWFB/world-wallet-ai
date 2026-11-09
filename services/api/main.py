@@ -99,7 +99,8 @@ def normalize_wallet_network(value: str) -> str:
     }
     return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
-USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
+ETHEREUM_USDT_MAINNET_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+USDT_ETH_CONTRACT = (os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT") or ETHEREUM_USDT_MAINNET_CONTRACT).strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
@@ -2991,6 +2992,25 @@ def wallet_asset_symbol(symbol: str, network: str) -> str:
     return symbol
 
 
+def wallet_sync_token_rows(registry_rows, ethereum_address: str | None):
+    """Add canonical Ethereum USDT when its catalog record lacks an active contract.
+
+    Ethereum USDT is a standard supported asset in the wallet catalog. Older
+    production registry rows may remain catalog_only with no contract address;
+    the official contract is used as a read-only balance source in that case.
+    """
+    rows = list(registry_rows or [])
+    has_ethereum_usdt = any(
+        len(row) >= 3
+        and str(row[0]).upper() == "USDT"
+        and str(row[2]).strip().lower() == "ethereum"
+        for row in rows
+    )
+    if ethereum_address and USDT_ETH_CONTRACT and not has_ethereum_usdt:
+        rows.append(("USDT", "Tether USD", "ethereum", USDT_ETH_CONTRACT, 6, "active"))
+    return rows
+
+
 def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
@@ -3014,6 +3034,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             "FROM token_registry WHERE contract_address IS NOT NULL "
             "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
         ).fetchall()
+    token_rows = wallet_sync_token_rows(token_rows, eth_address)
 
     if solana_mainnet_address:
         try:
@@ -3090,7 +3111,10 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             continue
         try:
             resolved_decimals = int(decimals)
-            if network == "sepolia":
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc_url)
+                resolved_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
+            elif network == "sepolia":
                 require_sepolia_rpc(rpc_url)
             elif network == "bnb":
                 require_bnb_rpc(rpc_url)
