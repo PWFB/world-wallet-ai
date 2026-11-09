@@ -216,11 +216,6 @@ def write_wallet_audit(conn, user: dict, wallet_id: str, action: str, entity_typ
     )
 
 
-def transaction_public_reference(transaction_id: str) -> str:
-    """Stable 11-digit display reference; it is not an authorization secret."""
-    return str(int(sha(transaction_id)[:16],16)%100000000000).zfill(11)
-
-
 def init_db():
     if not DATABASE_URL:
         return
