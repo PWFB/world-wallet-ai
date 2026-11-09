@@ -29,8 +29,9 @@ contract BalmzToken is ERC20 {
     address public constant RESERVE_RECIPIENT =
         0xbbdb482ae0895e496676ec84501d2945a404ff2c;
 
-    // Chain-specific immutable supply minted once during construction.
+    // Chain-specific immutable supplies minted once during construction.
     uint256 public immutable INITIAL_SUPPLY;
+    uint256 public immutable RESERVE_MINTED_SUPPLY;
 
     constructor() ERC20("BALMZ Token", "BALMZ") {
         if (block.chainid == 1 || block.chainid == 31337) {
@@ -43,6 +44,7 @@ contract BalmzToken is ERC20 {
             }
 
             INITIAL_SUPPLY = ETHEREUM_DISTRIBUTION_SUPPLY + RESERVE_SUPPLY;
+            RESERVE_MINTED_SUPPLY = RESERVE_SUPPLY;
             _mint(msg.sender, ETHEREUM_DISTRIBUTION_SUPPLY);
             _mint(RESERVE_RECIPIENT, RESERVE_SUPPLY);
         } else if (block.chainid == 56) {
@@ -51,10 +53,12 @@ contract BalmzToken is ERC20 {
                 "Deploy with the approved OKX reserve EOA"
             );
             INITIAL_SUPPLY = BNB_DISTRIBUTION_SUPPLY;
+            RESERVE_MINTED_SUPPLY = 0;
             _mint(msg.sender, BNB_DISTRIBUTION_SUPPLY);
         } else if (block.chainid == 11155111) {
             // Sepolia test tokens never count toward the Mainnet allocation.
             INITIAL_SUPPLY = SEPOLIA_TEST_SUPPLY;
+            RESERVE_MINTED_SUPPLY = 0;
             _mint(msg.sender, SEPOLIA_TEST_SUPPLY);
         } else {
             revert("Unsupported BALMZ deployment chain");
