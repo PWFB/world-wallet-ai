@@ -23,6 +23,24 @@ class MarketPriceCacheTests(unittest.TestCase):
     def test_cache_miss_has_no_fallback(self):
         self.assertIsNone(self.cache.stale_response(now=self.now))
 
+    def test_fresh_response_is_reused_without_stale_warning(self):
+        self.cache.store(self.payload, fetched_at=self.now)
+        result = self.cache.fresh_response(now=self.now + timedelta(seconds=45))
+        self.assertFalse(result["stale"])
+        self.assertEqual(result["cache_age_seconds"], 45)
+        self.assertEqual(result["prices"]["ETH"]["usd"], 2500.0)
+
+    def test_fresh_response_expires_after_ttl(self):
+        self.cache.store(self.payload, fetched_at=self.now)
+        self.assertIsNone(self.cache.fresh_response(now=self.now + timedelta(seconds=61)))
+
+    def test_fresh_response_copy_does_not_mutate_cache(self):
+        self.cache.store(self.payload, fetched_at=self.now)
+        result = self.cache.fresh_response(now=self.now + timedelta(seconds=5))
+        result["prices"]["ETH"]["usd"] = 1.0
+        again = self.cache.fresh_response(now=self.now + timedelta(seconds=6))
+        self.assertEqual(again["prices"]["ETH"]["usd"], 2500.0)
+
     def test_recent_quote_is_returned_as_stale_with_age(self):
         self.cache.store(self.payload, fetched_at=self.now)
         result = self.cache.stale_response(now=self.now + timedelta(seconds=75))

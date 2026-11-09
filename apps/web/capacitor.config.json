@@ -1,0 +1,8 @@
+{
+  "appId": "com.pwfb.worldwalletai",
+  "appName": "World Wallet AI",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

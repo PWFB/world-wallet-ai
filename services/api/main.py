@@ -4,9 +4,12 @@ import base64
 import hashlib
 import re
 import secrets
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
+from threading import Lock
+from anyio import to_thread
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -37,8 +40,12 @@ IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
-GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-2.5-flash").strip()
+GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-3.8-flash").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
+# Etherscan V2 key is backend-only; never expose it through frontend build variables or API responses.
+ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "").strip()
+ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
+ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111}
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 COINGECKO_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_COINGECKO_ADMIN_EMAIL") or GEMINI_ADMIN_EMAIL).strip().lower()
 WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
@@ -58,12 +65,41 @@ ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
-SOLANA_DEVNET_RPC_URL = os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL", "").strip()
+SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
+SOLANA_MAINNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_MAINNET_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
+SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
+SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
+BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+BALMZ_SOLANA_DEVNET_DECIMALS = 9
+BALMZ_SOLANA_MAINNET_MINT = os.getenv("WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT", "").strip()
+BALMZ_PRESALE_RECEIVING_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS", "").strip()
+BALMZ_PRESALE_PRICE_USD = Decimal("7.00")
+BALMZ_TARGET_SUPPLY = 1_000_000_000
+SOLANA_SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+
+
+def normalize_wallet_network(value: str) -> str:
+    """Normalize explicit chain names without guessing which network 'mainnet' means."""
+    network = re.sub(r"[\s-]+", "_", str(value or "").strip().lower())
+    aliases = {
+        "solana": "solana_mainnet",
+        "solana_mainnet_beta": "solana_mainnet",
+        "mainnet_beta": "solana_mainnet",
+        "devnet": "solana_devnet",
+        "eth": "ethereum",
+        "ethereum_mainnet": "ethereum",
+        "ethereum_sepolia": "sepolia",
+        "bsc": "bnb",
+        "binance_smart_chain": "bnb",
+    }
+    return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
+BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
 BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
+BALMZ_BNB_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_BNB_CONTRACT", "").strip()
 
 DEFAULT_TRUSTED_ORIGINS = [
     "https://world-wallet-ai-frontend.onrender.com",
@@ -194,6 +230,7 @@ class TransferRequest(BaseModel):
     recipient: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class WithdrawalRequest(BaseModel):
@@ -203,6 +240,7 @@ class WithdrawalRequest(BaseModel):
     destination: str = Field(min_length=4, max_length=128)
     network: str = Field(min_length=3, max_length=32)
     note: str | None = Field(default=None, max_length=200)
+    source_address: str | None = Field(default=None, max_length=128)
 
 
 class RequestCreate(BaseModel):
@@ -214,6 +252,12 @@ class RequestCreate(BaseModel):
 class RequestStatusUpdate(BaseModel):
     request_id: str = Field(min_length=4, max_length=80)
     status: str = Field(min_length=2, max_length=32)
+
+
+class AdminAnnouncementUpdate(BaseModel):
+    title: str = Field(default="", max_length=120)
+    body: str = Field(default="", max_length=600)
+    enabled: bool = False
 
 
 class AddressBookCreate(BaseModel):
@@ -253,6 +297,16 @@ class WalletAddressRequest(BaseModel):
     label: str = Field(default="primary", min_length=1, max_length=80)
 
 
+class WalletAddressChallengeRequest(BaseModel):
+    network: str = Field(min_length=2, max_length=32)
+    address: str = Field(min_length=4, max_length=128)
+
+
+class WalletAddressVerifyRequest(BaseModel):
+    challenge_id: str = Field(min_length=12, max_length=100)
+    signature: str = Field(min_length=20, max_length=300)
+
+
 class WalletActivateRequest(BaseModel):
     wallet_id: str = Field(min_length=4, max_length=80)
 
@@ -276,10 +330,66 @@ class ApiKeyImportRequest(BaseModel):
     api_key: str = Field(min_length=30, max_length=300)
 
 
+# A small per-process pool prevents request bursts from opening unbounded Neon
+# connections. Render currently runs one API worker; keep this limit conservative.
+_DB_POOL = None
+_DB_POOL_LOCK = Lock()
+
+
+def configure_api_thread_limit():
+    """Bound synchronous FastAPI work to protect the small Render instance from RAM spikes."""
+    raw_limit = os.getenv("WORLD_WALLET_API_THREAD_LIMIT", "8").strip()
+    try:
+        requested_limit = int(raw_limit)
+    except (TypeError, ValueError):
+        logger.warning("Invalid WORLD_WALLET_API_THREAD_LIMIT; using the safe default")
+        requested_limit = 8
+
+    # Keep a small but useful pool, and never allow an environment override to
+    # expand AnyIO's default worker capacity beyond a conservative ceiling.
+    requested_limit = max(2, min(requested_limit, 16))
+    try:
+        limiter = to_thread.current_default_thread_limiter()
+        effective_limit = min(int(limiter.total_tokens), requested_limit)
+        limiter.total_tokens = effective_limit
+        logger.info("API synchronous request capacity configured: %s", effective_limit)
+        return effective_limit
+    except Exception as exc:
+        # A failed tuning step must not prevent the API from starting.
+        logger.warning("Could not configure API thread capacity: error_type=%s", type(exc).__name__)
+        return None
+
+
 def db():
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="World Wallet database is not configured")
-    return psycopg.connect(DATABASE_URL)
+    global _DB_POOL
+    if _DB_POOL is None:
+        with _DB_POOL_LOCK:
+            if _DB_POOL is None:
+                from psycopg_pool import ConnectionPool
+                _DB_POOL = ConnectionPool(
+                    conninfo=DATABASE_URL,
+                    min_size=1,
+                    max_size=5,
+                    timeout=5,
+                    max_idle=300,
+                    max_lifetime=1800,
+                    reconnect_timeout=10,
+                    kwargs={
+                        "connect_timeout": 5,
+                        "application_name": "world-wallet-ai-api",
+                    },
+                    open=True,
+                )
+    return _DB_POOL.connection(timeout=5)
+
+
+@app.on_event("shutdown")
+def close_database_pool():
+    """Return pooled connections cleanly when the API process shuts down."""
+    if _DB_POOL is not None:
+        _DB_POOL.close()
 
 
 def sha(value: str) -> str:
@@ -321,12 +431,44 @@ def init_db():
           requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS phone_otp_requests_phone_time_idx ON phone_otp_requests(phone_number,requested_at DESC);
+        CREATE SEQUENCE IF NOT EXISTS wallets_wallet_number_seq
+          AS BIGINT MINVALUE 1 MAXVALUE 99999999999 START WITH 10000000000 INCREMENT BY 1 NO CYCLE;
         CREATE TABLE IF NOT EXISTS wallets(
           id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id),
           name TEXT NOT NULL DEFAULT 'Wallet', currency TEXT NOT NULL DEFAULT 'USD',
+          wallet_number BIGINT NOT NULL DEFAULT nextval('wallets_wallet_number_seq')
+            CHECK (wallet_number BETWEEN 10000000000 AND 99999999999),
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE wallets ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT 'Wallet';
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS wallet_number BIGINT;
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS mining_referral_code TEXT;
+        ALTER TABLE wallets ADD COLUMN IF NOT EXISTS world_wallet_code TEXT;
+        UPDATE wallets SET wallet_number=nextval('wallets_wallet_number_seq') WHERE wallet_number IS NULL;
+        UPDATE wallets SET
+          mining_referral_code=COALESCE(NULLIF(mining_referral_code,''),'MINE-' || upper(substr(md5(id || random()::text || clock_timestamp()::text),1,10))),
+          world_wallet_code=COALESCE(NULLIF(world_wallet_code,''),'WWAI-' || upper(substr(md5(random()::text || clock_timestamp()::text || id),1,10)))
+        WHERE mining_referral_code IS NULL OR mining_referral_code='' OR world_wallet_code IS NULL OR world_wallet_code='';
+        ALTER TABLE wallets ALTER COLUMN mining_referral_code SET DEFAULT ('MINE-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,10)));
+        ALTER TABLE wallets ALTER COLUMN world_wallet_code SET DEFAULT ('WWAI-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,10)));
+        ALTER TABLE wallets ALTER COLUMN mining_referral_code SET NOT NULL;
+        ALTER TABLE wallets ALTER COLUMN world_wallet_code SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_mining_referral_code_unique ON wallets(mining_referral_code);
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_world_wallet_code_unique ON wallets(world_wallet_code);
+        ALTER TABLE wallets ALTER COLUMN wallet_number SET DEFAULT nextval('wallets_wallet_number_seq');
+        ALTER TABLE wallets ALTER COLUMN wallet_number SET NOT NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallets_wallet_number_unique ON wallets(wallet_number);
+        DO $$
+        BEGIN
+          ALTER TABLE wallets ADD CONSTRAINT wallets_wallet_number_11_digits
+            CHECK (wallet_number BETWEEN 10000000000 AND 99999999999);
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        SELECT setval(
+          'wallets_wallet_number_seq',
+          GREATEST(COALESCE((SELECT MAX(wallet_number) FROM wallets), 9999999999::BIGINT), 9999999999::BIGINT),
+          TRUE
+        );
         CREATE TABLE IF NOT EXISTS token_registry(
           id TEXT PRIMARY KEY,
           symbol TEXT NOT NULL,
@@ -366,9 +508,24 @@ def init_db():
           wallet_id TEXT NOT NULL REFERENCES wallets(id), network TEXT NOT NULL, address TEXT NOT NULL,
           label TEXT NOT NULL DEFAULT 'primary', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY(wallet_id,network)
         );
-        -- Upgrade legacy one-address-per-network wallets without removing saved addresses.
+        -- Preserve existing rows while supporting multiple addresses and ownership proof.
         ALTER TABLE wallet_addresses DROP CONSTRAINT IF EXISTS wallet_addresses_pkey;
+        ALTER TABLE wallet_addresses ADD COLUMN IF NOT EXISTS ownership_verified BOOLEAN NOT NULL DEFAULT FALSE;
         CREATE UNIQUE INDEX IF NOT EXISTS wallet_addresses_unique_address_idx ON wallet_addresses(wallet_id,network,address);
+        CREATE TABLE IF NOT EXISTS wallet_address_challenges(
+          id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), owner_id TEXT NOT NULL REFERENCES users(id),
+          network TEXT NOT NULL, address TEXT NOT NULL, message TEXT NOT NULL, expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS wallet_address_challenges_owner_idx ON wallet_address_challenges(owner_id,wallet_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS portfolio_performance_snapshots(
+          id BIGSERIAL PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          value_usd NUMERIC(36,18) NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS portfolio_performance_wallet_time_idx
+          ON portfolio_performance_snapshots(wallet_id, created_at DESC);
         CREATE TABLE IF NOT EXISTS transactions(
           id TEXT PRIMARY KEY, wallet_id TEXT NOT NULL REFERENCES wallets(id), type TEXT NOT NULL,
           asset TEXT NOT NULL, description TEXT NOT NULL, amount NUMERIC(36,18) NOT NULL,
@@ -387,7 +544,54 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS balmz_mining_sessions(
+          id TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          status TEXT NOT NULL CHECK(status IN ('active','completed')),
+          started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          ended_at TIMESTAMPTZ,
+          duration_seconds BIGINT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK ((status='active' AND ended_at IS NULL) OR (status='completed' AND ended_at IS NOT NULL))
+        );
+        CREATE INDEX IF NOT EXISTS balmz_mining_sessions_wallet_started_idx
+          ON balmz_mining_sessions(wallet_id,started_at DESC);
+        CREATE UNIQUE INDEX IF NOT EXISTS balmz_mining_one_active_session_per_wallet
+          ON balmz_mining_sessions(wallet_id) WHERE status='active';
+        CREATE TABLE IF NOT EXISTS balmz_mining_reward_ledger(
+          id TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          session_id TEXT NOT NULL REFERENCES balmz_mining_sessions(id) ON DELETE CASCADE,
+          cycle_number BIGINT NOT NULL CHECK(cycle_number > 0),
+          earned_at TIMESTAMPTZ NOT NULL,
+          reward_amount NUMERIC(36,18) NOT NULL CHECK(reward_amount = 0.5),
+          status TEXT NOT NULL DEFAULT 'pending_launch'
+            CHECK(status IN ('pending_launch','paid')),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE(wallet_id,session_id,cycle_number)
+        );
+        CREATE INDEX IF NOT EXISTS balmz_mining_reward_wallet_day_idx
+          ON balmz_mining_reward_ledger(wallet_id,earned_at);
+        CREATE TABLE IF NOT EXISTS admin_audit_events(
+          id TEXT PRIMARY KEY,
+          actor_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          actor_email TEXT NOT NULL,
+          action TEXT NOT NULL,
+          details TEXT NOT NULL DEFAULT '',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS admin_audit_events_created_idx
+          ON admin_audit_events(created_at DESC);
+        CREATE TABLE IF NOT EXISTS wallet_announcements(
+          id SMALLINT PRIMARY KEY CHECK(id=1),
+          title TEXT NOT NULL,
+          body TEXT NOT NULL,
+          enabled BOOLEAN NOT NULL DEFAULT FALSE,
+          updated_by TEXT NOT NULL REFERENCES users(id),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS tx_hash TEXT;
+        ALTER TABLE transactions ADD COLUMN IF NOT EXISTS from_address TEXT;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_height INTEGER;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS block_hash TEXT;
@@ -414,6 +618,16 @@ def init_db():
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,source)
         );
+        CREATE TABLE IF NOT EXISTS solana_devnet_deposits(
+          tx_signature TEXT PRIMARY KEY,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id),
+          destination_address TEXT NOT NULL,
+          amount NUMERIC(36,18) NOT NULL,
+          slot BIGINT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS solana_devnet_deposits_wallet_created_idx
+          ON solana_devnet_deposits(wallet_id,created_at DESC);
         """)
         if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
             conn.execute(
@@ -493,7 +707,7 @@ def provision_identity(email: str, password: str | None = None, name: str = "Wor
                     "INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) ON CONFLICT(id) DO NOTHING",
                     (wallet_id, user["id"], "Production Wallet"),
                 )
-                conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s AND active_wallet_id IS NULL", (wallet_id, user["id"]))
+                conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s", (wallet_id, user["id"]))
         else:
             user_id = "usr_" + sha(email.lower())[:24]
             conn.execute("INSERT INTO users(id,email,name,password_sha256,google_subject) VALUES(%s,%s,%s,%s,%s)",
@@ -770,7 +984,7 @@ def _base58_decode(value: str):
         number = number * 58 + BASE58_ALPHABET.index(c)
     raw = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
     leading = len(value) - len(value.lstrip("1"))
-    return b"\\x00" * leading + raw
+    return b"\x00" * leading + raw
 
 
 def valid_solana_address(address: str) -> bool:
@@ -880,12 +1094,19 @@ def valid_destination_for_network(address: str, network: str) -> bool:
 def validate_asset_network(asset: str, network: str):
     symbol = asset.upper().strip()
     net = network.strip().lower()
+    # BNB Chain USDT has its own wallet-asset row. Normalize the legacy
+    # request label so reservations never debit Ethereum USDT by accident.
+    if symbol == "USDT" and net == "bnb":
+        symbol = "USDT-BNB"
     allowed = {
         "ETH": {"ethereum"},
         "BNB": {"bnb"},
-        "USDT": {"ethereum", "bnb"},
+        "USDT": {"ethereum"},
+        "USDT-BNB": {"bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
+        "BALMZ-SEP": {"sepolia"},
+        "BALMZ-SOL-DEVNET": {"solana-devnet"},
     }
     if symbol not in allowed or net not in allowed[symbol]:
         raise HTTPException(status_code=400, detail=f"{symbol} is not supported on the {net} network")
@@ -950,6 +1171,48 @@ def rpc_call(url: str, method: str, params: list):
     return None
 
 
+
+def require_solana_rpc_cluster(url: str, expected_genesis_hash: str, cluster_name: str):
+    """Fail closed when a Solana RPC URL points at the wrong cluster."""
+    if not url:
+        raise ValueError(f"{cluster_name} RPC is not configured")
+    actual_genesis_hash = rpc_call(url, "getGenesisHash", [])
+    if actual_genesis_hash != expected_genesis_hash:
+        raise ValueError(f"Configured {cluster_name} RPC returned an unexpected Solana cluster genesis hash")
+    return actual_genesis_hash
+
+
+def solana_spl_token_balance(owner_address: str, mint_address: str = BALMZ_SOLANA_DEVNET_MINT, decimals: int = BALMZ_SOLANA_DEVNET_DECIMALS):
+    """Read the confirmed SPL token balance from Solana Devnet without signing."""
+    if not valid_solana_address(owner_address) or not valid_solana_address(mint_address):
+        raise ValueError("Invalid Solana owner or mint address")
+    if int(decimals) != BALMZ_SOLANA_DEVNET_DECIMALS:
+        raise ValueError("Unexpected BALMZ Solana Devnet decimals")
+    require_solana_rpc_cluster(SOLANA_DEVNET_RPC_URL, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
+    response = rpc_call(
+        SOLANA_DEVNET_RPC_URL,
+        "getTokenAccountsByOwner",
+        [owner_address, {"mint": mint_address},
+         {"encoding": "jsonParsed", "commitment": "confirmed"}],
+    )
+    if not isinstance(response, dict) or not isinstance(response.get("value"), list):
+        raise ValueError("Solana Devnet returned an invalid token-account response")
+    raw_total = 0
+    for item in response["value"]:
+        try:
+            info = item["account"]["data"]["parsed"]["info"]
+            amount = info["tokenAmount"]
+            if info.get("mint") != mint_address or int(amount.get("decimals")) != int(decimals):
+                raise ValueError("Solana token account mint or decimals mismatch")
+            raw_amount = amount.get("amount")
+            if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+                raise ValueError("Solana token account returned an invalid raw amount")
+            raw_total += int(raw_amount)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Solana Devnet returned malformed token-account data") from exc
+    return float(Decimal(raw_total) / (Decimal(10) ** int(decimals)))
+
+
 def evm_chain_id(url: str):
     """Return the connected EVM RPC chain ID as an integer."""
     raw = rpc_call(url, "eth_chainId", [])
@@ -971,6 +1234,14 @@ def require_sepolia_rpc(url: str):
         raise ValueError("Configured Sepolia RPC did not report chain ID 11155111")
 
 
+def require_bnb_rpc(url: str):
+    """Fail closed if the BNB RPC endpoint is not BNB Smart Chain mainnet."""
+    chain_id = evm_chain_id(url)
+    if chain_id != 56:
+        raise ValueError("Configured BNB RPC did not report chain ID 56")
+    return chain_id
+
+
 def evm_balance(url: str, address: str):
     raw = rpc_call(url, "eth_getBalance", [address, "latest"])
     return int(raw, 16) / 10**18 if raw else 0.0
@@ -979,15 +1250,24 @@ def evm_balance(url: str, address: str):
 def btc_balance(address: str):
     if not address:
         return None
+    # Validate before placing the address into a public API path. This also
+    # prevents malformed input from being treated as a Bitcoin Mainnet address.
+    if not valid_bitcoin_address(address):
+        raise ValueError("Invalid Bitcoin Mainnet address")
     response = httpx.get(f"https://blockstream.info/api/address/{address}", timeout=10)
     response.raise_for_status()
     data = response.json()
-    chain = data.get("chain_stats", {})
+    chain = data.get("chain_stats")
+    if not isinstance(chain, dict):
+        raise ValueError("Bitcoin API response is missing confirmed chain statistics")
+    funded = int(chain.get("funded_txo_sum", 0))
+    spent = int(chain.get("spent_txo_sum", 0))
+    if funded < 0 or spent < 0 or spent > funded:
+        raise ValueError("Bitcoin API returned invalid confirmed balance statistics")
     # Confirmed balance is the accounting source of truth. Pending mempool
     # movement is surfaced through transaction status and must not bypass
     # the wallet's reservation model.
-    confirmed = int(chain.get("funded_txo_sum", 0)) - int(chain.get("spent_txo_sum", 0))
-    return confirmed / 100_000_000
+    return (funded - spent) / 100_000_000
 
 def erc20_balance(url: str, contract: str, address: str, decimals: int = 18):
     """Read a real ERC-20 balance using registry metadata."""
@@ -1004,6 +1284,54 @@ def erc20_balance(url: str, contract: str, address: str, decimals: int = 18):
 def evm_block_number(url: str):
     raw = rpc_call(url, "eth_blockNumber", [])
     return int(raw, 16) if raw else None
+
+
+def etherscan_v2_request(chain_id: int, module: str, action: str, params: dict | None = None):
+    """Perform a backend-only, read-only Etherscan API V2 GET request."""
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="Etherscan API key is not configured on the backend")
+    if int(chain_id) not in ETHERSCAN_CHAIN_IDS.values():
+        raise ValueError("Unsupported Etherscan chain ID")
+    if not re.fullmatch(r"[a-zA-Z]+", str(module or "")) or not re.fullmatch(r"[a-zA-Z]+", str(action or "")):
+        raise ValueError("Invalid Etherscan API module or action")
+    query = dict(params or {})
+    # Reserved authentication/routing fields cannot be overridden by endpoint parameters.
+    query.update({
+        "chainid": int(chain_id),
+        "module": module,
+        "action": action,
+        "apikey": ETHERSCAN_API_KEY,
+    })
+    response = httpx.get(ETHERSCAN_V2_API_URL, params=query, timeout=12)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("Etherscan returned an unexpected response")
+    return payload
+
+
+def etherscan_contract_source(chain_id: int, address: str):
+    """Return safe contract verification metadata only; do not return source or API credentials."""
+    payload = etherscan_v2_request(
+        chain_id, "contract", "getsourcecode", {"address": address}
+    )
+    if str(payload.get("status")) != "1":
+        raise ValueError("Etherscan source lookup did not succeed")
+    results = payload.get("result")
+    if not isinstance(results, list) or not results or not isinstance(results[0], dict):
+        raise ValueError("Etherscan source lookup returned no contract metadata")
+    item = results[0]
+    source_text = str(item.get("SourceCode") or "").strip()
+    abi_text = str(item.get("ABI") or "").strip()
+    verified = bool(source_text and abi_text and abi_text != "Contract source code not verified")
+    return {
+        "source_verified": verified,
+        "contract_name": str(item.get("ContractName") or "")[:160] or None,
+        "compiler_version": str(item.get("CompilerVersion") or "")[:100] or None,
+        "optimization_used": str(item.get("OptimizationUsed") or "")[:10] or None,
+        "proxy": str(item.get("Proxy") or "")[:10] or None,
+        "implementation": str(item.get("Implementation") or "")[:42] or None,
+    }
 
 
 def require_sepolia_rpc(url: str):
@@ -1058,112 +1386,143 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
+        elif network == "bnb":
+            require_bnb_rpc(url)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
+
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
         source = network + ":native"
+        native_asset = "ETH" if network == "ethereum" else ("BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else network.upper())
         wallet_lower = wallet_address.lower()
-        imported = []
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
-        required_confirmations = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
+        required = max(1, min(int(os.getenv("WORLD_WALLET_EVM_CONFIRMATIONS", "3")), 100))
+
+        # Fetch the sync cursor, then release the connection before block/receipt RPCs.
         with db() as conn:
             cursor = _sync_cursor(conn, user["wallet_id"], source)
-            start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
-            block_hashes = {}
-            seen_hashes = set()
-            for block_number in range(start, latest + 1):
-                block = rpc_call(url, "eth_getBlockByNumber", [hex(block_number), True])
-                if not block:
+        start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
+
+        block_hashes = {}
+        candidates = []
+        for block_number in range(start, latest + 1):
+            block = rpc_call(url, "eth_getBlockByNumber", [hex(block_number), True])
+            if not block:
+                continue
+            block_hash = block.get("hash")
+            if block_hash:
+                block_hashes[block_number] = block_hash
+            for tx in block.get("transactions", []):
+                sender = str(tx.get("from") or "").lower()
+                recipient = str(tx.get("to") or "").lower()
+                if sender != wallet_lower and recipient != wallet_lower:
                     continue
-                block_hash = block.get("hash")
-                if block_hash:
-                    block_hashes[block_number] = block_hash
-                for tx in block.get("transactions", []):
-                    sender = str(tx.get("from") or "").lower()
-                    recipient = str(tx.get("to") or "").lower()
-                    if sender != wallet_lower and recipient != wallet_lower:
-                        continue
-                    value = int(tx.get("value") or "0x0", 16) / 10**18
-                    if value <= 0:
-                        continue
-                    tx_hash = tx.get("hash")
-                    if not tx_hash:
-                        continue
-                    seen_hashes.add(tx_hash.lower())
-                    direction = "received" if recipient == wallet_lower else "sent"
-                    signed_amount = value if direction == "received" else -value
-                    receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
-                    receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
-                    confirmations = max(0, latest - block_number + 1)
-                    if receipt_status == "0x0":
-                        status = "failed"
-                    elif receipt is None or receipt_status != "0x1":
-                        status = "pending"
-                    elif confirmations >= required_confirmations:
-                        status = "confirmed"
-                    else:
-                        status = "pending"
-                    tx_id = "evm_" + tx_hash
-                    native_asset = "ETH" if network == "ethereum" else ("BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else network.upper())
-                    existing = conn.execute(
-                        "SELECT id,status,type,description,block_hash FROM transactions "
-                        "WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s",
-                        (user["wallet_id"], tx_hash, network, native_asset),
-                    ).fetchone()
-                    if existing:
-                        old_id, old_status, old_type, old_description, old_block_hash = existing
-                        if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
-                            status = "reorged"
-                            confirmations = 0
-                        elif old_status == "settled":
-                            status = "settled"
-                        elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
-                            status = "broadcast_pending"
-                    values=(confirmations, block_number, block_hash, status, existing[0] if existing else tx_id, user["wallet_id"])
-                    if existing:
-                        conn.execute(
-                            "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                            values,
-                        )
-                    else:
-                        conn.execute(
-                            "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) "
-                            "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                            (tx_id,user["wallet_id"],direction,native_asset,
-                             f"{network} native {direction}",signed_amount,status,
-                             recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number,block_hash),
-                        )
-                    imported.append({"tx_hash":tx_hash,"asset":native_asset,"network":network,
-                                     "type":direction,"amount":signed_amount,"status":status,"confirmations":confirmations,
-                                     "block_height":block_number,"block_hash":block_hash})
-            # A block hash changing inside the overlap means an old record can no longer
-            # be treated as confirmed. Mark it explicitly so accounting/UI never lies.
-            for row in conn.execute(
-                "SELECT id,tx_hash,block_height,block_hash FROM transactions "
+                value = int(tx.get("value") or "0x0", 16) / 10**18
+                if value <= 0:
+                    continue
+                tx_hash = tx.get("hash")
+                if not tx_hash:
+                    continue
+                direction = "received" if recipient == wallet_lower else "sent"
+                signed_amount = value if direction == "received" else -value
+                receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
+                receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
+                confirmations = max(0, latest - block_number + 1)
+                if receipt_status == "0x0":
+                    status = "failed"
+                elif receipt is None or receipt_status != "0x1":
+                    status = "pending"
+                else:
+                    status = "confirmed" if confirmations >= required else "pending"
+                candidates.append({
+                    "tx_hash":tx_hash,
+                    "sender":sender,
+                    "recipient":recipient,
+                    "direction":direction,
+                    "amount":signed_amount,
+                    "status":status,
+                    "confirmations":confirmations,
+                    "block_number":block_number,
+                    "block_hash":block_hash,
+                })
+
+        # Read possible reorg candidates in a short query. Canonical block lookups
+        # happen only after this connection has been returned to the pool.
+        with db() as conn:
+            saved_rows = conn.execute(
+                "SELECT id,block_height,block_hash FROM transactions "
                 "WHERE wallet_id=%s AND network=%s AND asset=%s AND block_height BETWEEN %s AND %s "
                 "AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
-                (user["wallet_id"],network,native_asset,start,latest),
-            ).fetchall():
-                txid, old_hash, old_height, old_block_hash = row
-                current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
-                if current_hash is None and old_height is not None:
-                    try:
-                        canonical = rpc_call(url, "eth_getBlockByNumber", [hex(int(old_height)), False])
-                        current_hash = (canonical or {}).get("hash")
-                    except Exception:
-                        current_hash = None
-                if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
+                (user["wallet_id"], network, native_asset, start, latest),
+            ).fetchall()
+
+        reorg_ids = []
+        for row_id, height, old_hash in saved_rows:
+            if height is None or not old_hash:
+                continue
+            height = int(height)
+            current_hash = block_hashes.get(height)
+            if current_hash is None:
+                try:
+                    canonical = rpc_call(url, "eth_getBlockByNumber", [hex(height), False])
+                    current_hash = (canonical or {}).get("hash")
+                except Exception:
+                    current_hash = None
+            if current_hash and old_hash.lower() != current_hash.lower():
+                reorg_ids.append(row_id)
+
+        imported = []
+        # Persist the already verified RPC observations in one short transaction.
+        with db() as conn:
+            for item in candidates:
+                existing = conn.execute(
+                    "SELECT id,status,type,description,block_hash FROM transactions "
+                    "WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s",
+                    (user["wallet_id"], item["tx_hash"], network, native_asset),
+                ).fetchone()
+                status = item["status"]
+                confirmations = item["confirmations"]
+                tx_id = "evm_" + item["tx_hash"]
+                if existing:
+                    old_id, old_status, old_type, old_description, old_block_hash = existing
+                    tx_id = old_id
+                    if old_status == "reorged" or (old_block_hash and item["block_hash"] and old_block_hash.lower() != item["block_hash"].lower()):
+                        status = "reorged"
+                        confirmations = 0
+                    elif old_status == "settled":
+                        status = "settled"
+                    elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
+                        status = "broadcast_pending"
                     conn.execute(
-                        "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
-                        (txid,user["wallet_id"]),
+                        "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,status=%s WHERE id=%s AND wallet_id=%s",
+                        (confirmations, item["block_number"], item["block_hash"], status, tx_id, user["wallet_id"]),
                     )
+                else:
+                    conn.execute(
+                        "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (tx_id,user["wallet_id"],item["direction"],native_asset,
+                         f"{network} native {item['direction']}",item["amount"],status,
+                         item["recipient"] if item["direction"]=="sent" else item["sender"],
+                         network,item["tx_hash"],confirmations,item["block_number"],item["block_hash"]),
+                    )
+                imported.append({
+                    "tx_hash":item["tx_hash"],"asset":native_asset,"network":network,
+                    "type":item["direction"],"amount":item["amount"],"status":status,
+                    "confirmations":confirmations,"block_height":item["block_number"],"block_hash":item["block_hash"],
+                })
+            if reorg_ids:
+                conn.execute(
+                    "UPDATE transactions SET status='reorged',confirmations=0 WHERE wallet_id=%s AND id=ANY(%s)",
+                    (user["wallet_id"], reorg_ids),
+                )
             _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
         return imported, None
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s native transaction sync failed: error_type=%s", network, type(exc).__name__)
         return [], f"{network} native transaction service unavailable"
-
 def sync_evm_token_transactions(user, url: str, network: str, contract: str, symbol: str, decimals: int = 6, wallet_address=None):
     wallet_address = wallet_address or next((a["address"] for a in configured_addresses(user) if a["network"]==network), None)
     if not url or not contract or not wallet_address:
@@ -1173,62 +1532,100 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     try:
         if network == "sepolia":
             require_sepolia_rpc(url)
+        elif network == "bnb":
+            decimals = verified_erc20_decimals(url, contract, network)
         latest = evm_block_number(url)
         if latest is None:
             return [], "latest block unavailable"
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")), 100000))
         source = network + ":" + symbol.lower()
+
+        # Only the cursor query uses a DB connection; log/receipt RPCs run without one.
         with db() as cursor_conn:
             cursor = _sync_cursor(cursor_conn, user["wallet_id"], source)
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
         start = max(0, latest - lookback + 1) if cursor is None else max(0, cursor - reorg_overlap + 1)
         logs = evm_transfer_logs(url, contract, wallet_address, start, latest)
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s %s transaction RPC preparation failed: error_type=%s", network, symbol, type(exc).__name__)
         return [], f"{network} {symbol} transaction service unavailable"
-    imported = []
-    wallet_lower = wallet_address.lower()
+
+    candidates = []
     block_hashes = {}
+    wallet_lower = wallet_address.lower()
+    required = required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS")
     try:
+        for log in logs:
+            topics = log.get("topics") or []
+            if len(topics) < 3:
+                continue
+            sender = "0x" + topics[1][-40:]
+            recipient = "0x" + topics[2][-40:]
+            raw_value = int(log.get("data") or "0x0", 16)
+            amount = raw_value / (10 ** decimals)
+            if amount <= 0:
+                continue
+            direction = "received" if recipient.lower() == wallet_lower else "sent"
+            signed_amount = amount if direction == "received" else -amount
+            tx_hash = log.get("transactionHash")
+            block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
+            log_index = int(log.get("logIndex"), 16) if log.get("logIndex") else None
+            block_hash = log.get("blockHash")
+            if not tx_hash:
+                continue
+            if block_number is not None and block_hash:
+                block_hashes[block_number] = block_hash
+            confirmations = max(0, latest - block_number + 1) if block_number is not None else 0
+            receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
+            receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
+            if receipt_status == "0x0":
+                status = "failed"
+            elif receipt is None or receipt_status != "0x1":
+                status = "pending"
+            else:
+                status = "confirmed" if confirmations >= required else "pending"
+            candidates.append({
+                "sender":sender,"recipient":recipient,"direction":direction,"amount":signed_amount,
+                "tx_hash":tx_hash,"block_number":block_number,"log_index":log_index,
+                "block_hash":block_hash,"confirmations":confirmations,"status":status,
+            })
+
         with db() as conn:
-            for log in logs:
-                topics = log.get("topics") or []
-                if len(topics) < 3:
-                    continue
-                sender = "0x" + topics[1][-40:]
-                recipient = "0x" + topics[2][-40:]
-                raw_value = int(log.get("data") or "0x0", 16)
-                amount = raw_value / (10 ** decimals)
-                if amount <= 0:
-                    continue
-                direction = "received" if recipient.lower() == wallet_address.lower() else "sent"
-                signed_amount = amount if direction == "received" else -amount
-                tx_hash = log.get("transactionHash")
-                block_number = int(log.get("blockNumber"), 16) if log.get("blockNumber") else None
-                log_index = int(log.get("logIndex"), 16) if log.get("logIndex") else None
-                block_hash = log.get("blockHash")
-                if not tx_hash:
-                    continue
-                if block_number is not None and block_hash:
-                    block_hashes[block_number] = block_hash
-                confirmations = max(0, latest - block_number + 1) if block_number is not None else 0
-                receipt = rpc_call(url, "eth_getTransactionReceipt", [tx_hash])
-                receipt_status = str(receipt.get("status") or "").lower() if receipt else ""
-                if receipt_status == "0x0":
-                    status = "failed"
-                elif receipt is None or receipt_status != "0x1":
-                    status = "pending"
-                else:
-                    status = "confirmed" if confirmations >= required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS") else "pending"
-                description = f"{symbol} {direction} on {network}"
+            saved_rows = conn.execute(
+                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network=%s AND asset=%s "
+                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
+                (user["wallet_id"],network,symbol,start,latest),
+            ).fetchall()
+
+        reorg_ids = []
+        for row_id, height, old_hash in saved_rows:
+            if height is None or not old_hash:
+                continue
+            height = int(height)
+            current_hash = block_hashes.get(height)
+            if current_hash is None:
+                try:
+                    canonical = rpc_call(url, "eth_getBlockByNumber", [hex(height), False])
+                    current_hash = (canonical or {}).get("hash")
+                except Exception:
+                    current_hash = None
+            if current_hash and old_hash.lower() != current_hash.lower():
+                reorg_ids.append(row_id)
+
+        imported = []
+        with db() as conn:
+            for item in candidates:
                 existing = conn.execute(
                     "SELECT id,status,type,description,block_hash FROM transactions WHERE wallet_id=%s AND tx_hash=%s AND network=%s AND asset=%s "
                     "AND COALESCE(log_index,-1)=COALESCE(%s,-1)",
-                    (user["wallet_id"],tx_hash,network,symbol,log_index),
+                    (user["wallet_id"],item["tx_hash"],network,symbol,item["log_index"]),
                 ).fetchone()
-                tx_id = existing[0] if existing else "evm_" + tx_hash + "_" + str(log_index if log_index is not None else 0)
+                tx_id = existing[0] if existing else "evm_" + item["tx_hash"] + "_" + str(item["log_index"] if item["log_index"] is not None else 0)
+                status = item["status"]
+                confirmations = item["confirmations"]
                 if existing:
                     old_id, old_status, old_type, old_description, old_block_hash = existing
-                    if old_status == "reorged" or (old_block_hash and block_hash and old_block_hash.lower() != block_hash.lower()):
+                    if old_status == "reorged" or (old_block_hash and item["block_hash"] and old_block_hash.lower() != item["block_hash"].lower()):
                         status = "reorged"
                         confirmations = 0
                     elif old_status == "settled":
@@ -1237,46 +1634,39 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                         status = "broadcast_pending"
                     conn.execute(
                         "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                        (confirmations,block_number,block_hash,log_index,status,tx_id,user["wallet_id"]),
+                        (confirmations,item["block_number"],item["block_hash"],item["log_index"],status,tx_id,user["wallet_id"]),
                     )
                 else:
+                    description = f"{symbol} {item['direction']} on {network}"
                     conn.execute(
                         "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash,log_index) "
                         "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (tx_id,user["wallet_id"],direction,symbol,description,signed_amount,status,
-                         recipient if direction=="sent" else sender,network,tx_hash,confirmations,block_number,block_hash,log_index),
+                        (tx_id,user["wallet_id"],item["direction"],symbol,description,item["amount"],status,
+                         item["recipient"] if item["direction"]=="sent" else item["sender"],network,item["tx_hash"],
+                         confirmations,item["block_number"],item["block_hash"],item["log_index"]),
                     )
-                imported.append({"tx_hash":tx_hash,"asset":symbol,"network":network,"type":direction,"amount":signed_amount,
-                                 "status":status,"confirmations":confirmations,"block_height":block_number,"block_hash":block_hash,
-                                 "log_index":log_index})
-            for row in conn.execute(
-                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network=%s AND asset=%s "
-                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','pending','failed','settled','broadcast_pending')",
-                (user["wallet_id"],network,symbol,start,latest),
-            ).fetchall():
-                txid, old_height, old_block_hash = row
-                current_hash = block_hashes.get(int(old_height)) if old_height is not None else None
-                if current_hash is None and old_height is not None:
-                    try:
-                        canonical = rpc_call(url, "eth_getBlockByNumber", [hex(int(old_height)), False])
-                        current_hash = (canonical or {}).get("hash")
-                    except Exception:
-                        current_hash = None
-                if old_block_hash and current_hash and old_block_hash.lower() != current_hash.lower():
-                    conn.execute(
-                        "UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",
-                        (txid,user["wallet_id"]),
-                    )
+                imported.append({
+                    "tx_hash":item["tx_hash"],"asset":symbol,"network":network,"type":item["direction"],
+                    "amount":item["amount"],"status":status,"confirmations":confirmations,
+                    "block_height":item["block_number"],"block_hash":item["block_hash"],"log_index":item["log_index"],
+                })
+            if reorg_ids:
+                conn.execute(
+                    "UPDATE transactions SET status='reorged',confirmations=0 WHERE wallet_id=%s AND id=ANY(%s)",
+                    (user["wallet_id"], reorg_ids),
+                )
             _set_sync_cursor(conn, user["wallet_id"], source, latest)
             conn.commit()
-    except Exception:
+    except Exception as exc:
+        logger.warning("%s %s transaction persistence failed: error_type=%s", network, symbol, type(exc).__name__)
         return [], f"{network} {symbol} transaction service unavailable"
     return imported, None
-
-
 def bitcoin_address_transactions(address: str):
     if not address:
         return []
+    # Never query the explorer with an unvalidated address.
+    if not valid_bitcoin_address(address):
+        raise ValueError("Invalid Bitcoin Mainnet address")
     txs = []
     next_url = f"https://blockstream.info/api/address/{address}/txs"
     max_pages = max(1, min(int(os.getenv("WORLD_WALLET_BTC_TX_PAGES", "3")), 10))
@@ -1321,17 +1711,57 @@ def sync_bitcoin_transactions(user, address=None):
         chain_txs = bitcoin_address_transactions(address)
     except Exception:
         return []
+
+    # Fetch the explorer tip outside the DB lease, then read the rows that need
+    # reorg checks and release that lease before canonical block-height requests.
+    reorg_ids = []
+    try:
+        tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
+        tip_response.raise_for_status()
+        tip_height = int(tip_response.text.strip())
+        lookback = max(1, min(int(os.getenv("WORLD_WALLET_BTC_REORG_LOOKBACK_BLOCKS", "144")), 1000))
+        with db() as conn:
+            saved = conn.execute(
+                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network='bitcoin' "
+                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','settled','broadcast_pending')",
+                (user["wallet_id"], max(0, tip_height - lookback + 1), tip_height),
+            ).fetchall()
+        canonical = {}
+        for row_id, height, old_hash in saved:
+            if height is None or not old_hash:
+                continue
+            height = int(height)
+            if height not in canonical:
+                try:
+                    response = httpx.get(f"https://blockstream.info/api/block-height/{height}", timeout=10)
+                    response.raise_for_status()
+                    canonical[height] = response.text.strip()
+                except Exception:
+                    canonical[height] = None
+            if canonical[height] and old_hash.lower() != canonical[height].lower():
+                reorg_ids.append(row_id)
+    except Exception:
+        # Transaction import remains useful even if the explorer's optional
+        # canonical reorg check is unavailable.
+        reorg_ids = []
+
     imported = []
     with db() as conn:
         for item in chain_txs:
             tx_hash = item["tx_hash"]
             if not tx_hash:
                 continue
-            existing = conn.execute("SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",(user["wallet_id"],tx_hash)).fetchone()
+            existing = conn.execute(
+                "SELECT id FROM transactions WHERE wallet_id=%s AND tx_hash=%s",
+                (user["wallet_id"],tx_hash),
+            ).fetchone()
             tx_id = existing[0] if existing else "btc_" + tx_hash
             description = "Bitcoin transaction " + tx_hash[:12] + "…"
             if existing:
-                existing_row = conn.execute("SELECT type,status,block_hash,description FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",(tx_id,user["wallet_id"])).fetchone()
+                existing_row = conn.execute(
+                    "SELECT type,status,block_hash,description FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+                    (tx_id,user["wallet_id"]),
+                ).fetchone()
                 old_type, old_status, old_block_hash, old_description = existing_row if existing_row else ("", "", None, "")
                 status = item["status"]
                 confirmations = item["confirmations"]
@@ -1343,66 +1773,72 @@ def sync_bitcoin_transactions(user, address=None):
                 elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
                     status = "broadcast_pending"
                 if old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}:
-                    conn.execute("UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
-                                 (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                    conn.execute(
+                        "UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
+                        (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]),
+                    )
                 elif old_type == "sent":
-                    conn.execute("UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
-                                 (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                    conn.execute(
+                        "UPDATE transactions SET status=%s,confirmations=%s,block_height=%s,block_hash=%s,network='bitcoin' WHERE id=%s AND wallet_id=%s",
+                        (status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]),
+                    )
                 else:
-                    conn.execute("UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
-                                 (item["type"],description,item["amount"],status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]))
+                    conn.execute(
+                        "UPDATE transactions SET type=%s,asset='BTC',description=%s,amount=%s,status=%s,network='bitcoin',confirmations=%s,block_height=%s,block_hash=%s WHERE id=%s AND wallet_id=%s",
+                        (item["type"],description,item["amount"],status,confirmations,item["block_height"],item.get("block_hash"),tx_id,user["wallet_id"]),
+                    )
                 item = {**item,"status":status,"confirmations":confirmations}
             else:
-                conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",(tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],address,item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")))
+                conn.execute(
+                    "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash) "
+                    "VALUES(%s,%s,%s,'BTC',%s,%s,%s,%s,'bitcoin',%s,%s,%s,%s)",
+                    (tx_id,user["wallet_id"],item["type"],description,item["amount"],item["status"],address,
+                     item["tx_hash"],item["confirmations"],item["block_height"],item.get("block_hash")),
+                )
             imported.append(item)
-        # Detect recent confirmed Bitcoin blocks that disappear from the explorer's
-        # address history after a reorg, including transactions no longer listed.
-        try:
-            tip_response = httpx.get("https://blockstream.info/api/blocks/tip/height", timeout=10)
-            tip_response.raise_for_status()
-            tip_height = int(tip_response.text.strip())
-            lookback = max(1, min(int(os.getenv("WORLD_WALLET_BTC_REORG_LOOKBACK_BLOCKS", "144")), 1000))
-            saved = conn.execute(
-                "SELECT id,block_height,block_hash FROM transactions WHERE wallet_id=%s AND network='bitcoin' "
-                "AND block_height BETWEEN %s AND %s AND status IN ('confirmed','settled','broadcast_pending')",
-                (user["wallet_id"], max(0, tip_height - lookback + 1), tip_height),
-            ).fetchall()
-            canonical = {}
-            for row_id, height, old_hash in saved:
-                if height is None or not old_hash:
-                    continue
-                height = int(height)
-                if height not in canonical:
-                    try:
-                        response = httpx.get(f"https://blockstream.info/api/block-height/{height}", timeout=10)
-                        response.raise_for_status()
-                        canonical[height] = response.text.strip()
-                    except Exception:
-                        canonical[height] = None
-                if canonical[height] and old_hash.lower() != canonical[height].lower():
-                    conn.execute("UPDATE transactions SET status='reorged',confirmations=0 WHERE id=%s AND wallet_id=%s",(row_id,user["wallet_id"]))
-        except Exception:
-            pass
+        if reorg_ids:
+            conn.execute(
+                "UPDATE transactions SET status='reorged',confirmations=0 WHERE wallet_id=%s AND id=ANY(%s)",
+                (user["wallet_id"], reorg_ids),
+            )
         conn.commit()
     return imported
-
 def wallet_valuation_summary(assets, transactions):
     """Summarize wallet exposure using verified current prices.
 
     Partial totals include only assets/transactions with a positive known quote.
     The corresponding unpriced-symbol lists make omissions explicit.
     """
+    # Devnet assets remain visible in the wallet asset list, but must never
+    # affect production portfolio valuation or mark production holdings as unpriced.
+    testnet_symbols = {"BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"}
+    testnet_networks = {"sepolia", "ethereum-sepolia", "solana-devnet", "solana_devnet"}
+    production_candidates = [item for item in assets
+                             if str(item.get("symbol", "")) not in testnet_symbols
+                             and str(item.get("network", "")).strip().lower() not in testnet_networks]
+    unclassified_assets = [
+        item for item in production_candidates
+        if "network" in item and item.get("network") is None
+        and (float(item.get("balance") or 0) > 0 or float(item.get("reserved_balance") or 0) > 0)
+    ]
+    # Legacy callers/tests without a network field keep their established
+    # behaviour. Only wallet_snapshot's explicit network=None is withheld.
+    assets = [item for item in production_candidates
+              if not ("network" in item and item.get("network") is None)]
+    transactions = [item for item in transactions
+                    if str(item.get("asset", "")) not in testnet_symbols
+                    and str(item.get("network", "")).strip().lower() not in testnet_networks]
     prices = {str(item["symbol"]): float(item.get("price_usd") or 0) for item in assets}
-    available_valuation_complete = all(
+    available_valuation_complete = not unclassified_assets and all(
         (float(item["balance"] or 0) <= 0 and float(item["reserved_balance"] or 0) <= 0)
         or bool(item.get("price_available"))
         for item in assets
     )
-    actual_valuation_complete = all(
+    actual_valuation_complete = not unclassified_assets and all(
         float(item["actual_balance"] or 0) <= 0 or bool(item.get("price_available"))
         for item in assets
     )
-    reserved_valuation_complete = all(
+    reserved_valuation_complete = not unclassified_assets and all(
         float(item["reserved_balance"] or 0) <= 0 or bool(item.get("price_available"))
         for item in assets
     )
@@ -1411,6 +1847,9 @@ def wallet_valuation_summary(assets, transactions):
         str(item["symbol"]) for item in assets
         if (float(item["balance"] or 0) > 0 or float(item["reserved_balance"] or 0) > 0)
         and not bool(item.get("price_available"))
+    } | {
+        str(item.get("symbol") or "Asset") + " (network attribution pending)"
+        for item in unclassified_assets
     })
     unpriced_actual_assets = sorted({
         str(item["symbol"]) for item in assets
@@ -1467,6 +1906,7 @@ def wallet_valuation_summary(assets, transactions):
         "valuation_complete": available_valuation_complete and actual_valuation_complete,
         "reserved_valuation_complete": reserved_valuation_complete,
         "unpriced_assets": unpriced_assets,
+        "unclassified_assets": sorted(str(item.get("symbol") or "Asset") for item in unclassified_assets),
         "unpriced_actual_assets": unpriced_actual_assets,
         "unpriced_reserved_assets": unpriced_reserved_assets,
         "total_received_usd": partial_received if received_valuation_complete else None,
@@ -1486,12 +1926,43 @@ def wallet_valuation_summary(assets, transactions):
 def wallet_snapshot(user):
     with db() as conn:
         assets=[]
+        network_by_asset = {
+            "BTC": "bitcoin", "ETH": "ethereum", "BNB": "bnb",
+            "SOL": "solana_mainnet", "SOL-DEVNET": "solana_devnet",
+            "USDT": "ethereum", "USDT-BNB": "bnb", "USDC": "ethereum",
+            "USDC-BNB": "bnb", "BALMZ": "ethereum", "BALMZ-SEP": "sepolia",
+            "BALMZ-SOL-DEVNET": "solana_devnet",
+        }
+        for registry_symbol, registry_network in conn.execute(
+            "SELECT symbol,network FROM token_registry WHERE status='active'"
+        ):
+            network_by_asset[wallet_asset_symbol(str(registry_symbol), str(registry_network))] = str(registry_network)
+        network_labels = {
+            "bitcoin": "Bitcoin Mainnet", "ethereum": "Ethereum Mainnet",
+            "bnb": "BNB Chain Mainnet", "solana_mainnet": "Solana Mainnet",
+            "sepolia": "Ethereum Sepolia (testnet)", "solana_devnet": "Solana Devnet (testnet)",
+        }
+        solana_mainnet_address_exists = conn.execute(
+            "SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network='solana_mainnet' LIMIT 1",
+            (user["wallet_id"],),
+        ).fetchone() is not None
         for symbol,name,balance,reserved_balance,price in conn.execute(
             "SELECT symbol,name,balance,reserved_balance,price_usd FROM assets WHERE wallet_id=%s ORDER BY symbol",(user["wallet_id"],)
         ):
             actual=Decimal(balance or 0); reserved=Decimal(reserved_balance or 0); available=max(actual-reserved,Decimal("0")); p=Decimal(price or 0)
             price_available = p > 0
-            assets.append({"symbol":symbol,"name":name,"balance":float(available),"available_balance":float(available),
+            asset_network = network_by_asset.get(str(symbol))
+            # Older releases could store Solana Devnet SOL in the generic SOL
+            # row. Without a separately configured Mainnet address that row
+            # cannot safely be attributed to production holdings.
+            if str(symbol) == "SOL" and not solana_mainnet_address_exists:
+                asset_network = None
+            display_name = ("Binance-Peg BSC-USD (BNB Chain)"
+                            if str(symbol) == "USDT-BNB" and USDT_BSC_CONTRACT.lower() == BSC_USDT_MAINNET_CONTRACT.lower()
+                            else name)
+            assets.append({"symbol":symbol,"name":display_name,"network":asset_network,
+                "network_label":network_labels.get(asset_network, "Network not classified"),
+                "balance":float(available),"available_balance":float(available),
                 "actual_balance":float(actual),"reserved_balance":float(reserved),"price_usd":float(p),
                 "price_available":price_available,
                 "live_price_usd":float(p) if price_available else None,
@@ -1508,6 +1979,7 @@ def wallet_snapshot(user):
             FROM transactions
             WHERE wallet_id=%s
               AND (type='received' OR (type IN ('sent','withdrawal') AND amount < 0))
+              AND COALESCE(LOWER(REPLACE(network, '_', '-')), '') NOT IN ('sepolia', 'ethereum-sepolia', 'solana-devnet')
             GROUP BY type,asset
         """,(user["wallet_id"],)):
             transaction_totals.append({"type":row[0],"asset":row[1],"amount":float(row[2] or 0),"count":int(row[3] or 0)})
@@ -1516,6 +1988,7 @@ def wallet_snapshot(user):
 
 @app.on_event("startup")
 def startup():
+    configure_api_thread_limit()
     init_db()
     if DATABASE_URL and IDENTITY_EMAIL and IDENTITY_PASSWORD:
         provision_identity(IDENTITY_EMAIL, IDENTITY_PASSWORD)
@@ -1529,6 +2002,51 @@ def root():
 @app.get("/health")
 def health():
     return {"status":"ok","database_configured":bool(DATABASE_URL)}
+
+
+_BNB_HEALTH_CACHE_TTL_SECONDS = 60
+_BNB_HEALTH_CACHE_LOCK = Lock()
+_BNB_HEALTH_CACHE = {"checked_at": 0.0, "result": None}
+
+
+@app.get("/health/bnb")
+def bnb_rpc_health():
+    """Read-only operational check for the configured BNB mainnet RPC and USDT contract."""
+    now = time.monotonic()
+    with _BNB_HEALTH_CACHE_LOCK:
+        cached = _BNB_HEALTH_CACHE
+        if cached["result"] is not None and now - cached["checked_at"] < _BNB_HEALTH_CACHE_TTL_SECONDS:
+            return dict(cached["result"])
+
+    try:
+        if not BSC_RPC_URL:
+            raise ValueError("BNB Chain RPC is not configured")
+        if not USDT_BSC_CONTRACT:
+            raise ValueError("BNB USDT contract is not configured")
+        chain_id = require_bnb_rpc(BSC_RPC_URL)
+        decimals = verified_erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT, "bnb", chain_checked=True)
+        latest_block = evm_block_number(BSC_RPC_URL)
+        if latest_block is None or latest_block <= 0:
+            raise ValueError("BNB RPC did not return a valid latest block")
+    except Exception as exc:
+        logger.warning("BNB RPC health check failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="BNB Chain RPC or USDT-BNB contract check failed") from exc
+
+    result = {
+        "status": "ok",
+        "network": "bnb",
+        "chain_id": chain_id,
+        "rpc_verified": True,
+        "contract_address": USDT_BSC_CONTRACT,
+        "token": "Binance-Peg BSC-USD",
+        "decimals": decimals,
+        "latest_block": latest_block,
+        "read_only": True,
+    }
+    with _BNB_HEALTH_CACHE_LOCK:
+        _BNB_HEALTH_CACHE["checked_at"] = now
+        _BNB_HEALTH_CACHE["result"] = result
+    return dict(result)
 
 
 @app.post("/api/v1/auth/login")
@@ -1678,9 +2196,450 @@ def google_login(request: GoogleLoginRequest):
     return {**session(user),"mode":"google","provider":"google"}
 
 
+# Historical ERC-20 Approval(owner, spender, value) event.
+ERC20_APPROVAL_TOPIC = "0x" + _keccak_hex("Approval(address,address,uint256)")
+KNOWN_OKX_WALLETCORE_TARGETS = {"0x80296ff8d1ed46f8e3c7992664d13b833504c2bb"}
+
+
+def _etherscan_result_list(payload, operation):
+    """Normalize Etherscan V2 list responses without treating empty history as an error."""
+    if not isinstance(payload, dict):
+        raise ValueError("Etherscan returned an invalid " + operation + " response")
+    result = payload.get("result")
+    if str(payload.get("status")) == "1" and isinstance(result, list):
+        return [item for item in result if isinstance(item, dict)]
+    message = str(result or payload.get("message") or "").strip().lower()
+    if any(phrase in message for phrase in ("no transactions found", "no records found", "no logs found", "no transactions")):
+        return []
+    raise ValueError("Etherscan could not complete the " + operation + " lookup")
+
+
+def _format_token_interaction(item, network, owner, balmz_contract):
+    """Return only public ERC-20 transfer fields; amounts remain exact decimal strings."""
+    contract = str(item.get("contractAddress") or "").strip()
+    raw_value = str(item.get("value") or "0")
+    decimals_raw = item.get("tokenDecimal")
+    try:
+        raw_integer = int(raw_value)
+        decimals = int(decimals_raw)
+        if raw_integer < 0 or decimals < 0 or decimals > 36:
+            raise ValueError
+        amount = format(Decimal(raw_integer) / (Decimal(10) ** decimals), "f")
+    except (TypeError, ValueError, ArithmeticError):
+        raw_integer = None
+        decimals = None
+        amount = None
+    return {
+        "network": network,
+        "owner_address": owner,
+        "token_contract_address": contract or None,
+        "token_name": str(item.get("tokenName") or "")[:120] or None,
+        "token_symbol": str(item.get("tokenSymbol") or "")[:32] or None,
+        "token_decimals": decimals,
+        "amount_raw": str(raw_integer) if raw_integer is not None else raw_value[:120],
+        "amount": amount,
+        "from_address": str(item.get("from") or "") or None,
+        "to_address": str(item.get("to") or "") or None,
+        "tx_hash": str(item.get("hash") or "") or None,
+        "block_number": str(item.get("blockNumber") or "") or None,
+        "timestamp": str(item.get("timeStamp") or "") or None,
+        "confirmations": str(item.get("confirmations") or "") or None,
+        "balmz_contract_match": bool(
+            balmz_contract and contract and contract.lower() == balmz_contract.lower()
+        ),
+    }
+
+
+def _format_approval_interaction(item, network, owner):
+    """Validate and normalize an indexed ERC-20 Approval log for the connected owner."""
+    topics = item.get("topics") or []
+    if len(topics) < 3 or str(topics[0]).lower() != ERC20_APPROVAL_TOPIC.lower():
+        return None
+    owner_topic = str(topics[1] or "").lower()
+    spender_topic = str(topics[2] or "").lower()
+    expected_owner = "0x" + str(owner)[2:].lower().rjust(64, "0")
+    if owner_topic != expected_owner or not re.fullmatch(r"0x[0-9a-f]{64}", spender_topic):
+        return None
+    contract = str(item.get("address") or "").strip()
+    if not valid_evm_address(contract):
+        return None
+    raw_data = str(item.get("data") or "")
+    if not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw_data):
+        return None
+    return {
+        "network": network,
+        "owner_address": owner,
+        "token_contract_address": contract,
+        "spender_address": "0x" + spender_topic[-40:],
+        "amount_raw": str(int(raw_data, 16)),
+        "tx_hash": str(item.get("transactionHash") or "") or None,
+        "block_number": str(item.get("blockNumber") or "") or None,
+        "log_index": str(item.get("logIndex") or "") or None,
+    }
+
+
+def _erc20_allowance_call_data(owner, spender):
+    """Encode allowance(owner, spender) for a read-only eth_call."""
+    if not valid_evm_address(owner) or not valid_evm_address(spender):
+        raise ValueError("Invalid ERC-20 allowance address")
+    return "0xdd62ed3e" + owner[2:].lower().rjust(64, "0") + spender[2:].lower().rjust(64, "0")
+
+
+def _read_current_erc20_allowance(rpc_url, contract, owner, spender):
+    """Read current allowance from the selected chain; return raw units only."""
+    if not rpc_url or not valid_evm_address(contract):
+        return None
+    raw = rpc_call(rpc_url, "eth_call", [
+        {"to": contract, "data": _erc20_allowance_call_data(owner, spender)}, "latest"
+    ])
+    if not isinstance(raw, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw):
+        return None
+    return str(int(raw, 16))
+
+
+def _inspect_eip7702_for_network_address(rpc_url, network, address):
+    """Inspect delegated account code only after the RPC chain identity is verified."""
+    try:
+        if network == "ethereum":
+            chain_id = require_ethereum_mainnet_rpc(rpc_url)
+        elif network == "bnb":
+            chain_id = require_bnb_rpc(rpc_url)
+        else:
+            chain_id = require_sepolia_rpc(rpc_url) or 11155111
+        code = rpc_call(rpc_url, "eth_getCode", [address, "latest"])
+        target = _decode_eip7702_designator(code)
+        return {
+            "rpc_chain_verified": True,
+            "chain_id": chain_id,
+            "delegated": bool(target),
+            "delegation_target": target,
+            "known_okx_walletcore": bool(target and target.lower() in KNOWN_OKX_WALLETCORE_TARGETS),
+            "note": "EIP-7702 delegation is not the same as an ERC-20 allowance or a claim authorization.",
+        }
+    except Exception as exc:
+        return {
+            "rpc_chain_verified": False,
+            "delegated": None,
+            "delegation_target": None,
+            "known_okx_walletcore": False,
+            "error_type": type(exc).__name__,
+            "note": "Delegation could not be verified against the selected network RPC.",
+        }
+
+
+@app.get("/api/v1/wallet/token-interactions")
+def wallet_token_interactions(
+    networks: str = "ethereum,bnb,sepolia",
+    page: int = 1,
+    offset: int = 100,
+    approval_from_block: int = 0,
+    approval_to_block: str = "latest",
+    user: dict = Depends(current_user),
+):
+    """Read-only token transfer history and block-ranged Approval discovery for verified active-wallet addresses."""
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="Etherscan API V2 is not configured on the backend")
+    if page < 1 or page > 100:
+        raise HTTPException(status_code=400, detail="Page must be between 1 and 100")
+    if offset < 1 or offset > 1000:
+        raise HTTPException(status_code=400, detail="Page size must be between 1 and 1000")
+    if approval_from_block < 0 or approval_from_block > 1000000000000:
+        raise HTTPException(status_code=400, detail="Approval start block is outside the supported range")
+    approval_to_block = str(approval_to_block or "latest").strip().lower()
+    if approval_to_block != "latest" and (not approval_to_block.isdigit() or len(approval_to_block) > 16):
+        raise HTTPException(status_code=400, detail="Approval end block must be a block number or latest")
+    if approval_to_block != "latest" and int(approval_to_block) < approval_from_block:
+        raise HTTPException(status_code=400, detail="Approval end block must not precede its start block")
+
+    allowed_networks = {"ethereum", "bnb", "sepolia"}
+    requested_networks = list(dict.fromkeys(part.strip().lower() for part in str(networks or "").split(",") if part.strip()))
+    if not requested_networks or any(network not in allowed_networks for network in requested_networks):
+        raise HTTPException(status_code=400, detail="Supported networks are ethereum, bnb, and sepolia")
+
+    # Discover only addresses already attached to the signed-in user's active wallet.
+    # Unverified addresses are reported but never queried for private wallet history.
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT network,address,label,ownership_verified FROM wallet_addresses "
+            "WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",
+            (user["wallet_id"],),
+        ).fetchall()
+
+    attached = [
+        {"network": str(row[0] or "").strip().lower(), "address": str(row[1] or "").strip(),
+         "label": str(row[2] or "")[:80], "ownership_verified": bool(row[3])}
+        for row in rows
+        if str(row[0] or "").strip().lower() in requested_networks and valid_evm_address(str(row[1] or "").strip())
+    ]
+    network_config = {
+        "ethereum": {"chain_id": 1, "rpc": ETH_RPC_URL, "balmz_contract": BALMZ_ETH_CONTRACT},
+        "bnb": {"chain_id": 56, "rpc": BSC_RPC_URL, "balmz_contract": BALMZ_BNB_CONTRACT},
+        "sepolia": {"chain_id": 11155111, "rpc": SEPOLIA_RPC_URL, "balmz_contract": BALMZ_SEPOLIA_CONTRACT},
+    }
+
+    scanned_networks = []
+    for network in requested_networks:
+        config = network_config[network]
+        network_addresses = [item for item in attached if item["network"] == network]
+        verified_addresses = [item for item in network_addresses if item["ownership_verified"]][:10]
+        address_results = []
+        skipped = [
+            {"address": item["address"], "label": item["label"], "reason": "Wallet address ownership is not signature-verified"}
+            for item in network_addresses if not item["ownership_verified"]
+        ]
+        if len(network_addresses) > 10:
+            skipped.extend(
+                {"address": item["address"], "label": item["label"], "reason": "Per-network scan limit reached; retry after reviewing earlier results"}
+                for item in network_addresses[10:]
+            )
+
+        for item in verified_addresses:
+            owner = item["address"]
+            warnings = []
+            transfers = []
+            approvals = []
+            transfer_has_more = False
+            approval_logs_truncated = False
+            approval_last_block = None
+            try:
+                payload = etherscan_v2_request(
+                    config["chain_id"], "account", "tokentx",
+                    {"address": owner, "page": page, "offset": offset, "sort": "desc"},
+                )
+                raw_transfers = _etherscan_result_list(payload, "ERC-20 transfer history")
+                transfers = [
+                    _format_token_interaction(tx, network, owner, config["balmz_contract"])
+                    for tx in raw_transfers
+                ]
+                transfer_has_more = len(raw_transfers) >= offset
+            except Exception as exc:
+                warnings.append("ERC-20 transfer history unavailable (" + type(exc).__name__ + ")")
+
+            try:
+                owner_topic = "0x" + owner[2:].lower().rjust(64, "0")
+                payload = etherscan_v2_request(
+                    config["chain_id"], "logs", "getLogs",
+                    {
+                        "fromBlock": str(approval_from_block), "toBlock": approval_to_block,
+                        "topic0": ERC20_APPROVAL_TOPIC, "topic1": owner_topic,
+                        "topic0_1_opr": "and",
+                    },
+                )
+                raw_approvals = _etherscan_result_list(payload, "ERC-20 Approval history")
+                for log in raw_approvals:
+                    normalized = _format_approval_interaction(log, network, owner)
+                    if normalized:
+                        approvals.append(normalized)
+                # Etherscan documents a hard 1,000-log response cap for getLogs;
+                # it does not offer reliable page/offset pagination for this endpoint.
+                approval_logs_truncated = len(raw_approvals) >= 1000
+                approval_last_block = max(
+                    (int(str(log.get("blockNumber"))) for log in raw_approvals
+                     if str(log.get("blockNumber") or "").isdigit()),
+                    default=None,
+                )
+            except Exception as exc:
+                warnings.append("ERC-20 Approval history unavailable (" + type(exc).__name__ + ")")
+
+            if approval_logs_truncated:
+                warnings.append("Approval history reached Etherscan's 1,000-log cap for this block range; narrow the block range and rescan.")
+            proxy = _inspect_eip7702_for_network_address(config["rpc"], network, owner) if config["rpc"] else {
+                "rpc_chain_verified": False, "delegated": None, "delegation_target": None,
+                "known_okx_walletcore": False, "note": "Network RPC is not configured; delegation was not checked.",
+            }
+
+            # Historical Approval events do not reveal whether an allowance is still active.
+            # Read the current allowance for the newest distinct token/spender pairs only.
+            current_allowances = []
+            seen_pairs = set()
+            allowance_checks_truncated = False
+            for approval in approvals:
+                pair = (approval["token_contract_address"].lower(), approval["spender_address"].lower())
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                if len(current_allowances) >= 50:
+                    allowance_checks_truncated = True
+                    continue
+                allowance_raw = None
+                if proxy.get("rpc_chain_verified") and config["rpc"]:
+                    try:
+                        allowance_raw = _read_current_erc20_allowance(
+                            config["rpc"], approval["token_contract_address"], owner, approval["spender_address"]
+                        )
+                    except Exception:
+                        allowance_raw = None
+                current_allowances.append({
+                    "token_contract_address": approval["token_contract_address"],
+                    "spender_address": approval["spender_address"],
+                    "current_allowance_raw": allowance_raw,
+                    "status": "verified_zero" if allowance_raw == "0" else (
+                        "verified_nonzero" if allowance_raw is not None else "not_verified"
+                    ),
+                })
+
+            allowance_lookup = {
+                (entry["token_contract_address"].lower(), entry["spender_address"].lower()): entry
+                for entry in current_allowances
+            }
+            for approval in approvals:
+                current = allowance_lookup.get((approval["token_contract_address"].lower(), approval["spender_address"].lower()))
+                approval["current_allowance_raw"] = current["current_allowance_raw"] if current else None
+                approval["current_allowance_status"] = current["status"] if current else "not_checked"
+
+            address_results.append({
+                "address": owner,
+                "label": item["label"],
+                "ownership_verified": True,
+                "delegation": proxy,
+                "token_transfers": transfers,
+                "approvals": approvals,
+                "current_allowance_checks": current_allowances,
+                "allowance_checks_truncated": allowance_checks_truncated,
+                "pagination": {
+                    "page": page, "page_size": offset,
+                    "token_transfers_has_more": transfer_has_more,
+                    "approval_from_block": approval_from_block,
+                    "approval_to_block": approval_to_block,
+                    "approval_logs_truncated": approval_logs_truncated,
+                    "approval_last_block": approval_last_block,
+                    "has_more": transfer_has_more,
+                },
+                "warnings": warnings,
+            })
+
+        scanned_networks.append({
+            "network": network,
+            "chain_id": config["chain_id"],
+            "address_count": len(verified_addresses),
+            "skipped_addresses": skipped,
+            "addresses": address_results,
+            "status": "scanned" if address_results else ("ownership_verification_required" if skipped else "no_attached_address"),
+        })
+
+    return {
+        "scope": "Authenticated active wallet; signature-verified EVM addresses only",
+        "read_only": True,
+        "secrets_exposed": False,
+        "page": page,
+        "page_size": offset,
+        "networks": scanned_networks,
+        "provider_limits": {
+            "token_transfers": "Etherscan account/tokentx may return only the last 10,000 records for an address; page through available results and use an independent indexer for older completeness guarantees.",
+            "approval_logs": "Etherscan logs/getLogs returns at most 1,000 matching logs per query; narrow the block range and rescan when the cap is reached.",
+        },
+        "claim_readiness": {
+            "claim_execution_enabled": False,
+            "claimable_balmz_amount": None,
+            "status": "not_established",
+            "reason": "Token transfers and ERC-20 approvals are not proof of an unclaimed BALMZ allocation. No verified network-specific BALMZ claim contract, allocation registry, issuer authorization, and replay-protected batch-claim interface are configured for this wallet.",
+            "next_requirement": "Verify the canonical BALMZ claim contract and allocation records on each network before enabling a wallet-signed claim.",
+        },
+        "warning": "EIP-7702 delegation, ERC-20 allowances, and BALMZ claim eligibility are separate checks. No transaction was signed, broadcast, or credited.",
+    }
+
+
 @app.get("/api/v1/auth/me")
 def auth_me(user: dict = Depends(current_user)):
     return {"user":user,"mode":"neon_auth" if NEON_JWKS_CLIENT else "database"}
+
+
+
+
+def _decode_eip7702_designator(code: str):
+    """Return the delegated implementation from an EIP-7702 designator, if present."""
+    value = str(code or "").lower()
+    if re.fullmatch(r"0xef0100[0-9a-f]{40}", value):
+        return "0x" + value[8:]
+    return None
+
+
+def _decode_okx_storage_proxy(code: str):
+    """Decode the 77-byte OKX-style minimal proxy only when its full byte pattern matches."""
+    value = str(code or "").lower()
+    prefix = "0x363d3d373d3d3d363d73"
+    middle = "5af43d82803e903d91602b57fd5bf3"
+    owner_prefix = "000000000000000000000000"
+    if len(value) != 2 + 77 * 2 or not value.startswith(prefix):
+        return None
+    implementation = "0x" + value[len(prefix):len(prefix) + 40]
+    expected = prefix + implementation[2:] + middle + owner_prefix
+    if not value.startswith(expected) or len(value) != len(expected) + 40:
+        return None
+    return {"implementation": implementation, "embedded_owner": "0x" + value[-40:]}
+
+
+@app.get("/api/v1/wallet/erc7702-inspection")
+def wallet_erc7702_inspection(user: dict = Depends(current_user)):
+    """Read-only Ethereum Mainnet inspection of the active wallet's EIP-7702 delegation."""
+    owner = wallet_network_address(user, "ethereum")
+    if not owner or not re.fullmatch(r"0x[a-fA-F0-9]{40}", str(owner)):
+        raise HTTPException(status_code=404, detail="No valid Ethereum Mainnet address is attached to the active wallet")
+    if not ETH_RPC_URL:
+        raise HTTPException(status_code=503, detail="Ethereum Mainnet RPC is not configured")
+    try:
+        chain_id = require_ethereum_mainnet_rpc(ETH_RPC_URL)
+        owner_code = rpc_call(ETH_RPC_URL, "eth_getCode", [owner, "latest"])
+        delegation_target = _decode_eip7702_designator(owner_code)
+    except Exception as exc:
+        logger.warning("ERC-7702 inspection failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Ethereum Mainnet RPC could not complete the read-only wallet inspection")
+
+    if not delegation_target:
+        return {
+            "network": "ethereum", "chain_id": chain_id, "owner_address": owner,
+            "delegated": False, "delegation_target": None,
+            "delegation_target_code_bytes": None, "known_okx_walletcore": False,
+            "storage": {"status": "not_checked", "address": None, "proxy": None},
+            "inspection": "Wallet has no EIP-7702 delegation designator at the latest block.",
+        }
+
+    known_walletcore = {"0x80296ff8d1ed46f8e3c7992664d13b833504c2bb"}
+    known_storage_implementations = {"0x7daf91dfe55fcab363416a6e3bceb3da34ff1d30"}
+    try:
+        target_code = rpc_call(ETH_RPC_URL, "eth_getCode", [delegation_target, "latest"])
+        target_code_bytes = max(0, (len(target_code or "0x") - 2) // 2)
+    except Exception:
+        target_code_bytes = None
+
+    storage = {"status": "unavailable", "address": None, "proxy": None}
+    selector_hash = keccak.new(digest_bits=256)
+    selector_hash.update(b"getMainStorage()")
+    selector = "0x" + selector_hash.digest()[:4].hex()
+    try:
+        storage_result = rpc_call(ETH_RPC_URL, "eth_call", [{"to": owner, "data": selector}, "latest"])
+        if isinstance(storage_result, str) and re.fullmatch(r"0x[0-9a-fA-F]{64}", storage_result):
+            storage_address = "0x" + storage_result[-40:]
+            if int(storage_address[2:], 16) == 0:
+                storage = {"status": "zero_address", "address": None, "proxy": None}
+            else:
+                storage_code = rpc_call(ETH_RPC_URL, "eth_getCode", [storage_address, "latest"])
+                proxy = _decode_okx_storage_proxy(storage_code)
+                if storage_code == "0x":
+                    storage_status = "no_code"
+                elif proxy:
+                    storage_status = "proxy_detected"
+                else:
+                    storage_status = "contract_detected_unclassified"
+                storage = {
+                    "status": storage_status, "address": storage_address,
+                    "code_bytes": max(0, (len(storage_code) - 2) // 2), "proxy": proxy,
+                    "implementation_known_okx": bool(proxy and proxy["implementation"].lower() in known_storage_implementations),
+                    "embedded_owner_matches": bool(proxy and proxy["embedded_owner"].lower() == owner.lower()),
+                }
+        else:
+            storage = {"status": "unexpected_return_data", "address": None, "proxy": None}
+    except Exception as exc:
+        storage = {"status": "call_unavailable", "address": None, "proxy": None, "reason": type(exc).__name__}
+
+    return {
+        "network": "ethereum", "chain_id": chain_id, "owner_address": owner,
+        "delegated": True, "delegation_target": delegation_target,
+        "delegation_target_code_bytes": target_code_bytes,
+        "known_okx_walletcore": delegation_target.lower() in known_walletcore,
+        "storage": storage,
+        "inspection": "Read-only chain inspection. A recognized implementation address does not prove who authorized the delegation or establish wallet security.",
+    }
 
 
 @app.get("/api/v1/wallet")
@@ -1695,6 +2654,65 @@ def wallet_addresses(user: dict = Depends(current_user)):
     return {"addresses": addresses, "configured": bool(addresses), "message": None if addresses else "No production wallet address is configured yet"}
 
 
+@app.get("/api/v1/wallet/nfts")
+def wallet_nfts(network: str = "ethereum", user: dict = Depends(current_user)):
+    """Read the active wallet's NFTs using Alchemy; never fabricates empty holdings."""
+    normalized_network = str(network or "").strip().lower()
+    hosts = {"ethereum": "eth-mainnet", "bnb": "bnb-mainnet"}
+    if normalized_network not in hosts:
+        raise HTTPException(status_code=400, detail="NFT lookup currently supports Ethereum and BNB Chain mainnet only")
+    owner_address = wallet_network_address(user, normalized_network)
+    if not owner_address:
+        raise HTTPException(status_code=404, detail=f"No {normalized_network} public address is attached to the active wallet")
+    if not ALCHEMY_API_KEY:
+        raise HTTPException(status_code=503, detail="NFT indexing is not configured. Set ALCHEMY_API_KEY on the backend.")
+    url = f"https://{hosts[normalized_network]}.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getNFTsForOwner"
+    try:
+        response = httpx.get(url, params={"owner": owner_address, "withMetadata": "true", "pageSize": 100}, timeout=12)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="NFT provider timed out. Retry the read-only lookup.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="NFT provider could not be reached.") from exc
+    if response.status_code in (401, 403):
+        raise HTTPException(status_code=503, detail="The configured NFT provider key is invalid or lacks NFT API access.")
+    if response.status_code == 429:
+        raise HTTPException(status_code=503, detail="NFT provider rate limit reached. Retry later.")
+    if response.is_error:
+        raise HTTPException(status_code=502, detail=f"NFT provider returned HTTP {response.status_code}.")
+    try:
+        payload = response.json()
+        source_items = payload.get("ownedNfts", []) if isinstance(payload, dict) else []
+        nfts = []
+        for item in source_items if isinstance(source_items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            contract = item.get("contract") if isinstance(item.get("contract"), dict) else {}
+            image = item.get("image") if isinstance(item.get("image"), dict) else {}
+            image_url = image.get("cachedUrl") or image.get("thumbnailUrl") or image.get("originalUrl") or ""
+            if not str(image_url).startswith("https://"):
+                image_url = ""
+            nfts.append({
+                "name": str(item.get("name") or item.get("title") or "Unnamed NFT")[:160],
+                "description": str(item.get("description") or "")[:500],
+                "token_id": str(item.get("tokenId") or ""),
+                "contract_address": str(contract.get("address") or ""),
+                "collection": str(contract.get("name") or contract.get("symbol") or "")[:160],
+                "image_url": image_url,
+                "token_type": str(item.get("tokenType") or ""),
+            })
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise HTTPException(status_code=502, detail="NFT provider returned an invalid collection response.") from exc
+    return {
+        "network": normalized_network,
+        "owner_address": owner_address,
+        "source": "Alchemy NFT API",
+        "nft_count": len(nfts),
+        "nfts": nfts,
+        "has_more": bool(payload.get("pageKey")) if isinstance(payload, dict) else False,
+        "notice": "Read-only collection data. Images and metadata are supplied by the NFT provider and may be incomplete.",
+    }
+
+
 def _chain_heights():
     heights = {}
     try:
@@ -1705,6 +2723,12 @@ def _chain_heights():
     for network, url in (("ethereum", ETH_RPC_URL), ("bnb", BSC_RPC_URL), ("sepolia", SEPOLIA_RPC_URL)):
         if url:
             try:
+                if network == "ethereum":
+                    require_ethereum_mainnet_rpc(url)
+                elif network == "bnb":
+                    require_bnb_rpc(url)
+                elif network == "sepolia":
+                    require_sepolia_rpc(url)
                 heights[network] = _hex_int(rpc_call(url, "eth_blockNumber", []))
             except Exception:
                 heights[network] = None
@@ -1758,108 +2782,175 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
-    return "USDT-BNB" if network == "bnb" and symbol == "USDT" else symbol
+    if network == "bnb" and symbol in {"USDT", "USDC"}:
+        return f"{symbol}-BNB"
+    if network == "sepolia" and symbol == "BALMZ":
+        return "BALMZ-SEP"
+    return symbol
 
 
-@app.post("/api/v1/wallet/sync")
-def sync_wallet(user: dict = Depends(current_user)):
+def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     sepolia_address = wallet_network_address(user, "sepolia")
+    solana_mainnet_address = wallet_network_address(user, "solana_mainnet")
     solana_address = wallet_network_address(user, "solana_devnet")
-    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_address:
+    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_mainnet_address and not solana_address:
         raise HTTPException(status_code=503, detail="No wallet address is configured")
+
     updates = []
     warnings = []
-    with db() as conn:
-        if btc_address:
-            try:
-                btc = btc_balance(btc_address)
-                if btc is not None:
-                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (btc,user["wallet_id"]))
-                    updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
-            except Exception:
-                warnings.append("Bitcoin balance service unavailable")
-        if solana_address and SOLANA_DEVNET_RPC_URL:
-            try:
-                raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
-                sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='SOL'", (sol_balance,user["wallet_id"]))
-                updates.append({"network":"solana_devnet","asset":"SOL","balance":sol_balance})
-            except Exception:
-                warnings.append("Solana Devnet balance service unavailable")
-        elif solana_address:
-            warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
-        if ETH_RPC_URL and eth_address:
-            try:
-                require_ethereum_mainnet_rpc(ETH_RPC_URL)
-                eth = evm_balance(ETH_RPC_URL, eth_address)
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='ETH'", (eth,user["wallet_id"]))
-                updates.append({"network":"ethereum","asset":"ETH","balance":eth})
-            except Exception:
-                warnings.append("Ethereum balance service unavailable")
-        if BSC_RPC_URL and bnb_address:
-            try:
-                bnb = evm_balance(BSC_RPC_URL, bnb_address)
-                conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BNB'", (bnb,user["wallet_id"]))
-                updates.append({"network":"bnb","asset":"BNB","balance":bnb})
-            except Exception:
-                warnings.append("BNB Chain balance service unavailable")
+    asset_upserts = []
+    asset_balance_updates = []
 
+    # Read registry metadata and release the database connection before any RPC
+    # call. Public blockchain providers can take seconds or time out entirely.
+    with db() as conn:
         token_rows = conn.execute(
             "SELECT symbol,name,network,contract_address,decimals,status "
             "FROM token_registry WHERE contract_address IS NOT NULL "
             "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
         ).fetchall()
-        for symbol, name, network, contract, decimals, status in token_rows:
-            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
-            token_address = eth_address if network == "ethereum" else bnb_address if network == "bnb" else wallet_network_address(user, "sepolia") if network == "sepolia" else None
-            if not rpc_url or not token_address:
+
+    if solana_mainnet_address:
+        try:
+            require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+            raw_sol = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [solana_mainnet_address, {"commitment": "confirmed"}])
+            sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+            asset_upserts.append(("SOL", "Solana (Mainnet)", sol_balance))
+            updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance})
+        except Exception:
+            warnings.append("Solana Mainnet balance service unavailable")
+
+    if btc_address:
+        try:
+            btc = btc_balance(btc_address)
+            if btc is not None:
+                asset_balance_updates.append((btc, "BTC"))
+                updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
+        except Exception:
+            warnings.append("Bitcoin balance service unavailable")
+
+    if solana_address and SOLANA_DEVNET_RPC_URL:
+        try:
+            require_solana_rpc_cluster(SOLANA_DEVNET_RPC_URL, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
+            raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
+            sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+            asset_upserts.append(("SOL-DEVNET", "Solana Devnet SOL", sol_balance))
+            # Devnet SOL is stored separately and never clears or overwrites Mainnet SOL.
+            updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
+        except Exception:
+            warnings.append("Solana Devnet balance service unavailable")
+    elif solana_address:
+        warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
+
+    if solana_address:
+        try:
+            balmz_balance = solana_spl_token_balance(solana_address)
+            asset_upserts.append(("BALMZ-SOL-DEVNET", "BALMZ Token (Solana Devnet)", balmz_balance))
+            updates.append({
+                "network": "solana-devnet",
+                "asset": "BALMZ-SOL-DEVNET",
+                "balance": balmz_balance,
+                "contract_address": BALMZ_SOLANA_DEVNET_MINT,
+                "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+            })
+        except Exception:
+            warnings.append("BALMZ Solana Devnet token balance service unavailable")
+
+    if ETH_RPC_URL and eth_address:
+        try:
+            require_ethereum_mainnet_rpc(ETH_RPC_URL)
+            eth = evm_balance(ETH_RPC_URL, eth_address)
+            asset_balance_updates.append((eth, "ETH"))
+            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+        except Exception:
+            warnings.append("Ethereum balance service unavailable")
+
+    if BSC_RPC_URL and bnb_address:
+        try:
+            require_bnb_rpc(BSC_RPC_URL)
+            bnb = evm_balance(BSC_RPC_URL, bnb_address)
+            asset_balance_updates.append((bnb, "BNB"))
+            updates.append({"network":"bnb","asset":"BNB","balance":bnb})
+        except Exception as exc:
+            logger.warning("BNB Chain balance synchronization failed: error_type=%s", type(exc).__name__)
+            warnings.append("BNB Chain balance service unavailable")
+
+    # Token decimals and balances are resolved from the verified chain outside
+    # the database lease. In particular, BNB decimals are never taken from the
+    # potentially stale token_registry value.
+    for symbol, name, network, contract, decimals, status in token_rows:
+        rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
+        token_address = eth_address if network == "ethereum" else bnb_address if network == "bnb" else sepolia_address if network == "sepolia" else None
+        if not rpc_url or not token_address:
+            continue
+        try:
+            resolved_decimals = int(decimals)
+            if network == "sepolia":
+                require_sepolia_rpc(rpc_url)
+            elif network == "bnb":
+                require_bnb_rpc(rpc_url)
+                resolved_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
+            balance = erc20_balance(rpc_url, contract, token_address, resolved_decimals)
+            if balance is None:
                 continue
-            try:
-                if network == "sepolia":
-                    require_sepolia_rpc(rpc_url)
-                balance = erc20_balance(rpc_url, contract, token_address, int(decimals))
-                if balance is None:
-                    continue
-                # Asset balances are keyed by symbol, so never combine the same
-                # token symbol across chains. Keep Ethereum USDT as USDT and
-                # represent BNB Chain USDT separately.
-                asset_symbol = wallet_asset_symbol(symbol, network)
-                asset_name = f"{name} (BNB Chain)" if asset_symbol == "USDT-BNB" else name
+            asset_symbol = wallet_asset_symbol(symbol, network)
+            asset_name = f"{name} (BNB Chain)" if asset_symbol.endswith("-BNB") else name
+            asset_upserts.append((asset_symbol, asset_name, balance))
+            updates.append({
+                "network":network,
+                "asset":asset_symbol,
+                "balance":balance,
+                "contract_address":contract,
+                "decimals":resolved_decimals,
+            })
+        except Exception:
+            warnings.append(f"{network} {symbol} token balance service unavailable")
+
+    # Apply only the successfully observed chain values in a short transaction.
+    # No HTTP/RPC requests are permitted while this connection is held.
+    if asset_upserts or asset_balance_updates:
+        with db() as conn:
+            for symbol, name, balance in asset_upserts:
                 conn.execute(
                     "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
                     "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
-                    (user["wallet_id"],asset_symbol,asset_name,balance),
+                    (user["wallet_id"], symbol, name, balance),
                 )
-                updates.append({"network":network,"asset":asset_symbol,"balance":balance,
-                                "contract_address":contract,"decimals":int(decimals)})
-            except Exception:
-                warnings.append(f"{network} {symbol} token balance service unavailable")
-        conn.commit()
-    imported_transactions = sync_bitcoin_transactions(user, btc_address)
+            for balance, symbol in asset_balance_updates:
+                conn.execute(
+                    "UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s",
+                    (balance, user["wallet_id"], symbol),
+                )
+            conn.commit()
+
+    imported_transactions = []
     evm_transactions = []
-    evm_warnings = []
-    for rpc_url, network, contract, token_symbol, network_address in (
-        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
-        (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
-    ):
-        if rpc_url and network_address:
-            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
-            evm_transactions.extend(native_imported)
-            if native_warning:
-                evm_warnings.append(native_warning)
-            if contract:
-                imported, warning = sync_evm_token_transactions(
-                    user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
-                    decimals=18 if network == "sepolia" else 6,
-                )
-                evm_transactions.extend(imported)
-                if warning:
-                    evm_warnings.append(warning)
-    warnings.extend(evm_warnings)
+    if include_transactions:
+        imported_transactions = sync_bitcoin_transactions(user, btc_address)
+        evm_warnings = []
+        for rpc_url, network, contract, token_symbol, network_address in (
+            (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
+            (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
+            (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
+        ):
+            if rpc_url and network_address:
+                native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
+                evm_transactions.extend(native_imported)
+                if native_warning:
+                    evm_warnings.append(native_warning)
+                if contract:
+                    token_imported, warning = sync_evm_token_transactions(
+                        user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                        decimals=18 if network == "sepolia" else 6,
+                    )
+                    evm_transactions.extend(token_imported)
+                    if warning:
+                        evm_warnings.append(warning)
+        warnings.extend(evm_warnings)
+
     assets, all_transactions, summary = wallet_snapshot(user)
     if btc_address and not imported_transactions:
         # An empty result can be a legitimate zero-transaction wallet; do not label it
@@ -1867,10 +2958,27 @@ def sync_wallet(user: dict = Depends(current_user)):
         pass
     # A configured address is not proof that history synced successfully. Only publish a
     # success timestamp when every configured transaction source completed without warnings.
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
-    return {"status":"synced_with_warnings" if warnings else "synced","wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},"assets":assets,"updates":updates,"warnings":warnings,"bitcoin_transactions":imported_transactions,"evm_transactions":evm_transactions,"transactions":all_transactions,"network_status":network_status,"last_balance_sync_at":last_balance_sync_at,"last_transaction_sync_at":last_transaction_sync_at}
+    return {
+        "status":"synced_with_warnings" if warnings else "synced",
+        "wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]},
+        "assets":assets,
+        "updates":updates,
+        "warnings":warnings,
+        "bitcoin_transactions":imported_transactions,
+        "evm_transactions":evm_transactions,
+        "transactions":all_transactions,
+        "network_status":network_status,
+        "last_balance_sync_at":last_balance_sync_at,
+        "last_transaction_sync_at":last_transaction_sync_at,
+    }
+
+@app.post("/api/v1/wallet/sync")
+def sync_wallet(user: dict = Depends(current_user)):
+    # Keep the public sync endpoint's existing behavior: balances plus transaction history.
+    return _sync_wallet_impl(user, include_transactions=True)
 
 
 # Process-local cache of verified provider responses. Cache entries expire after 15 minutes;
@@ -1902,7 +3010,7 @@ def _coinbase_spot_price_fallback():
             return symbol, None
         return symbol, {"usd": value, "usd_24h_change": None, "listed": True}
 
-    with ThreadPoolExecutor(max_workers=10) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         futures = {pool.submit(fetch, symbol, product): symbol for symbol, product in pairs.items()}
         for future in as_completed(futures):
             symbol = futures[future]
@@ -1932,66 +3040,269 @@ def _coinbase_spot_price_fallback():
     }
 
 
+def _verify_balmz_solana_mainnet_mint(mint_address: str | None) -> dict:
+    """Verify token identity and observed supply on Solana Mainnet without signing or moving funds."""
+    result = {
+        "production_mint_verified": False,
+        "supply_matches_target": False,
+        "mint_authority_revoked": False,
+        "freeze_authority_revoked": False,
+        "observed_supply": None,
+        "warnings": [],
+    }
+    if not mint_address:
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified because it is not configured.")
+        return result
+    if not valid_solana_address(mint_address):
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified because its address format is invalid.")
+        return result
+
+    try:
+        require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        account_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getAccountInfo",
+            [mint_address, {"encoding": "jsonParsed", "commitment": "finalized"}],
+        )
+        account = account_response.get("value") if isinstance(account_response, dict) else None
+        if not isinstance(account, dict):
+            result["warnings"].append("Production BALMZ-SOL mint could not be verified because the account was not found on Solana Mainnet.")
+            return result
+
+        data = account.get("data", {})
+        parsed = data.get("parsed", {}) if isinstance(data, dict) else {}
+        info = parsed.get("info", {}) if isinstance(parsed, dict) else {}
+        valid_spl_mint = (
+            account.get("owner") == SOLANA_SPL_TOKEN_PROGRAM_ID
+            and isinstance(parsed, dict)
+            and parsed.get("type") == "mint"
+            and isinstance(info, dict)
+            and info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS
+        )
+        if not valid_spl_mint:
+            result["warnings"].append("Production BALMZ-SOL mint could not be verified as a 9-decimal SPL Token mint on Solana Mainnet.")
+            return result
+
+        # This boolean confirms the address, program, and network. Supply and authorities
+        # remain separate readiness checks so the UI can explain exactly what still fails.
+        result["production_mint_verified"] = True
+        result["mint_authority_revoked"] = info.get("mintAuthority") is None
+        result["freeze_authority_revoked"] = info.get("freezeAuthority") is None
+
+        supply_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getTokenSupply",
+            [mint_address, {"commitment": "finalized"}],
+        )
+        supply_info = supply_response.get("value", {}) if isinstance(supply_response, dict) else {}
+        raw_amount = supply_info.get("amount")
+        if isinstance(raw_amount, str) and raw_amount.isdigit() and supply_info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS:
+            observed = Decimal(raw_amount) / (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
+            result["observed_supply"] = int(observed) if observed == observed.to_integral_value() else float(observed)
+            result["supply_matches_target"] = raw_amount == str(BALMZ_TARGET_SUPPLY * (10 ** BALMZ_SOLANA_DEVNET_DECIMALS))
+
+        if not result["supply_matches_target"]:
+            result["warnings"].append("Observed Mainnet token supply does not match the 1,000,000,000-token target.")
+        if not result["mint_authority_revoked"]:
+            result["warnings"].append("The production mint authority is still enabled; fixed supply is not enforced.")
+        if not result["freeze_authority_revoked"]:
+            result["warnings"].append("The production freeze authority is still enabled; review this control before launch.")
+    except Exception as exc:
+        logger.warning("BALMZ Mainnet mint verification unavailable: error_type=%s", type(exc).__name__)
+        result["warnings"].append("Production BALMZ-SOL mint could not be verified on Solana Mainnet.")
+    return result
+
+
+def _verify_balmz_presale_receiver(address: str | None) -> dict:
+    """Read-only check of the configured treasury address on Solana Mainnet."""
+    result = {
+        "address_format_valid": bool(address and valid_solana_address(address)),
+        "mainnet_rpc_verified": False,
+        "account_exists": False,
+        "balance_sol": None,
+        "has_positive_sol_balance": False,
+        "warnings": [],
+    }
+    if not address:
+        result["warnings"].append("No presale receiving address is configured.")
+        return result
+    if not result["address_format_valid"]:
+        result["warnings"].append("The configured presale receiving address has an invalid Solana public-key format.")
+        return result
+
+    try:
+        require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        balance_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getBalance",
+            [address, {"commitment": "finalized"}],
+        )
+        lamports = balance_response.get("value") if isinstance(balance_response, dict) else None
+        if not isinstance(lamports, int) or isinstance(lamports, bool) or lamports < 0:
+            raise ValueError("Solana Mainnet returned an invalid treasury balance")
+        result["mainnet_rpc_verified"] = True
+        result["balance_sol"] = float(Decimal(lamports) / Decimal(1_000_000_000))
+        result["has_positive_sol_balance"] = lamports > 0
+
+        account_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getAccountInfo",
+            [address, {"encoding": "base64", "commitment": "finalized"}],
+        )
+        account = account_response.get("value") if isinstance(account_response, dict) else None
+        result["account_exists"] = isinstance(account, dict)
+        if not result["account_exists"]:
+            result["warnings"].append("The configured receiving address has no on-chain account at the time of this check.")
+        if not result["has_positive_sol_balance"]:
+            result["warnings"].append("The configured receiving address has no positive SOL balance; verify the intended treasury address before using it.")
+    except Exception as exc:
+        logger.warning("BALMZ Mainnet treasury check unavailable: error_type=%s", type(exc).__name__)
+        result["warnings"].append("The presale receiving address balance could not be verified against Solana Mainnet.")
+    return result
+
+
+@app.get("/api/v1/balmz/presale/status")
+def balmz_presale_status(user: dict = Depends(current_user)):
+    """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
+    configured_mint = BALMZ_SOLANA_MAINNET_MINT if valid_solana_address(BALMZ_SOLANA_MAINNET_MINT) else None
+    receiver_status = _verify_balmz_presale_receiver(BALMZ_PRESALE_RECEIVING_ADDRESS)
+    recipient_is_valid = receiver_status["address_format_valid"]
+    mint_status = _verify_balmz_solana_mainnet_mint(configured_mint)
+    readiness = {
+        "production_mint_verified": mint_status["production_mint_verified"],
+        "supply_matches_target": mint_status["supply_matches_target"],
+        "mint_authority_revoked": mint_status["mint_authority_revoked"],
+        "freeze_authority_revoked": mint_status["freeze_authority_revoked"],
+        "receiving_address_configured": recipient_is_valid,
+        "receiving_address_mainnet_verified": receiver_status["mainnet_rpc_verified"],
+        "receiving_address_account_exists": receiver_status["account_exists"],
+        "receiving_address_has_positive_sol_balance": receiver_status["has_positive_sol_balance"],
+        # Intentionally false: an authenticated, replay-protected settlement endpoint is not implemented.
+        "payment_verification_implemented": False,
+        # A token price target alone is not a liquidity or market-making mechanism.
+        "liquidity_mechanism_configured": False,
+        # CI status is not inferred from runtime settings.
+        "regression_suite_verified": False,
+    }
+    warnings = list(mint_status["warnings"]) + list(receiver_status["warnings"])
+    if recipient_is_valid:
+        warnings.append("On-chain balance checks do not prove that the founder controls the receiving wallet; verify ownership before accepting funds.")
+    warnings.extend([
+        "Presale payment acceptance remains disabled; confirmed, replay-protected settlement is not implemented.",
+        "The launch target of 1 BALMZ-SOL = 1 SOL is not a guaranteed market price and needs a disclosed liquidity mechanism.",
+        "Complete production readiness checks and regression tests before opening the presale.",
+    ])
+    return {
+        "token": "BALMZ-SOL",
+        "project": "World Wallet AI",
+        "stage": "planning",
+        "presale_price_usd": float(BALMZ_PRESALE_PRICE_USD),
+        "presale_price_unit": "USD per token",
+        "target_supply": BALMZ_TARGET_SUPPLY,
+        "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+        "launch_target": "1 BALMZ-SOL = 1 SOL",
+        "launch_price_guaranteed": False,
+        "payment_acceptance_enabled": False,
+        "production_network": "solana_mainnet",
+        "production_mint": configured_mint,
+        "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
+        "devnet_mint_is_test_only": True,
+        "recipient_address_configured": recipient_is_valid,
+        "receiving_address_configured": recipient_is_valid,
+        "presale_receiving_address": BALMZ_PRESALE_RECEIVING_ADDRESS if recipient_is_valid else None,
+        "presale_receiving_address_mainnet_verified": receiver_status["mainnet_rpc_verified"],
+        "presale_receiving_address_account_exists": receiver_status["account_exists"],
+        "presale_receiving_balance_sol": receiver_status["balance_sol"],
+        "presale_receiving_address_has_positive_sol_balance": receiver_status["has_positive_sol_balance"],
+        "observed_supply": mint_status["observed_supply"],
+        "readiness": readiness,
+        "warnings": list(dict.fromkeys(warnings)),
+        "transaction_scope": {
+            "presale_payments": "disabled until production mint, receiving address, and replay-protected payment verification are verified",
+            "mainnet_transactions": "must be confirmed at finalized commitment on the Solana Mainnet genesis hash",
+            "devnet_transactions": "testing evidence only; excluded from production balances, presale settlement, and reserves",
+            "proof_of_reserves": "must use independently verified production on-chain balances; transaction history is not proof of reserves",
+        },
+        "notice": "Planning only. Do not send funds. Presale payments are disabled; this endpoint only reports readiness and never accepts, moves, or settles funds.",
+    }
+
+
+# Serialize cache misses: concurrent dashboard panels share one provider refresh
+# rather than each spawning a separate provider request burst.
+_MARKET_PRICE_REFRESH_LOCK = Lock()
+
+
 @app.get("/api/v1/prices/market")
 def market_prices():
     """Public market quotes for the wallet's supported coin catalog."""
     global _MARKET_PRICE_CACHE
-    coin_ids = {
-        "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
-        "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
-        "LTC":"litecoin","DOGE":"dogecoin",
-    }
-    try:
-        response = httpx.get(
-            f"{_active_coingecko_config()[1]}/simple/price",
-            params={
-                "ids": ",".join(coin_ids.values()),
-                "vs_currencies": "usd",
-                "include_24hr_change": "true",
-            },
-            headers=coingecko_headers(),
-            timeout=8,
-        )
-        response.raise_for_status()
-        raw = response.json()
-    except Exception as exc:
-        # Log only provider/status metadata, never request headers or API keys.
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        logger.warning("CoinGecko market-price request failed: error_type=%s status=%s",
-                       type(exc).__name__, status)
-        # Prefer a recent successful quote, then try an independent spot-price provider.
-        fallback = _MARKET_PRICE_CACHE.stale_response()
-        if fallback is not None:
-            logger.info("Serving cached market quotes: age_seconds=%s", fallback.get("cache_age_seconds"))
-            return fallback
-        backup = _coinbase_spot_price_fallback()
-        if backup is not None:
-            _MARKET_PRICE_CACHE.store(backup)
-            logger.warning("Serving fresh spot quotes from Coinbase fallback; 24h changes are unavailable")
-            return backup
-        raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
-
-    prices = {}
-    for symbol, coin_id in coin_ids.items():
-        quote = raw.get(coin_id, {})
-        usd = quote.get("usd")
-        prices[symbol] = {
-            "usd": float(usd) if usd is not None else None,
-            "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
-            "listed": usd is not None,
+    cached = _MARKET_PRICE_CACHE.fresh_response(max_age_seconds=60)
+    if cached is not None:
+        return cached
+    with _MARKET_PRICE_REFRESH_LOCK:
+        # Re-check after acquiring the lock because another request may have
+        # populated the cache while this request waited.
+        cached = _MARKET_PRICE_CACHE.fresh_response(max_age_seconds=60)
+        if cached is not None:
+            return cached
+        coin_ids = {
+            "BTC":"bitcoin","USDT":"tether","USDT-BNB":"tether","ETH":"ethereum","BNB":"binancecoin",
+            "USDC":"usd-coin","SOL":"solana","XRP":"ripple","ADA":"cardano",
+            "LTC":"litecoin","DOGE":"dogecoin",
         }
-    # BALMZ has no verified market quote yet. Never invent a price.
-    prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False, "eth_reference_usd": prices.get("ETH", {}).get("usd")}
-    prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
-    payload = {
-        "source": "CoinGecko",
-        "updated_at": datetime.now(timezone.utc).isoformat(),
-        "prices": prices,
-        "stale": False,
-        "cache_age_seconds": 0,
-    }
-    _MARKET_PRICE_CACHE.store(payload)
-    return payload
+        try:
+            api_key, base_url = _active_coingecko_config()
+            response = httpx.get(
+                f"{base_url}/simple/price",
+                params={
+                    "ids": ",".join(coin_ids.values()),
+                    "vs_currencies": "usd",
+                    "include_24hr_change": "true",
+                },
+                headers=coingecko_headers(api_key, base_url),
+                timeout=httpx.Timeout(8.0, connect=3.0),
+            )
+            response.raise_for_status()
+            raw = response.json()
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            logger.warning("CoinGecko market-price request failed: error_type=%s status=%s",
+                           type(exc).__name__, status)
+            fallback = _MARKET_PRICE_CACHE.stale_response()
+            if fallback is not None:
+                logger.info("Serving cached market quotes: age_seconds=%s", fallback.get("cache_age_seconds"))
+                return fallback
+            backup = _coinbase_spot_price_fallback()
+            if backup is not None:
+                _MARKET_PRICE_CACHE.store(backup)
+                logger.warning("Serving fresh spot quotes from Coinbase fallback; 24h changes are unavailable")
+                return backup
+            raise HTTPException(status_code=503, detail="Live market price service unavailable") from exc
+
+        prices = {}
+        for symbol, coin_id in coin_ids.items():
+            quote = raw.get(coin_id, {})
+            usd = quote.get("usd")
+            prices[symbol] = {
+                "usd": float(usd) if usd is not None else None,
+                "usd_24h_change": float(quote["usd_24h_change"]) if quote.get("usd_24h_change") is not None else None,
+                "listed": usd is not None,
+            }
+        for alias, source in (("USDT-BNB", "USDT"), ("USDC-BNB", "USDC")):
+            if source in prices:
+                prices[alias] = dict(prices[source])
+        prices["BALMZ"] = {"usd": None, "usd_24h_change": None, "listed": False,
+                           "eth_reference_usd": prices.get("ETH", {}).get("usd")}
+        prices["BALMZ-SEP"] = {"usd": None, "usd_24h_change": None, "listed": False}
+        payload = {
+            "source": "CoinGecko",
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "prices": prices,
+            "stale": False,
+            "cache_age_seconds": 0,
+        }
+        _MARKET_PRICE_CACHE.store(payload)
+        return payload
 
 
 @app.get("/api/v1/prices/history/{symbol}")
@@ -2047,6 +3358,8 @@ def refresh_prices(user: dict = Depends(current_user)):
         # existing internal placeholder, and the frontend labels it Not listed.
         market_prices["BALMZ"] = 0.0
         market_prices["BALMZ-SEP"] = 0.0
+        market_prices["USDT-BNB"] = market_prices["USDT"]
+        market_prices["USDC-BNB"] = market_prices["USDC"]
         for symbol, price in market_prices.items():
             conn.execute("UPDATE assets SET price_usd=%s WHERE wallet_id=%s AND symbol=%s", (price,user["wallet_id"],symbol))
         conn.commit()
@@ -2065,7 +3378,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
     bitcoin_transactions = []
 
     try:
-        sync_result = sync_wallet(user)
+        sync_result = _sync_wallet_impl(user, include_transactions=False)
         updates = sync_result.get("updates", [])
         bitcoin_transactions = sync_result.get("bitcoin_transactions", [])
         sync_error = " • ".join(sync_result.get("warnings", [])) or None
@@ -2074,17 +3387,13 @@ def refresh_wallet(user: dict = Depends(current_user)):
     except Exception:
         sync_error = "Wallet chain synchronization failed"
 
-    # The dashboard's Refresh button must import transactions too, not only
-    # update balances/prices. Keep this independent so one failing source does
-    # not prevent price refresh or return an otherwise useful wallet snapshot.
+    # Keep transaction history verification separate from balance reads so one
+    # failing transaction source does not discard a valid balance snapshot.
     try:
         transaction_result = sync_transactions(user)
         bitcoin_transactions = transaction_result.get("imported", bitcoin_transactions)
         tx_warnings = transaction_result.get("warnings", [])
         transaction_sync_error = " • ".join(tx_warnings) or None
-        # Only publish a successful sync timestamp when every configured source
-        # completed without warnings; otherwise the UI could imply stale history
-        # was freshly verified.
         if transaction_sync_error is None:
             last_transaction_sync_at = datetime.now(timezone.utc).isoformat()
     except HTTPException as exc:
@@ -2092,17 +3401,10 @@ def refresh_wallet(user: dict = Depends(current_user)):
     except Exception:
         transaction_sync_error = "Wallet transaction synchronization failed"
 
-    try:
-        price_result = refresh_prices(user)
-    except HTTPException as exc:
-        price_result = {}
-        price_error = str(exc.detail)
-    except Exception:
-        price_result = {}
-        price_error = "Live market price refresh failed"
-
+    # Market quotes are fetched separately by /api/v1/prices/market. Avoid a
+    # second synchronous provider request here so the wallet response is faster.
     assets_now, transactions_now, summary_now = wallet_snapshot(user)
-    warnings = [x for x in (sync_error, transaction_sync_error, price_error) if x]
+    warnings = [x for x in (sync_error, transaction_sync_error) if x]
     network_status = sync_result.get("network_status") or _network_sync_status(user, warnings, [])
     return {
         "status": "refreshed_with_warnings" if warnings else "refreshed",
@@ -2111,7 +3413,7 @@ def refresh_wallet(user: dict = Depends(current_user)):
         "transactions": transactions_now,
         "updates": updates,
         "bitcoin_transactions": bitcoin_transactions,
-        "price_source": price_result.get("source"),
+        "price_source": None,
         "warnings": warnings,
         "network_status": network_status,
         "last_balance_sync_at": sync_result.get("last_balance_sync_at"),
@@ -2139,16 +3441,343 @@ def system_status(user: dict = Depends(current_user)):
         "transaction_broadcast_mode": "external_wallet_signed_by_client",
     }
 
+
+
+def require_world_wallet_admin(user):
+    """Protect administrative data with the explicitly configured owner identity."""
+    email = str((user or {}).get("email") or "").strip().lower()
+    configured_email = WORLD_WALLET_ADMIN_EMAIL.strip().lower()
+    if not configured_email:
+        raise HTTPException(status_code=503, detail="Set WORLD_WALLET_ADMIN_EMAIL in the backend environment before using the admin console")
+    if email != configured_email:
+        raise HTTPException(status_code=403, detail="This account is not the configured World Wallet AI administrator")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="The admin console requires the production database")
+    return email
+
+
+def record_admin_event(user, action: str, details: str = ""):
+    """Persist a minimal audit record; never store secrets or request payloads."""
+    event_id = "adm_" + secrets.token_urlsafe(18)
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO admin_audit_events(id,actor_user_id,actor_email,action,details) VALUES(%s,%s,%s,%s,%s)",
+            (event_id, user["id"], str(user.get("email") or "").strip().lower(), action[:80], details[:240]),
+        )
+        conn.commit()
+
+
+@app.get("/api/v1/announcement")
+def get_wallet_announcement(user: dict = Depends(current_user)):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT title,body,enabled,updated_at FROM wallet_announcements WHERE id=1"
+        ).fetchone()
+    if not row or not row[2]:
+        return {"announcement": None}
+    return {"announcement": {"title": row[0], "body": row[1], "enabled": bool(row[2]), "updated_at": row[3].isoformat() if row[3] else None}}
+
+
+@app.get("/api/v1/admin/overview")
+def admin_overview(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    with db() as conn:
+        counts = {
+            "users": conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+            "wallets": conn.execute("SELECT COUNT(*) FROM wallets").fetchone()[0],
+            "transactions": conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0],
+            "requests": conn.execute("SELECT COUNT(*) FROM wallet_requests").fetchone()[0],
+            "active_api_keys": conn.execute("SELECT COUNT(*) FROM api_keys WHERE revoked_at IS NULL").fetchone()[0],
+        }
+    record_admin_event(user, "view_admin_overview")
+    return {"counts": counts, "payments_enabled": False, "transaction_signing": "external_wallet_only"}
+
+
+@app.get("/api/v1/admin/users")
+def admin_users(q: str = "", limit: int = 50, offset: int = 0, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    query = str(q or "").strip()[:100]
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    where = ""
+    params = []
+    if query:
+        where = "WHERE lower(u.email) LIKE lower(%s) OR lower(u.name) LIKE lower(%s)"
+        pattern = "%" + query + "%"
+        params.extend([pattern, pattern])
+    with db() as conn:
+        total = conn.execute("SELECT COUNT(*) FROM users u " + where, tuple(params)).fetchone()[0]
+        rows = conn.execute(
+            "SELECT u.id,u.name,u.email,u.created_at,COUNT(w.id) "
+            "FROM users u LEFT JOIN wallets w ON w.owner_id=u.id " + where +
+            " GROUP BY u.id,u.name,u.email,u.created_at ORDER BY u.created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        ).fetchall()
+    record_admin_event(user, "view_admin_users", "count=" + str(len(rows)))
+    return {"users": [
+        {"id": row[0], "name": row[1], "email": row[2], "created_at": row[3].isoformat() if row[3] else None, "wallet_count": int(row[4])}
+        for row in rows
+    ], "total": int(total), "limit": limit, "offset": offset}
+
+
+@app.get("/api/v1/admin/roles")
+def admin_roles(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    record_admin_event(user, "view_admin_role_policy")
+    return {
+        "model": "single_owner_allowlist",
+        "owner_email": WORLD_WALLET_ADMIN_EMAIL.strip().lower(),
+        "assignments_editable": False,
+        "roles": [
+            {"name": "Owner Admin", "source": "WORLD_WALLET_ADMIN_EMAIL", "description": "Only this explicitly configured account can access administrative endpoints."},
+            {"name": "Standard User", "source": "default", "description": "All other authenticated accounts. No elevated permissions are implied."},
+        ],
+        "notice": "Role assignment is intentionally read-only until a persistent, audited RBAC policy is introduced. Do not grant admin access by changing client-side data.",
+    }
+
+
+@app.get("/api/v1/admin/settings")
+def admin_settings(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    checks = [
+        {"key": "World Wallet admin email", "configured": bool(WORLD_WALLET_ADMIN_EMAIL)},
+        {"key": "Alchemy NFT API key", "configured": bool(ALCHEMY_API_KEY)},
+        {"key": "Etherscan API V2 key", "configured": bool(ETHERSCAN_API_KEY)},
+        {"key": "Google Gemini API key", "configured": bool(GEMINI_API_KEY)},
+        {"key": "PostgreSQL database", "configured": bool(DATABASE_URL)},
+        {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
+        {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
+        {"key": "BNB Chain Mainnet RPC", "configured": bool(BSC_RPC_URL)},
+        {"key": "Bitcoin address", "configured": bool(BTC_ADDRESS)},
+        {"key": "Solana Mainnet RPC", "configured": bool(SOLANA_MAINNET_RPC_URL)},
+        {"key": "Solana Devnet RPC", "configured": bool(SOLANA_DEVNET_RPC_URL)},
+        {"key": "CoinGecko server key", "configured": bool(COINGECKO_API_KEY)},
+        {"key": "BALMZ Solana Mainnet mint", "configured": bool(BALMZ_SOLANA_MAINNET_MINT)},
+    ]
+    record_admin_event(user, "view_admin_settings")
+    return {"checks": checks, "payments_enabled": False, "transaction_broadcast": "external_wallet_only", "secrets_exposed": False}
+
+
+@app.post("/api/v1/admin/etherscan-provider/test")
+def admin_test_etherscan_provider(user: dict = Depends(current_user)):
+    """Test the backend Etherscan V2 key on supported EVM networks without exposing it."""
+    require_world_wallet_admin(user)
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="ETHERSCAN_API_KEY is not configured on the backend")
+
+    probe_address = "0x000000000000000000000000000000000000dEaD"
+    results = []
+    for network, chain_id in ETHERSCAN_CHAIN_IDS.items():
+        try:
+            payload = etherscan_v2_request(
+                chain_id, "account", "balance",
+                {"address": probe_address, "tag": "latest"},
+            )
+            ok = str(payload.get("status")) == "1" and str(payload.get("result", "")).isdigit()
+            results.append({
+                "network": network,
+                "chain_id": chain_id,
+                "ok": ok,
+                "message": "Etherscan API V2 responded successfully" if ok else "Etherscan API V2 rejected or could not complete the read-only probe",
+            })
+        except Exception as exc:
+            logger.warning("Etherscan provider probe failed: network=%s error_type=%s", network, type(exc).__name__)
+            results.append({
+                "network": network,
+                "chain_id": chain_id,
+                "ok": False,
+                "message": "Etherscan API V2 request failed; check key permissions, network support, and provider limits",
+            })
+
+    success = bool(results) and all(item["ok"] for item in results)
+    record_admin_event(
+        user,
+        "test_etherscan_v2_provider",
+        "success=" + str(success).lower() + "; networks=" + ",".join(item["network"] for item in results if item["ok"]),
+    )
+    return {
+        "success": success,
+        "key_configured": True,
+        "api_version": "v2",
+        "results": results,
+        "read_only": True,
+        "secrets_exposed": False,
+        "notice": "Read-only balance probes use a fixed public address. No customer wallet, private key, or transaction signing request is involved.",
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.post("/api/v1/admin/nft-provider/test")
+def admin_test_nft_provider(user: dict = Depends(current_user)):
+    """Make read-only owner-lookup probes against Alchemy without exposing its key or wallet data."""
+    require_world_wallet_admin(user)
+    if not ALCHEMY_API_KEY:
+        raise HTTPException(status_code=503, detail="ALCHEMY_API_KEY is not configured on the backend")
+
+    probe_owner = "0x000000000000000000000000000000000000dEaD"
+    results = []
+    for network in ("eth-mainnet", "bnb-mainnet"):
+        url = f"https://{network}.g.alchemy.com/nft/v3/{ALCHEMY_API_KEY}/getNFTsForOwner"
+        try:
+            response = httpx.get(
+                url,
+                params={"owner": probe_owner, "pageSize": 1, "withMetadata": "false"},
+                timeout=12,
+            )
+        except httpx.TimeoutException:
+            results.append({"network": network, "ok": False, "message": "Provider request timed out"})
+            continue
+        except httpx.HTTPError:
+            results.append({"network": network, "ok": False, "message": "Provider could not be reached"})
+            continue
+
+        if response.status_code in (401, 403):
+            results.append({"network": network, "ok": False, "message": "Alchemy rejected the configured key or its NFT API permissions"})
+            continue
+        if response.status_code == 429:
+            results.append({"network": network, "ok": False, "message": "Alchemy rate limit reached"})
+            continue
+        if response.is_error:
+            results.append({"network": network, "ok": False, "message": f"Alchemy returned HTTP {response.status_code}"})
+            continue
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict) or not isinstance(payload.get("ownedNfts"), list):
+            results.append({"network": network, "ok": False, "message": "Alchemy returned an unexpected NFT API response"})
+            continue
+        results.append({
+            "network": network,
+            "ok": True,
+            "message": "Alchemy NFT API responded successfully",
+            "probe_items": len(payload["ownedNfts"]),
+        })
+
+    success = bool(results) and all(item["ok"] for item in results)
+    record_admin_event(
+        user,
+        "test_alchemy_nft_provider",
+        "success=" + str(success).lower() + "; networks=" + ",".join(item["network"] for item in results if item["ok"]),
+    )
+    return {
+        "success": success,
+        "key_configured": True,
+        "results": results,
+        "notice": "Read-only provider connectivity test using a fixed public probe address. No customer wallet address, key, NFT content or private data was requested or returned.",
+        "tested_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@app.get("/api/v1/admin/activity")
+def admin_activity(limit: int = 50, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    limit = max(1, min(int(limit), 100))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,actor_email,action,details,created_at FROM admin_audit_events ORDER BY created_at DESC LIMIT %s",
+            (limit,),
+        ).fetchall()
+    record_admin_event(user, "view_admin_activity")
+    return {"events": [
+        {"id": row[0], "actor_email": row[1], "action": row[2], "details": row[3], "created_at": row[4].isoformat() if row[4] else None}
+        for row in rows
+    ]}
+
+
+@app.get("/api/v1/admin/announcement")
+def admin_get_announcement(user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    with db() as conn:
+        row = conn.execute("SELECT title,body,enabled,updated_at FROM wallet_announcements WHERE id=1").fetchone()
+    record_admin_event(user, "view_admin_announcement")
+    return {"announcement": {"title": row[0], "body": row[1], "enabled": bool(row[2]), "updated_at": row[3].isoformat() if row[3] else None} if row else {"title": "", "body": "", "enabled": False, "updated_at": None}}
+
+
+@app.put("/api/v1/admin/announcement")
+def admin_update_announcement(request: AdminAnnouncementUpdate, user: dict = Depends(current_user)):
+    require_world_wallet_admin(user)
+    title = request.title.strip()
+    body = request.body.strip()
+    if request.enabled and (not title or not body):
+        raise HTTPException(status_code=400, detail="An enabled announcement needs both a title and message")
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO wallet_announcements(id,title,body,enabled,updated_by) VALUES(1,%s,%s,%s,%s) "
+            "ON CONFLICT(id) DO UPDATE SET title=EXCLUDED.title,body=EXCLUDED.body,enabled=EXCLUDED.enabled,updated_by=EXCLUDED.updated_by,updated_at=NOW()",
+            (title, body, request.enabled, user["id"]),
+        )
+        conn.commit()
+    record_admin_event(user, "update_wallet_announcement", "enabled=" + str(bool(request.enabled)).lower())
+    return {"status": "saved", "announcement": {"title": title, "body": body, "enabled": bool(request.enabled)}}
+
+
+
 @app.get("/api/v1/assets")
 def assets(user: dict = Depends(current_user)):
     a,_,_ = wallet_snapshot(user)
     return {"assets":a}
 
 
+@app.post("/api/v1/portfolio/performance/snapshot")
+def record_portfolio_performance_snapshot(user: dict = Depends(current_user)):
+    """Record a timestamped portfolio value only when the full USD valuation is verified."""
+    _, _, summary = wallet_snapshot(user)
+    value = summary.get("available_balance_usd")
+    if value is None or summary.get("valuation_complete") is not True:
+        return {"recorded": False, "reason": "A complete verified USD valuation is not available yet."}
+    with db() as conn:
+        # Avoid duplicate points from repeated reloads; keep at most one sample per 5 minutes.
+        inserted = conn.execute(
+            """
+            INSERT INTO portfolio_performance_snapshots(wallet_id, value_usd)
+            SELECT %s, %s
+            WHERE NOT EXISTS (
+              SELECT 1 FROM portfolio_performance_snapshots
+              WHERE wallet_id=%s AND created_at > NOW() - INTERVAL '5 minutes'
+            )
+            RETURNING created_at
+            """,
+            (user["wallet_id"], Decimal(str(value)), user["wallet_id"]),
+        ).fetchone()
+        latest = inserted[0] if inserted else conn.execute(
+            "SELECT created_at FROM portfolio_performance_snapshots WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 1",
+            (user["wallet_id"],),
+        ).fetchone()
+    return {"recorded": bool(inserted), "timestamp": latest[0].isoformat() if latest and latest[0] else None,
+            "value_usd": float(value), "currency": "USD"}
+
+
 @app.get("/api/v1/portfolio/performance")
-def performance(user: dict = Depends(current_user)):
-    _,_,summary = wallet_snapshot(user)
-    return {"currency":"USD","period":"all","change_percent":summary["change_24h"],"points":[{"label":"Current","value_usd":summary["available_balance_usd"]}]}
+def performance(period: str = "1M", user: dict = Depends(current_user)):
+    period = str(period or "1M").strip().upper()
+    windows = {"1D": "1 day", "1W": "7 days", "1M": "30 days", "1Y": "365 days"}
+    if period not in windows:
+        raise HTTPException(status_code=400, detail="Period must be one of 1D, 1W, 1M, or 1Y")
+    interval = windows[period]
+    with db() as conn:
+        rows = conn.execute(
+            """
+            SELECT created_at, value_usd
+            FROM portfolio_performance_snapshots
+            WHERE wallet_id=%s AND created_at >= NOW() - (%s)::interval
+            ORDER BY created_at ASC
+            """,
+            (user["wallet_id"], interval),
+        ).fetchall()
+    points = [
+        {
+            "timestamp": row[0].isoformat() if row[0] else None,
+            "label": row[0].astimezone(timezone.utc).strftime("%b %d %H:%M") if row[0] else "",
+            "value_usd": float(row[1]),
+        }
+        for row in rows
+    ]
+    first = points[0]["value_usd"] if points else None
+    last = points[-1]["value_usd"] if points else None
+    change_percent = ((last - first) / first * 100) if first not in (None, 0) and last is not None else None
+    return {"currency": "USD", "period": period, "change_percent": change_percent, "points": points,
+            "history_source": "timestamped_portfolio_snapshots"}
 
 
 @app.get("/api/v1/transactions")
@@ -2265,6 +3894,18 @@ def wallet_signing_config(user: dict = Depends(current_user)):
     ethereum_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     bitcoin_address = wallet_network_address(user, "bitcoin")
+    bnb_rpc_verified = False
+    bnb_usdt_decimals = None
+    if BSC_RPC_URL:
+        try:
+            require_bnb_rpc(BSC_RPC_URL)
+            bnb_rpc_verified = True
+            if USDT_BSC_CONTRACT:
+                bnb_usdt_decimals = verified_erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT, "bnb", chain_checked=True)
+        except Exception:
+            # Do not advertise BNB signing details when RPC chain identity is unknown.
+            bnb_rpc_verified = False
+            bnb_usdt_decimals = None
     return {
         "mode": "external_signer",
         "networks": {
@@ -2277,10 +3918,11 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "balmz_decimals": erc20_decimals(ETH_RPC_URL, BALMZ_ETH_CONTRACT) if ETH_RPC_URL and BALMZ_ETH_CONTRACT else None,
             },
             "bnb": {
-                "chain_id": "0x38",
-                "wallet_address": bnb_address if BSC_RPC_URL else None,
-                "usdt_contract": USDT_BSC_CONTRACT or None,
-                "usdt_decimals": erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT) if BSC_RPC_URL and USDT_BSC_CONTRACT else None,
+                "rpc_verified": bnb_rpc_verified,
+                "chain_id": "0x38" if bnb_rpc_verified else None,
+                "wallet_address": bnb_address if bnb_rpc_verified else None,
+                "usdt_contract": (USDT_BSC_CONTRACT or None) if bnb_rpc_verified else None,
+                "usdt_decimals": bnb_usdt_decimals if bnb_rpc_verified else None,
             },
             # Sepolia is a separate test network. Do not query token metadata here:
             # only the chain-checked sync path may call the configured Sepolia RPC.
@@ -2302,44 +3944,59 @@ def wallet_signing_config(user: dict = Depends(current_user)):
 
 @app.get("/api/v1/tokens")
 def list_token_registry(user: dict = Depends(current_user)):
-    networks = {a["network"] for a in configured_addresses(user)}
+    # Registry rows historically use both hyphenated and underscored network IDs.
+    networks = {str(a["network"]).strip().lower().replace("-", "_") for a in configured_addresses(user)}
     with db() as conn:
         rows=conn.execute("SELECT symbol,name,network,contract_address,decimals,coingecko_id,status,metadata_url,logo_url FROM token_registry ORDER BY symbol,network").fetchall()
     tokens=[]
     for r in rows:
-        supported = r[2] in networks
-        tokens.append({"symbol":r[0],"name":r[1],"network":r[2],"contract_address":r[3],"decimals":r[4],"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        registry_network = str(r[2]).strip().lower().replace("-", "_")
+        supported = registry_network in networks
+        token_name = r[1]
+        token_decimals = r[4]
+        if registry_network == "bnb" and r[3]:
+            try:
+                token_decimals = verified_erc20_decimals(BSC_RPC_URL, r[3], "bnb")
+            except Exception:
+                # Never publish stale registry precision as verified BNB token metadata.
+                token_decimals = None
+            if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
+                token_name = "Binance-Peg BSC-USD"
+        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
 def list_wallets(user: dict = Depends(current_user)):
     with db() as conn:
-        rows=conn.execute("SELECT id,name,created_at FROM wallets WHERE owner_id=%s ORDER BY created_at ASC",(user["id"],)).fetchall()
-    return {"wallets":[{"id":r[0],"name":r[1],"created_at":r[2].isoformat() if r[2] else None,"active":r[0]==user.get("wallet_id")} for r in rows],"active_wallet_id":user.get("wallet_id")}
+        rows=conn.execute("SELECT id,name,created_at,wallet_number FROM wallets WHERE owner_id=%s ORDER BY created_at ASC",(user["id"],)).fetchall()
+    return {"wallets":[{"id":r[0],"name":r[1],"created_at":r[2].isoformat() if r[2] else None,"wallet_number":str(r[3]),"active":r[0]==user.get("wallet_id")} for r in rows],"active_wallet_id":user.get("wallet_id")}
 
 
 @app.post("/api/v1/wallets")
 def create_wallet(request: WalletCreateRequest,user: dict = Depends(current_user)):
     wallet_id="wallet_"+sha(user["id"]+request.name.strip()+str(datetime.now(timezone.utc).timestamp()))[:24]
     with db() as conn:
-        conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s)",(wallet_id,user["id"],request.name.strip()))
+        wallet_row=conn.execute("INSERT INTO wallets(id,owner_id,name) VALUES(%s,%s,%s) RETURNING wallet_number",(wallet_id,user["id"],request.name.strip())).fetchone()
+        if not wallet_row or wallet_row[0] is None:
+            raise HTTPException(status_code=500,detail="A unique wallet number could not be assigned.")
+        wallet_number=str(wallet_row[0])
         for symbol,asset_name in [("BALMZ","BALMZ Token"),("BALMZ-SEP","BALMZ Token (Sepolia)"),("BTC","Bitcoin"),("ETH","Ethereum"),("USDT","Tether USD"),("BNB","BNB"),("USDC","USD Coin"),("SOL","Solana"),("XRP","XRP"),("ADA","Cardano"),("LTC","Litecoin"),("DOGE","Dogecoin")]:
             conn.execute("INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,0,0)",(wallet_id,symbol,asset_name))
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(wallet_id,user["id"]))
         conn.commit()
     user["wallet_id"]=wallet_id
-    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
+    return {"wallet":{"id":wallet_id,"name":request.name.strip(),"wallet_number":wallet_number,"active":True},"message":"Wallet created. Add public network addresses to connect it to live blockchain data."}
 
 
 @app.post("/api/v1/wallets/active")
 def activate_wallet(request: WalletActivateRequest,user: dict = Depends(current_user)):
     with db() as conn:
-        row=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
+        row=conn.execute("SELECT id,name,wallet_number FROM wallets WHERE id=%s AND owner_id=%s",(request.wallet_id,user["id"])).fetchone()
         if not row: raise HTTPException(status_code=404, detail="Wallet not found")
         conn.execute("UPDATE users SET active_wallet_id=%s WHERE id=%s",(row[0],user["id"]))
         conn.commit()
     user["wallet_id"]=row[0]
-    return {"wallet":{"id":row[0],"name":row[1],"active":True}}
+    return {"wallet":{"id":row[0],"name":row[1],"wallet_number":str(row[2]),"active":True}}
 
 
 @app.get("/api/v1/wallets/{wallet_id}/addresses")
@@ -2347,43 +4004,159 @@ def list_wallet_addresses(wallet_id: str,user: dict = Depends(current_user)):
     with db() as conn:
         owner=conn.execute("SELECT id,name FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        rows=conn.execute("SELECT network,address,label,created_at FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",(wallet_id,)).fetchall()
-    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None} for r in rows]}
+        rows=conn.execute("SELECT network,address,label,created_at,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",(wallet_id,)).fetchall()
+    return {"wallet_id":wallet_id,"addresses":[{"network":r[0],"address":r[1],"label":r[2],"created_at":r[3].isoformat() if r[3] else None,"ownership_verified":bool(r[4])} for r in rows]}
 
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses")
 def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict = Depends(current_user)):
-    network=request.network.strip().lower(); address=request.address.strip()
+    network=normalize_wallet_network(request.network)
+    address=request.address.strip()
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
-    if network=="solana_devnet" and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network in {"solana_mainnet","solana_devnet"} and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_mainnet","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
-        # EVM addresses are case-insensitive; Base58 Solana addresses are case-sensitive.
         comparison = "lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
-        existing=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
+        existing=conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison} FOR UPDATE",(wallet_id,network,address)).fetchone()
         if existing:
             conn.execute(f"UPDATE wallet_addresses SET label=%s WHERE wallet_id=%s AND network=%s AND {comparison}",(request.label.strip(),wallet_id,network,address))
         else:
-            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label) VALUES(%s,%s,%s,%s) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
+            conn.execute("INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified) VALUES(%s,%s,%s,%s,FALSE) ON CONFLICT DO NOTHING",(wallet_id,network,address,request.label.strip()))
+        saved=conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
         conn.commit()
-    return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip()}}
+    return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip(),"ownership_verified":bool(saved and saved[0])}}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses/challenge")
+def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallengeRequest,user: dict = Depends(current_user)):
+    network=normalize_wallet_network(request.network); address=request.address.strip()
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address):
+        raise HTTPException(status_code=400,detail="Invalid EVM address")
+    if network in {"solana_mainnet","solana_devnet"} and not valid_solana_address(address):
+        raise HTTPException(status_code=400,detail="Invalid Solana address")
+    if network == "bitcoin" and not valid_bitcoin_address(address):
+        raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_mainnet","solana_devnet"}:
+        raise HTTPException(status_code=400,detail="Unsupported ownership challenge network")
+    challenge_id="wac_"+secrets.token_urlsafe(24); issued=int(datetime.now(timezone.utc).timestamp())
+    message=(f"World Wallet AI address ownership verification\nWallet: {wallet_id}\nNetwork: {network}\nAddress: {address}\nChallenge: {challenge_id}\nIssued: {issued}\nSign this message only to prove control of this address. This does not authorize a transaction.")
+    with db() as conn:
+        owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
+        if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
+        comparison = "lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+        attached=conn.execute(f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address)).fetchone()
+        if not attached: raise HTTPException(status_code=404,detail="Attach this address before verifying ownership")
+        conn.execute("INSERT INTO wallet_address_challenges(id,wallet_id,owner_id,network,address,message,expires_at) VALUES(%s,%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",(challenge_id,wallet_id,user["id"],network,address,message))
+        conn.commit()
+    return {"challenge_id":challenge_id,"message":message,"expires_in_seconds":600}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses/verify")
+def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,user: dict = Depends(current_user)):
+    with db() as conn:
+        challenge=conn.execute("SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges WHERE id=%s AND wallet_id=%s AND owner_id=%s FOR UPDATE",(request.challenge_id,wallet_id,user["id"])).fetchone()
+        if not challenge: raise HTTPException(status_code=404,detail="Verification challenge not found")
+        if challenge[4] is not None: raise HTTPException(status_code=409,detail="Verification challenge already used")
+        if challenge[3] <= datetime.now(timezone.utc): raise HTTPException(status_code=410,detail="Verification challenge expired")
+        network,address,message=challenge[0],challenge[1],challenge[2]
+        if network in {"ethereum","bnb","sepolia"}:
+            try:
+                from eth_account import Account
+                from eth_account.messages import encode_defunct
+                recovered=Account.recover_message(encode_defunct(text=message),signature=request.signature)
+            except Exception as exc:
+                raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature") from exc
+            if recovered.lower()!=address.lower():
+                raise HTTPException(status_code=400,detail="Signature does not match attached address")
+            comparison="lower(address)=lower(%s)"
+        elif network in {"solana_mainnet","solana_devnet"}:
+            try:
+                signature_bytes=base64.b64decode(request.signature,validate=True)
+                alphabet="123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+                decoded=0
+                for character in address:
+                    digit=alphabet.find(character)
+                    if digit<0: raise ValueError("Invalid base58 character")
+                    decoded=decoded*58+digit
+                public_key=decoded.to_bytes((decoded.bit_length()+7)//8,"big") if decoded else b""
+                leading_zeroes=len(address)-len(address.lstrip("1"))
+                public_key=(b"\x00"*leading_zeroes)+public_key
+                if len(public_key)!=32 or len(signature_bytes)!=64:
+                    raise ValueError("Invalid Ed25519 key or signature length")
+                from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+                Ed25519PublicKey.from_public_bytes(public_key).verify(signature_bytes,message.encode("utf-8"))
+            except Exception as exc:
+                raise HTTPException(status_code=400,detail="Invalid Solana Ed25519 ownership signature") from exc
+            comparison="address=%s"
+        elif network == "bitcoin":
+            try:
+                raw_signature=bytes.fromhex(request.signature.removeprefix("0x"))
+                if len(raw_signature)!=65:
+                    raise ValueError("Expected a 65-byte recoverable secp256k1 signature")
+                v=raw_signature[64]
+                if v>=27: v-=27
+                if v not in (0,1): raise ValueError("Invalid recovery id")
+                from eth_keys import keys
+                from eth_utils import keccak
+                recovered=keys.Signature(vrs=(v,int.from_bytes(raw_signature[:32],"big"),int.from_bytes(raw_signature[32:64],"big"))).recover_public_key_from_msg_hash(keccak(message.encode("utf-8")))
+                compressed=recovered.to_compressed_bytes()
+                witness_hash=hashlib.new("ripemd160",hashlib.sha256(compressed).digest()).digest()
+                alphabet="qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+                clean=address.lower()
+                separator=clean.rfind("1")
+                if separator<1 or clean[:separator]!="bc": raise ValueError("Expected a Bitcoin Mainnet Bech32 address")
+                data=[alphabet.index(character) for character in clean[separator+1:]]
+                if len(data)<7: raise ValueError("Invalid Bech32 data")
+                values=[ord(character)>>5 for character in clean[:separator]]+[0]+[ord(character)&31 for character in clean[:separator]]
+                generators=[0x3b6a57b2,0x26508e6d,0x1ea119fa,0x3d4233dd,0x2a1462b3]
+                polymod=1
+                for value in values+data:
+                    top=polymod>>25
+                    polymod=((polymod&0x1ffffff)<<5)^value
+                    for index,generator in enumerate(generators):
+                        if (top>>index)&1: polymod^=generator
+                if polymod!=1: raise ValueError("Invalid Bitcoin Bech32 checksum")
+                payload=data[:-6]
+                if not payload or payload[0]!=0: raise ValueError("Only native SegWit v0 addresses are supported for this proof")
+                accumulator=0; bit_count=0; decoded_program=[]
+                for value in payload[1:]:
+                    accumulator=(accumulator<<5)|value
+                    bit_count+=5
+                    while bit_count>=8:
+                        bit_count-=8
+                        decoded_program.append((accumulator>>bit_count)&255)
+                if bit_count>=5 or ((accumulator<<(8-bit_count))&255):
+                    raise ValueError("Invalid Bech32 witness padding")
+                if bytes(decoded_program)!=witness_hash or len(witness_hash)!=20:
+                    raise ValueError("Bitcoin signature does not match the attached P2WPKH address")
+            except Exception as exc:
+                raise HTTPException(status_code=400,detail="Invalid Bitcoin Mainnet ownership signature") from exc
+            comparison="address=%s"
+        else:
+            raise HTTPException(status_code=400,detail="Unsupported ownership proof network")
+        updated=conn.execute(f"UPDATE wallet_addresses SET ownership_verified=TRUE WHERE wallet_id=%s AND network=%s AND {comparison}",(wallet_id,network,address))
+        if updated.rowcount != 1: raise HTTPException(status_code=409,detail="Attached address no longer exists")
+        consumed=conn.execute("UPDATE wallet_address_challenges SET used_at=NOW() WHERE id=%s AND used_at IS NULL AND expires_at>NOW()",(request.challenge_id,))
+        if consumed.rowcount != 1: raise HTTPException(status_code=409,detail="Verification challenge was already consumed or expired")
+        conn.commit()
+    return {"status":"verified","wallet_id":wallet_id,"network":network,"address":address,"ownership_verified":True}
 
 
 @app.get("/api/v1/wallets/{wallet_id}/addresses/balance")
 def read_wallet_address_balance(wallet_id: str, network: str, address: str, user: dict = Depends(current_user)):
     """Read the balance for one attached public address without mutating portfolio assets."""
-    network = network.strip().lower()
+    network = normalize_wallet_network(network)
     address = address.strip()
-    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_devnet"}:
+    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet"}:
         raise HTTPException(status_code=400, detail="Unsupported wallet network")
     if network in {"ethereum", "sepolia", "bnb"} and not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM address")
     if network == "bitcoin" and not valid_bitcoin_address(address):
         raise HTTPException(status_code=400, detail="Invalid Bitcoin address")
-    if network == "solana_devnet" and not valid_solana_address(address):
+    if network in {"solana_mainnet", "solana_devnet"} and not valid_solana_address(address):
         raise HTTPException(status_code=400, detail="Invalid Solana public address")
     with db() as conn:
         owner = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (wallet_id, user["id"])).fetchone()
@@ -2410,12 +4183,20 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         elif network == "bnb":
             rpc_url, asset = BSC_RPC_URL, "BNB"
             if not rpc_url: raise HTTPException(status_code=503, detail="BNB Chain RPC is not configured")
+            require_bnb_rpc(rpc_url)
             balance = evm_balance(rpc_url, address)
-        elif network == "solana_devnet":
-            if not SOLANA_DEVNET_RPC_URL: raise HTTPException(status_code=503, detail="Solana Devnet RPC is not configured. Set WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.")
-            raw = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+        elif network in {"solana_mainnet", "solana_devnet"}:
+            if network == "solana_mainnet":
+                rpc_url, asset = SOLANA_MAINNET_RPC_URL, "SOL"
+                expected_hash, cluster_name = SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+            else:
+                rpc_url, asset = SOLANA_DEVNET_RPC_URL, "SOL (Devnet)"
+                expected_hash, cluster_name = SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet"
+            if not rpc_url:
+                raise HTTPException(status_code=503, detail=f"{cluster_name} RPC is not configured")
+            require_solana_rpc_cluster(rpc_url, expected_hash, cluster_name)
+            raw = rpc_call(rpc_url, "getBalance", [address, {"commitment": "confirmed"}])
             balance = int((raw or {}).get("value", 0)) / 1_000_000_000
-            asset = "SOL (Devnet)"
         else:
             balance = btc_balance(address)
             asset = "BTC"
@@ -2439,6 +4220,193 @@ def wallet_connect(user: dict = Depends(current_user)):
         "addresses": addresses,
         "networks": sorted({a["network"] for a in addresses}),
         "message": None if addresses else "No production wallet address is configured yet",
+    }
+
+
+
+@app.get("/api/v1/mining/balmz")
+def balmz_mining_status(user: dict = Depends(current_user)):
+    """Return wallet-scoped mining sessions and pending, non-spendable allocations."""
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,status,started_at,ended_at,duration_seconds FROM balmz_mining_sessions "
+            "WHERE wallet_id=%s ORDER BY started_at DESC LIMIT 25",
+            (user["wallet_id"],),
+        ).fetchall()
+        totals = conn.execute(
+            "SELECT COUNT(*) FILTER (WHERE status='completed'),COALESCE(SUM(duration_seconds),0) "
+            "FROM balmz_mining_sessions WHERE wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
+        reward_totals = conn.execute(
+            "SELECT COALESCE(SUM(reward_amount),0),COUNT(*) "
+            "FROM balmz_mining_reward_ledger WHERE wallet_id=%s AND status='pending_launch'",
+            (user["wallet_id"],),
+        ).fetchone()
+        reward_rows = conn.execute(
+            "SELECT id,session_id,cycle_number,earned_at,created_at,reward_amount,status "
+            "FROM balmz_mining_reward_ledger WHERE wallet_id=%s "
+            "ORDER BY created_at DESC,id DESC LIMIT 100",
+            (user["wallet_id"],),
+        ).fetchall()
+        code_row = conn.execute(
+            "SELECT mining_referral_code,world_wallet_code FROM wallets WHERE id=%s",
+            (user["wallet_id"],),
+        ).fetchone()
+    active = next((row for row in rows if row[1] == "active"), None)
+    total_seconds = int(totals[1] or 0)
+    if active:
+        total_seconds += max(0, int((datetime.now(timezone.utc) - active[2]).total_seconds()))
+    return {
+        "wallet_id": user["wallet_id"],
+        "mining_referral_code": code_row[0] if code_row else None,
+        "world_wallet_code": code_row[1] if code_row else None,
+        "program": "BALMZ Free Mining",
+        "mode": "pending_reward_ledger",
+        "active_session": None if not active else {
+            "id": active[0], "started_at": active[2].isoformat()
+        },
+        "completed_sessions": int(totals[0] or 0),
+        "total_session_seconds": total_seconds,
+        "reward_asset": "BALMZ",
+        "reward_rate_per_cycle": "0.5",
+        "cycle_seconds": 10800,
+        "daily_reward_cap": "4",
+        "pending_reward_amount": str(reward_totals[0] or 0),
+        "pending_cycle_count": int(reward_totals[1] or 0),
+        "reward_status": "pending_launch_not_spendable",
+        "record_enabled": True,
+        "withdrawal_enabled": False,
+        "claim_enabled": False,
+        "notice": "Eligible cycles can be recorded as pending BALMZ allocations only. No token is minted, transferred, or spendable before the official launch and funding verification.",
+        "recent_rewards": [{
+            "id": row[0], "session_id": row[1], "cycle_number": int(row[2]),
+            "earned_at": row[3].isoformat(), "recorded_at": row[4].isoformat(),
+            "amount": str(row[5]), "status": row[6]
+        } for row in reward_rows],
+        "recent_sessions": [{
+            "id": row[0], "status": row[1], "started_at": row[2].isoformat(),
+            "ended_at": row[3].isoformat() if row[3] else None,
+            "duration_seconds": int(row[4]) if row[4] is not None else None,
+        } for row in rows],
+    }
+
+
+@app.post("/api/v1/mining/balmz/record")
+def record_balmz_mining_rewards(user: dict = Depends(current_user)):
+    """Idempotently record completed 3-hour cycles as pending allocations only."""
+    now = datetime.now(timezone.utc)
+    recorded = 0
+    with db() as conn:
+        # Serialize all claims for this wallet, including across old/new sessions.
+        wallet = conn.execute(
+            "SELECT id FROM wallets WHERE id=%s FOR UPDATE", (user["wallet_id"],)
+        ).fetchone()
+        if not wallet:
+            raise HTTPException(status_code=404, detail="Mining wallet was not found")
+        sessions = conn.execute(
+            "SELECT id,started_at,COALESCE(ended_at,%s) FROM balmz_mining_sessions "
+            "WHERE wallet_id=%s ORDER BY started_at",
+            (now, user["wallet_id"]),
+        ).fetchall()
+        existing_rows = conn.execute(
+            "SELECT session_id,cycle_number,earned_at FROM balmz_mining_reward_ledger "
+            "WHERE wallet_id=%s",
+            (user["wallet_id"],),
+        ).fetchall()
+        existing = {(row[0], int(row[1])) for row in existing_rows}
+        daily_counts = {}
+        for row in existing_rows:
+            day = row[2].astimezone(timezone.utc).date()
+            daily_counts[day] = daily_counts.get(day, 0) + 1
+
+        for session_id, started_at, ended_at in sessions:
+            elapsed_seconds = max(0, int((min(ended_at, now) - started_at).total_seconds()))
+            completed_cycles = elapsed_seconds // 10800
+            for cycle_number in range(1, completed_cycles + 1):
+                if (session_id, cycle_number) in existing:
+                    continue
+                earned_at = started_at + timedelta(seconds=cycle_number * 10800)
+                earned_day = earned_at.astimezone(timezone.utc).date()
+                if daily_counts.get(earned_day, 0) >= 8:
+                    continue
+                ledger_id = "balmz_reward_" + sha(
+                    user["wallet_id"] + ":" + session_id + ":" + str(cycle_number)
+                )[:32]
+                inserted = conn.execute(
+                    "INSERT INTO balmz_mining_reward_ledger"
+                    "(id,wallet_id,session_id,cycle_number,earned_at,reward_amount,status) "
+                    "VALUES(%s,%s,%s,%s,%s,0.5,'pending_launch') "
+                    "ON CONFLICT(wallet_id,session_id,cycle_number) DO NOTHING",
+                    (ledger_id, user["wallet_id"], session_id, cycle_number, earned_at),
+                )
+                if inserted.rowcount:
+                    recorded += 1
+                    daily_counts[earned_day] = daily_counts.get(earned_day, 0) + 1
+                    existing.add((session_id, cycle_number))
+        conn.commit()
+
+    return {
+        "status": "recorded",
+        "new_cycles_recorded": recorded,
+        "reward_per_cycle": "0.5",
+        "daily_cap": "4",
+        "allocation_status": "pending_launch_not_spendable",
+        "withdrawal_enabled": False,
+        "notice": "Eligible cycles were recorded as pending allocations only. No BALMZ was minted, transferred, or made spendable.",
+    }
+
+
+@app.post("/api/v1/mining/balmz/start")
+def start_balmz_mining(user: dict = Depends(current_user)):
+    """Start a free session record; this endpoint never issues or credits tokens."""
+    session_id = "mine_" + secrets.token_hex(16)
+    with db() as conn:
+        existing = conn.execute(
+            "SELECT id,started_at FROM balmz_mining_sessions WHERE wallet_id=%s AND status='active' FOR UPDATE",
+            (user["wallet_id"],),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail="A free BALMZ participation session is already active")
+        inserted = conn.execute(
+            "INSERT INTO balmz_mining_sessions(id,wallet_id,status) VALUES(%s,%s,'active') "
+            "ON CONFLICT (wallet_id) WHERE status='active' DO NOTHING",
+            (session_id, user["wallet_id"]),
+        )
+        if inserted.rowcount == 0:
+            raise HTTPException(status_code=409, detail="A free BALMZ participation session is already active")
+        conn.commit()
+    return {
+        "status": "started", "session_id": session_id,
+        "reward_status": "disabled_pending_verified_funded_allocation",
+        "claim_enabled": False,
+        "notice": "Free session tracking started. No BALMZ is mined, minted, or credited by this session tracker.",
+    }
+
+
+@app.post("/api/v1/mining/balmz/stop")
+def stop_balmz_mining(user: dict = Depends(current_user)):
+    """Complete the caller's active session without assigning a token reward."""
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id,started_at FROM balmz_mining_sessions WHERE wallet_id=%s AND status='active' FOR UPDATE",
+            (user["wallet_id"],),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=409, detail="There is no active BALMZ participation session")
+        ended_at = datetime.now(timezone.utc)
+        duration = max(0, int((ended_at - row[1]).total_seconds()))
+        conn.execute(
+            "UPDATE balmz_mining_sessions SET status='completed',ended_at=%s,duration_seconds=%s "
+            "WHERE id=%s AND wallet_id=%s AND status='active'",
+            (ended_at, duration, row[0], user["wallet_id"]),
+        )
+        conn.commit()
+    return {
+        "status": "completed", "session_id": row[0], "duration_seconds": duration,
+        "reward_amount": None, "claim_enabled": False,
+        "reward_status": "disabled_pending_verified_funded_allocation",
+        "notice": "Session recorded. No BALMZ reward was created or credited.",
     }
 
 
@@ -2532,17 +4500,34 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
+        elif network == "sepolia":
+            require_sepolia_rpc(rpc)
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
     except Exception as exc:
-        raise HTTPException(status_code=503, detail="Blockchain RPC unavailable") from exc
+        raise HTTPException(status_code=503, detail="Blockchain RPC unavailable or chain identity mismatch") from exc
     has_code = bool(code and code not in {"0x","0x0"})
+    source_check = {"status": "not_checked", "source_verified": False}
+    if has_code and ETHERSCAN_API_KEY:
+        try:
+            source_metadata = etherscan_contract_source(ETHERSCAN_CHAIN_IDS[network], address)
+            source_check = {"status": "checked", **source_metadata}
+        except Exception as exc:
+            logger.warning("Etherscan contract source lookup failed: network=%s error_type=%s", network, type(exc).__name__)
+            source_check = {"status": "unavailable", "source_verified": False}
+    elif has_code:
+        source_check = {"status": "not_configured", "source_verified": False}
     return {
         "status": "contract" if has_code else "no_contract_code",
         "network": network,
         "address": address,
         "contract": has_code,
-        "source_verified": False,
-        "note": "This check confirms deployed bytecode only; it does not prove source-code verification or safety.",
+        "source_verified": bool(source_check.get("source_verified")),
+        "explorer_source": source_check,
+        "note": "Deployed bytecode and explorer source verification are separate checks. Etherscan source verification does not prove contract safety, ownership, reserves, or audit status.",
     }
 
 def _abi_text_value(raw):
@@ -2572,6 +4557,8 @@ def _inspect_evm_address(address, network, rpc):
             require_sepolia_rpc(rpc)
         elif network == "ethereum":
             require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
         raw_balance = rpc_call(rpc, "eth_getBalance", [address, "latest"])
         block_number = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
         balance = int(raw_balance or "0x0", 16) / 10**18
@@ -2596,15 +4583,17 @@ def _inspect_evm_address(address, network, rpc):
                 ).fetchall()
             for symbol, name, contract, decimals in tokens:
                 try:
-                    value = erc20_balance(rpc, contract, address, int(decimals))
+                    token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else int(decimals)
+                    value = erc20_balance(rpc, contract, address, token_decimals)
+                    display_name = "Binance-Peg BSC-USD" if network == "bnb" and str(contract).lower() == BSC_USDT_MAINNET_CONTRACT.lower() else name
                     result["tokens"].append({
-                        "symbol": symbol, "name": name, "contract_address": contract,
-                        "decimals": int(decimals), "on_chain_balance": value, "available_balance": value,
+                        "symbol": symbol, "name": display_name, "contract_address": contract,
+                        "decimals": token_decimals, "on_chain_balance": value, "available_balance": value,
                     })
                 except Exception:
                     result["tokens"].append({
                         "symbol": symbol, "name": name, "contract_address": contract,
-                        "decimals": int(decimals), "on_chain_balance": None, "available_balance": None,
+                        "decimals": None if network == "bnb" else int(decimals), "on_chain_balance": None, "available_balance": None,
                         "status": "unavailable",
                     })
         return result
@@ -2833,11 +4822,67 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     if not addresses:
         raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
     reserves = []
+    testnet_assets = []
+    token_supplies = []
     warnings = []
     excluded_networks = []
     for item in addresses:
-        network = item["network"]
+        network = str(item["network"]).strip().lower().replace("-", "_")
         address = item["address"]
+        if network == "solana_mainnet":
+            # Native SOL is production-network evidence, kept distinct from the
+            # Devnet BALMZ token and never interpreted as BALMZ presale reserves.
+            try:
+                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+                native_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+                slot = rpc_call(SOLANA_MAINNET_RPC_URL, "getSlot", [{"commitment": "confirmed"}])
+                reserves.append({
+                    "network": "solana_mainnet", "address": address, "asset": "SOL",
+                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
+                    "block_number": slot, "source": "Solana Mainnet getBalance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-mainnet: native SOL balance unavailable")
+            continue
+        if network == "solana_devnet":
+            # Keep testnet holdings separate from production reserve figures.
+            solana_rpc = SOLANA_DEVNET_RPC_URL or "https://api.devnet.solana.com"
+            try:
+                require_solana_rpc_cluster(solana_rpc, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
+                native_result = rpc_call(solana_rpc, "getBalance", [address, {"commitment": "confirmed"}])
+                testnet_assets.append({
+                    "network": "solana-devnet", "address": address, "asset": "SOL-DEVNET",
+                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
+                    "block_number": None, "source": "Solana Devnet getBalance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-devnet: native SOL balance unavailable")
+            try:
+                token_balance = solana_spl_token_balance(address)
+                testnet_assets.append({
+                    "network": "solana-devnet", "address": address, "asset": "BALMZ-SOL-DEVNET",
+                    "balance": token_balance, "contract_address": BALMZ_SOLANA_DEVNET_MINT,
+                    "block_number": None, "source": "Solana Devnet SPL token account balance (confirmed)",
+                })
+            except Exception:
+                warnings.append("solana-devnet BALMZ: wallet token balance unavailable")
+            try:
+                supply_response = rpc_call(solana_rpc, "getTokenSupply", [BALMZ_SOLANA_DEVNET_MINT, {"commitment": "confirmed"}])
+                supply = (supply_response or {}).get("value") or {}
+                supply_decimals = int(supply.get("decimals", -1))
+                raw_supply = str(supply.get("amount", ""))
+                if supply_decimals != BALMZ_SOLANA_DEVNET_DECIMALS or not raw_supply.isdigit():
+                    raise ValueError("Unexpected BALMZ mint supply response")
+                total_supply = float(supply.get("uiAmountString") or (int(raw_supply) / (10 ** supply_decimals)))
+                token_supplies.append({
+                    "symbol": "BALMZ-SOL-DEVNET", "network": "solana-devnet",
+                    "mint_address": BALMZ_SOLANA_DEVNET_MINT, "decimals": supply_decimals,
+                    "total_supply": total_supply, "raw_amount": raw_supply,
+                    "source": "Solana Devnet getTokenSupply (confirmed)", "commitment": "confirmed",
+                })
+            except Exception:
+                warnings.append("solana-devnet BALMZ: on-chain total supply unavailable")
+            continue
         if network == "sepolia":
             excluded_networks.append("sepolia")
             continue
@@ -2853,6 +4898,10 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
             if not rpc:
                 warnings.append(f"{network}: RPC is not configured")
                 continue
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc)
+            elif network == "bnb":
+                require_bnb_rpc(rpc)
             raw = rpc_call(rpc, "eth_getBalance", [address, "latest"])
             height = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
             reserves.append({
@@ -2867,22 +4916,27 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
                     (network,),
                 ).fetchall()
             for symbol, contract, decimals in tokens:
+                asset_symbol = wallet_asset_symbol(symbol, network)
                 try:
                     reserves.append({
-                        "network": network, "address": address, "asset": symbol,
-                        "balance": erc20_balance(rpc, contract, address, int(decimals)),
+                        "network": network, "address": address, "asset": asset_symbol,
+                        "balance": erc20_balance(
+                            rpc, contract, address,
+                            verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else int(decimals),
+                        ),
                         "contract_address": contract, "block_number": height,
                         "source": "configured ERC-20 contract balanceOf",
                     })
                 except Exception:
-                    warnings.append(f"{network} {symbol}: token balance unavailable")
+                    warnings.append(f"{network} {asset_symbol}: token balance unavailable")
         except Exception:
             warnings.append(f"{network}: on-chain lookup failed")
     return {
         "status": "partial" if warnings else "snapshot",
         "scope": "Connected public addresses for this authenticated wallet only",
         "as_of": datetime.now(timezone.utc).isoformat(),
-        "reserves": reserves, "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
+        "reserves": reserves, "testnet_assets": testnet_assets, "token_supplies": token_supplies,
+        "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
         "audited": False, "liabilities_included": False,
         "note": "This is an on-chain asset snapshot, not an audited proof of reserves or solvency attestation. It excludes platform-wide customer liabilities, off-chain assets, and ownership proof.",
     }
@@ -2898,6 +4952,14 @@ def inspect_contract(request: ContractInspectRequest, user: dict = Depends(curre
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
     try:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(rpc)
+        elif network == "bnb":
+            require_bnb_rpc(rpc)
+        elif network == "sepolia":
+            require_sepolia_rpc(rpc)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported contract inspection network")
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
         has_code = bool(code and code not in {"0x", "0x0"})
         if not has_code:
@@ -2936,7 +4998,15 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.recipient,network):
         raise HTTPException(status_code=400,detail="Invalid recipient address for selected network")
-    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{request.note or ''}")
+    source_address=(request.source_address or "").strip() or wallet_network_address(user,network)
+    if not source_address: raise HTTPException(status_code=409,detail="No source address is attached for this network")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address): raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    comparison="lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+    with db() as address_conn:
+        attached=address_conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(user["wallet_id"],network,source_address)).fetchone()
+    if not attached: raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if network in {"ethereum","bnb","sepolia"} and not attached[0]: raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before transfer")
+    fingerprint=sha(f"transfer|{symbol}|{network}|{request.amount}|{request.recipient.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -2961,8 +5031,8 @@ def transfer(request: TransferRequest,user: dict = Depends(current_user)):
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'sent',%s,%s,%s,'pending',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Transfer request",-request.amount,request.recipient,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
@@ -2974,7 +5044,15 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
     symbol,network=validate_asset_network(request.asset,request.network)
     if not valid_destination_for_network(request.destination,network):
         raise HTTPException(status_code=400,detail="Invalid destination address for selected network")
-    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{request.note or ''}")
+    source_address=(request.source_address or "").strip() or wallet_network_address(user,network)
+    if not source_address: raise HTTPException(status_code=409,detail="No source address is attached for this network")
+    if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(source_address): raise HTTPException(status_code=400,detail="Invalid source address for selected network")
+    comparison="lower(address)=lower(%s)" if network in {"ethereum","bnb","sepolia"} else "address=%s"
+    with db() as address_conn:
+        attached=address_conn.execute(f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",(user["wallet_id"],network,source_address)).fetchone()
+    if not attached: raise HTTPException(status_code=404,detail="Selected source address is not attached to this wallet")
+    if network in {"ethereum","bnb","sepolia"} and not attached[0]: raise HTTPException(status_code=403,detail="Selected source address must pass message-signature ownership verification before withdrawal")
+    fingerprint=sha(f"withdrawal|{symbol}|{network}|{request.amount}|{request.destination.strip()}|{source_address}|{request.note or ''}")
     with db() as conn:
         asset_row=conn.execute(
             "SELECT balance,reserved_balance FROM assets WHERE wallet_id=%s AND symbol=%s FOR UPDATE",
@@ -2983,7 +5061,7 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
         if not asset_row:
             raise HTTPException(status_code=400,detail="Unsupported asset")
         existing=conn.execute(
-            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status "
+            "SELECT i.request_hash,t.id,t.asset,t.amount,t.destination,t.network,t.status,t.from_address "
             "FROM transaction_idempotency i JOIN transactions t ON t.id=i.transaction_id "
             "WHERE i.wallet_id=%s AND i.idempotency_key=%s",
             (user["wallet_id"],request.idempotency_key.strip()),
@@ -2993,14 +5071,14 @@ def withdrawal(request: WithdrawalRequest,user: dict = Depends(current_user)):
                 raise HTTPException(status_code=409,detail="Idempotency key was already used for a different withdrawal")
             return {"status":existing[6],"mode":"database","accounting":"reserved","broadcast":False,
                     "replayed":True,"withdrawal":{"id":existing[1],"asset":existing[2],"amount":float(abs(existing[3])),
-                    "destination":existing[4],"network":existing[5]}}
+                    "destination":existing[4],"network":existing[5],"source_address":existing[7]}}
         ok,rejection=reserve_asset(conn,user,symbol,request.amount)
         if not ok:
             conn.rollback()
             return rejection
         txid="tx_"+sha(user["wallet_id"]+request.idempotency_key.strip())[:24]
-        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s)",
-                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network))
+        conn.execute("INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,from_address) VALUES(%s,%s,'withdrawal',%s,%s,%s,'pending_review',%s,%s,%s)",
+                     (txid,user["wallet_id"],symbol,"Withdrawal request",-request.amount,request.destination,network,source_address))
         conn.execute("INSERT INTO transaction_idempotency(wallet_id,idempotency_key,request_hash,transaction_id) VALUES(%s,%s,%s,%s)",
                      (user["wallet_id"],request.idempotency_key.strip(),fingerprint,txid))
         conn.commit()
@@ -3014,6 +5092,9 @@ class TransactionCancelRequest(BaseModel):
 class TransactionSettleRequest(BaseModel):
     transaction_id: str = Field(min_length=4,max_length=80)
     tx_hash: str = Field(min_length=8,max_length=128)
+
+class SolanaDevnetDepositRequest(BaseModel):
+    tx_signature: str = Field(min_length=64, max_length=100)
 
 EVM_TX_HASH_RE = __import__("re").compile(r"^0x[0-9a-fA-F]{64}$")
 BTC_TX_HASH_RE = __import__("re").compile(r"^[0-9a-fA-F]{64}$")
@@ -3058,6 +5139,24 @@ def erc20_decimals(url: str, contract: str):
     return _hex_int(raw) if raw is not None else None
 
 
+def verified_erc20_decimals(url: str, contract: str, network: str, *, chain_checked: bool = False):
+    """Read ERC-20 precision only from the selected EVM network and validate its range."""
+    network = str(network or "").strip().lower()
+    if network not in {"ethereum", "bnb", "sepolia"}:
+        raise ValueError("Unsupported network for ERC-20 decimals")
+    if not chain_checked:
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(url)
+        elif network == "bnb":
+            require_bnb_rpc(url)
+        else:
+            require_sepolia_rpc(url)
+    decimals = erc20_decimals(url, contract)
+    if decimals is None or not isinstance(decimals, int) or decimals < 0 or decimals > 36:
+        raise ValueError("Unable to determine valid ERC-20 decimals")
+    return decimals
+
+
 def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, wallet_address: str):
     response = httpx.get(f"https://blockstream.info/api/tx/{tx_hash}", timeout=15)
     if response.status_code == 404:
@@ -3088,9 +5187,15 @@ def verify_bitcoin_settlement(tx_hash: str, destination: str, amount: Decimal, w
 
 
 def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: str, amount: Decimal, wallet_address: str):
-    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else ""
+    rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
     if not rpc or not wallet_address:
         raise HTTPException(status_code=503, detail=f"{network.title()} settlement RPC or wallet is not configured")
+    try:
+        if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
+        elif network == "sepolia": require_sepolia_rpc(rpc)
+        elif network == "bnb": require_bnb_rpc(rpc)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"{network.title()} RPC chain identity check failed") from exc
     try:
         tx = rpc_call(rpc, "eth_getTransactionByHash", [tx_hash])
         if not tx:
@@ -3126,16 +5231,30 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if asset == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 label = "BALMZ"
+            elif asset == "BALMZ-SEP":
+                contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
+                label = "BALMZ Sepolia"
+            elif asset == "USDT-BNB":
+                contract = USDT_BSC_CONTRACT if network == "bnb" else ""
+                label = "USDT on BNB Chain"
             else:
-                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT if network == "bnb" else ""
-                label = "USDT"
+                # Accept pre-fix pending BNB transactions using the legacy
+                # generic USDT symbol, but never route new BNB reservations
+                # through that label (validate_asset_network canonicalizes it).
+                contract = (
+                    USDT_ETH_CONTRACT if network == "ethereum"
+                    else USDT_BSC_CONTRACT if network == "bnb"
+                    else ""
+                )
+                label = "USDT on BNB Chain" if network == "bnb" else "USDT"
             if not contract:
                 raise HTTPException(status_code=503, detail=label + " contract is not configured for settlement verification")
             if not _same_address(tx.get("to"), contract):
-                raise HTTPException(status_code=409, detail="Token contract does not match the configured USDT contract")
-            decimals = erc20_decimals(rpc, contract)
-            if decimals is None or decimals < 0 or decimals > 36:
-                raise HTTPException(status_code=503, detail="Unable to determine token decimals")
+                raise HTTPException(status_code=409, detail=f"Token contract does not match the configured {label} contract")
+            try:
+                decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
+            except Exception as exc:
+                raise HTTPException(status_code=503, detail="Unable to determine token decimals") from exc
             expected = exact_base_units(amount, decimals)
             found = False
             for log in receipt.get("logs") or []:
@@ -3168,25 +5287,458 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
         raise HTTPException(status_code=503, detail="Blockchain settlement verification unavailable") from exc
 
 
-def reconcile_settled_asset(conn, user, symbol, network):
-    # Chain synchronization is authoritative for actual balance. Re-read it after
-    # verification instead of subtracting the request amount a second time.
-    address = wallet_network_address(user, network)
+
+def verify_solana_devnet_settlement(
+    tx_signature: str, destination: str, amount: Decimal, wallet_address: str
+):
+    """Verify a confirmed BALMZ SPL transfer on Solana Devnet."""
+    import re
+
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,100}", tx_signature):
+        raise ValueError("Invalid Solana transaction signature")
+    if not valid_solana_address(destination) or not valid_solana_address(wallet_address):
+        raise ValueError("Invalid Solana sender or recipient address")
+
+    result = rpc_call(
+        SOLANA_DEVNET_RPC_URL, "getTransaction",
+        [tx_signature, {
+            "encoding": "jsonParsed",
+            # Settlement must not release a reservation on a merely confirmed
+            # transaction. Require the RPC provider to return finalized data.
+            "commitment": "finalized",
+            "maxSupportedTransactionVersion": 0,
+        }],
+    )
+    if result is None:
+        statuses = rpc_call(
+            SOLANA_DEVNET_RPC_URL, "getSignatureStatuses",
+            [[tx_signature], {"searchTransactionHistory": True}],
+        )
+        if not isinstance(statuses, dict) or not isinstance(statuses.get("value"), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana signature-status response")
+        values = statuses["value"]
+        if len(values) != 1:
+            raise HTTPException(status_code=503, detail="Unexpected Solana signature-status response length")
+        status = values[0]
+        if status is None:
+            return {"state": "not_found", "confirmations": 0, "block_height": None}
+        if not isinstance(status, dict) or "err" not in status:
+            raise HTTPException(status_code=503, detail="Malformed Solana signature status")
+        if status["err"] is not None:
+            raise ValueError("Solana transaction failed on-chain")
+        # A status alone does not prove the exact token transfer. Keep it pending
+        # until getTransaction returns the finalized transaction details.
+        return {"state": "pending", "confirmations": 0, "block_height": None}
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction response")
+
+    meta = result.get("meta")
+    transaction = result.get("transaction")
+    if not isinstance(meta, dict) or not isinstance(transaction, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction metadata")
+
+    if meta.get("err") is not None:
+        raise ValueError("Solana transaction failed on-chain")
+
+    message = transaction.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction message")
+
+    keys = message.get("accountKeys") or []
+    post_balances = meta.get("postTokenBalances") or []
+    outer_instructions = message.get("instructions") or []
+    inner_groups = meta.get("innerInstructions") or []
+    if not all(isinstance(items, list) for items in (keys, post_balances, outer_instructions, inner_groups)):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction instruction or balance lists")
+    if not all(isinstance(item, dict) for item in post_balances):
+        raise HTTPException(status_code=503, detail="Malformed Solana token balance entry")
+
+    key_names = [
+        item.get("pubkey") if isinstance(item, dict) else item
+        for item in keys
+    ]
+    if not all(isinstance(key, str) and key for key in key_names):
+        raise HTTPException(status_code=503, detail="Malformed Solana account keys")
+    instructions = list(outer_instructions)
+    for inner in inner_groups:
+        if not isinstance(inner, dict) or not isinstance(inner.get("instructions", []), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana inner instruction group")
+        instructions.extend(inner.get("instructions") or [])
+    if not all(isinstance(item, dict) for item in instructions):
+        raise HTTPException(status_code=503, detail="Malformed Solana instruction")
+
+    expected = Decimal(amount) * (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
+    if expected != expected.to_integral_value():
+        raise ValueError("Token amount has unsupported precision")
+    expected_raw = int(expected)
+
+    for instruction in instructions:
+        parsed = instruction.get("parsed")
+        if parsed is None:
+            continue
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
+        if parsed.get("type") != "transferChecked":
+            continue
+        if instruction.get("program") not in {"spl-token", "spl-token-2022"}:
+            continue
+        info = parsed.get("info")
+        if not isinstance(info, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer instruction")
+        if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
+            continue
+        if info.get("authority") != wallet_address:
+            continue
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
+        raw_amount = token_amount.get("amount")
+        if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            raise HTTPException(status_code=503, detail="Malformed Solana raw token amount")
+        if raw_amount != str(expected_raw):
+            continue
+        try:
+            parsed_decimals = token_amount.get("decimals")
+            if isinstance(parsed_decimals, bool) or not isinstance(parsed_decimals, int):
+                raise TypeError("Invalid token decimals")
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=503, detail="Malformed Solana token amount metadata")
+        if parsed_decimals != BALMZ_SOLANA_DEVNET_DECIMALS:
+            continue
+
+        destination_account = info.get("destination")
+        account_index = next(
+            (i for i, key in enumerate(key_names) if key == destination_account),
+            None,
+        )
+        if account_index is None:
+            continue
+        recipient_matches = any(
+            item.get("accountIndex") == account_index
+            and item.get("owner") == destination
+            and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+            for item in post_balances
+        )
+        if recipient_matches:
+            return {
+                "state": "confirmed",
+                # Compatibility marker for the existing integer DB/API field;
+                # finality is explicitly represented separately below.
+                "confirmations": 1,
+                "finality": "finalized",
+                "block_height": None,
+            }
+
+    raise ValueError(
+        "Confirmed transaction does not contain the exact BALMZ Devnet transfer"
+    )
+
+
+def verify_solana_devnet_deposit(tx_signature: str, destination_wallet: str):
+    """Verify a finalized incoming BALMZ Devnet transfer; never treats test tokens as Mainnet value."""
+    import re
+
+    if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,100}", tx_signature):
+        raise ValueError("Invalid Solana transaction signature")
+    if not valid_solana_address(destination_wallet):
+        raise ValueError("Invalid Solana Devnet receiving wallet address")
+
+    result = rpc_call(
+        SOLANA_DEVNET_RPC_URL, "getTransaction",
+        [tx_signature, {
+            "encoding": "jsonParsed",
+            "commitment": "finalized",
+            "maxSupportedTransactionVersion": 0,
+        }],
+    )
+    if result is None:
+        statuses = rpc_call(
+            SOLANA_DEVNET_RPC_URL, "getSignatureStatuses",
+            [[tx_signature], {"searchTransactionHistory": True}],
+        )
+        if not isinstance(statuses, dict) or not isinstance(statuses.get("value"), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana signature-status response")
+        values = statuses["value"]
+        if len(values) != 1:
+            raise HTTPException(status_code=503, detail="Unexpected Solana signature-status response length")
+        status = values[0]
+        if status is None:
+            return {"state": "not_found", "confirmations": 0, "slot": None}
+        if not isinstance(status, dict) or "err" not in status:
+            raise HTTPException(status_code=503, detail="Malformed Solana signature status")
+        if status["err"] is not None:
+            raise ValueError("Solana deposit transaction failed on-chain")
+        # A signature status alone cannot establish the mint, recipient owner, or exact amount.
+        return {"state": "pending", "confirmations": 0, "slot": None}
+
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction response")
+    meta = result.get("meta")
+    transaction = result.get("transaction")
+    if not isinstance(meta, dict) or not isinstance(transaction, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction metadata")
+    if meta.get("err") is not None:
+        raise ValueError("Solana deposit transaction failed on-chain")
+
+    message = transaction.get("message")
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction message")
+    keys = message.get("accountKeys") or []
+    post_balances = meta.get("postTokenBalances") or []
+    pre_balances = meta.get("preTokenBalances") or []
+    outer_instructions = message.get("instructions") or []
+    inner_groups = meta.get("innerInstructions") or []
+    if not all(isinstance(items, list) for items in (keys, post_balances, pre_balances, outer_instructions, inner_groups)):
+        raise HTTPException(status_code=503, detail="Malformed Solana transaction instruction or balance lists")
+    if not all(isinstance(item, dict) for item in (*post_balances, *pre_balances)):
+        raise HTTPException(status_code=503, detail="Malformed Solana token balance entry")
+
+    key_names = [
+        item.get("pubkey") if isinstance(item, dict) else item
+        for item in keys
+    ]
+    if not all(isinstance(key, str) and key for key in key_names):
+        raise HTTPException(status_code=503, detail="Malformed Solana account keys")
+
+    instructions = list(outer_instructions)
+    for inner in inner_groups:
+        if not isinstance(inner, dict) or not isinstance(inner.get("instructions", []), list):
+            raise HTTPException(status_code=503, detail="Malformed Solana inner instruction group")
+        instructions.extend(inner.get("instructions") or [])
+    if not all(isinstance(item, dict) for item in instructions):
+        raise HTTPException(status_code=503, detail="Malformed Solana instruction")
+
+    received_raw = 0
+    matching_transfer_count = 0
+    for instruction in instructions:
+        parsed = instruction.get("parsed")
+        if parsed is None:
+            continue
+        if not isinstance(parsed, dict):
+            raise HTTPException(status_code=503, detail="Malformed parsed Solana instruction")
+        if parsed.get("type") != "transferChecked" or instruction.get("program") not in {"spl-token", "spl-token-2022"}:
+            continue
+        info = parsed.get("info")
+        if not isinstance(info, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana token transfer instruction")
+        if info.get("mint") != BALMZ_SOLANA_DEVNET_MINT:
+            continue
+
+        token_amount = info.get("tokenAmount")
+        if not isinstance(token_amount, dict):
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer amount")
+        raw_amount = token_amount.get("amount")
+        try:
+            decimals = int(token_amount.get("decimals"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail="Malformed Solana transfer decimals") from exc
+        if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            raise HTTPException(status_code=503, detail="Malformed Solana raw transfer amount")
+        if decimals != BALMZ_SOLANA_DEVNET_DECIMALS:
+            raise ValueError("BALMZ Devnet deposit has unexpected token decimals")
+        raw_int = int(raw_amount)
+        if raw_int <= 0:
+            raise ValueError("BALMZ Devnet deposit amount must be greater than zero")
+
+        destination_token_account = info.get("destination")
+        source_token_account = info.get("source")
+        if not isinstance(destination_token_account, str):
+            continue
+        try:
+            destination_index = key_names.index(destination_token_account)
+        except ValueError:
+            continue
+
+        owner_rows = [
+            item for item in post_balances
+            if item.get("accountIndex") == destination_index
+            and item.get("owner") == destination_wallet
+            and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+        ]
+        if not owner_rows:
+            continue
+
+        # Do not count a wallet sending tokens to itself as an incoming deposit.
+        if isinstance(source_token_account, str):
+            try:
+                source_index = key_names.index(source_token_account)
+            except ValueError:
+                source_index = None
+            if source_index is not None and any(
+                item.get("accountIndex") == source_index
+                and item.get("owner") == destination_wallet
+                and item.get("mint") == BALMZ_SOLANA_DEVNET_MINT
+                for item in (*pre_balances, *post_balances)
+            ):
+                continue
+
+        matching_transfer_count += 1
+        received_raw += raw_int
+
+    if matching_transfer_count == 0 or received_raw <= 0:
+        raise ValueError("Transaction does not contain an incoming BALMZ Devnet deposit to this wallet")
+
+    return {
+        "state": "confirmed",
+        "amount": Decimal(received_raw) / (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS),
+        "confirmations": 1,
+        "finality": "finalized",
+        "slot": result.get("slot") if isinstance(result.get("slot"), int) else None,
+    }
+
+
+@app.post("/api/v1/deposits/solana-devnet/verify")
+def verify_solana_devnet_deposit_request(
+    request: SolanaDevnetDepositRequest,
+    user: dict = Depends(current_user),
+):
+    """Record a genuine finalized Devnet deposit for testing; it is not Mainnet funding."""
+    tx_signature = request.tx_signature.strip()
+    destination_wallet = wallet_network_address(user, "solana_devnet")
+    if not destination_wallet:
+        raise HTTPException(
+            status_code=409,
+            detail="Connect a Solana Devnet receiving address to this wallet before verifying deposits",
+        )
+
+    try:
+        verification = verify_solana_devnet_deposit(tx_signature, destination_wallet)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if verification["state"] == "not_found":
+        raise HTTPException(status_code=404, detail="Solana Devnet deposit transaction was not found")
+    if verification["state"] == "pending":
+        return {
+            "status": "pending",
+            "recorded": False,
+            "network": "solana-devnet",
+            "asset": "BALMZ-SOL-DEVNET",
+            "message": "Waiting for finalized transaction details; no deposit has been recorded.",
+        }
+
+    amount = Decimal(verification["amount"])
+    slot = verification.get("slot")
+    try:
+        live_balance = solana_spl_token_balance(destination_wallet)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Could not refresh the live BALMZ Devnet balance") from exc
+
+    with db() as conn:
+        inserted = conn.execute(
+            """INSERT INTO solana_devnet_deposits(tx_signature,wallet_id,destination_address,amount,slot)
+               VALUES(%s,%s,%s,%s,%s)
+               ON CONFLICT(tx_signature) DO NOTHING
+               RETURNING tx_signature""",
+            (tx_signature, user["wallet_id"], destination_wallet, amount, slot),
+        ).fetchone()
+
+        if not inserted:
+            existing = conn.execute(
+                "SELECT wallet_id,amount FROM solana_devnet_deposits WHERE tx_signature=%s",
+                (tx_signature,),
+            ).fetchone()
+            if not existing:
+                raise HTTPException(status_code=503, detail="Could not confirm the existing Devnet deposit record")
+            if existing[0] != user["wallet_id"]:
+                raise HTTPException(status_code=409, detail="This transaction signature has already been claimed by another wallet")
+            amount = Decimal(existing[1])
+            conn.execute(
+                """INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)
+                   VALUES(%s,'BALMZ-SOL-DEVNET','BALMZ Token (Solana Devnet)',%s,0)
+                   ON CONFLICT(wallet_id,symbol) DO UPDATE
+                   SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
+                (user["wallet_id"], live_balance),
+            )
+            conn.commit()
+            return {
+                "status": "confirmed",
+                "recorded": True,
+                "replayed": True,
+                "network": "solana-devnet",
+                "asset": "BALMZ-SOL-DEVNET",
+                "amount": str(amount),
+                "balance": live_balance,
+                "tx_signature": tx_signature,
+                "slot": slot,
+                "finality": "finalized",
+                "mainnet_funding": False,
+            }
+
+        conn.execute(
+            """INSERT INTO assets(wallet_id,symbol,name,balance,price_usd)
+               VALUES(%s,'BALMZ-SOL-DEVNET','BALMZ Token (Solana Devnet)',%s,0)
+               ON CONFLICT(wallet_id,symbol) DO UPDATE
+               SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
+            (user["wallet_id"], live_balance),
+        )
+        deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
+        conn.execute(
+            """INSERT INTO transactions(
+                 id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height
+               ) VALUES(%s,%s,'received','BALMZ-SOL-DEVNET','BALMZ Devnet deposit',%s,'confirmed',%s,
+                        'solana-devnet',%s,1,%s)""",
+            (
+                deposit_id, user["wallet_id"], amount, destination_wallet, tx_signature,
+                slot if isinstance(slot, int) and slot <= 2147483647 else None,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "status": "confirmed",
+        "recorded": True,
+        "replayed": False,
+        "network": "solana-devnet",
+        "asset": "BALMZ-SOL-DEVNET",
+        "amount": str(amount),
+        "balance": live_balance,
+        "tx_signature": tx_signature,
+        "slot": slot,
+        "finality": "finalized",
+        "mainnet_funding": False,
+        "broadcast": False,
+    }
+
+
+def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
+    # Re-read the exact source wallet used by this transaction; do not silently
+    # reconcile a different attached address on the same network.
+    address = source_address or wallet_network_address(user, network)
     value = None
     try:
         if symbol == "BTC" and address:
             value = btc_balance(address)
         elif symbol in {"ETH", "BNB"} and address:
-            value = evm_balance(ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL, address)
-        elif symbol in {"USDT", "BALMZ"} and address:
+            rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else ""
+            if network == "ethereum": require_ethereum_mainnet_rpc(rpc)
+            elif network == "sepolia": require_sepolia_rpc(rpc)
+            elif network == "bnb": require_bnb_rpc(rpc)
+            value = evm_balance(rpc, address)
+        elif symbol == "BALMZ-SOL-DEVNET" and network == "solana-devnet" and address:
+            value = solana_spl_token_balance(
+                address, BALMZ_SOLANA_DEVNET_MINT,
+                BALMZ_SOLANA_DEVNET_DECIMALS,
+            )
+        elif symbol in {"USDT", "USDT-BNB", "BALMZ", "BALMZ-SEP"} and address:
             if symbol == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 rpc = ETH_RPC_URL if network == "ethereum" else ""
+            elif symbol == "BALMZ-SEP":
+                contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
+                rpc = SEPOLIA_RPC_URL if network == "sepolia" else ""
+                if rpc: require_sepolia_rpc(rpc)
+            elif network == "ethereum":
+                contract, rpc = USDT_ETH_CONTRACT, ETH_RPC_URL
+            elif network == "bnb":
+                contract, rpc = USDT_BSC_CONTRACT, BSC_RPC_URL
+                if rpc: require_bnb_rpc(rpc)
             else:
-                contract = USDT_ETH_CONTRACT if network == "ethereum" else USDT_BSC_CONTRACT
-                rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL
+                contract, rpc = "", ""
             if contract and rpc:
-                value = erc20_balance(rpc, contract, address)
+                token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else 18
+                value = erc20_balance(rpc, contract, address, token_decimals)
     except Exception:
         value = None
     if value is not None:
@@ -3209,12 +5761,12 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             (user["wallet_id"],symbol),
         ).fetchone()
         row=conn.execute(
-            "SELECT id,asset,amount,status,destination,network,tx_hash FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
+            "SELECT id,asset,amount,status,destination,network,tx_hash,from_address,type FROM transactions WHERE id=%s AND wallet_id=%s FOR UPDATE",
             (txid,user["wallet_id"]),
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404,detail="Transaction not found")
-        txid,symbol,amount,status,destination,network,existing_hash=row
+        txid,symbol,amount,status,destination,network,existing_hash,source_address,transaction_type=row
         if status in {"confirmed","settled"}:
             return {"status":"confirmed","transaction_id":txid,"tx_hash":existing_hash,"replayed":True}
         if status == "cancelled":
@@ -3223,14 +5775,28 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             raise HTTPException(status_code=409,detail="Transaction is not eligible for settlement")
         if existing_hash and existing_hash.lower() != tx_hash.lower():
             raise HTTPException(status_code=409,detail="Transaction already has a different broadcast hash")
-        if network == "bitcoin":
+        if network == "solana-devnet" and symbol == "BALMZ-SOL-DEVNET":
+            try:
+                verification = verify_solana_devnet_settlement(
+                    tx_hash, destination, abs(Decimal(amount)),
+                    wallet_network_address(user, "solana-devnet"),
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        elif network == "bitcoin":
             if not BTC_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid Bitcoin transaction hash")
-            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),wallet_network_address(user,"bitcoin"))
-        elif network in {"ethereum","bnb"}:
+            if not source_address and transaction_type == "withdrawal":
+                raise HTTPException(status_code=409,detail="This withdrawal has no recorded source address and cannot be settled automatically")
+            source_address=source_address or wallet_network_address(user,"bitcoin")
+            verification=verify_bitcoin_settlement(tx_hash,destination,abs(Decimal(amount)),source_address)
+        elif network in {"ethereum","bnb","sepolia"}:
             if not EVM_TX_HASH_RE.fullmatch(tx_hash):
                 raise HTTPException(status_code=400,detail="Invalid EVM transaction hash")
-            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),wallet_network_address(user,network))
+            if not source_address and transaction_type == "withdrawal":
+                raise HTTPException(status_code=409,detail="This withdrawal has no recorded source address and cannot be settled automatically")
+            source_address = source_address or wallet_network_address(user,network)
+            verification=verify_evm_settlement(tx_hash,symbol,network,destination,abs(Decimal(amount)),source_address)
         else:
             raise HTTPException(status_code=400,detail="Unsupported settlement network")
 
@@ -3242,7 +5808,7 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
                 (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
             )
             conn.commit()
-            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"broadcast":False}
+            return {"status":"broadcast_pending","transaction_id":txid,"tx_hash":tx_hash,"confirmations":verification.get("confirmations",0),"finality":verification.get("finality"),"broadcast":False}
 
         hold=abs(Decimal(amount))
         if not asset or Decimal(asset[0] or 0) < hold:
@@ -3255,13 +5821,14 @@ def settle_transaction(request: TransactionSettleRequest,user: dict = Depends(cu
             "UPDATE transactions SET status='settled',tx_hash=%s,confirmations=%s,block_height=%s WHERE id=%s AND wallet_id=%s",
             (tx_hash,verification.get("confirmations",0),verification.get("block_height"),txid),
         )
-        reconcile_settled_asset(conn,user,symbol,network)
+        reconcile_settled_asset(conn,user,symbol,network,source_address)
         conn.commit()
         return {
             "status":"confirmed",
             "transaction_id":txid,
             "tx_hash":tx_hash,
             "confirmations":verification.get("confirmations",0),
+            "finality":verification.get("finality"),
             "block_height":verification.get("block_height"),
             "accounting":"reserved_released_and_chain_reconciled",
             "broadcast":False,

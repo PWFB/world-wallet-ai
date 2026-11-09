@@ -4,6 +4,11 @@ import WalletVault from "./WalletVault.jsx";
 import ContractTools from "./ContractTools.jsx";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
+import { isTestnetNetwork } from "./network-selection.js";
+import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
+import OKXWalletInspector from "./OKXWalletInspector.jsx";
+import TokenInteractionAudit from "./TokenInteractionAudit.jsx";
+import FreeBalmzMining from "./FreeBalmzMining.jsx";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -47,8 +52,9 @@ async function walletAuthHeaders(accessToken, extra = {}) {
 function transactionExplorerUrl(transaction) {
   const hash = String(transaction?.tx_hash || transaction?.transaction_hash || "").trim();
   if (!hash) return "";
-  const network = String(transaction?.network || "").toLowerCase();
+  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  if (network === "solana_devnet" || asset === "BALMZ-SOL-DEVNET") return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}?cluster=devnet`;
   if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
   if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
   if (network === "sepolia" || asset === "BALMZ-SEP") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
@@ -64,7 +70,7 @@ function transactionExplorerUrl(transaction) {
 
 function tokenExplorerUrl(transaction) {
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
-  const network = String(transaction?.network || "").toLowerCase();
+  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const contract = String(transaction?.token_contract_address || transaction?.contract_address || "").trim();
   if (contract && /^0x[a-fA-F0-9]{40}$/.test(contract)) {
     return network === "sepolia" || asset === "BALMZ-SEP" ? `https://sepolia.etherscan.io/token/${contract}`
@@ -76,6 +82,7 @@ function tokenExplorerUrl(transaction) {
 }
 
 const RECEIVE_ASSET_OPTIONS = [
+  { symbol: "SOL", name: "Solana" },
   { symbol: "BTC", name: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum" },
   { symbol: "BNB", name: "BNB" },
@@ -91,6 +98,7 @@ const networksForAsset = symbol => ({
   BTC: [{ value: "bitcoin", label: "Bitcoin" }],
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
+  SOL: [{ value: "solana_mainnet", label: "Solana Mainnet" }],
   USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
@@ -99,22 +107,62 @@ const networksForAsset = symbol => ({
   "BALMZ-SOL-DEVNET": [{ value: "solana_devnet", label: "Solana Devnet (testnet)" }],
 }[symbol] || []);
 
-function getLocalExternalReceiveAddress() {
+function getSavedExternalConnections() {
   try {
-    const connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
-    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return [];
-    const rawChainId = connection.chainId;
-    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
-      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const saved = JSON.parse(localStorage.getItem("world_wallet_external_connections_v2") || "[]");
+    const legacy = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
+    const list = [...(Array.isArray(saved) ? saved : []), ...(legacy ? [legacy] : [])];
+    return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
+      .filter((item, index, all) => all.findIndex(other =>
+        String(other.walletId || "") === String(item.walletId || "") &&
+        Number(other.chainId) === Number(item.chainId) &&
+        other.address.toLowerCase() === item.address.toLowerCase()
+      ) === index);
+  } catch { return []; }
+}
+function getLocalExternalReceiveAddress(walletId = "") {
+  if (!walletId) return [];
+  return getSavedExternalConnections().filter(connection => String(connection.walletId || "") === String(walletId)).map(connection => {
+    const chainId = Number(connection.chainId);
     const network = ({ 1: "ethereum", 11155111: "sepolia", 56: "bnb" })[chainId];
-    if (!network) return [];
-    return [{ network, address: connection.address, label: "Connected external wallet", local: true }];
-  } catch {
-    return [];
-  }
+    return { network, address: connection.address, label: connection.label || "Connected external wallet", local: true, walletId };
+  }).filter(item => item.network);
+}
+function getLocalVaultReceiveAddress(walletId = "", userId = "") {
+  if (!walletId || !userId) return [];
+  try {
+    const saved = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]");
+    if (!Array.isArray(saved)) return [];
+    const entry = saved.find(item => {
+      const serverWalletId = item?.serverWalletId || (String(item?.walletId || "").startsWith("wallet_") ? item.walletId : "");
+      const ownerMatches = item?.ownerUserId ? Boolean(userId) && String(item.ownerUserId) === String(userId) : true;
+      return String(serverWalletId) === String(walletId) && ownerMatches;
+    });
+    if (!entry) return [];
+    const addressSet = entry.addresses && typeof entry.addresses === "object"
+      ? entry.addresses
+      : { [entry.network || "ethereum"]: entry.address };
+    return Object.entries(addressSet).filter(([network, address]) =>
+      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet"].includes(network) && typeof address === "string" && address.length
+    ).map(([network, address]) => ({
+      network,
+      address,
+      label: (entry.name || "Wallet") + " · ID " + (entry.walletNumber || "legacy"),
+      walletNumber: entry.walletNumber || "",
+      walletId: entry.walletId,
+      local: true,
+      generated: true,
+    }));
+  } catch { return []; }
+}
+function getLocalReceiveAddresses(walletId = "", userId = "") {
+  return [...getLocalVaultReceiveAddress(walletId, userId), ...getLocalExternalReceiveAddress(walletId)]
+    .filter((item, index, all) => all.findIndex(other =>
+      other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()
+    ) === index);
 }
 
-function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId, accountUserId = "" }) {
   const [wallets, setWallets] = useState([]);
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
@@ -160,53 +208,42 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => { loadWallets(); }, [accessToken]);
 
-  // When a user has connected an external EVM wallet, attach its public address
-  // to the active server wallet when the Wallets screen loads. Private keys never
-  // enter this flow. Unsupported chains are left unmodified rather than mislabeled.
+  // Attach every saved external EVM address to its matching network on the active wallet.
+  // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
-    let connection;
-    try { connection = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return; }
-    if (!connection?.address || !/^0x[a-fA-F0-9]{40}$/.test(connection.address)) return;
-    const rawChainId = connection.chainId;
-    const chainId = typeof rawChainId === "string" && /^0x[0-9a-f]+$/i.test(rawChainId)
-      ? Number.parseInt(rawChainId, 16) : Number(rawChainId);
+    const connections = getSavedExternalConnections().filter(connection => String(connection.walletId || "") === String(walletId));
     const networkByChain = { 1: "ethereum", 11155111: "sepolia", 56: "bnb" };
-    const externalNetwork = networkByChain[chainId];
-    if (!externalNetwork) return;
-    if (walletAddresses.some(item => item.network === externalNetwork && String(item.address || "").toLowerCase() === connection.address.toLowerCase())) return;
-    const attachKey = walletId + ":" + externalNetwork + ":" + connection.address.toLowerCase();
-    if (externalAttachRef.current.has(attachKey)) return;
-    externalAttachRef.current.add(attachKey);
     let cancelled = false;
     (async () => {
-      try {
-        const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
-          method: "POST",
-          headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
-          body: JSON.stringify({ network: externalNetwork, address: connection.address, label: "external wallet" }),
-        });
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || "External wallet connected, but its address could not be attached.");
-        if (cancelled) return;
-        await loadAddresses(walletId);
-        const refreshedResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
-        const refreshed = await refreshedResponse.json();
-        if (refreshedResponse.ok) {
-          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
-          onTransactionsUpdated?.(refreshed.transactions || []);
-          setMessage("External wallet address attached to the active wallet. Live data refreshed; verify the network and source warnings.");
-        } else {
-          setMessage("External wallet address attached. Wallet refresh needs a retry: " + (refreshed.detail || "refresh unavailable."));
+      for (const connection of connections) {
+        const externalNetwork = networkByChain[Number(connection.chainId)];
+        if (!externalNetwork || !connection.address) continue;
+        if (walletAddresses.some(item => item.network === externalNetwork && String(item.address || "").toLowerCase() === connection.address.toLowerCase())) continue;
+        const attachKey = walletId + ":" + externalNetwork + ":" + connection.address.toLowerCase();
+        if (externalAttachRef.current.has(attachKey)) continue;
+        externalAttachRef.current.add(attachKey);
+        try {
+          const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+            method: "POST",
+            headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ network: externalNetwork, address: connection.address, label: connection.label || "external wallet" }),
+          });
+          const data = await response.json();
+          if (!response.ok) throw new Error(data.detail || "External wallet address could not be attached.");
+          if (cancelled) return;
+          await loadAddresses(walletId);
+        } catch (error) {
+          externalAttachRef.current.delete(attachKey);
+          if (!cancelled) setMessage(error?.message || "Could not attach a connected external wallet address.");
         }
-      } catch (error) {
-        externalAttachRef.current.delete(attachKey);
-        if (!cancelled) setMessage(error?.message || "Could not attach the connected external wallet address.");
+      }
+      if (!cancelled) {
+        try { await refreshActiveWallet(); } catch (error) { setMessage("Addresses are saved; wallet refresh can be retried: " + (error?.message || "unavailable")); }
       }
     })();
     return () => { cancelled = true; };
   }, [walletId, addressesLoadedForWallet, walletAddresses, accessToken, apiBaseUrl]);
-
   const refreshActiveWallet = async () => {
     const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", { method: "POST", headers: await walletAuthHeaders(accessToken) });
     const data = await response.json();
@@ -261,49 +298,96 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   const addAddress = async () => {
     const value = address.trim();
-    const selectedWalletId = walletId;
-    const selectedNetwork = network;
-    const selectedLabel = label.trim() || "primary";
+    const cleanLabel = label.trim() || "primary";
     if (!value) return setMessage("Enter a public wallet address.");
     if (!selectedWalletId) return setMessage("Select a wallet first.");
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(selectedWalletId) + "/addresses", {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
         headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
-        body: JSON.stringify({ network: selectedNetwork, address: value, label: selectedLabel }),
+        body: JSON.stringify({ network, address: value, label: cleanLabel }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.detail || "Unable to save this public address.");
+      if (!response.ok) throw new Error(data.detail || "The server rejected this address. Check the network and public address, then try again.");
 
-      // Confirm persistence from the server before clearing the form. A successful
-      // POST alone is not enough to tell the user that the address is visible.
-      const listResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(selectedWalletId) + "/addresses", {
+      // Confirm persistence from the server before telling the user the address is connected.
+      const listResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         headers: await walletAuthHeaders(accessToken),
       });
       const listData = await listResponse.json().catch(() => ({}));
       if (!listResponse.ok) {
-        throw new Error("The server accepted the address, but verification failed. Tap Refresh to check saved addresses.");
+        throw new Error("The server accepted the address, but verification failed. Refresh the Wallets page before submitting it again.");
       }
-      const savedAddresses = Array.isArray(listData.addresses) ? listData.addresses : [];
-      const matchesSaved = savedAddresses.some(item =>
-        item.network === selectedNetwork &&
-        (["ethereum", "sepolia", "bnb"].includes(selectedNetwork)
+      const saved = (Array.isArray(listData.addresses) ? listData.addresses : []).some(item =>
+        item.network === network &&
+        (["ethereum", "sepolia", "bnb"].includes(network)
           ? String(item.address || "").toLowerCase() === value.toLowerCase()
           : String(item.address || "") === value)
       );
-      if (!matchesSaved) {
-        throw new Error("The server did not confirm this address as saved. Your form was kept so you can retry.");
+      if (!saved) {
+        throw new Error("The server accepted the request but the address was not found in the saved address list. Please retry.");
       }
 
-      setWalletAddresses(savedAddresses);
-      setAddressesLoadedForWallet(selectedWalletId);
+      const savedAddress = (listData.addresses || []).find(item =>
+        item.network === network &&
+        (["ethereum", "sepolia", "bnb"].includes(network)
+          ? String(item.address || "").toLowerCase() === value.toLowerCase()
+          : String(item.address || "") === value
+        )
+      );
+      let ownershipVerified = Boolean(savedAddress?.ownership_verified);
+      if (["ethereum", "sepolia", "bnb"].includes(network)) {
+        const provider = externalProvider || window.ethereum || window.coinbaseWalletExtension;
+        if (provider?.request) {
+          try {
+            const accounts = await provider.request({ method: "eth_accounts" });
+            const chainHex = externalChainId ?? await provider.request({ method: "eth_chainId" });
+            const expectedChain = { ethereum: 1, sepolia: 11155111, bnb: 56 }[network];
+            const connectedChain = typeof chainHex === "number" ? chainHex : Number.parseInt(String(chainHex), 16);
+            const signerAccounts = Array.isArray(accounts) && accounts.length ? accounts : (externalAccount ? [externalAccount] : []);
+            if (signerAccounts.some(item => String(item).toLowerCase() === value.toLowerCase()) && connectedChain === expectedChain) {
+              const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/challenge", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ network, address: value, label: cleanLabel }),
+              });
+              const challenge = await challengeResponse.json().catch(() => ({}));
+              if (!challengeResponse.ok) throw new Error(challenge.detail || "Could not create ownership challenge.");
+              const messageHex = "0x" + Array.from(new TextEncoder().encode(challenge.message), byte => byte.toString(16).padStart(2, "0")).join("");
+              const signature = await provider.request({ method: "personal_sign", params: [messageHex, value] });
+              const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/verify", {
+                method: "POST",
+                headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+                body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+              });
+              const verified = await verifyResponse.json().catch(() => ({}));
+              if (!verifyResponse.ok) throw new Error(verified.detail || "Address ownership verification failed.");
+              ownershipVerified = verified.ownership_verified === true;
+              const refreshedAddresses = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+                headers: await walletAuthHeaders(accessToken),
+              });
+              const refreshedList = await refreshedAddresses.json().catch(() => ({}));
+              if (refreshedAddresses.ok) listData.addresses = refreshedList.addresses || listData.addresses;
+            } else {
+              setMessage("Address saved, but ownership is not verified. Connect the matching wallet on the selected network and retry to sign the verification message.");
+            }
+          } catch (signError) {
+            setMessage("Address saved but not ownership-verified: " + (signError?.message || "wallet signature was not completed."));
+          }
+        } else {
+          setMessage("Address saved but not ownership-verified. Connect a compatible EVM wallet to sign the ownership challenge.");
+        }
+      }
+      setWalletAddresses(listData.addresses);
+      setAddressesLoadedForWallet(walletId);
       setAddress("");
-      setMessage("Public address saved and verified. Checking live wallet data…");
+      if (ownershipVerified) setMessage("Address saved and ownership signature verified. No transaction was sent. Checking live wallet data…");
+      else if (!["ethereum", "sepolia", "bnb"].includes(network)) setMessage("Public address saved for " + network + ". This address has not undergone native ownership verification.");
 
-      // Address persistence is independent of RPC health. Do not report a saved
-      // address as a failed connection just because a chain refresh is unavailable.
+      // Address persistence is independent of chain refresh. A missing RPC or
+      // unavailable indexer must not make a successfully saved address look unsaved.
       try {
         const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
           method: "POST",
@@ -311,20 +395,20 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         });
         const refreshData = await refreshResponse.json().catch(() => ({}));
         if (!refreshResponse.ok) {
-          setMessage("Public address saved and verified. Live refresh is unavailable: " + (refreshData.detail || "try Refresh again later."));
+          setMessage("Address saved and verified. Live data refresh is unavailable: " + (refreshData.detail || "use Refresh to retry."));
           return;
         }
         onWalletUpdated?.({ wallet: refreshData.wallet, assets: refreshData.assets || [], updates: refreshData.updates || [] });
         onTransactionsUpdated?.(refreshData.transactions || []);
         const warnings = Array.isArray(refreshData.warnings) ? refreshData.warnings : [];
         setMessage(warnings.length
-          ? "Public address saved and verified. Live data has warnings: " + warnings.join(" • ")
-          : "Public address saved and verified. Wallet data refreshed.");
+          ? "Address saved and verified. Live refresh completed with warnings: " + warnings.join(" • ")
+          : "Address saved and verified. Wallet refresh completed; confirm the displayed network and on-chain balance.");
       } catch (refreshError) {
-        setMessage("Public address saved and verified. Live refresh could not complete: " + (refreshError?.message || "try Refresh again later."));
+        setMessage("Address saved and verified. Live data refresh failed: " + (refreshError?.message || "use Refresh to retry."));
       }
     } catch (error) {
-      setMessage(error.message || "Unable to save public address.");
+      setMessage(error.message || "Unable to connect address.");
     } finally {
       setBusy(false);
     }
@@ -352,36 +436,101 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   const selectedWallet = wallets.find(w => w.id === walletId);
-  const visibleAddresses = [...walletAddresses, ...localEntries.filter(entry => entry.address && (!selectedWallet || entry.walletId === selectedWallet.id || entry.walletId === walletId || entry.walletId.startsWith("local-"))).map(entry => ({ network: entry.network || "ethereum", address: entry.address, label: entry.name || "Local signing wallet", local: true, walletId: entry.walletId }))].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
+  const allAccountLocalEntries = localEntries.filter(entry => {
+    const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
+    const belongsToAccount = entry.ownerUserId
+      ? String(entry.ownerUserId) === String(accountUserId)
+      : Boolean(serverWalletId && wallets.some(item => item.id === serverWalletId));
+    return belongsToAccount;
+  });
+  const accountLocalEntries = allAccountLocalEntries.filter(entry => {
+    const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
+    return String(serverWalletId) === String(walletId);
+  });
+  const localWalletAddresses = accountLocalEntries.flatMap(entry => {
+    const addressSet = entry.addresses && typeof entry.addresses === "object"
+      ? entry.addresses
+      : { [entry.network || "ethereum"]: entry.address };
+    return Object.entries(addressSet).filter(([, value]) => typeof value === "string" && value.length).map(([addressNetwork, value]) => ({
+      network: addressNetwork,
+      address: value,
+      label: (entry.name || "Local signing wallet") + (entry.walletNumber ? " · ID " + entry.walletNumber : ""),
+      local: true,
+      walletId: entry.walletId,
+      walletNumber: entry.walletNumber || "",
+      generated: true,
+    }));
+  });
+  const visibleAddresses = [...walletAddresses, ...localWalletAddresses].filter((item, index, all) => all.findIndex(other => other.network === item.network && other.address?.toLowerCase() === item.address?.toLowerCase()) === index);
+  const walletNumberFor = id => allAccountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === id)?.walletNumber || String(wallets.find(item => item.id === id)?.wallet_number || "Create a signing wallet");
+  const activeLocalEntry = accountLocalEntries.find(entry => (entry.serverWalletId || entry.walletId) === walletId);
+  const activeLocalAddressSet = activeLocalEntry?.addresses && typeof activeLocalEntry.addresses === "object"
+    ? activeLocalEntry.addresses
+    : (activeLocalEntry?.address ? { [activeLocalEntry.network || "ethereum"]: activeLocalEntry.address } : {});
+  const localAddressSyncKey = Object.entries(activeLocalAddressSet).map(([networkName, value]) => networkName + ":" + value).sort().join("|");
+  const serverAddressSyncKey = walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()).sort().join("|");
+
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId || !accessToken || !activeLocalEntry || !localAddressSyncKey) return;
+    let cancelled = false;
+    (async () => {
+      const known = new Set(walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()));
+      const failures = [];
+      for (const [networkName, addressValue] of Object.entries(activeLocalAddressSet)) {
+        const key = networkName + ":" + String(addressValue).toLowerCase();
+        if (known.has(key)) continue;
+        try {
+          const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+            method: "POST",
+            headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+            body: JSON.stringify({ network: networkName, address: addressValue, label: "generated " + (activeLocalEntry.walletNumber || "wallet") }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Address sync failed.");
+          known.add(key);
+        } catch (error) {
+          failures.push(networkName + ": " + (error?.message || "sync failed"));
+        }
+        if (cancelled) return;
+      }
+      if (cancelled) return;
+      await loadAddresses(walletId);
+      if (failures.length) setMessage("Some generated receiving addresses still need sync: " + failures.join("; "));
+      else setMessage("The selected wallet's generated addresses are synced.");
+    })().catch(error => {
+      if (!cancelled) setMessage(error?.message || "Unable to sync generated wallet addresses.");
+    });
+    return () => { cancelled = true; };
+  }, [walletId, addressesLoadedForWallet, accessToken, apiBaseUrl, accountUserId, localAddressSyncKey, serverAddressSyncKey]);
+
 
   return <section className="content feature-content">
     <div className="page-heading">
-      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Create wallet profiles, connect public addresses, and switch the active wallet.</p></div>
+      <div><p className="eyebrow">WALLET MANAGEMENT</p><h1>Wallets</h1><p className="muted">Generate full self-custody wallets, manage their receiving addresses, and switch the active wallet.</p></div>
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel">
-        <p className="feature-kicker">CREATE WALLET PROFILE</p>
-        <h2>New wallet</h2>
-        <p className="muted">This creates a wallet record only. World Wallet AI does not generate or store a private key on the server.</p>
-        <label>Wallet name<input value={walletName} onChange={e => setWalletName(e.target.value)} placeholder="Personal Wallet" maxLength="80"/></label>
-        <button className="primary feature-submit" disabled={busy || !walletName.trim()} onClick={createWallet}>{busy ? "Creating…" : "Create wallet →"}</button>
-        <div className="security-note">For a non-custodial wallet, create or import the signing account in a compatible wallet app and connect only its public address here.</div>
+        <p className="feature-kicker">WALLET STRUCTURE</p>
+        <h2>Independent self-custody wallets</h2>
+        <p className="muted">Use Generate complete wallet above. Each wallet has its own recovery phrase, encrypted key material, 11-digit wallet ID, public addresses, and separate account history.</p>
+        <div className="security-note">Ethereum and BNB Chain use the same EVM mainnet address within one wallet. Bitcoin and Solana have their own mainnet addresses. Sepolia and Solana Devnet use separate test-network derivations.</div>
       </article>
       <article className="panel action-panel">
         <p className="feature-kicker">ACTIVE WALLET</p>
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
+        <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
-          {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
+          {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} · ID {walletNumberFor(w.id)}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
         <div className="tool-list">
           {visibleAddresses.length ? visibleAddresses.map(a => {
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
-            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
-            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
@@ -391,27 +540,41 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <h2>Attach a blockchain address</h2>
       {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" ? "Solana Base58 public address" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Sepolia and Solana Devnet are test networks. You can attach public addresses without a private key. Solana Devnet balance checks require WORLD_WALLET_SOLANA_DEVNET_RPC_URL on the backend.</div>
+      <div className="security-note">Ethereum Sepolia and Solana Devnet are test networks. Solana Mainnet and Devnet are separate network identities; the backend checks each RPC cluster before returning balances. Configure WORLD_WALLET_SOLANA_MAINNET_RPC_URL separately from WORLD_WALLET_SOLANA_DEVNET_RPC_URL.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
-      <div className="security-note">BALMZ is currently contract-pending. Do not enter a made-up BALMZ contract address. Once the real contract is deployed, its real address can be registered and its on-chain metadata and balance can be read.</div>
+      <div className="security-note">The BALMZ-SOL-DEVNET mint is test-only and must not be used as the World Wallet AI presale asset. Register the real production BALMZ mint or contract only after its Mainnet deployment is verified; never substitute the Devnet mint.</div>
     </article>
   </section>;
 }
 
-export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated }) {
+export default function FeaturePage({ accountName = "", accountEmail = "", selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
+  const activeWalletId = String(wallet?.wallet_id || wallet?.id || wallet?.walletId || "");
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
+  const [marketSearch, setMarketSearch] = useState("");
+  const [presaleStatus, setPresaleStatus] = useState(null);
+  const [presaleStatusError, setPresaleStatusError] = useState("");
+  const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
+  const [presaleStatusCheckedAt, setPresaleStatusCheckedAt] = useState(null);
+  const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
+  const [presaleInterest, setPresaleInterest] = useState(null);
+  const [presaleInterestBusy, setPresaleInterestBusy] = useState(false);
+  const [presaleInterestLoading, setPresaleInterestLoading] = useState(false);
+  const [presaleInterestError, setPresaleInterestError] = useState("");
+  const [presaleInterestMessage, setPresaleInterestMessage] = useState("");
   const [amount, setAmount] = useState("");
   const [destination, setDestination] = useState("");
   const [network, setNetwork] = useState(() => networksForAsset(assets[0]?.symbol || "BALMZ")[0]?.value || "ethereum");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [addresses, setAddresses] = useState(() => getLocalExternalReceiveAddress());
+  const [addresses, setAddresses] = useState(() => []);
+  const [withdrawalAddresses, setWithdrawalAddresses] = useState([]);
+  const [selectedSourceAddress, setSelectedSourceAddress] = useState("");
   const [receiveNetwork, setReceiveNetwork] = useState("all");
   const [swapFrom, setSwapFrom] = useState("ETH");
   const [swapTo, setSwapTo] = useState("USDT");
@@ -430,8 +593,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
   const [historyBusy, setHistoryBusy] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  const [historyTypeFilter, setHistoryTypeFilter] = useState("all");
+  const [historyStatusFilter, setHistoryStatusFilter] = useState("all");
+  const [historySearch, setHistorySearch] = useState("");
   const [copiedAddress, setCopiedAddress] = useState("");
+  const [devnetDepositSignature, setDevnetDepositSignature] = useState("");
+  const [devnetDepositBusy, setDevnetDepositBusy] = useState(false);
+  const [devnetDepositMessage, setDevnetDepositMessage] = useState("");
+  const [devnetDepositResult, setDevnetDepositResult] = useState(null);
   const [toolItems, setToolItems] = useState([]);
+  const [requestItems, setRequestItems] = useState([]);
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [requestError, setRequestError] = useState("");
+  const [selectedRequest, setSelectedRequest] = useState(null);
   const [chainResult, setChainResult] = useState(null);
   const [proofData, setProofData] = useState(null);
   const [apiKeyBalance, setApiKeyBalance] = useState(null);
@@ -452,7 +626,86 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   const [walletProfiles, setWalletProfiles] = useState([]);
   const [targetWalletId, setTargetWalletId] = useState("");
   const [toolBusy, setToolBusy] = useState(false);
+  const [adminData, setAdminData] = useState(null);
+  const [adminBusy, setAdminBusy] = useState(false);
+  const [adminError, setAdminError] = useState("");
+  const [adminSearch, setAdminSearch] = useState("");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [announcementEnabled, setAnnouncementEnabled] = useState(false);
+  const [adminSaveBusy, setAdminSaveBusy] = useState(false);
+  const [adminSaveMessage, setAdminSaveMessage] = useState("");
+  const [nftProviderTest, setNftProviderTest] = useState(null);
+  const [nftProviderTestBusy, setNftProviderTestBusy] = useState(false);
+  const [nftProviderTestError, setNftProviderTestError] = useState("");
+  const [etherscanProviderTest, setEtherscanProviderTest] = useState(null);
+  const [etherscanProviderTestBusy, setEtherscanProviderTestBusy] = useState(false);
+  const [etherscanProviderTestError, setEtherscanProviderTestError] = useState("");
+  const [supportTitle, setSupportTitle] = useState("");
+  const [supportDetails, setSupportDetails] = useState("");
+  const [supportSubmitBusy, setSupportSubmitBusy] = useState(false);
+  const [supportSubmitMessage, setSupportSubmitMessage] = useState("");
+  const [supportItems, setSupportItems] = useState([]);
+  const [supportLoadError, setSupportLoadError] = useState("");
+  const [nftNetwork, setNftNetwork] = useState("ethereum");
+  const [nftData, setNftData] = useState(null);
+  const [nftBusy, setNftBusy] = useState(false);
+  const [nftError, setNftError] = useState("");
+  const [nftRefresh, setNftRefresh] = useState(0);
+  const [miningInterest, setMiningInterest] = useState(null);
+  const [miningBusy, setMiningBusy] = useState(false);
+  const [miningLoadBusy, setMiningLoadBusy] = useState(false);
+  const [miningMessage, setMiningMessage] = useState("");
+  const [miningError, setMiningError] = useState("");
   const requestKeyRef = useRef("");
+
+  useEffect(() => {
+    const activeWalletId = wallet?.wallet_id || wallet?.id;
+    setSelectedSourceAddress("");
+    if (!activeWalletId || !accessToken) { setWithdrawalAddresses([]); return; }
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(activeWalletId) + "/addresses", { headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load attached wallet addresses.");
+        if (!cancelled) setWithdrawalAddresses(Array.isArray(data.addresses) ? data.addresses : []);
+      })
+      .catch(() => { if (!cancelled) setWithdrawalAddresses([]); });
+    return () => { cancelled = true; };
+  }, [wallet?.wallet_id, wallet?.id, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "BALMZ Presale" || !accessToken) return;
+    let cancelled = false;
+    fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not load BALMZ presale status.");
+        if (!cancelled) { setPresaleStatus(data); setPresaleStatusError(""); setPresaleStatusCheckedAt(new Date().toISOString()); }
+      })
+      .catch(error => { if (!cancelled) setPresaleStatusError(error.message || "Could not load BALMZ presale status."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "BALMZ Presale" || !accessToken) return undefined;
+    let cancelled = false;
+    setPresaleInterestLoading(true);
+    setPresaleInterest(null);
+    setPresaleInterestError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Presale interest status could not be loaded.");
+        const existing = (Array.isArray(data.requests) ? data.requests : []).find(item =>
+          item.kind === "other" && item.title === "BALMZ Presale early access"
+        ) || null;
+        if (!cancelled) setPresaleInterest(existing);
+      })
+      .catch(error => { if (!cancelled) setPresaleInterestError(error.message || "Presale interest status could not be loaded."); })
+      .finally(() => { if (!cancelled) setPresaleInterestLoading(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
 
   useEffect(() => {
     if (active !== "API Keys" || !accessToken) return;
@@ -481,6 +734,87 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [active, apiBaseUrl, accessToken]);
 
   useEffect(() => {
+    const adminEndpoints = {
+      "Admin Editor": "/api/v1/admin/announcement",
+      "User Management": "/api/v1/admin/users",
+      "System Settings": "/api/v1/admin/settings",
+      "Logs & Activity": "/api/v1/admin/activity",
+      "Role Management": "/api/v1/admin/roles",
+    };
+    const endpoint = adminEndpoints[active];
+    if (!endpoint || !accessToken) return undefined;
+    let cancelled = false;
+    setAdminBusy(true);
+    setAdminError("");
+    setAdminSaveMessage("");
+    fetch(apiBaseUrl + endpoint, { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Administrative data could not be loaded.");
+        if (cancelled) return;
+        setAdminData(data);
+        if (active === "Admin Editor") {
+          const announcement = data.announcement || {};
+          setAnnouncementTitle(announcement.title || "");
+          setAnnouncementBody(announcement.body || "");
+          setAnnouncementEnabled(Boolean(announcement.enabled));
+        }
+      })
+      .catch(error => { if (!cancelled) setAdminError(error.message || "Administrative data could not be loaded."); })
+      .finally(() => { if (!cancelled) setAdminBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "Support Center" || !accessToken) return undefined;
+    let cancelled = false;
+    setSupportLoadError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Support requests could not be loaded.");
+        if (!cancelled) setSupportItems(Array.isArray(data.requests) ? data.requests.filter(item => item.kind === "support") : []);
+      })
+      .catch(error => { if (!cancelled) setSupportLoadError(error.message || "Support requests could not be loaded."); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken]);
+
+  useEffect(() => {
+    if (active !== "Token Mining" || !accessToken) return undefined;
+    let cancelled = false;
+    setMiningLoadBusy(true);
+    setMiningInterest(null);
+    setMiningError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Mining interest status could not be loaded.");
+        const requests = Array.isArray(data.requests) ? data.requests : [];
+        const existing = requests.find(item => item.kind === "other" && item.title === "BALMZ Token Mining early access") || null;
+        if (!cancelled) setMiningInterest(existing);
+      })
+      .catch(error => { if (!cancelled) setMiningError(error.message || "Mining interest status could not be loaded."); })
+      .finally(() => { if (!cancelled) setMiningLoadBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
+    if (active !== "NFTs" || !accessToken) return undefined;
+    let cancelled = false;
+    setNftBusy(true);
+    setNftError("");
+    fetch(apiBaseUrl + "/api/v1/wallet/nfts?network=" + encodeURIComponent(nftNetwork), { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "NFT collection could not be loaded.");
+        if (!cancelled) setNftData(data);
+      })
+      .catch(error => { if (!cancelled) { setNftData(null); setNftError(error.message || "NFT collection could not be loaded."); } })
+      .finally(() => { if (!cancelled) setNftBusy(false); });
+    return () => { cancelled = true; };
+  }, [active, apiBaseUrl, accessToken, nftNetwork, nftRefresh]);
+
+  useEffect(() => {
     if (selectedAsset && selectedAsset !== asset) setAsset(selectedAsset);
   }, [selectedAsset]);
 
@@ -490,49 +824,74 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }, [asset]);
 
   useEffect(() => {
-    const syncLocalExternalAddress = () => {
-      const localAddresses = getLocalExternalReceiveAddress();
-      setAddresses(previous => {
-        const serverAddresses = previous.filter(item => !item.local);
-        return [...serverAddresses, ...localAddresses].filter((item, index, all) =>
-          item?.address && item?.network &&
-          all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
-        );
-      });
+    const syncLocalReceiveAddresses = () => {
+      const localAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+      setAddresses(previous => [...localAddresses, ...previous.filter(item => !item.local)].filter((item, index, all) =>
+        item?.address && item?.network &&
+        all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
+      ));
     };
-    window.addEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-    window.addEventListener("storage", syncLocalExternalAddress);
+    syncLocalReceiveAddresses();
+    window.addEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+    window.addEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+    window.addEventListener("storage", syncLocalReceiveAddresses);
     return () => {
-      window.removeEventListener("world-wallet-external-connection-updated", syncLocalExternalAddress);
-      window.removeEventListener("storage", syncLocalExternalAddress);
+      window.removeEventListener("world-wallet-external-connection-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("world-wallet-local-vault-updated", syncLocalReceiveAddresses);
+      window.removeEventListener("storage", syncLocalReceiveAddresses);
     };
-  }, []);
+  }, [activeWalletId, accountUserId]);
 
   useEffect(() => {
     if (active !== "Receive" && active !== "Deposit") return;
     let cancelled = false;
-    fetch(apiBaseUrl + "/api/v1/wallet/addresses", { headers: { Authorization: "Bearer " + accessToken } })
-      .then(async r => ({ ok: r.ok, data: await r.json() }))
-      .then(({ ok, data }) => {
+    const initialLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+    setAddresses(initialLocalAddresses);
+    const loadAddresses = async () => {
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/wallet/addresses", {
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const { ok, data } = { ok: response.ok, data: await response.json() };
         if (cancelled) return;
         const serverAddresses = ok && Array.isArray(data.addresses) ? data.addresses : [];
-        const localExternalAddresses = getLocalExternalReceiveAddress();
-        const combined = [...serverAddresses, ...localExternalAddresses].filter((item, index, all) =>
+        const freshLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+        const combined = [...freshLocalAddresses, ...serverAddresses].filter((item, index, all) =>
           item?.address && item?.network &&
           all.findIndex(other => other.network === item.network && String(other.address).toLowerCase() === String(item.address).toLowerCase()) === index
         );
         setAddresses(combined);
-        setAddressMessage(ok ? (data.message || "") : (data.detail || "Unable to load saved addresses. A connected external public address may still be shown locally."));
-      })
-      .catch(() => { if (!cancelled) { const localExternalAddresses = getLocalExternalReceiveAddress(); setAddresses(previous => { const serverAddresses = previous.filter(item => !item.local); return [...serverAddresses, ...localExternalAddresses]; }); setAddressMessage(localExternalAddresses.length ? "Showing your connected public address from this browser. Saved server addresses could not be loaded." : "Unable to load wallet addresses. Connect a supported public wallet to show a receiving address."); } });
+        setAddressMessage(ok
+          ? (freshLocalAddresses.length ? "Receiving addresses loaded for this wallet. Mainnet and testnet/devnet addresses remain separate." : (data.message || ""))
+          : (data.detail || "Showing locally generated addresses for the selected wallet; server sync is unavailable."));
+      } catch {
+        if (!cancelled) {
+          const freshLocalAddresses = getLocalReceiveAddresses(activeWalletId, accountUserId);
+          setAddresses(freshLocalAddresses);
+          setAddressMessage(freshLocalAddresses.length
+            ? "Showing the locally generated addresses for the selected wallet. Server address refresh is unavailable."
+            : "No generated wallet address is available yet. Create a complete self-custody wallet to generate its addresses.");
+        }
+      }
+    };
+    loadAddresses();
     return () => { cancelled = true; };
-  }, [active, apiBaseUrl, accessToken]);
+  }, [active, apiBaseUrl, accessToken, activeWalletId, accountUserId]);
   function persistExternalConnection(connection) {
     try {
-      if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
-      else localStorage.removeItem("world_wallet_external_connection_v1");
+      const existing = getSavedExternalConnections();
+      const scopedConnection = { ...connection, walletId: activeWalletId };
+      if (scopedConnection?.address && Number.isFinite(Number(scopedConnection.chainId)) && activeWalletId) {
+        const next = [...existing.filter(item => !(
+          String(item.walletId || "") === activeWalletId &&
+          Number(item.chainId) === Number(scopedConnection.chainId) &&
+          item.address.toLowerCase() === scopedConnection.address.toLowerCase()
+        )), scopedConnection];
+        localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+        localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(scopedConnection));
+      }
     } catch {}
-    window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+    window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));
   }
 
   function parseExternalChainId(value) {
@@ -606,8 +965,8 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     try {
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [1],
-        optionalChains: [11155111, 56],
+        chains: [56],
+        optionalChains: [1, 11155111],
         showQrModal: true,
         methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
         events: ["accountsChanged", "chainChanged", "disconnect"],
@@ -619,39 +978,38 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         },
       });
       provider.on("accountsChanged", accounts => {
+        const chainId = parseExternalChainId(provider.chainId);
         const address = accounts?.[0] || "";
         setWcAccount(address);
-        const connection = address ? { address, chainId: parseExternalChainId(provider.chainId), connectedAt: new Date().toISOString() } : null;
-        try { if (connection) localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); else localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
-        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
+        (Array.isArray(accounts) ? accounts : []).forEach((account, index) => {
+          if (/^0x[a-fA-F0-9]{40}$/.test(account || "") && chainId) persistExternalConnection({ address: account, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+        });
       });
-      provider.on("chainChanged", chain => {
-        setWcChainId(parseExternalChainId(chain));
+      provider.on("chainChanged", async chain => {
+        const chainId = parseExternalChainId(chain);
+        setWcChainId(chainId);
         try {
-          const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
-          if (previous?.address) {
-            const connection = { ...previous, chainId: parseExternalChainId(chain) };
-            localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection));
-            window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
-          }
+          const accounts = await provider.request({ method: "eth_accounts" });
+          (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
+            if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+          });
         } catch {}
       });
       provider.on("disconnect", () => {
         setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
-        try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
+        // Keep previously attached addresses; disconnecting a session must not delete receiving routes.
         window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
       });
       await provider.connect();
       const accounts = await provider.request({ method: "eth_accounts" });
+      const chainId = parseExternalChainId(provider.chainId);
       setWcAccount(accounts?.[0] || "");
-      setWcChainId(parseExternalChainId(provider.chainId));
+      setWcChainId(chainId);
       setWcProvider(provider);
       setWcProviderKind("walletconnect");
-      if (accounts?.[0]) {
-        const connection = { address: accounts[0], chainId: parseExternalChainId(provider.chainId), provider: "walletconnect", connectedAt: new Date().toISOString() };
-        try { localStorage.setItem("world_wallet_external_connection_v1", JSON.stringify(connection)); } catch {}
-        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection }));
-      }
+      (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
+        if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
+      });
       if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
     } catch (error) {
       setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
@@ -711,12 +1069,115 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     }
   }
 
+  async function verifyDevnetDeposit() {
+    const txSignature = devnetDepositSignature.trim();
+    if (!txSignature) {
+      setDevnetDepositMessage("Paste the Solana Devnet transaction signature first.");
+      return;
+    }
+    if (!accessToken) {
+      setDevnetDepositMessage("Sign in again before verifying a deposit.");
+      return;
+    }
+
+    setDevnetDepositBusy(true);
+    setDevnetDepositMessage("");
+    setDevnetDepositResult(null);
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/deposits/solana-devnet/verify", {
+        method: "POST",
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ tx_signature: txSignature }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not verify the Solana Devnet deposit.");
+
+      if (data.status === "pending") {
+        setDevnetDepositMessage(data.message || "Transaction details are not final yet; no deposit was recorded.");
+        return;
+      }
+
+      setDevnetDepositResult(data);
+      let statusMessage = data.replayed
+        ? "This Devnet deposit was already recorded (" + number(data.amount) + " BALMZ-SOL-DEVNET); no duplicate activity was added."
+        : "Finalized Devnet deposit recorded: " + number(data.amount) + " BALMZ-SOL-DEVNET.";
+      statusMessage += " Devnet tokens do not fund Mainnet transactions.";
+
+      try {
+        const refreshResponse = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
+          method: "POST",
+          headers: await walletAuthHeaders(accessToken),
+        });
+        const refreshed = await refreshResponse.json();
+        if (refreshResponse.ok) {
+          onWalletUpdated?.({ wallet: refreshed.wallet, assets: refreshed.assets || [], updates: refreshed.updates || [] });
+          onTransactionsUpdated?.(refreshed.transactions || []);
+          statusMessage += " Wallet balance refreshed.";
+        } else {
+          statusMessage += " Use Refresh to reload the wallet balance.";
+        }
+      } catch {
+        statusMessage += " The deposit is recorded; refresh the wallet display to reload the balance.";
+      }
+      setDevnetDepositMessage(statusMessage);
+    } catch (error) {
+      setDevnetDepositMessage(error?.message || "Could not verify the Solana Devnet deposit.");
+    } finally {
+      setDevnetDepositBusy(false);
+    }
+  }
+
   useEffect(() => {
-    if (active !== "Transactions" || !accessToken) return;
-    setHistoryTransactions([]);
-    setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+    if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active) || !accessToken) return;
+    // Keep confirmed rows visible while a fresh page loads.
     loadTransactionHistory({ offset: 0, append: false });
   }, [active, accessToken, apiBaseUrl]);
+
+  useEffect(() => {
+    if (active !== "Request Center" || !accessToken) return;
+    let cancelled = false;
+    setRequestBusy(true);
+    setRequestError("");
+    fetch(apiBaseUrl + "/api/v1/request-center", {
+      headers: { Authorization: "Bearer " + accessToken },
+    })
+      .then(async response => {
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Unable to load requests.");
+        if (!cancelled) setRequestItems(Array.isArray(data.requests) ? data.requests : []);
+      })
+      .catch(error => {
+        if (!cancelled) setRequestError(error.message || "Unable to load requests.");
+      })
+      .finally(() => {
+        if (!cancelled) setRequestBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [active, accessToken, apiBaseUrl]);
+
+  const selectableWalletAssets = [...RECEIVE_ASSET_OPTIONS, ...(walletCoinCatalog || []), ...(assets || [])]
+    .filter((item, index, all) => item?.symbol && all.findIndex(other => other?.symbol === item.symbol) === index);
+  const normalizeHistoryNetwork = value => String(value || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
+  const selectedIncomingHistory = historyTransactions.filter(item =>
+    String(item.type || "").toLowerCase() === "received" &&
+    String(item.asset || item.symbol || "").toUpperCase() === String(asset || "").toUpperCase() &&
+    (receiveNetwork === "all" || normalizeHistoryNetwork(item.network) === normalizeHistoryNetwork(receiveNetwork))
+  );
+  const renderIncomingHistoryPanel = (title, emptyMessage) => (
+    <article className="panel transaction-panel wallet-inline-history">
+      <div className="panel-head"><div><h2>{title}</h2><span>Verified incoming records for {asset}{receiveNetwork === "all" ? "" : " · " + receiveNetwork}</span></div><button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>{historyBusy ? "Loading…" : "↻ Refresh"}</button></div>
+      {historyError && <div role="status" className="feature-error">{historyError} <button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
+      {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved deposit history…</div> : selectedIncomingHistory.length ? selectedIncomingHistory.map((item, index) => (
+        <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={item.tx_hash || item.id || index} onClick={() => setFocusedTransaction?.(item)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(item); } }} aria-label={"View received transaction details for " + (item.asset || asset)}>
+          <span className="activity-icon">↓</span>
+          <div className="transaction-main"><b>{item.asset || item.symbol || asset} received</b><small>{item.description || "Incoming wallet transaction"}</small>{item.tx_hash && <code title={item.tx_hash}>{item.tx_hash}</code>}</div>
+          <strong className="positive">{Number(item.raw_amount ?? item.amount) >= 0 ? "+" : ""}{number(Math.abs(Number(item.raw_amount ?? item.amount)))} {item.asset || item.symbol || asset}</strong>
+          <div className="transaction-meta"><span className={item.status === "confirmed" || item.status === "settled" ? "positive" : item.status === "failed" || item.status === "reorged" ? "negative" : "neutral"}>{item.status || "recorded"}{item.confirmations ? " · " + item.confirmations + " confirmations" : ""}</span>{item.network && <small>{item.network}</small>}{transactionExplorerUrl(item) && <a href={transactionExplorerUrl(item)} target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>View on explorer ↗</a>}<small>{item.time || "Time unavailable"}</small></div>
+        </div>
+      )) : <div className="live-chart-empty">{historyError ? "History could not be loaded. Retry to check again." : emptyMessage}</div>}
+      {historyPagination.has_more && <div className="transaction-filter-bar"><span>More records are available ({historyPagination.total} total wallet transactions).</span><button type="button" className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more history"}</button></div>}
+    </article>
+  );
 
   const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
@@ -771,34 +1232,42 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return settleData;
   }
 
-  async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination }) {
-    if (!window.ethereum) throw new Error("No compatible external EVM wallet is available. Connect a browser wallet that supports EVM signing.");
+  async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
+    const provider = wcProvider || window.ethereum;
+    if (!provider || typeof provider.request !== "function") throw new Error("No compatible external EVM wallet is available. Connect an injected wallet or WalletConnect before signing.");
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
     const config = await configResponse.json();
     if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
     const networkConfig = config.networks?.[network];
-    if (!networkConfig?.wallet_address) throw new Error("Production " + network + " signing address is not configured.");
-    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+    if (!networkConfig) throw new Error("Signing configuration for " + network + " is not available.");
+    const expectedSigner = sourceAddress || networkConfig.wallet_address;
+    if (!expectedSigner) throw new Error("Select a verified attached source address before signing.");
+    const accounts = await provider.request({ method: "eth_requestAccounts" });
     const signer = accounts?.[0];
-    if (!signer || signer.toLowerCase() !== networkConfig.wallet_address.toLowerCase()) {
-      throw new Error("Connect the configured production wallet address before signing this transaction.");
+    if (!signer || signer.toLowerCase() !== expectedSigner.toLowerCase()) {
+      throw new Error("Connect the selected verified source address before signing this transaction.");
     }
-    const chainId = await window.ethereum.request({ method: "eth_chainId" });
-    if (chainId.toLowerCase() !== networkConfig.chain_id.toLowerCase()) {
+    let chainId = await provider.request({ method: "eth_chainId" });
+    if (String(chainId).toLowerCase() !== String(networkConfig.chain_id).toLowerCase()) {
       try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
+        await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: networkConfig.chain_id }] });
       } catch (error) {
         if (Number(error?.code) === 4001) throw error;
-        throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum" : "BNB Chain") + " mainnet.");
+        throw new Error("Switch the external wallet to the " + (network === "ethereum" ? "Ethereum Mainnet" : network === "sepolia" ? "Ethereum Sepolia testnet" : "BNB Chain") + ".");
+      }
+      chainId = await provider.request({ method: "eth_chainId" });
+      if (String(chainId).toLowerCase() !== String(networkConfig.chain_id).toLowerCase()) {
+        throw new Error("The connected wallet is not on the required network. No transaction was submitted.");
       }
     }
 
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT" || asset === "BALMZ") {
-      const contract = asset === "BALMZ" ? networkConfig.balmz_contract : networkConfig.usdt_contract;
-      const configuredDecimals = asset === "BALMZ" ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
+    } else if (asset === "USDT" || asset === "BALMZ" || asset === "BALMZ-SEP") {
+      const isBalmz = asset === "BALMZ" || asset === "BALMZ-SEP";
+      const contract = isBalmz ? networkConfig.balmz_contract : networkConfig.usdt_contract;
+      const configuredDecimals = isBalmz ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
       if (!contract || configuredDecimals == null) throw new Error(asset + " external signing is not configured for this network.");
       const decimals = Number(configuredDecimals);
       const units = decimalToUnits(amount, decimals);
@@ -811,7 +1280,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       throw new Error("This asset is not available for live external EVM broadcast yet.");
     }
 
-    const txHash = await window.ethereum.request({ method: "eth_sendTransaction", params: [tx] });
+    const txHash = await provider.request({ method: "eth_sendTransaction", params: [tx] });
     if (!txHash) throw new Error("External wallet did not return a transaction hash.");
 
     const settleResponse = await fetch(apiBaseUrl + "/api/v1/transactions/settle", {
@@ -854,14 +1323,19 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = (network === "ethereum" || network === "bnb") && ["ETH", "BNB", "USDT", "BALMZ"].includes(asset);
+      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "BALMZ", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !window.ethereum) throw new Error("Connect a compatible external EVM wallet to send live funds. No transaction will be recorded without a signer.");
+      if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
+      const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
+      if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
+      const selectedSource = withdrawalAddresses.find(item => item.network === network && String(item.address || "").toLowerCase() === selectedSourceAddress.toLowerCase());
+      if (!selectedSource) throw new Error("The selected source address is not attached to the active wallet.");
+      if (evmNetwork && selectedSource.ownership_verified !== true) throw new Error("Verify ownership of the selected EVM address before sending or withdrawing.");
 
       const requestKey = requestKeyRef.current || crypto.randomUUID();
       requestKeyRef.current = requestKey;
-      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null };
+      const body = { idempotency_key: requestKey, asset, amount: parsedAmount, network, note: note || null, source_address: selectedSourceAddress };
       body[endpoint.includes("transfers") ? "recipient" : "destination"] = destination;
       const r = await fetch(apiBaseUrl + endpoint, { method:"POST", headers:{"Content-Type":"application/json", Authorization:"Bearer "+accessToken}, body:JSON.stringify(body) });
       const data = await r.json();
@@ -869,7 +1343,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
       transactionId = data.transfer?.id || data.withdrawal?.id;
       if (isLiveEvm && transactionId) {
-        const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim() });
+        const settlement = await broadcastExternalEvm({ transactionId, endpoint, asset, amount: parsedAmount, network, destination: destination.trim(), sourceAddress: selectedSourceAddress });
         setMessage(settlement.status === "broadcast_pending" ? "Live transaction broadcast. Waiting for blockchain confirmation." : "Live transaction verified and wallet accounting reconciled.");
       } else if (isLiveBitcoin && transactionId) {
         const settlement = await broadcastExternalBitcoin({ transactionId, amount: parsedAmount, destination: destination.trim() });
@@ -907,6 +1381,137 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
 
+  if (active === "Wallet Safety") return <WalletSafetyLayer />;
+  if (active === "OKX Wallet Inspector") return <OKXWalletInspector accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
+  if (active === "Token Interaction Audit") return <TokenInteractionAudit accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
+  if (active === "Token Mining") return <FreeBalmzMining accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
+
+  if (active === "BALMZ Presale") {
+    const solUsd = Number(marketPrices?.SOL?.usd);
+    const hasSolQuote = Number.isFinite(solUsd) && solUsd > 0;
+    const presaleReadiness = presaleStatus?.readiness || {};
+    const presalePriceUsd = Number(presaleStatus?.presale_price_usd ?? 7);
+    const receiverBalanceSol = presaleStatus?.presale_receiving_balance_sol;
+    const receiverBalanceLabel = receiverBalanceSol === null || receiverBalanceSol === undefined
+      ? "Unavailable"
+      : Number(receiverBalanceSol).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 9 }) + " SOL";
+    const budgetUsd = Number(presaleBudgetUsd);
+    const validBudget = Number.isFinite(budgetUsd) && budgetUsd >= presalePriceUsd;
+    const estimatedTokenCount = validBudget ? budgetUsd / presalePriceUsd : null;
+    // Show a live SOL equivalent only as a non-binding estimate; it is not a locked payment quote.
+    const estimatedSolAmount = hasSolQuote && validBudget ? budgetUsd / solUsd : null;
+    const formatTokenCount = value => value === null ? "—" : value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+    const formatSolAmount = value => value === null ? "Unavailable" : value.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 6 }) + " SOL";
+    const readinessState = ready => ready ? "verified" : "pending";
+    const readinessLabel = ready => ready ? "Verified" : "Pending";
+    return <section className="content feature-content balmz-presale-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">WORLD WALLET AI · TOKEN OFFERING</p><h1>BALMZ-SOL Presale</h1><p className="muted">Exchange-style presale overview · production controls are still being verified.</p></div>
+        <div className="presale-heading-actions"><span className="presale-status-pill"><i /> Planning · not live</span><button type="button" className="presale-refresh-button" disabled={presaleStatusBusy} onClick={async () => { setPresaleStatusBusy(true); setPresaleStatusError(""); try { const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } }); const data = await response.json(); if (!response.ok) throw new Error(data.detail || "Could not refresh BALMZ presale status."); setPresaleStatus(data); setPresaleStatusCheckedAt(new Date().toISOString()); setMessage("Presale readiness refreshed from the backend."); } catch (error) { setPresaleStatusError(error.message || "Could not refresh BALMZ presale status."); } finally { setPresaleStatusBusy(false); } }}>{presaleStatusBusy ? "Checking…" : "↻ Refresh checks"}</button>{presaleStatusCheckedAt && <small className="presale-last-checked">Last checked {new Date(presaleStatusCheckedAt).toLocaleTimeString()}</small>}</div>
+      </div>
+
+      <article className="panel presale-hero">
+        <div className="presale-hero-main">
+          <div className="presale-hero-copy">
+            <div className="presale-token-heading">
+              <img src={BALMZ_LOGO_URL} alt="BALMZ token logo" onError={event => { event.currentTarget.style.display = "none"; }} />
+              <div><span className="feature-kicker">WORLD WALLET AI TOKEN</span><h2>BALMZ-SOL</h2><p>Solana Mainnet · production token not yet verified</p></div>
+            </div>
+            <p className="presale-description">Founder-defined plan: a $7 USD presale price, with a separate launch target of 1 BALMZ-SOL = 1 SOL. No sale is open and this page does not request or submit payments.</p>
+            <div className="presale-price-grid">
+              <div className="presale-price-card"><span>PLANNED PRESALE PRICE</span><strong>$7.00</strong><small>Per BALMZ-SOL token · USD reference</small></div>
+              <div className="presale-price-card"><span>LAUNCH PRICE TARGET</span><strong>1 : 1 SOL</strong><small>Target only; market price is not guaranteed</small></div>
+            </div>
+          </div>
+        </div>
+
+        <aside className="presale-order-card" aria-label="Presale estimate only">
+          <div className="presale-order-top"><span>ESTIMATE PRESALE ALLOCATION</span><span className="presale-order-badge">NOT LIVE</span></div>
+          <div className="presale-order-rate">$7.00 <small>/ BALMZ-SOL</small></div>
+          <label className="presale-estimate-label" htmlFor="presale-budget-usd">Contribution estimate (USD)
+            <div className="presale-estimate-input"><span>$</span><input id="presale-budget-usd" type="number" min={presalePriceUsd} step="1" inputMode="decimal" value={presaleBudgetUsd} onChange={event => setPresaleBudgetUsd(event.target.value)} aria-describedby="presale-estimate-note" /></div>
+          </label>
+          <div className="presale-estimate-result"><span>Estimated token amount</span><strong>{formatTokenCount(estimatedTokenCount)}</strong></div>
+          <div className="presale-estimate-result presale-estimate-sol-result"><span>Indicative SOL equivalent</span><strong>{formatSolAmount(estimatedSolAmount)}</strong></div>
+          {!validBudget && <p className="presale-estimate-validation" role="status">Enter at least $7 to view a non-binding estimate.</p>}
+          {!hasSolQuote && <p className="presale-estimate-validation" role="status">SOL equivalent is unavailable until a verified SOL/USD market quote is returned.</p>}
+          <button className="primary presale-disabled-cta" type="button" disabled aria-disabled="true">Presale not open</button>
+          <p className="presale-order-note" id="presale-estimate-note">Planning estimate only. The SOL equivalent can change with the market and excludes network fees or slippage. No wallet is connected, no transaction is created, and payment acceptance remains disabled.</p>
+        </aside>
+      </article>
+
+      <article className="panel action-panel presale-interest-panel">
+        <div className="panel-head"><div><h2>Register for BALMZ presale updates</h2><span>Early-access requests are saved to your signed-in wallet account.</span></div><span className="mining-interest-badge">FREE TO REGISTER</span></div>
+        {presaleInterestLoading && <div className="feature-loading" role="status">Checking your registration…</div>}
+        {presaleInterestError && <div className="feature-error" role="alert">{presaleInterestError}</div>}
+        {presaleInterest ? <div className="mining-registered" role="status"><span className="mining-registered-icon">✓</span><div><b>Your presale interest is registered</b><p>Your request is saved in Request Center for this wallet. This does not reserve tokens or guarantee an allocation.</p><small>Request status: {presaleInterest.status || "open"} · Registered {presaleInterest.created_at ? new Date(presaleInterest.created_at).toLocaleString() : "successfully"}</small></div><button className="secondary" onClick={() => setActive("Request Center")}>View request →</button></div> : <>
+          {presaleInterestMessage && <div className="feature-success" role="status">{presaleInterestMessage}</div>}
+          <p>Register to receive official sale-opening notices and verified payment instructions. This is not an order, payment, token reservation or investment commitment.</p>
+          <button className="primary feature-submit" disabled={presaleInterestBusy || presaleInterestLoading || Boolean(presaleInterestError)} onClick={async () => {
+            setPresaleInterestBusy(true); setPresaleInterestMessage(""); setPresaleInterestError("");
+            try {
+              const response = await fetch(apiBaseUrl + "/api/v1/request-center", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+                body: JSON.stringify({
+                  kind: "other",
+                  title: "BALMZ Presale early access",
+                  details: "I would like official BALMZ presale opening updates, verified production mint and treasury details, sale terms, supported payment networks and settlement instructions. I understand the presale is not open and this request does not reserve tokens or authorize payment."
+                })
+              });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.detail || "Presale interest could not be registered.");
+              setPresaleInterest(data.request || { kind: "other", title: "BALMZ Presale early access", status: "open" });
+              setPresaleInterestMessage("Your presale update request was saved successfully.");
+            } catch (error) {
+              setPresaleInterestError(error.message || "Presale interest could not be registered.");
+            } finally { setPresaleInterestBusy(false); }
+          }}>{presaleInterestBusy ? "Registering…" : "Register for presale updates →"}</button>
+        </>}
+        <p className="security-note">No deposit, wallet signature, token approval or private key is required. Presale payment acceptance remains disabled until production mint, treasury ownership and settlement verification are complete.</p>
+      </article>
+
+      <div className="presale-metrics-grid">
+        <article className="panel presale-metric"><span className="feature-kicker">SOL MARKET REFERENCE</span><strong>{hasSolQuote ? "$" + solUsd.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 4}) : "Unavailable"}</strong><small>{hasSolQuote ? "Live SOL USD quote from the market feed; not a BALMZ price." : "A verified SOL USD quote is not currently available."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRESALE STATUS</span><strong>{presaleStatus?.stage === "planning" ? "Not open" : "Checking status"}</strong><small>{presaleStatus?.payment_acceptance_enabled ? "Payment acceptance is enabled." : "Payment acceptance is disabled."}</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PLANNED TOKEN SUPPLY</span><strong>{Number(presaleStatus?.target_supply ?? 1_000_000_000).toLocaleString("en-US")}</strong><small>Founder target · not proof of a deployed Mainnet supply.</small></article>
+        <article className="panel presale-metric"><span className="feature-kicker">PRODUCTION MINT</span><strong>{presaleStatus?.production_mint || "Not configured"}</strong><small>Production mint must be verified independently; Devnet is test-only.</small></article>
+        <article className="panel presale-metric presale-treasury-metric">
+          <span className="feature-kicker">MAINNET TREASURY BALANCE</span>
+          <strong>{receiverBalanceLabel}</strong>
+          <small>{presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? (presaleStatus?.readiness?.receiving_address_has_positive_sol_balance ? "Account exists on Mainnet with a positive SOL balance." : "Account exists on Mainnet, but its SOL balance is zero.") : "No on-chain account exists for this address yet.") : "Not verified against Solana Mainnet yet."}</small>
+          {presaleStatus?.presale_receiving_address ? <div className="presale-treasury-actions">
+            <code>{presaleStatus.presale_receiving_address.slice(0, 8)}…{presaleStatus.presale_receiving_address.slice(-6)}</code>
+            <button type="button" className="text-btn" onClick={async () => { try { await navigator.clipboard.writeText(presaleStatus.presale_receiving_address); setMessage("Mainnet treasury address copied."); } catch { setMessage("Clipboard unavailable. Select the treasury address in Network and transaction scope to copy it manually."); } }}>Copy address</button>
+          </div> : <small>No treasury address configured.</small>}
+        </article>
+      </div>
+
+      <article className="panel presale-readiness-panel">
+        <div className="panel-head"><div><h2>Launch readiness</h2><span>All critical controls must be verified before accepting funds.</span></div><span className="presale-status-pill"><i /> Payments disabled</span></div>
+        {presaleStatusError && <div className="feature-error" role="status">{presaleStatusError}</div>}
+        <div className="presale-check-list">
+          <div><span className={"presale-check " + readinessState(presaleReadiness.production_mint_verified)}>{presaleReadiness.production_mint_verified ? "✓" : "1"}</span><div><b>Deploy and verify the production mint</b><small>Use a separate Solana Mainnet mint and confirm the account belongs to the SPL Token program. Never use the Devnet mint as a presale asset.</small></div><em>{readinessLabel(presaleReadiness.production_mint_verified)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}>{presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked ? "✓" : "2"}</span><div><b>Confirm supply and mint authority</b><small>Verify the 1 billion supply policy at 9 decimals and revoke mint authority if the production supply is intended to be fixed.</small></div><em>{readinessLabel(presaleReadiness.supply_matches_target && presaleReadiness.mint_authority_revoked)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.receiving_address_configured && presaleReadiness.receiving_address_mainnet_verified && presaleReadiness.receiving_address_account_exists && presaleReadiness.receiving_address_has_positive_sol_balance && presaleReadiness.payment_verification_implemented)}>{presaleReadiness.receiving_address_configured && presaleReadiness.receiving_address_mainnet_verified && presaleReadiness.receiving_address_account_exists && presaleReadiness.receiving_address_has_positive_sol_balance && presaleReadiness.payment_verification_implemented ? "✓" : "3"}</span><div><b>Verify the treasury address and settlement service</b><small>Check the configured address and SOL balance on Mainnet, independently verify wallet control, and reject wrong destinations or duplicate finalized signatures before settlement.</small></div><em>{readinessLabel(presaleReadiness.receiving_address_configured && presaleReadiness.receiving_address_mainnet_verified && presaleReadiness.receiving_address_account_exists && presaleReadiness.receiving_address_has_positive_sol_balance && presaleReadiness.payment_verification_implemented)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.liquidity_mechanism_configured)}>{presaleReadiness.liquidity_mechanism_configured ? "✓" : "4"}</span><div><b>Define launch liquidity and price mechanics</b><small>A 1 SOL price target is not automatically enforced by token metadata; it requires a disclosed and funded pricing/liquidity mechanism.</small></div><em>{readinessLabel(presaleReadiness.liquidity_mechanism_configured)}</em></div>
+          <div><span className={"presale-check " + readinessState(presaleReadiness.regression_suite_verified)}>{presaleReadiness.regression_suite_verified ? "✓" : "5"}</span><div><b>Pass backend and frontend regression tests</b><small>Cover wrong cluster, wrong destination, duplicate signatures, insufficient payment, wrong mint, and production/testnet isolation.</small></div><em>{readinessLabel(presaleReadiness.regression_suite_verified)}</em></div>
+        </div>
+        {presaleStatus?.warnings?.map((warning, index) => <div className="security-note" key={index}>Readiness warning: {warning}</div>)}
+        <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "Presale payments are disabled until production checks and settlement are complete."}</div>
+      </article>
+
+      <article className="panel presale-scope-panel">
+        <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production activity and test evidence remain isolated.</span></div></div>
+        <div className="presale-scope-grid">
+          <div><span className="scope-dot scope-test" /><b>Solana Devnet</b><small>Testing only · excluded from production reserves and presale settlement</small><code>{presaleStatus?.devnet_mint || "Devnet mint not loaded"}</code><a href={"https://explorer.solana.com/address/" + (presaleStatus?.devnet_mint || "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF") + "?cluster=devnet"} target="_blank" rel="noopener noreferrer">Open Devnet explorer ↗</a></div>
+          <div><span className="scope-dot scope-production" /><b>Solana Mainnet</b><small>Production · no presale transaction accepted</small><code>{presaleStatus?.production_mint || "Production mint not configured"}</code><span className="muted">Treasury address: {presaleStatus?.presale_receiving_address || "Not configured"}</span><span className="muted">Finalized Mainnet SOL balance: {receiverBalanceLabel}</span><span className="muted">Account check: {presaleStatus?.readiness?.receiving_address_mainnet_verified ? (presaleStatus?.readiness?.receiving_address_account_exists ? "Account exists on Mainnet" : "Account not found on Mainnet") : "Not verified"}</span>{presaleStatus?.presale_receiving_address && <a href={"https://explorer.solana.com/address/" + encodeURIComponent(presaleStatus.presale_receiving_address)} target="_blank" rel="noopener noreferrer">Open treasury address on Mainnet explorer ↗</a>}<span className="muted">Mainnet signatures must be independently verified before settlement.</span></div>
+        </div>
+        <p className="presale-disclaimer">Transaction history is evidence of activity, not proof of reserves or a guarantee of token value. SOL's market quote is displayed only as a reference; it is not applied to BALMZ balances.</p>
+      </article>
+    </section>;
+  }
+
   if (active === "Proof of Reserves") {
     const loadProof = async () => {
       setToolBusy(true); setMessage(""); setProofData(null);
@@ -914,7 +1519,20 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         const response = await fetch(apiBaseUrl + "/api/v1/wallet/proof-of-reserves", { headers: { Authorization: "Bearer " + accessToken } });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Unable to read on-chain reserves.");
-        setProofData(data);
+        // The SOL quote is a visual benchmark only; it is never applied to BALMZ
+        // balances or included in production reserve figures.
+        let solReferenceUsd = null;
+        try {
+          const marketResponse = await fetch(apiBaseUrl + "/api/v1/prices/market", { cache: "no-store" });
+          if (marketResponse.ok) {
+            const marketData = await marketResponse.json();
+            const quote = Number(marketData?.prices?.SOL?.usd);
+            if (Number.isFinite(quote) && quote > 0) solReferenceUsd = quote;
+          }
+        } catch {
+          // A market-data outage must not discard the independently loaded chain snapshot.
+        }
+        setProofData({ ...data, sol_reference_usd: solReferenceUsd });
         setMessage(data.warnings?.length ? "Snapshot loaded with warnings; review unavailable networks." : "On-chain snapshot refreshed.");
       } catch (error) { setMessage(error.message || "Reserve snapshot unavailable."); }
       finally { setToolBusy(false); }
@@ -928,6 +1546,41 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
         {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        <div className="panel action-panel">
+          <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
+          <h2>History reconciliation</h2>
+          <p className="muted">Transaction history supports review of reserve movements, but incoming/outgoing totals are not current reserves. Each record must be checked against its network explorer; saved history alone is not an audit or proof of ownership.</p>
+          {historyError && <div role="status" className="feature-error">{historyError} <button type="button" className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry history</button></div>}
+          {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading transaction evidence…</div> : historyTransactions.length ? <div className="tool-list">
+            {historyTransactions.slice(0, 10).map((item, index) => {
+              const explorer = transactionExplorerUrl(item);
+              const status = String(item.status || "recorded").toLowerCase();
+              const hasHash = Boolean(String(item.tx_hash || item.transaction_hash || "").trim());
+              const isTestnet = isTestnetNetwork(item.network, item.asset || item.symbol);
+              return <div className="tool-row" key={item.tx_hash || item.id || index}>
+                <div><b>{item.asset || item.symbol || "Asset"} · {item.type || "transaction"}</b><small>{item.time || "Time unavailable"} · {item.network || "Network unavailable"}</small><small>Recorded status: {status} · {Number(item.confirmations || 0)} confirmations reported</small><small>{hasHash && explorer ? "Public explorer reference available; verify the record there." : "Missing transaction hash or supported explorer link; manual verification needed."}{isTestnet ? " Testnet record; excluded from production reserves." : ""}</small></div>
+                <strong>{item.amount == null ? "Amount unavailable" : String(item.amount) + " " + (item.asset || item.symbol || "")}</strong>
+                {hasHash && explorer ? <a href={explorer} target="_blank" rel="noreferrer">Verify on explorer ↗</a> : <span className="neutral">Evidence incomplete</span>}
+              </div>;
+            })}
+          </div> : <div className="live-chart-empty">No saved transaction records were returned. Refresh history or check whether this network has a supported history importer.</div>}
+          {historyPagination.has_more && <div className="transaction-filter-bar"><span>Showing the latest 10 of {historyPagination.total} saved records.</span><button type="button" className="secondary" onClick={() => setActive("Transactions")}>Review full history →</button></div>}
+          {!historyPagination.has_more && historyTransactions.length > 0 && <div className="transaction-filter-bar"><span>{historyTransactions.length} saved record(s) loaded.</span><button type="button" className="secondary" onClick={() => setActive("Transactions")}>Open transaction history →</button></div>}
+          {historyTransactions.some(item => !String(item.tx_hash || item.transaction_hash || "").trim() || !transactionExplorerUrl(item)) && <div className="security-note">Suggestion: review records marked “Evidence incomplete,” confirm the correct network, and run a fresh history sync. Do not count unsupported or unverified records as reserve evidence.</div>}
+          {historyTransactions.some(item => ["pending", "unconfirmed", "failed", "reorged"].includes(String(item.status || "").toLowerCase())) && <div className="security-note">Suggestion: inspect pending, failed, or reorged entries separately. Do not treat them as settled reserve movements until the chain status is verified.</div>}
+        </div>
+        {proofData?.testnet_assets?.length ? <div className="panel action-panel">
+          <p className="feature-kicker">TESTNET HOLDINGS · NOT PRODUCTION RESERVES</p>
+          <h2>Solana Devnet assets</h2>
+          <p className="muted">These test-network balances are shown separately from production reserve figures.</p>
+          <div className="tool-list">{proofData.testnet_assets.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · SOLANA DEVNET</b><small>{item.source}</small>{item.contract_address && <small>Mint: {item.contract_address}</small>}</div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div>
+        </div> : null}
+        {proofData?.token_supplies?.length ? <div className="panel action-panel">
+          <p className="feature-kicker">ON-CHAIN TOKEN SUPPLY · TESTNET</p>
+          <h2>BALMZ total minted supply</h2>
+          <p className="muted">Read directly from the Solana Devnet mint. Total supply is not the same as the amount held by this wallet. SOL reference price: {proofData?.sol_reference_usd > 0 ? "$" + Number(proofData.sol_reference_usd).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "Unavailable"}. This is a SOL market benchmark only, not a BALMZ price, and it is excluded from reserve valuation.</p>
+          <div className="tool-list">{proofData.token_supplies.map(item=><div className="tool-row" key={item.mint_address}><div><b>{item.symbol} total supply</b><small>{item.source} · {item.decimals} decimals</small><small>Mint: {item.mint_address}</small></div><strong>{item.total_supply == null ? "Unavailable" : number(item.total_supply)+" "+item.symbol}</strong><a href={"https://explorer.solana.com/address/"+encodeURIComponent(item.mint_address)+"?cluster=devnet"} target="_blank" rel="noreferrer">Verify mint ↗</a></div>)}</div>
+        </div> : null}
         {proofData?.warnings?.map((warning,index)=><div className="security-note" key={index}>Warning: {warning}</div>)}
         <div className="panel action-panel">
           <p className="feature-kicker">DEPLOYED TOKEN CONTRACT REGISTER · READ ONLY</p>
@@ -1257,7 +1910,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} accountUserId={accountUserId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
@@ -1298,17 +1951,28 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             <input value={destination} onChange={e => { setDestination(e.target.value); setMessage(""); }} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"} autoComplete="off" spellCheck="false"/>
           </label>
           <label>Network
-            <select value={network} onChange={e => { setNetwork(e.target.value); setMessage(""); }} disabled={!networkOptions.length}>
+            <select value={network} onChange={e => { setNetwork(e.target.value); setSelectedSourceAddress(""); setMessage(""); }} disabled={!networkOptions.length}>
               {networkOptions.length ? networkOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}
             </select>
           </label>
+          <label>Source address
+            <select value={selectedSourceAddress} onChange={e => setSelectedSourceAddress(e.target.value)} disabled={!withdrawalAddresses.length}>
+              <option value="">Select an attached source address</option>
+              {withdrawalAddresses.filter(item => item.network === network).map(item => (
+                <option key={item.network + ":" + item.address} value={item.address} disabled={["ethereum", "bnb", "sepolia"].includes(network) && item.ownership_verified !== true}>
+                  {item.label || "Wallet"} · {item.address.slice(0, 8)}…{item.address.slice(-6)}{["ethereum", "bnb", "sepolia"].includes(network) ? (item.ownership_verified ? " · Verified" : " · Verify first") : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="security-note">EVM transfers and withdrawals require a signature-verified source address. Signing the ownership message does not send funds. Sepolia remains a test network.</div>
           <div className={destination ? (destinationLooksValid ? "wallet-network-check is-valid" : "wallet-network-check is-warning") : "wallet-network-check"}>
             <span>{destination ? (destinationLooksValid ? "✓" : "!") : "i"}</span>
             <div><b>{destination ? (destinationLooksValid ? "Address format looks valid" : "Check the destination address") : "Network compatibility matters"}</b><small>Use an address for the selected network. A valid-looking address does not prove ownership or guarantee that the destination supports this asset.</small></div>
           </div>
           <label>Note <span className="wallet-optional">(optional)</span><textarea value={note} onChange={e => setNote(e.target.value)} maxLength="200" placeholder="Add a note for your records"/></label>
           {message && <div role="status" className={/accepted|broadcast|verified|reconciled/i.test(message) ? "feature-success" : "feature-error"}>{message}</div>}
-          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
+          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !selectedSourceAddress || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
           <p className="wallet-form-footnote">You will see a wallet approval prompt for supported live transfers. Never share a recovery phrase or private key with anyone.</p>
         </article>
         <aside className="wallet-review-column">
@@ -1340,14 +2004,14 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       <div className="wallet-receive-layout">
         <article className="panel wallet-form-card">
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↓</span><div><h2>Prepare a deposit</h2><p>Select the exact asset and network before sending funds.</p></div></div>
-          <label>Asset to deposit<select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>{assets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}</select></label>
+          <label>Asset to deposit<select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>{selectableWalletAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}</select></label>
           <label>Deposit network<select value={receiveNetwork} onChange={e => setReceiveNetwork(e.target.value)}><option value="all">All compatible networks</option>{depositOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <div className="wallet-network-check is-warning"><span>!</span><div><b>Check the network before sending</b><small>Only send {asset} through a network shown for the destination address. Mainnet funds and testnet tokens are not interchangeable.</small></div></div>
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
           <h3>Step 1 · Choose a destination address</h3>
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
@@ -1356,8 +2020,24 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <p className="muted">Open the wallet or exchange holding your funds, choose the same asset and network, paste the copied address, and review the address and network carefully before confirming.</p>
           <h3>Step 3 · Verify the transaction</h3>
           <div className="wallet-network-check"><span>i</span><div><b>Deposit status is not yet independently tracked here</b><small>This screen does not mark a deposit as complete. Check the transaction hash on the correct network explorer and wait for confirmations.</small></div></div>
+          {asset === "BALMZ-SOL-DEVNET" && <article className="panel wallet-review-card" aria-labelledby="solana-devnet-deposit-verification">
+            <span className="feature-kicker">SOLANA DEVNET TEST FLOW</span>
+            <h3 id="solana-devnet-deposit-verification">Verify a BALMZ Devnet deposit</h3>
+            <p className="muted">After BALMZ-SOL-DEVNET reaches your connected Solana Devnet address, paste its transaction signature. The API checks the finalized on-chain transfer and records it once.</p>
+            <label>Solana Devnet transaction signature
+              <input value={devnetDepositSignature} onChange={event => setDevnetDepositSignature(event.target.value)} placeholder="Paste transaction signature" autoComplete="off" spellCheck="false" />
+            </label>
+            {devnetDepositMessage && <div role="status" className={/could not|not found|failed|invalid|error|sign in/i.test(devnetDepositMessage) ? "feature-error" : "feature-success"}>{devnetDepositMessage}</div>}
+            {devnetDepositResult && <div className="wallet-summary-row"><span>Recorded Devnet amount</span><b>{number(devnetDepositResult.amount)} BALMZ-SOL-DEVNET</b></div>}
+            <button className="primary feature-submit" onClick={verifyDevnetDeposit} disabled={devnetDepositBusy || !devnetDepositSignature.trim() || !accessToken}>
+              {devnetDepositBusy ? "Checking finalized transaction…" : "Verify Devnet deposit →"}
+            </button>
+            <div className="wallet-network-check is-warning"><span>!</span><div><b>Devnet only — not Mainnet funding</b><small>This confirms a test-network deposit for testing the wallet workflow. It does not fund, broadcast, or settle a real Mainnet transaction.</small></div></div>
+          </article>}
+
         </article>
         <aside className="wallet-review-column">
+          {renderIncomingHistoryPanel("Deposit history", "No verified deposits are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Never share your secret phrase</b><p>A deposit only needs the correct public receiving address. Never provide a seed phrase or private key to a sender.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia is for testing only. Do not send real mainnet funds to a Sepolia address.</p></div></article>
@@ -1379,9 +2059,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           <div className="wallet-card-heading"><span className="wallet-action-icon receive-icon">↙</span><div><h2>Receiving address</h2><p>Copy the public address to share with the person sending you funds.</p></div></div>
           <label>Asset to receive
             <select value={asset} onChange={e => { setAsset(e.target.value); setReceiveNetwork("all"); setAddressMessage(""); }}>
-              {[...RECEIVE_ASSET_OPTIONS, ...assets].filter((item, index, all) =>
-                item?.symbol && networksForAsset(item.symbol).length > 0 && all.findIndex(other => other.symbol === item.symbol) === index
-              ).map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
+              {selectableWalletAssets.map(item => <option key={item.symbol} value={item.symbol}>{item.symbol} · {item.name || item.symbol}</option>)}
             </select>
           </label>
           <label>Network filter
@@ -1394,14 +2072,15 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
-              {item.local && <small className="muted">Shown from this browser's connected wallet. Server attachment and balance verification may still be pending.</small>}
+              {item.local && <small className="muted">{item.generated ? "Generated for this self-custody wallet" : "Connected external public address"}{item.walletNumber ? " · Wallet ID " + item.walletNumber : ""}. No private key is sent to the server.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
-            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Connect a public address for this asset's network in Wallets. This page will list it here after it is saved." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Connect an address →</button></div>}
+            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Create a complete self-custody wallet in Wallets. Its receiving addresses will be generated automatically and saved to this wallet; external wallet connection is optional." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Create or select wallet →</button></div>}
           </div>
         </article>
         <aside className="wallet-review-column">
+          {renderIncomingHistoryPanel("Received history", "No incoming transactions are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{number(selectedAssetAvailable)} {asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{selectedWalletAsset?.price_available === false || selectedWalletAsset?.value_usd == null ? "Price unavailable" : money(selectedWalletAsset.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Public address only</b><p>Receiving does not require sharing a private key. Only share the public address shown for the matching network.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia and Solana Devnet addresses are for testing. Test tokens are not mainnet funds.</p></div></article>
@@ -1488,6 +2167,18 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Transactions") {
+    const visibleHistoryTransactions = historyTransactions.filter(item => {
+      const type = String(item.type || "").toLowerCase();
+      const status = String(item.status || "recorded").toLowerCase();
+      const term = historySearch.trim().toLowerCase();
+      const searchable = [item.type, item.asset, item.symbol, item.description, item.tx_hash, item.network, item.status, item.amount].join(" ").toLowerCase();
+      const typeMatches = historyTypeFilter === "all" || type.includes(historyTypeFilter);
+      const statusMatches = historyStatusFilter === "all"
+        || (historyStatusFilter === "pending" && ["pending", "pending_review", "broadcast_pending", "unconfirmed"].includes(status))
+        || (historyStatusFilter === "confirmed" && ["confirmed", "success", "settled"].includes(status))
+        || (historyStatusFilter === "failed" && ["failed", "reorged", "rejected"].includes(status));
+      return typeMatches && statusMatches && (!term || searchable.includes(term));
+    });
     async function settleTransaction(transaction) {
       const txHash = window.prompt("Enter the real blockchain transaction hash for this request:");
       if (!txHash) return;
@@ -1559,9 +2250,15 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
       {syncMessage && <div role="status" className={/failed|unavailable|warning|not configured|no live transaction source|rate limit|latest block unavailable/i.test(syncMessage) ? "feature-error" : "feature-success"}>{syncMessage}</div>}
       {historyError && <div role="status" className="feature-error">{historyError} <button className="secondary" onClick={() => loadTransactionHistory({ offset: 0, append: false })} disabled={historyBusy}>Retry</button></div>}
       <article className="panel transaction-panel">
-        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>{historyTransactions.length} of {historyPagination.total} transaction{historyPagination.total===1?"":"s"}</small></div>
-        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : historyTransactions.length ? historyTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
-          <span className="activity-icon">{a.type[0].toUpperCase()}</span>
+        <div className="transaction-filter-bar"><span>Recorded wallet activity</span><small>Showing {visibleHistoryTransactions.length} of {historyTransactions.length} loaded · {historyPagination.total} total</small></div>
+        <div className="transaction-controls" aria-label="Filter transaction history">
+          <input type="search" value={historySearch} onChange={event => setHistorySearch(event.target.value)} placeholder="Search asset, hash, network or description…" aria-label="Search transactions"/>
+          <select value={historyTypeFilter} onChange={event => setHistoryTypeFilter(event.target.value)} aria-label="Filter transaction type"><option value="all">All types</option><option value="received">Received</option><option value="sent">Sent</option><option value="deposit">Deposits</option><option value="withdraw">Withdrawals</option><option value="swap">Swaps</option></select>
+          <select value={historyStatusFilter} onChange={event => setHistoryStatusFilter(event.target.value)} aria-label="Filter transaction status"><option value="all">All statuses</option><option value="confirmed">Confirmed</option><option value="pending">Pending</option><option value="failed">Failed / reorged</option></select>
+          <button type="button" className="secondary" onClick={() => { setHistorySearch(""); setHistoryTypeFilter("all"); setHistoryStatusFilter("all"); }}>Clear filters</button>
+        </div>
+        {historyBusy && historyTransactions.length === 0 ? <div className="live-chart-empty">Loading saved transaction history…</div> : visibleHistoryTransactions.length ? visibleHistoryTransactions.map((a,i) => <div role="button" tabIndex={0} className="transaction-row transaction-chain-row transaction-row-clickable" key={a.tx_hash || a.id || i} onClick={() => setFocusedTransaction?.(a)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction?.(a); } }} aria-label={"View transaction details for " + (a.type || "transaction")}>
+          <span className="activity-icon">{String(a.type || "T").slice(0,1).toUpperCase()}</span>
           <div className="transaction-main"><b>{a.type}</b><small>{a.description}</small>{a.tx_hash && <code title={a.tx_hash}>{a.tx_hash}</code>}</div>
           <strong className={Number(a.raw_amount) >= 0 ? "positive" : "negative"}>{a.amount}</strong>
           <div className="transaction-meta">
@@ -1573,7 +2270,7 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
             {["pending","pending_review","broadcast_pending"].includes(a.status) && a.id ? <button className="secondary" onClick={event => { event.stopPropagation(); settleTransaction(a); }} disabled={syncBusy}>{a.status === "broadcast_pending" ? "Verify confirmation" : "Verify settlement"}</button> : null}
             <small>{a.time}</small>
           </div>
-        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : "No real wallet transactions recorded yet."}</div>}
+        </div>) : <div className="live-chart-empty">{historyError ? "Transaction history could not be loaded." : (historyTransactions.length ? "No transactions match these filters." : "No real wallet transactions recorded yet.")}</div>}
         {historyPagination.has_more && <div className="transaction-filter-bar"><span>More saved transactions are available.</span><button className="secondary" disabled={historyBusy} onClick={() => loadTransactionHistory({ offset: historyPagination.next_offset ?? historyTransactions.length, append: true })}>{historyBusy ? "Loading…" : "Load more transactions"}</button></div>}
       </article>
     </section>;
@@ -1584,18 +2281,35 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     setSyncBusy(true);
     setSyncMessage("");
     try {
+      const headers = await walletAuthHeaders(accessToken);
       const response = await fetch(apiBaseUrl + "/api/v1/wallet/refresh", {
         method: "POST",
-        headers: await walletAuthHeaders(accessToken),
+        headers,
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet refresh failed.");
-      onWalletUpdated?.({ wallet: data.wallet, assets: data.assets || [], updates: data.updates || [] });
+      let refreshedWallet = data.wallet;
+      let refreshedAssets = Array.isArray(data.assets) ? data.assets : [];
+      try {
+        const priceResponse = await fetch(apiBaseUrl + "/api/v1/prices/refresh", {
+          method: "POST",
+          headers,
+        });
+        const priced = await priceResponse.json();
+        if (priceResponse.ok) {
+          refreshedWallet = priced.wallet || refreshedWallet;
+          refreshedAssets = Array.isArray(priced.assets) ? priced.assets : refreshedAssets;
+        }
+      } catch {
+        // Retain the last wallet snapshot if the independent price provider is unavailable.
+      }
+      onWalletUpdated?.({ wallet: refreshedWallet, assets: refreshedAssets, updates: data.updates || [] });
       onTransactionsUpdated?.(data.transactions || []);
+      await refreshMarketPrices?.();
       const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
       setSyncMessage(warnings.length
-        ? "Balance sync completed with warnings: " + warnings.join(" • ")
-        : "Wallet balances refreshed from configured on-chain addresses.");
+        ? "Wallet balances refreshed with warnings: " + warnings.join(" • ")
+        : "Mainnet and testnet balances refreshed separately from their configured networks.");
     } catch (error) {
       setSyncMessage(error?.message || "Wallet balance sync failed.");
     } finally {
@@ -1603,25 +2317,89 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     }
   };
 
-  if (active === "Portfolio") return <section className="content feature-content portfolio-page">
+  if (active === "Portfolio") {
+    const mainnetNetworks = ["bitcoin", "ethereum", "bnb", "solana_mainnet"];
+    const testnetNetworks = ["sepolia", "solana_devnet", "solana-devnet"];
+    const testnetSymbols = ["BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET"];
+    const mainnetAssets = assets.filter(item => mainnetNetworks.includes(String(item.network || "").toLowerCase()));
+    const testnetAssets = assets.filter(item => testnetNetworks.includes(String(item.network || "").toLowerCase()) || testnetSymbols.includes(String(item.symbol || "").toUpperCase()));
+    const classifiedSymbols = new Set([...mainnetAssets, ...testnetAssets].map(item => item.symbol));
+    const unclassifiedAssets = assets.filter(item => !classifiedSymbols.has(item.symbol));
+    return <section className="content feature-content portfolio-page">
     <div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT / LIVE MARKET</p><h1>Portfolio</h1><p className="muted">Open any coin to view its individual trading card, quote, wallet balance and supported actions.</p></div><div className="page-actions"><button className="secondary" onClick={refreshPortfolioBalances} disabled={syncBusy}>{syncBusy ? "Syncing balances…" : "↻ Refresh wallet data"}</button><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div></div>
-    <div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{walletBalanceText || (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd))} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div>
+    <div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>MAINNET AVAILABLE BALANCE</span></div><div className="hero-balance">{walletBalanceText || (wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd))} <small>USD</small></div><div className="balance-meta"><span>Production networks only</span><b className="neutral">Verified USD quotes required</b></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change remain unavailable until reliable cost-basis and valuation history are connected.</small></article></div>
+    <article className="panel assets-panel portfolio-network-panel">
+      <div className="panel-head"><div><h2>Mainnet holdings</h2><span>Production balances only · Ethereum, BNB Chain, Bitcoin and Solana Mainnet</span></div></div>
+      {mainnetAssets.length ? <div className="asset-list">{mainnetAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · {item.network_label || item.network}</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>{item.value_usd == null ? "USD value unavailable" : "$" + money(item.value_usd)}</small></div></div>)}</div> : <div className="live-chart-empty">No verified Mainnet balance has been returned yet. Connect a production public address and refresh wallet data.</div>}
+    </article>
+    <article className="panel assets-panel portfolio-network-panel">
+      <div className="panel-head"><div><h2>Testnet balances</h2><span>Sepolia and Solana Devnet · excluded from Mainnet valuation</span></div></div>
+      {testnetAssets.length ? <div className="asset-list">{testnetAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · {item.network_label || item.network || "Testnet"}</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>Testnet balance · no Mainnet USD value</small></div></div>)}</div> : <div className="live-chart-empty">No Sepolia or Solana Devnet balances have been verified for this wallet.</div>}
+    </article>
+    {unclassifiedAssets.length > 0 && <article className="panel assets-panel portfolio-network-panel"><div className="panel-head"><div><h2>Network attribution pending</h2><span>These saved rows will not be merged into either network group until classified.</span></div></div><div className="asset-list">{unclassifiedAssets.map(item => <div className="asset-row" key={item.symbol}><AssetIcon symbol={item.symbol} fallback={item.icon || "•"} /><div className="asset-name"><b>{item.symbol}</b><small>{item.name} · Network not classified</small></div><div className="asset-balance"><b>{number(item.balance)} {item.symbol}</b><small>USD valuation withheld pending network classification</small></div></div>)}</div></article>}
     {(walletBalanceCaption || unpricedAssets.length > 0) && <p className="coin-catalog-note portfolio-valuation-note" role="status">{walletBalanceCaption || ("No verified USD quote for: " + unpricedAssets.join(", "))}</p>}
     {(syncMessage || (walletRefreshMessage && walletRefreshMessage !== "Wallet data refreshed.")) && <div className="market-price-error" role="status">{syncMessage || walletRefreshMessage}</div>}
     <article className="panel market-prices-panel portfolio-market-panel"><div className="panel-head"><div><h2>Live market prices</h2><span>Live quotes for supported coins · refreshed automatically</span></div><button type="button" className="text-btn" onClick={refreshMarketPrices} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing…" : "↻ Refresh prices"}</button></div>
       {marketPricesError && <div className="market-price-error" role="status">{marketPricesError}</div>}
-      <div className="market-price-grid">{(walletCoinCatalog || []).map(c=>{const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;return <button type="button" className="market-price-item portfolio-market-coin" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="market-price-name"><b>{c.symbol}</b><small>{c.name}</small></span><span className="market-price-value"><b>{hasPrice?money(Number(q.usd)):((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"Not listed":"Unavailable")}</b><small className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"No verified quote":"24h change unavailable"):(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"% · 24h"}</small></span></button>})}</div>
+      <div className="market-price-grid">{(walletCoinCatalog || []).map(c=>{const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const ethReference=c.symbol==="BALMZ"&&Number(q.eth_reference_usd)>0;return <button type="button" className="market-price-item portfolio-market-coin" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="market-price-name"><b>{c.symbol}</b><small>{c.name}</small></span><span className="market-price-value"><b>{hasPrice?money(Number(q.usd)):((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"Not listed":"Unavailable")}</b><small className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?((c.symbol==="BALMZ"||c.symbol==="BALMZ-SEP")?"No verified quote":"24h change unavailable"):(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"% · 24h"}</small>{ethReference?<small className="neutral">ETH reference: ${money(Number(q.eth_reference_usd))} · not BALMZ price</small>:c.symbol==="BALMZ"?<small className="neutral">Ethereum Mainnet contract and market listing required</small>:c.symbol==="BALMZ-SEP"?<small className="neutral">Sepolia testnet · no market price</small>:null}</span></button>})}</div>
       <p className="coin-catalog-note">{marketPricesUpdatedAt ? "Last updated " + new Date(marketPricesUpdatedAt).toLocaleTimeString() : "Waiting for the first successful market response."} · BALMZ remains unpriced until a verifiable market quote exists.</p>
     </article>
     <article className="panel assets-panel portfolio-assets-panel"><div className="panel-head"><div><h2>Coin trading cards</h2><span>{(walletCoinCatalog||[]).length} supported catalog entries · select a card to open its trading details</span></div></div>
-      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const hasStoredBalance=heldBalance>0||Number(held?.reserved_balance||0)>0;const balanceLabel=balanceSynced?number(heldBalance)+" "+c.symbol:hasStoredBalance?number(heldBalance)+" "+c.symbol+" · recorded, not synced":"Not synced";return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="portfolio-coin-network">{c.status||"Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceLabel}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
+      <div className="portfolio-coin-grid">{(walletCoinCatalog||[]).map(c=>{const held=assets.find(a=>a.symbol===c.symbol);const q=marketPrices?.[c.symbol]||{};const hasPrice=q.usd!=null&&Number.isFinite(Number(q.usd))&&Number(q.usd)>0;const delta=q.usd_24h_change;const heldBalance=Number(held?.balance ?? held?.available_balance ?? 0);const balanceSynced=Array.isArray(syncedBalanceAssets)&&syncedBalanceAssets.includes(c.symbol);const hasStoredBalance=heldBalance>0||Number(held?.reserved_balance||0)>0;const balanceLabel=balanceSynced?number(heldBalance)+" "+c.symbol:hasStoredBalance?number(heldBalance)+" "+c.symbol+" · recorded, not synced":"Not synced";return <button type="button" className="portfolio-coin-card" key={c.symbol} onClick={()=>setSelectedCoin?.(c.symbol)}><div className="portfolio-coin-top"><AssetIcon symbol={c.symbol} fallback={c.icon||"•"} /><span className="portfolio-coin-network">{held?.network_label || c.status || "Supported asset"}</span></div><div className="portfolio-coin-title"><b>{c.name}</b><span>{c.symbol}</span></div><div className="portfolio-coin-price">{hasPrice?money(Number(q.usd)):c.symbol==="BALMZ"?"Not listed":"Price unavailable"}<small>{hasPrice?"USD spot price":"Verified quote not available"}</small></div><div className="portfolio-coin-meta"><span>Balance</span><b>{balanceLabel}</b></div><div className="portfolio-coin-meta"><span>24h</span><b className={delta==null?"neutral":Number(delta)>=0?"positive":"negative"}>{delta==null?"—":(Number(delta)>=0?"+":"")+Number(delta).toFixed(2)+"%"}</b></div><span className="portfolio-open-card">Open trading card →</span></button>})}</div>
     </article>
   </section>;
+  }
+  if (active === "Markets") {
+    const marketRows = (walletCoinCatalog || []).map(item => {
+      const quote = marketPrices?.[item.symbol] || {};
+      const price = Number(quote.usd);
+      const change = Number(quote.usd_24h_change);
+      const hasPrice = quote.usd !== null && quote.usd !== undefined && Number.isFinite(price) && price > 0;
+      return { ...item, price: hasPrice ? price : null, change: Number.isFinite(change) ? change : null, source: quote.source || (hasPrice ? "CoinGecko" : null), listed: quote.listed === true };
+    }).filter(item => {
+      const term = marketSearch.trim().toLowerCase();
+      return !term || item.symbol.toLowerCase().includes(term) || String(item.name || "").toLowerCase().includes(term);
+    }).sort((a, b) => {
+      if (a.price != null && b.price == null) return -1;
+      if (a.price == null && b.price != null) return 1;
+      return a.symbol.localeCompare(b.symbol);
+    });
+    return <section className="content feature-content market-page">
+      <div className="page-heading">
+        <div><p className="eyebrow">DISCOVER / LIVE MARKET DATA</p><h1>Markets</h1><p className="muted">Explore supported assets using available market-provider quotes. Prices are informational and do not execute trades.</p></div>
+        <div className="page-actions"><button type="button" className="secondary" onClick={() => refreshMarketPrices?.()} disabled={marketPricesLoading}>{marketPricesLoading ? "Refreshing quotes…" : "↻ Refresh markets"}</button><button type="button" className="secondary" onClick={() => setActive("Portfolio")}>Open portfolio →</button></div>
+      </div>
+      <article className="panel market-toolbar">
+        <label className="market-search-label" htmlFor="market-search">Search assets</label>
+        <input id="market-search" type="search" value={marketSearch} onChange={event => setMarketSearch(event.target.value)} placeholder="Search by name or symbol…"/>
+        <div className="market-provider-status" role="status">
+          <span className={marketPricesError ? "market-status-dot is-error" : marketPricesLoading ? "market-status-dot is-loading" : "market-status-dot"} />
+          {marketPricesError ? "Market provider reported an issue. Some quotes may be unavailable." : marketPricesUpdatedAt ? "Last quote update: " + new Date(marketPricesUpdatedAt).toLocaleString() : marketPricesLoading ? "Loading market quotes…" : "Quote update time unavailable"}
+        </div>
+        {marketPricesError && <p className="market-error">{marketPricesError}</p>}
+      </article>
+      <article className="panel market-table-panel">
+        <div className="panel-head"><div><h2>Supported assets</h2><span>{marketRows.length} matching assets · sorted by quote availability</span></div></div>
+        {marketRows.length ? <div className="market-table-wrap"><table className="market-table">
+          <thead><tr><th>Asset</th><th>Price (USD)</th><th>24h change</th><th>Quote status</th><th> </th></tr></thead>
+          <tbody>{marketRows.map(item => <tr key={item.symbol}>
+            <td><div className="market-asset"><AssetIcon symbol={item.symbol} fallback={item.icon || "•"}/><span><b>{item.name || item.symbol}</b><small>{item.symbol} · {item.status || "Network not classified"}</small></span></div></td>
+            <td className="market-price">{item.price == null ? "Unavailable" : "$" + money(item.price)}</td>
+            <td className={item.change == null ? "neutral" : item.change >= 0 ? "positive" : "negative"}>{item.change == null ? "—" : (item.change >= 0 ? "+" : "") + item.change.toFixed(2) + "%"}</td>
+            <td><span className={item.price == null ? "market-quote-badge is-muted" : "market-quote-badge is-live"}>{item.price == null ? (item.symbol.startsWith("BALMZ") ? "Not listed / unpriced" : "Quote unavailable") : "Quote available"}</span></td>
+            <td><button type="button" className="text-btn" onClick={() => { setSelectedCoin?.(item.symbol); setActive("Dashboard"); }}>View asset →</button></td>
+          </tr>)}</tbody>
+        </table></div> : <div className="live-chart-empty">No supported assets match “{marketSearch}”. Try another name or symbol.</div>}
+        <p className="market-disclaimer">Market quotes can change, be delayed, or be unavailable. A listed asset is not proof that this wallet holds it. Wallet balances and valuations are shown separately in Portfolio and are never inferred from market prices.</p>
+      </article>
+    </section>;
+  }
+
   if (active === "Staking" || active === "NFTs") return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ASSET MANAGEMENT</p><h1>{active}</h1><p className="muted">Manage your digital assets.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="balance-grid feature-balance"><article className="hero-card"><div className="card-top"><span>AVAILABLE BALANCE</span></div><div className="hero-balance">{wallet.valuation_complete === false || wallet.available_balance_usd == null ? "Valuation unavailable" : money(wallet.available_balance_usd)} <small>USD</small></div></article><article className="stat-card"><span>Portfolio performance</span><strong>Not calculated</strong><small className="neutral">Profit and 24h portfolio change are unavailable until reliable cost-basis and valuation history are connected.</small></article></div><article className="panel assets-panel"><div className="panel-head"><div><h2>{active} assets</h2><span>Current wallet holdings</span></div></div><div className="asset-list">{assets.map(a=><div className="asset-row" key={a.symbol}><AssetIcon symbol={a.symbol} fallback={a.icon || "•"} /><div className="asset-name"><b>{a.symbol}</b><small>{a.name}</small></div><div className="asset-balance"><b>{number(a.balance)}</b><small>{a.price_available === false || a.value_usd == null ? "Price unavailable" : money(a.value_usd)}</small></div><small className="neutral">24h change unavailable</small></div>)}</div></article></section>;
 
   if (active === "Verify Contract") {
-    const verify=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/contracts/verify",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({address:destination.trim(),network})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Contract check failed.");setMessage(d.contract?"Contract bytecode detected on "+d.network+". Source code verification: not checked.":"No contract bytecode detected on "+d.network+". "+(d.note||""));}catch(e){setMessage(e.message||"Contract check failed.");}finally{setToolBusy(false);}};
-    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Verify Contract</h1><p className="muted">Check deployed bytecode on Ethereum, BNB Chain, or Ethereum Sepolia testnet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><article className="panel action-panel"><label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Ethereum Sepolia (testnet)</option></select></label><label>Contract address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>{message&&<div className={message.toLowerCase().includes("detected")&&!message.toLowerCase().includes("no contract")?"feature-success":"feature-error"} role="status">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!/^0x[0-9a-fA-F]{40}$/.test(destination.trim())} onClick={verify}>{toolBusy?"Checking…":"Check deployed bytecode →"}</button><div className="security-note">This checks whether bytecode exists at the address only. It does not verify source code, audit the contract, prove ownership, or certify safety. Sepolia is a test network.</div></article></section>;
+    const verify=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/contracts/verify",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({address:destination.trim(),network})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Contract check failed.");setMessage(d.contract?"Contract bytecode detected on "+d.network+". Etherscan source code verification: "+(d.source_verified?"VERIFIED":"not verified")+(d.explorer_source?.contract_name?" · "+d.explorer_source.contract_name:"")+(d.explorer_source?.status==="unavailable"?" · explorer lookup unavailable":d.explorer_source?.status==="not_configured"?" · Etherscan key not configured":"")+". "+(d.note||""):"No contract bytecode detected on "+d.network+". "+(d.note||""));}catch(e){setMessage(e.message||"Contract check failed.");}finally{setToolBusy(false);}};
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Verify Contract</h1><p className="muted">Check deployed bytecode on Ethereum, BNB Chain, or Ethereum Sepolia testnet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><article className="panel action-panel"><label>Network<select value={network} onChange={e=>setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain</option><option value="sepolia">Ethereum Sepolia (testnet)</option></select></label><label>Contract address<input value={destination} onChange={e=>setDestination(e.target.value)} placeholder="0x…"/></label>{message&&<div className={message.toLowerCase().includes("detected")&&!message.toLowerCase().includes("no contract")?"feature-success":"feature-error"} role="status">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!/^0x[0-9a-fA-F]{40}$/.test(destination.trim())} onClick={verify}>{toolBusy?"Checking…":"Check deployed bytecode →"}</button><div className="security-note">This checks deployed bytecode and, when the backend Etherscan API V2 key is configured, whether explorer source code is verified. A verified source listing does not audit the contract, prove ownership, or certify safety. Etherscan checks are read-only. Sepolia is a test network.</div></article></section>;
   }
 
   if (active === "Address Book") {
@@ -1634,11 +2412,11 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
   }
 
   if (active === "Request Center") {
-    const loadRequests=async()=>{setToolBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setToolItems(d.requests||[]);}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
+    const loadRequests=async()=>{setRequestBusy(true);setRequestError("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to load requests.");setRequestItems(Array.isArray(d.requests)?d.requests:[]);}catch(e){setRequestError(e.message||"Unable to load requests.");}finally{setRequestBusy(false);}};
     const createRequest=async()=>{setToolBusy(true);setMessage("");try{const r=await fetch(apiBaseUrl+"/api/v1/request-center",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({kind:"support",title:destination,details:note})});const d=await r.json();if(!r.ok)throw new Error(d.detail||"Unable to create request.");setDestination("");setNote("");setMessage("Request created.");await loadRequests();}catch(e){setMessage(e.message);}finally{setToolBusy(false);}};
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Request Center</h1><p className="muted">Create and track database-backed support requests.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel"><h2>New request</h2><label>Title<input value={destination} onChange={e=>setDestination(e.target.value)} maxLength="120" placeholder="Request title"/></label><label>Details<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="1000" placeholder="Describe what you need"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={createRequest}>{toolBusy?"Saving…":"Create request →"}</button></article>
-      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests}>{toolBusy?"Loading…":"↻ Refresh"}</button></div>{toolItems.length?toolItems.map(r=><div className="tool-row" key={r.id}><div><b>{r.title}</b><small>{r.kind} • {r.status}</small></div><code>{r.id}</code></div>):<div className="live-chart-empty">No requests loaded. Tap Refresh.</div>}</article></div></section>;
+      <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests} disabled={requestBusy}>{requestBusy?"Loading…":"↻ Refresh"}</button></div>{requestError&&<div role="status" className="feature-error">{requestError}</div>}{requestItems.length?requestItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">{requestBusy ? "Loading your saved requests…" : requestError ? "Requests could not be loaded. Retry to check again." : "No requests have been created yet."}</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
   }
 
   if (active === "Wallet Connect") {
@@ -1678,6 +2456,202 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     </section>;
   }
 
+  if (active === "Profile") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Profile</h1><p className="muted">Your authenticated World Wallet AI account and active wallet identity.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallets →</button></div>
+      <article className="panel action-panel"><div className="panel-head"><div><h2>Account details</h2><span>Read-only identity sourced from the signed-in session</span></div></div>
+        <div className="tool-list">
+          <div className="tool-row"><div><b>Display name</b><small>Account profile</small></div><strong>{accountName||"Not provided"}</strong></div>
+          <div className="tool-row"><div><b>Email address</b><small>Authenticated identity</small></div><strong>{accountEmail||"Unavailable"}</strong></div>
+          <div className="tool-row"><div><b>Account ID</b><small>Internal identifier · do not share publicly</small></div><code>{accountUserId||"Unavailable"}</code></div>
+          <div className="tool-row"><div><b>Active wallet ID</b><small>11-digit public wallet reference</small></div><strong>{wallet?.wallet_number||"Not assigned"}</strong></div>
+          <div className="tool-row"><div><b>Wallet name</b><small>Currently selected wallet</small></div><strong>{wallet?.name||"Primary wallet"}</strong></div>
+        </div>
+        <div className="security-note">Profile values are read-only here. Recovery phrases, private keys, passwords and one-time codes are never displayed on this page.</div>
+      </article>
+      <article className="panel action-panel"><h2>Account tools</h2><div className="page-actions"><button className="secondary" onClick={()=>setActive("API Keys")}>API keys</button><button className="secondary" onClick={()=>setActive("Wallet Safety")}>Wallet safety</button><button className="secondary" onClick={()=>setActive("Support Center")}>Contact support</button></div></article>
+    </section>;
+  }
+
+  if (["Admin Editor","User Management","System Settings","Logs & Activity","Role Management"].includes(active)) {
+    const reloadUsers = async () => {
+      setAdminBusy(true);setAdminError("");
+      try {
+        const response=await fetch(apiBaseUrl+"/api/v1/admin/users?q="+encodeURIComponent(adminSearch.trim()),{headers:{Authorization:"Bearer "+accessToken},cache:"no-store"});
+        const data=await response.json();if(!response.ok)throw new Error(data.detail||"User list could not be loaded.");setAdminData(data);
+      } catch(error) { setAdminError(error.message||"User list could not be loaded."); }
+      finally { setAdminBusy(false); }
+    };
+    const saveAnnouncement = async () => {
+      setAdminSaveBusy(true);setAdminSaveMessage("");setAdminError("");
+      try {
+        const response=await fetch(apiBaseUrl+"/api/v1/admin/announcement",{method:"PUT",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({title:announcementTitle,body:announcementBody,enabled:announcementEnabled})});
+        const data=await response.json();if(!response.ok)throw new Error(data.detail||"Announcement could not be saved.");
+        setAdminData({announcement:data.announcement});setAdminSaveMessage("Dashboard announcement saved.");
+      } catch(error) { setAdminError(error.message||"Announcement could not be saved."); }
+      finally { setAdminSaveBusy(false); }
+    };
+    const heading = active === "Admin Editor" ? "Dashboard announcement editor" : active;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">RESTRICTED ADMINISTRATION</p><h1>{heading}</h1><p className="muted">Every data endpoint verifies the configured owner account on the backend.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
+      {adminBusy&&<div className="feature-loading" role="status">Loading authorized admin data…</div>}
+      {adminError&&<div className="feature-error" role="alert">{adminError}</div>}
+      {active==="Admin Editor"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Dashboard announcement</h2><span>Publish a short notice to signed-in wallet dashboards</span></div></div>
+        <label>Title<input value={announcementTitle} maxLength={120} onChange={event=>setAnnouncementTitle(event.target.value)} placeholder="Service notice"/></label>
+        <label>Message<textarea value={announcementBody} maxLength={600} rows={4} onChange={event=>setAnnouncementBody(event.target.value)} placeholder="Write a factual update for wallet users."/></label>
+        <label className="checkbox-label"><input type="checkbox" checked={announcementEnabled} onChange={event=>setAnnouncementEnabled(event.target.checked)}/> Show this announcement on the dashboard</label>
+        {adminSaveMessage&&<div className="feature-success" role="status">{adminSaveMessage}</div>}
+        <button className="primary feature-submit" disabled={adminSaveBusy||(announcementEnabled&&(!announcementTitle.trim()||!announcementBody.trim()))} onClick={saveAnnouncement}>{adminSaveBusy?"Saving…":"Save announcement"}</button>
+        <p className="security-note">Saving only changes the dashboard announcement. It does not change wallet balances, network configuration, payments or transaction permissions.</p>
+      </article>}
+      {active==="User Management"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Registered accounts</h2><span>{adminData?.total??"—"} account record(s) · read-only to protect customer data</span></div></div>
+        <div className="inline-form"><input value={adminSearch} onChange={event=>setAdminSearch(event.target.value)} placeholder="Search name or email"/><button className="secondary" disabled={adminBusy} onClick={reloadUsers}>Search</button></div>
+        {adminData?.users?.length?<div className="tool-list">{adminData.users.map(item=><div className="tool-row" key={item.id}><div><b>{item.name||"Unnamed account"}</b><small>{item.email}</small><small>{item.created_at?new Date(item.created_at).toLocaleDateString():"Creation date unavailable"}</small></div><strong>{item.wallet_count} wallet(s)</strong></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No matching account records.</div>:null}
+        <p className="security-note">Account deletion, suspension, password reset and balance editing are not exposed here. Administrative access cannot be used to alter customer wallets or ledgers.</p>
+      </article>}
+      {active==="System Settings"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Backend configuration health</h2><span>Presence checks only · secret values are never returned</span></div></div>
+        {adminData?.checks?.length?<div className="tool-list">{adminData.checks.map(item=><div className="tool-row" key={item.key}><div><b>{item.key}</b></div><strong className={item.configured?"positive":"neutral"}>{item.configured?"Configured":"Not configured"}</strong></div>)}</div>:null}
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Alchemy NFT API connectivity</h2><span>Live, read-only checks against Ethereum and BNB Mainnet</span></div><button className="secondary" disabled={nftProviderTestBusy} onClick={async()=>{
+          setNftProviderTestBusy(true);setNftProviderTest(null);setNftProviderTestError("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/admin/nft-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Alchemy connectivity test failed.");
+            setNftProviderTest(data);
+          } catch(error) { setNftProviderTestError(error.message||"Alchemy connectivity test failed."); }
+          finally { setNftProviderTestBusy(false); }
+        }}>{nftProviderTestBusy?"Testing…":"Test Alchemy API"}</button></div>
+        {nftProviderTestError&&<div className="feature-error" role="alert">{nftProviderTestError}</div>}
+        {nftProviderTest&&<><div className={nftProviderTest.success?"feature-success":"feature-error"} role="status">{nftProviderTest.success?"Alchemy NFT API is responding on both supported wallet networks.":"One or more Alchemy NFT API checks did not pass."}</div>
+          <div className="tool-list">{nftProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="eth-mainnet"?"Ethereum Mainnet":"BNB Chain Mainnet"}</b><small>{item.message}{item.ok?" · probe items: "+item.probe_items:""}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {nftProviderTest.tested_at?new Date(nftProviderTest.tested_at).toLocaleString():"just now"} · {nftProviderTest.notice}</small>
+        </>}
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Etherscan API V2 connectivity</h2><span>Read-only API key checks for Ethereum, BNB Chain, and Sepolia</span></div><button className="secondary" disabled={etherscanProviderTestBusy} onClick={async()=>{
+          setEtherscanProviderTestBusy(true);setEtherscanProviderTest(null);setEtherscanProviderTestError("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/admin/etherscan-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Etherscan API connectivity test failed.");
+            setEtherscanProviderTest(data);
+          } catch(error) { setEtherscanProviderTestError(error.message||"Etherscan API connectivity test failed."); }
+          finally { setEtherscanProviderTestBusy(false); }
+        }}>{etherscanProviderTestBusy?"Testing…":"Test Etherscan API"}</button></div>
+        {etherscanProviderTestError&&<div className="feature-error" role="alert">{etherscanProviderTestError}</div>}
+        {etherscanProviderTest&&<><div className={etherscanProviderTest.success?"feature-success":"feature-error"} role="status">{etherscanProviderTest.success?"Etherscan API V2 is responding on all configured EVM networks.":"One or more Etherscan API V2 checks did not pass."}</div>
+          <div className="tool-list">{etherscanProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="ethereum"?"Ethereum Mainnet":item.network==="bnb"?"BNB Chain Mainnet":"Ethereum Sepolia"}</b><small>Chain ID {item.chain_id} · {item.message}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {etherscanProviderTest.tested_at?new Date(etherscanProviderTest.tested_at).toLocaleString():"just now"} · {etherscanProviderTest.notice}</small>
+        </>}
+        <div className="security-note">Etherscan is a read-only explorer provider. Its API key remains on the backend and is never returned to this page. It cannot sign wallet transactions, authorize deploys, or pay gas.</div>
+        <div className="security-note">Payments: disabled. Transaction broadcast: {adminData?.transaction_broadcast||"external wallet only"}. Configuration changes still belong in Render. This button checks provider connectivity only; it does not read a customer wallet, modify assets or approve transactions.</div>
+      </article>}
+      {active==="Logs & Activity"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Administrative audit events</h2><span>Admin-console reads and announcement changes</span></div></div>
+        {adminData?.events?.length?<div className="tool-list">{adminData.events.map(item=><div className="tool-row" key={item.id}><div><b>{item.action}</b><small>{item.actor_email} · {item.created_at?new Date(item.created_at).toLocaleString():"Time unavailable"}</small><small>{item.details}</small></div></div>)}</div>:!adminBusy&&!adminError?<div className="live-chart-empty">No administrative audit events have been recorded yet.</div>:null}
+        <p className="security-note">This view is an administrative audit trail, not a full raw server log stream. Render runtime and deployment logs remain in the Render Dashboard.</p>
+      </article>}
+      {active==="Role Management"&&<article className="panel action-panel"><div className="panel-head"><div><h2>Authorization policy</h2><span>Server-enforced owner access model</span></div></div>
+        <div className="tool-list">{(adminData?.roles||[]).map(item=><div className="tool-row" key={item.name}><div><b>{item.name}</b><small>{item.description}</small></div><strong>{item.source}</strong></div>)}</div>
+        <div className="security-note">{adminData?.notice||"Role assignment is read-only until a persistent RBAC system is implemented."}</div>
+        <p className="muted">Configured owner: {adminData?.owner_email||"Not available"} · Editable assignments: {adminData?.assignments_editable?"Yes":"No"}</p>
+      </article>}
+    </section>;
+  }
+
+  if (active === "NFTs") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ON-CHAIN COLLECTIBLES</p><h1>NFTs</h1><p className="muted">Read-only NFTs owned by the active wallet.</p></div><button className="secondary" onClick={()=>setNftRefresh(value=>value+1)} disabled={nftBusy}>↻ Refresh</button></div>
+      <article className="panel action-panel"><div className="inline-form"><label>Network<select value={nftNetwork} onChange={event=>setNftNetwork(event.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option></select></label><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallet addresses</button></div>
+        {nftBusy&&<div className="feature-loading" role="status">Loading NFTs from the read-only provider…</div>}
+        {nftError&&<div className="feature-error" role="alert">{nftError}</div>}
+        {nftData&&<><div className="panel-head"><div><h2>{nftData.nft_count} NFT(s) found</h2><span>{nftData.network} · {nftData.source}</span></div></div>
+          {nftData.nfts?.length?<div className="feature-grid">{nftData.nfts.map((item,index)=><article className="panel action-panel" key={item.contract_address+":"+item.token_id+":"+index}>{item.image_url?<img src={item.image_url} alt={item.name} loading="lazy" style={{width:"100%",maxHeight:220,objectFit:"contain",borderRadius:12}}/>:<div className="feature-icon">◇</div>}<h3>{item.name}</h3><p>{item.collection||"Unlabelled collection"} · Token #{item.token_id||"unknown"}</p><small>{item.contract_address}</small></article>)}</div>:<div className="live-chart-empty">The provider returned no NFTs for this address and network.</div>}
+          <p className="security-note">{nftData.notice}</p>
+        </>}
+      </article>
+    </section>;
+  }
+
+  if (active === "Token Mining") {
+    return <section className="content feature-content mining-page">
+      <div className="page-heading">
+        <div>
+          <p className="eyebrow">WORLD WALLET AI / BALMZ ECOSYSTEM</p>
+          <h1>BALMZ Token Mining</h1>
+          <p className="muted">A transparent home for the upcoming BALMZ community rewards programme.</p>
+        </div>
+        <button className="secondary" onClick={() => setActive("BALMZ Presale")}>Explore BALMZ →</button>
+      </div>
+
+      <article className="panel action-panel mining-hero">
+        <div className="mining-hero-copy">
+          <span className="feature-kicker">COMMUNITY REWARDS · PRE-LAUNCH</span>
+          <h2>Be ready for the first verified BALMZ mining campaign.</h2>
+          <p>World Wallet AI is preparing a wallet-first place for official BALMZ participation and rewards information. Campaign rules, eligibility, supported networks, token allocations and claim mechanics will be published only after they are confirmed and independently verifiable.</p>
+          <div className="mining-status-line"><span className="mining-status-dot" aria-hidden="true"></span><b>Pre-launch</b><span>Registration of interest is open</span></div>
+        </div>
+        <div className="mining-hero-mark" aria-hidden="true"><span>⛏</span><b>BALMZ</b><small>MINING HUB</small></div>
+      </article>
+
+      <div className="feature-grid mining-status-grid">
+        <article className="panel action-panel mining-status-card"><small>PROGRAMME STATUS</small><strong>Pre-launch</strong><span>No active mining round is currently running.</span></article>
+        <article className="panel action-panel mining-status-card"><small>MINING RATE</small><strong>Not published</strong><span>No verified hash rate or earning rate is available yet.</span></article>
+        <article className="panel action-panel mining-status-card"><small>REWARD CLAIMS</small><strong>Not enabled</strong><span>No claimable BALMZ rewards are being represented.</span></article>
+      </div>
+
+      <article className="panel action-panel mining-interest-panel">
+        <div className="panel-head">
+          <div><h2>Join the BALMZ mining early-access list</h2><span>Your registration is linked to your signed-in wallet account.</span></div>
+          <span className="mining-interest-badge">FREE TO REGISTER</span>
+        </div>
+        {miningLoadBusy && <div className="feature-loading" role="status">Checking your registration…</div>}
+        {miningError && <div className="feature-error" role="alert">{miningError}</div>}
+        {miningInterest ? (
+          <div className="mining-registered" role="status">
+            <span className="mining-registered-icon">✓</span>
+            <div><b>Your interest is registered</b><p>Your early-access request is saved in Request Center for this wallet. You can review its status there.</p><small>Request status: {miningInterest.status || "open"} · Registered {miningInterest.created_at ? new Date(miningInterest.created_at).toLocaleString() : "successfully"}</small></div>
+            <button className="secondary" onClick={() => setActive("Request Center")}>View request →</button>
+          </div>
+        ) : (
+          <>
+            <p>Register once to record your interest in future BALMZ mining announcements and campaign information. This does not activate mining, reserve tokens, guarantee eligibility or promise rewards.</p>
+            {miningMessage && <div className="feature-success" role="status">{miningMessage}</div>}
+            <button className="primary feature-submit" disabled={miningBusy || miningLoadBusy || Boolean(miningError)} onClick={async () => {
+              setMiningBusy(true);setMiningMessage("");setMiningError("");
+              try {
+                const response = await fetch(apiBaseUrl + "/api/v1/request-center", {
+                  method: "POST",
+                  headers: {"Content-Type":"application/json", Authorization:"Bearer "+accessToken},
+                  body: JSON.stringify({
+                    kind: "other",
+                    title: "BALMZ Token Mining early access",
+                    details: "I would like to register interest in official BALMZ mining programme updates, verified campaign rules, eligibility requirements, supported networks and any future reward-claim instructions. I understand that no mining round or token reward is currently active or guaranteed."
+                  })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.detail || "Your mining interest could not be registered.");
+                setMiningInterest(data.request || {kind:"other",title:"BALMZ Token Mining early access",status:"open"});
+                setMiningMessage("Your interest was saved successfully.");
+              } catch(error) {
+                setMiningError(error.message || "Your mining interest could not be registered.");
+              } finally {
+                setMiningBusy(false);
+              }
+            }}>{miningBusy ? "Registering…" : "Register my interest →"}</button>
+          </>
+        )}
+        <p className="security-note">No deposit, wallet signature, token approval or private key is required to register. Never share your recovery phrase. Registration is not a promise of token allocation or investment return.</p>
+      </article>
+
+      <div className="feature-grid mining-steps-grid">
+        <article className="panel action-panel"><span className="mining-step-number">01</span><h3>Official rules first</h3><p>Networks, eligibility, campaign dates and reward limits will be published before any campaign opens.</p></article>
+        <article className="panel action-panel"><span className="mining-step-number">02</span><h3>Wallet-specific eligibility</h3><p>Any future activity must be tied to a clearly identified wallet and verified participation criteria.</p></article>
+        <article className="panel action-panel"><span className="mining-step-number">03</span><h3>Verifiable reward claims</h3><p>Claims will be shown only after a real reward contract, allocation and on-chain claim process are verified.</p></article>
+      </div>
+      <div className="security-note">Important: this page is currently an early-access registration hub, not a CPU/GPU miner or a live yield product. No background mining runs on your phone or computer.</div>
+    </section>;
+  }
+
+  if (active === "Staking") {
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ON-CHAIN POSITIONS</p><h1>Staking</h1><p className="muted">Read-only staking status for supported protocols.</p></div><button className="secondary" onClick={()=>setActive("Support Center")}>Request an integration →</button></div>
+      <article className="panel action-panel"><h2>No verified staking provider is connected</h2><p>A wallet address alone cannot enumerate or value staking positions across arbitrary protocols. This workspace will show positions only after a verified protocol indexer and contract registry are configured.</p><div className="security-note">No sample positions, token balances, rewards, APRs or estimated returns are displayed. No staking approval or transaction signing is available here.</div><button className="primary" onClick={()=>{setSupportTitle("Staking integration request");setSupportDetails("Please enable read-only staking position discovery for supported networks and protocols.");setActive("Support Center");}}>Request staking support</button></article>
+    </section>;
+  }
+
   if (active === "Help & Docs") {
     const docs = [
       ["Getting started","Create a wallet profile or attach a public address from Wallets. A profile is not the same as a generated on-chain wallet.","Wallets"],
@@ -1689,7 +2663,30 @@ export default function FeaturePage({ selectedAsset, selectedCoin, setSelectedCo
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / DOCUMENTATION</p><h1>Help &amp; Docs</h1><p className="muted">Guidance for using the wallet safely and checking live data.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div><div className="feature-grid">{docs.map(([title,body,target],i)=><article className="panel action-panel" key={title}><p className="feature-kicker">GUIDE {String(i+1).padStart(2,"0")}</p><h2>{title}</h2><p>{body}</p><button className="secondary" onClick={()=>setActive(target)}>Open {target} →</button></article>)}</div></section>;
   }
   if (active === "Support Center") {
-    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / SUPPORT</p><h1>Support Center</h1><p className="muted">Choose a connected page to investigate an issue.</p></div><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs →</button></div><article className="panel action-panel"><h2>Troubleshooting</h2><p>These shortcuts open the relevant app pages. This screen does not submit a support ticket or claim that a service is healthy.</p>{[["Sign-in and account","Profile"],["Wallets and addresses","Wallets"],["Market prices and API keys","API Keys"],["Transaction history","Transactions"]].map(([label,target])=><div className="tool-row" key={target}><div><b>{label}</b></div><button className="secondary" onClick={()=>setActive(target)}>{target} →</button></div>)}<div className="security-note">Never provide support with a private key or seed phrase. A ticket submission channel is not configured on this page.</div></article></section>;
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">WORLD WALLET AI / SUPPORT</p><h1>Support Center</h1><p className="muted">Create and track a support request for this wallet account.</p></div><button className="secondary" onClick={()=>setActive("Help & Docs")}>Help &amp; Docs →</button></div>
+      <article className="panel action-panel">
+        <h2>Contact support</h2>
+        <label>Request subject<input value={supportTitle} maxLength={120} onChange={event=>setSupportTitle(event.target.value)} placeholder="Describe the issue in a few words"/></label>
+        <label>Details<textarea value={supportDetails} maxLength={1000} rows={5} onChange={event=>setSupportDetails(event.target.value)} placeholder="Include the affected page, network and approximate time. Never include passwords, API secrets, private keys or recovery phrases."/></label>
+        {supportSubmitMessage && <div className={/created|submitted/i.test(supportSubmitMessage)?"feature-success":"feature-error"} role="status">{supportSubmitMessage}</div>}
+        <button className="primary feature-submit" disabled={supportSubmitBusy||supportTitle.trim().length<2} onClick={async()=>{
+          setSupportSubmitBusy(true);setSupportSubmitMessage("");
+          try {
+            const response=await fetch(apiBaseUrl+"/api/v1/request-center",{method:"POST",headers:{"Content-Type":"application/json",Authorization:"Bearer "+accessToken},body:JSON.stringify({kind:"support",title:supportTitle.trim(),details:supportDetails.trim()})});
+            const data=await response.json();if(!response.ok)throw new Error(data.detail||"Support request could not be submitted.");
+            setSupportItems(previous=>[data.request,...previous]);setSupportTitle("");setSupportDetails("");setSupportSubmitMessage("Support request submitted and saved to your Request Center.");
+          } catch(error) { setSupportSubmitMessage(error.message||"Support request could not be submitted."); }
+          finally { setSupportSubmitBusy(false); }
+        }}>{supportSubmitBusy?"Submitting…":"Submit support request →"}</button>
+        <div className="security-note">Requests are saved to your authenticated wallet account. Support never needs your password, seed phrase, private key or one-time code.</div>
+      </article>
+      <article className="panel action-panel">
+        <div className="panel-head"><div><h2>Your support requests</h2><span>Support-type requests saved for the active wallet</span></div><button className="secondary" onClick={async()=>{setSupportLoadError("");try{const response=await fetch(apiBaseUrl+"/api/v1/request-center",{headers:{Authorization:"Bearer "+accessToken},cache:"no-store"});const data=await response.json();if(!response.ok)throw new Error(data.detail||"Could not refresh requests.");setSupportItems((data.requests||[]).filter(item=>item.kind==="support"));}catch(error){setSupportLoadError(error.message||"Could not refresh requests.");}}}>↻ Refresh</button></div>
+        {supportLoadError&&<div className="feature-error" role="alert">{supportLoadError}</div>}
+        {supportItems.length?<div className="tool-list">{supportItems.map(item=><div className="tool-row" key={item.id}><div><b>{item.title}</b><small>{item.created_at?new Date(item.created_at).toLocaleString():"Saved request"} · {item.status}</small><small>{item.details}</small></div><strong>{item.status}</strong></div>)}</div>:<div className="live-chart-empty">No support requests have been submitted for this wallet yet.</div>}
+      </article>
+    </section>;
   }
   const moduleGuidance = {
     "Admin Editor":"Editing tools are not connected to a verified backend workflow yet.",

@@ -3,13 +3,47 @@ import sys
 import unittest
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock, Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
 
 
 class SettlementAndWalletToolTests(unittest.TestCase):
+    def test_bnb_rpc_health_reports_verified_chain_and_contract_precision(self):
+        with patch.object(main, "_BNB_HEALTH_CACHE", {"checked_at": 0.0, "result": None}), \
+             patch.object(main.time, "monotonic", return_value=100.0), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "5" * 40), \
+             patch.object(main, "require_bnb_rpc", return_value=56) as chain_check, \
+             patch.object(main, "verified_erc20_decimals", return_value=18) as decimals_check, \
+             patch.object(main, "evm_block_number", return_value=45000000) as block_check:
+            result = main.bnb_rpc_health()
+        self.assertEqual(result["status"], "ok")
+        self.assertEqual(result["chain_id"], 56)
+        self.assertTrue(result["rpc_verified"])
+        self.assertEqual(result["decimals"], 18)
+        self.assertEqual(result["latest_block"], 45000000)
+        self.assertTrue(result["read_only"])
+        chain_check.assert_called_once_with("https://bnb.example")
+        decimals_check.assert_called_once_with("https://bnb.example", "0x" + "5" * 40, "bnb", chain_checked=True)
+        block_check.assert_called_once_with("https://bnb.example")
+
+    def test_bnb_rpc_health_fails_closed_before_contract_read_on_wrong_chain(self):
+        with patch.object(main, "_BNB_HEALTH_CACHE", {"checked_at": 0.0, "result": None}), \
+             patch.object(main.time, "monotonic", return_value=100.0), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "5" * 40), \
+             patch.object(main, "require_bnb_rpc", side_effect=ValueError("wrong chain")), \
+             patch.object(main, "verified_erc20_decimals") as decimals_check, \
+             patch.object(main, "evm_block_number") as block_check:
+            with self.assertRaises(main.HTTPException) as caught:
+                main.bnb_rpc_health()
+        self.assertEqual(caught.exception.status_code, 503)
+        decimals_check.assert_not_called()
+        block_check.assert_not_called()
+
     def test_wallet_sync_route_is_registered_on_sync_handler_only(self):
         sync_routes = [
             route for route in main.app.routes
@@ -20,6 +54,36 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIs(sync_routes[0].endpoint, main.sync_wallet)
         self.assertNotIn(main._chain_heights, [route.endpoint for route in main.app.routes])
         self.assertNotIn(main.wallet_asset_symbol, [route.endpoint for route in main.app.routes])
+
+    def test_bitcoin_mainnet_address_validation_accepts_known_legacy_address(self):
+        self.assertTrue(main.valid_bitcoin_address("1BoatSLRHtKNngkdXEeobR76b53LETtpyT"))
+
+    def test_bitcoin_balance_rejects_invalid_address_before_network_request(self):
+        with patch.object(main.httpx, "get") as get:
+            with self.assertRaisesRegex(ValueError, "Invalid Bitcoin Mainnet address"):
+                main.btc_balance("not-a-bitcoin-address")
+        get.assert_not_called()
+
+    def test_bitcoin_transaction_sync_rejects_invalid_address_before_network_request(self):
+        with patch.object(main.httpx, "get") as get:
+            with self.assertRaisesRegex(ValueError, "Invalid Bitcoin Mainnet address"):
+                main.bitcoin_address_transactions("not-a-bitcoin-address")
+        get.assert_not_called()
+
+    def test_bitcoin_balance_uses_confirmed_chain_statistics_only(self):
+        class Response:
+            def raise_for_status(self):
+                return None
+            def json(self):
+                return {
+                    "chain_stats": {"funded_txo_sum": 250000000, "spent_txo_sum": 50000000},
+                    "mempool_stats": {"funded_txo_sum": 900000000, "spent_txo_sum": 0},
+                }
+
+        address = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+        with patch.object(main.httpx, "get", return_value=Response()) as get:
+            self.assertEqual(main.btc_balance(address), 2.0)
+        get.assert_called_once_with(f"https://blockstream.info/api/address/{address}", timeout=10)
 
     def test_exact_base_units_accepts_supported_precision(self):
         self.assertEqual(main.exact_base_units(Decimal("1.25"), 8), 125000000)
@@ -60,6 +124,326 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         with patch.object(main, "evm_chain_id", return_value=11155111):
             with self.assertRaisesRegex(ValueError, "mainnet chain ID 1"):
                 main.require_ethereum_mainnet_rpc("https://rpc.example")
+
+    def test_sepolia_asset_symbol_is_not_mainnet_eth(self):
+        from fastapi import HTTPException
+        with self.assertRaises(HTTPException):
+            main.validate_asset_network("ETH", "sepolia")
+        self.assertEqual(main.validate_asset_network("BALMZ-SEP", "sepolia"), ("BALMZ-SEP", "sepolia"))
+
+    def test_usdt_asset_is_canonicalized_by_network(self):
+        from fastapi import HTTPException
+        self.assertEqual(main.validate_asset_network("USDT", "ethereum"), ("USDT", "ethereum"))
+        self.assertEqual(main.validate_asset_network("USDT", "bnb"), ("USDT-BNB", "bnb"))
+        self.assertEqual(main.validate_asset_network("USDT-BNB", "bnb"), ("USDT-BNB", "bnb"))
+        with self.assertRaises(HTTPException):
+            main.validate_asset_network("USDT-BNB", "ethereum")
+
+    def test_bnb_address_inspection_stops_before_balance_on_wrong_chain(self):
+        address = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB balance must not be read from the wrong chain")
+
+        with patch.object(main, "rpc_call", side_effect=fake_rpc):
+            with self.assertRaises(main.HTTPException) as caught:
+                main._inspect_evm_address(address, "bnb", "https://rpc.example")
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_native_transaction_sync_stops_before_block_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB blocks must not be queried on the wrong chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_native_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb", wallet_address=wallet
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_token_transaction_sync_stops_before_log_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB token logs must not be queried on the wrong chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "bnb",
+                contract, "USDT-BNB", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_single_address_balance_stops_on_wrong_chain(self):
+        address = "0x" + "1" * 40
+        calls = []
+        fake_conn = Mock()
+        fake_conn.execute.return_value.fetchone.side_effect = [("wallet_test",), (1,)]
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("BNB balance must not be read on the wrong chain")
+
+        with patch.object(main, "db") as db, \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            db.return_value.__enter__.return_value = fake_conn
+            with self.assertRaises(main.HTTPException) as caught:
+                main.read_wallet_address_balance(
+                    "wallet_test", "bnb", address, {"id": "user_test"}
+                )
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_contract_verification_stops_before_bytecode_read_on_wrong_chain(self):
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Contract bytecode must not be read on the wrong chain")
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.verify_contract(
+                    SimpleNamespace(address="0x" + "1" * 40, network="bnb"),
+                    {"id": "user_test"},
+                )
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_contract_inspection_stops_before_bytecode_read_on_wrong_chain(self):
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Contract bytecode must not be read on the wrong chain")
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.inspect_contract(
+                    SimpleNamespace(address="0x" + "1" * 40, network="bnb"),
+                    {"id": "user_test"},
+                )
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_bnb_proof_of_reserves_excludes_wrong_chain_rpc_data(self):
+        address = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(1)
+            raise AssertionError("Reserve balances must not be read from the wrong chain")
+
+        with patch.object(main, "configured_addresses", return_value=[
+            {"network": "bnb", "address": address, "label": "primary"},
+        ]), patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["reserves"], [])
+        self.assertTrue(any("bnb: on-chain lookup failed" in warning for warning in result["warnings"]))
+        self.assertEqual(calls, ["eth_chainId"])
+
+    def test_signing_config_skips_bnb_token_metadata_on_wrong_chain(self):
+        address = "0x" + "1" * 40
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "bnb" else None), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", "0x" + "2" * 40), \
+             patch.object(main, "rpc_call", return_value=hex(1)), \
+             patch.object(main, "erc20_decimals") as decimals:
+            result = main.wallet_signing_config({"wallet_id": "wallet_test"})
+
+        bnb = result["networks"]["bnb"]
+        self.assertFalse(bnb["rpc_verified"])
+        self.assertIsNone(bnb["chain_id"])
+        self.assertIsNone(bnb["wallet_address"])
+        self.assertIsNone(bnb["usdt_contract"])
+        self.assertIsNone(bnb["usdt_decimals"])
+        decimals.assert_not_called()
+
+    def test_signing_config_exposes_bnb_fields_only_after_chain_56_verification(self):
+        address = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        with patch.object(main, "wallet_network_address", side_effect=lambda _user, network: address if network == "bnb" else None), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "rpc_call", return_value=hex(56)), \
+             patch.object(main, "erc20_decimals", return_value=18):
+            result = main.wallet_signing_config({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["networks"]["bnb"], {
+            "rpc_verified": True,
+            "chain_id": "0x38",
+            "wallet_address": address,
+            "usdt_contract": contract,
+            "usdt_decimals": 18,
+        })
+
+    def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
+        address = "0x" + "1" * 40
+        contract = "0x" + "2" * 40
+        db_context = MagicMock()
+        db_conn = MagicMock()
+        db_context.__enter__.return_value = db_conn
+        db_conn.execute.return_value.fetchall.return_value = [("USDT", contract, 6)]
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_chainId":
+                return hex(56)
+            if method == "eth_getBalance":
+                return hex(2 * 10**18)
+            if method == "eth_blockNumber":
+                return hex(100)
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "bnb", "address": address, "label": "primary"},
+            ]),
+            patch.object(main, "BSC_RPC_URL", "https://bnb.example"),
+            patch.object(main, "db", return_value=db_context),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+            patch.object(main, "verified_erc20_decimals", return_value=18),
+            patch.object(main, "erc20_balance", return_value=12.5),
+        ):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(
+            [item["asset"] for item in result["reserves"]],
+            ["BNB", "USDT-BNB"],
+        )
+        self.assertEqual(result["reserves"][1]["balance"], 12.5)
+
+    def test_bnb_usdt_settlement_uses_bnb_contract(self):
+        tx_hash = "0x" + "a" * 64
+        wallet = "0x" + "1" * 40
+        destination = "0x" + "2" * 40
+        contract = "0x" + "3" * 40
+        tx = {"from": wallet, "to": contract, "value": "0x0"}
+        receipt = {
+            "status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc",
+            "logs": [{
+                "address": contract,
+                "topics": [
+                    main.ERC20_TRANSFER_TOPIC,
+                    "0x" + "0" * 24 + wallet[2:],
+                    "0x" + "0" * 24 + destination[2:],
+                ],
+                "data": hex(1_000_000),
+            }],
+        }
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return tx
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_blockNumber":
+                return "0x66"
+            if method == "eth_getBlockByNumber":
+                return {"hash": "0xabc"}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "USDT_BSC_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "erc20_decimals", return_value=6), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.verify_evm_settlement(
+                tx_hash, "USDT-BNB", "bnb", destination, Decimal("1"), wallet
+            )
+
+        self.assertEqual(result["state"], "confirmed")
+        self.assertEqual(result["confirmations"], 3)
+
+    def test_bnb_usdt_reconciliation_updates_the_network_qualified_asset(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "3" * 40
+        conn = Mock()
+        user = {"wallet_id": "wallet_test"}
+
+        with (
+            patch.object(main, "wallet_network_address", return_value=wallet),
+            patch.object(main, "BSC_RPC_URL", "https://bnb.example"),
+            patch.object(main, "USDT_BSC_CONTRACT", contract),
+            patch.object(main, "require_bnb_rpc", return_value=56),
+            patch.object(main, "verified_erc20_decimals", return_value=18),
+            patch.object(main, "erc20_balance", return_value=12.5),
+        ):
+            main.reconcile_settled_asset(conn, user, "USDT-BNB", "bnb", wallet)
+
+        conn.execute.assert_called_once()
+        self.assertIn("symbol=%s", conn.execute.call_args.args[0])
+        self.assertEqual(conn.execute.call_args.args[1], (12.5, "wallet_test", "USDT-BNB"))
+
+    def test_bnb_token_history_uses_contract_decimals_not_registry_default(self):
+        wallet = "0x" + "1" * 40
+        contract = "0x" + "3" * 40
+        user = {"wallet_id": "wallet_test"}
+        with (
+            patch.object(main, "wallet_owns_network_address", return_value=True),
+            patch.object(main, "require_bnb_rpc", return_value=56),
+            patch.object(main, "erc20_decimals", return_value=18) as decimals_reader,
+            patch.object(main, "evm_block_number", return_value=None),
+        ):
+            imported, warning = main.sync_evm_token_transactions(
+                user, "https://bnb.example", "bnb", contract, "USDT-BNB",
+                decimals=6, wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertEqual(warning, "latest block unavailable")
+        decimals_reader.assert_called_once_with("https://bnb.example", contract)
+
+    def test_verified_bnb_token_decimals_reject_wrong_chain(self):
+        with (
+            patch.object(main, "evm_chain_id", return_value=1),
+            patch.object(main, "erc20_decimals") as decimals_reader,
+        ):
+            with self.assertRaisesRegex(ValueError, "chain ID 56"):
+                main.verified_erc20_decimals("https://rpc.example", "0x" + "3" * 40, "bnb")
+        decimals_reader.assert_not_called()
+
+    def test_bnb_rpc_requires_chain_id_56(self):
+        with patch.object(main, "evm_chain_id", return_value=56):
+            self.assertEqual(main.require_bnb_rpc("https://bsc.example"), 56)
+        with patch.object(main, "evm_chain_id", return_value=1):
+            with self.assertRaisesRegex(ValueError, "chain ID 56"):
+                main.require_bnb_rpc("https://bsc.example")
 
     def test_ethereum_rpc_falls_back_when_primary_provider_fails(self):
         class Response:
@@ -105,6 +489,52 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         with patch.object(main, "rpc_call", return_value=None):
             with self.assertRaisesRegex(ValueError, "did not return a chain ID"):
                 main.require_sepolia_rpc("https://rpc.example")
+
+    def test_normalize_wallet_network_never_aliases_solana_to_devnet_or_generic_mainnet_to_ethereum(self):
+        self.assertEqual(main.normalize_wallet_network("solana"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("solana-mainnet"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("mainnet-beta"), "solana_mainnet")
+        self.assertEqual(main.normalize_wallet_network("solana-devnet"), "solana_devnet")
+        self.assertEqual(main.normalize_wallet_network("mainnet"), "mainnet")
+        self.assertEqual(main.normalize_wallet_network("Ethereum Mainnet"), "ethereum")
+
+    def test_solana_rpc_cluster_guard_rejects_devnet_for_production(self):
+        with patch.object(main, "rpc_call", return_value=main.SOLANA_MAINNET_GENESIS_HASH):
+            main.require_solana_rpc_cluster(
+                "https://rpc.example", main.SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+            )
+        with patch.object(main, "rpc_call", return_value=main.SOLANA_DEVNET_GENESIS_HASH):
+            with self.assertRaisesRegex(ValueError, "unexpected Solana cluster genesis hash"):
+                main.require_solana_rpc_cluster(
+                    "https://rpc.example", main.SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"
+                )
+
+    def test_solana_mainnet_reserves_use_mainnet_rpc_and_are_not_testnet_evidence(self):
+        address = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+
+        def fake_rpc(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 2_000_000_000}
+            if method == "getSlot":
+                return 987654
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "solana_mainnet", "address": address, "label": "mainnet wallet"},
+            ]),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+        ):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["reserves"][0]["network"], "solana_mainnet")
+        self.assertEqual(result["reserves"][0]["asset"], "SOL")
+        self.assertEqual(result["reserves"][0]["balance"], 2.0)
+        self.assertEqual(result["reserves"][0]["block_number"], 987654)
+        self.assertEqual(result["testnet_assets"], [])
+        self.assertEqual(result["token_supplies"], [])
 
     def test_sepolia_token_sync_skips_logs_on_wrong_chain(self):
         wallet = "0x" + "1" * 40
@@ -156,6 +586,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         receipt = {"status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc", "logs": []}
 
         def fake_rpc(_url, method, _params):
+            if method == "eth_chainId":
+                return "0x1"
             if method == "eth_getTransactionByHash":
                 return tx
             if method == "eth_getTransactionReceipt":
@@ -179,6 +611,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         receipt = {"status": "0x1", "blockNumber": "0x64", "blockHash": "0xold", "logs": []}
 
         def fake_rpc(_url, method, _params):
+            if method == "eth_chainId":
+                return "0x1"
             if method == "eth_getTransactionByHash":
                 return tx
             if method == "eth_getTransactionReceipt":
@@ -273,7 +707,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_refresh_does_not_claim_transaction_sync_succeeded_with_warnings(self):
         user = {"id": "user_test", "wallet_id": "wallet_test"}
-        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+        with patch.object(main, "_sync_wallet_impl", return_value={"updates": [], "warnings": []}), \
              patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": ["Ethereum RPC unavailable"]}), \
              patch.object(main, "refresh_prices", return_value={"source": "test"}), \
              patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
@@ -286,7 +720,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_refresh_reports_transaction_sync_time_after_clean_sync(self):
         user = {"id": "user_test", "wallet_id": "wallet_test"}
-        with patch.object(main, "sync_wallet", return_value={"updates": [], "warnings": []}), \
+        with patch.object(main, "_sync_wallet_impl", return_value={"updates": [], "warnings": []}), \
              patch.object(main, "sync_transactions", return_value={"imported": [], "warnings": []}), \
              patch.object(main, "refresh_prices", return_value={"source": "test"}), \
              patch.object(main, "wallet_snapshot", return_value=([], [], {})), \
@@ -395,7 +829,10 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(sepolia["balmz_decimals"], 18)
         self.assertEqual(sepolia["network_type"], "testnet")
         self.assertEqual(result["networks"]["ethereum"]["chain_id"], "0x1")
-        self.assertEqual(result["networks"]["bnb"]["chain_id"], "0x38")
+        self.assertFalse(result["networks"]["bnb"]["rpc_verified"])
+        self.assertIsNone(result["networks"]["bnb"]["chain_id"])
+        self.assertIsNone(result["networks"]["bnb"]["wallet_address"])
+        self.assertIsNone(result["networks"]["bnb"]["usdt_contract"])
 
 
     def test_wallet_sync_does_not_timestamp_transaction_history_with_warnings(self):
@@ -483,6 +920,43 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         self.assertEqual(decode.call_args.kwargs["options"]["require"], ["exp", "sub", "email"])
 
+    def test_solana_devnet_proof_includes_wallet_holdings_and_live_mint_supply(self):
+        address = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        mint = main.BALMZ_SOLANA_DEVNET_MINT
+
+        def fake_rpc(_url, method, _params):
+            if method == "getGenesisHash":
+                return main.SOLANA_DEVNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 5_000_000_000}
+            if method == "getTokenSupply":
+                return {"value": {
+                    "amount": "1000000000000000000",
+                    "decimals": 9,
+                    "uiAmountString": "1000000000",
+                }}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with (
+            patch.object(main, "configured_addresses", return_value=[
+                {"network": "solana_devnet", "address": address, "label": "BALMZ wallet"},
+            ]),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+            patch.object(main, "solana_spl_token_balance", return_value=321.5),
+        ):
+            result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["reserves"], [])
+        self.assertEqual(result["testnet_assets"][0]["asset"], "SOL-DEVNET")
+        balmz = next(item for item in result["testnet_assets"] if item["asset"] == "BALMZ-SOL-DEVNET")
+        self.assertEqual(balmz["balance"], 321.5)
+        supply = result["token_supplies"][0]
+        self.assertEqual(supply["mint_address"], mint)
+        self.assertEqual(supply["total_supply"], 1_000_000_000)
+        self.assertEqual(supply["raw_amount"], "1000000000000000000")
+        self.assertFalse(result["audited"])
+        self.assertFalse(result["liabilities_included"])
+
 if __name__ == "__main__":
     unittest.main()
 
@@ -544,6 +1018,64 @@ class WalletValuationSummaryTests(unittest.TestCase):
         self.assertTrue(summary["reserved_valuation_complete"])
         self.assertEqual(summary["reserved_balance_usd"], 0)
         self.assertEqual(summary["valuation_basis"], "current_verified_market_quotes")
+
+    def test_testnet_asset_rows_never_enter_mainnet_portfolio_valuation(self):
+        assets = [
+            {
+                "symbol": "ETH", "network": "ethereum",
+                "balance": 1.0, "actual_balance": 1.0, "reserved_balance": 0,
+                "price_usd": 2000, "price_available": True,
+                "value_usd": 2000, "actual_value_usd": 2000,
+            },
+            {
+                "symbol": "BALMZ", "network": "ethereum",
+                "balance": 10, "actual_balance": 10, "reserved_balance": 0,
+                "price_usd": 0, "price_available": False,
+                "value_usd": None, "actual_value_usd": None,
+            },
+            {
+                "symbol": "BALMZ", "network": "sepolia",
+                "balance": 500, "actual_balance": 500, "reserved_balance": 0,
+                "price_usd": 99, "price_available": True,
+                "value_usd": 49500, "actual_value_usd": 49500,
+            },
+            {
+                "symbol": "BALMZ-SOL-DEVNET", "network": "solana_devnet",
+                "balance": 1000, "actual_balance": 1000, "reserved_balance": 0,
+                "price_usd": 99, "price_available": True,
+                "value_usd": 99000, "actual_value_usd": 99000,
+            },
+        ]
+
+        summary = main.wallet_valuation_summary(assets, [])
+
+        self.assertEqual(summary["partial_available_balance_usd"], 2000)
+        self.assertIsNone(summary["available_balance_usd"])
+        self.assertEqual(summary["unpriced_assets"], ["BALMZ"])
+
+    def test_explicitly_unclassified_positive_balance_is_not_assumed_mainnet(self):
+        assets = [
+            {
+                "symbol": "ETH", "network": "ethereum",
+                "balance": 1.0, "actual_balance": 1.0, "reserved_balance": 0,
+                "price_usd": 2000, "price_available": True,
+                "value_usd": 2000, "actual_value_usd": 2000,
+            },
+            {
+                "symbol": "SOL", "network": None,
+                "balance": 3.0, "actual_balance": 3.0, "reserved_balance": 0,
+                "price_usd": 150, "price_available": True,
+                "value_usd": 450, "actual_value_usd": 450,
+            },
+        ]
+
+        summary = main.wallet_valuation_summary(assets, [])
+
+        self.assertEqual(summary["partial_available_balance_usd"], 2000)
+        self.assertIsNone(summary["available_balance_usd"])
+        self.assertFalse(summary["valuation_complete"])
+        self.assertEqual(summary["unclassified_assets"], ["SOL"])
+        self.assertEqual(summary["unpriced_assets"], ["SOL (network attribution pending)"])
 
     def test_empty_wallet_returns_real_zero_when_nothing_is_unpriced(self):
         summary = main.wallet_valuation_summary([], [])
