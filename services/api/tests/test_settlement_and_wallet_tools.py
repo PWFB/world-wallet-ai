@@ -411,6 +411,47 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("symbol=%s", conn.execute.call_args.args[0])
         self.assertEqual(conn.execute.call_args.args[1], (12.5, "wallet_test", "USDT-BNB"))
 
+    def test_ethereum_usdt_token_history_checks_mainnet_and_contract_decimals(self):
+        wallet = "0x" + "1" * 40
+        contract = main.ETHEREUM_USDT_MAINNET_CONTRACT
+        user = {"wallet_id": "wallet_test"}
+        with (
+            patch.object(main, "wallet_owns_network_address", return_value=True),
+            patch.object(main, "require_ethereum_mainnet_rpc", return_value=1) as chain_check,
+            patch.object(main, "verified_erc20_decimals", return_value=6) as decimals_check,
+            patch.object(main, "evm_block_number", return_value=None),
+        ):
+            imported, warning = main.sync_evm_token_transactions(
+                user, "https://ethereum.example", "ethereum", contract, "USDT",
+                decimals=18, wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertEqual(warning, "latest block unavailable")
+        chain_check.assert_called_once_with("https://ethereum.example")
+        decimals_check.assert_called_once_with(
+            "https://ethereum.example", contract, "ethereum", chain_checked=True
+        )
+
+    def test_ethereum_token_history_stops_before_log_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(56)
+            raise AssertionError("Ethereum token logs must not be queried on BNB Chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "ethereum",
+                main.ETHEREUM_USDT_MAINNET_CONTRACT, "USDT", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
+
     def test_bnb_token_history_uses_contract_decimals_not_registry_default(self):
         wallet = "0x" + "1" * 40
         contract = "0x" + "3" * 40
