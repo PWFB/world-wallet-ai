@@ -5930,10 +5930,16 @@ def verify_solana_devnet_deposit_request(
                    SET balance=EXCLUDED.balance,name=EXCLUDED.name""",
                 (user["wallet_id"], live_balance),
             )
+            deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
+            reference_row = conn.execute(
+                "SELECT reference FROM transactions WHERE id=%s AND wallet_id=%s",
+                (deposit_id, user["wallet_id"]),
+            ).fetchone()
             conn.commit()
             return {
                 "status": "confirmed",
                 "recorded": True,
+                "reference": reference_row[0] if reference_row else None,
                 "replayed": True,
                 "network": "solana-devnet",
                 "asset": "BALMZ-SOL-DEVNET",
@@ -5953,21 +5959,32 @@ def verify_solana_devnet_deposit_request(
             (user["wallet_id"], live_balance),
         )
         deposit_id = "dep_" + sha("solana-devnet-deposit:" + tx_signature)[:24]
-        conn.execute(
+        transaction_row = conn.execute(
             """INSERT INTO transactions(
                  id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height
                ) VALUES(%s,%s,'received','BALMZ-SOL-DEVNET','BALMZ Devnet deposit',%s,'confirmed',%s,
-                        'solana-devnet',%s,1,%s)""",
+                        'solana-devnet',%s,1,%s)
+               RETURNING reference""",
             (
                 deposit_id, user["wallet_id"], amount, destination_wallet, tx_signature,
                 slot if isinstance(slot, int) and slot <= 2147483647 else None,
             ),
+        ).fetchone()
+        transaction_reference = transaction_row[0] if transaction_row else None
+        if not transaction_reference:
+            raise HTTPException(status_code=503, detail="Deposit transaction reference could not be assigned")
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"], actor_email=user["email"],
+            action="deposit_verified", resource="transaction", resource_id=deposit_id,
+            network="solana-devnet", reference=transaction_reference,
+            details={"asset": "BALMZ-SOL-DEVNET", "amount": str(amount), "slot": slot, "finality": "finalized", "mainnet_funding": False},
         )
         conn.commit()
 
     return {
         "status": "confirmed",
         "recorded": True,
+        "reference": transaction_reference,
         "replayed": False,
         "network": "solana-devnet",
         "asset": "BALMZ-SOL-DEVNET",
