@@ -49,6 +49,8 @@ class FakeConnection:
                 return Result(rowcount=0)
             self.challenge[4] = datetime.now(timezone.utc)
             return Result(rowcount=1)
+        if normalized.startswith("insert into wallet_audit_events"):
+            return Result()
         raise AssertionError("Unexpected SQL: " + normalized)
 
     def commit(self):
