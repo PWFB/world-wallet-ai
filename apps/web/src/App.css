@@ -1888,3 +1888,16 @@
 .transaction-controls input,.transaction-controls select{min-width:0;min-height:38px;padding:9px 10px;border:1px solid #263b58;border-radius:8px;background:#091629;color:#e8eff9;font:inherit;font-size:10px}
 .transaction-controls input:focus,.transaction-controls select:focus{outline:2px solid rgba(255,122,24,.45);outline-offset:1px}
 @media(max-width:760px){.transaction-controls{grid-template-columns:1fr 1fr}.transaction-controls input{grid-column:1/-1}.transaction-controls button{grid-column:1/-1}}
+
+
+/* BALMZ Solana Devnet token metadata presentation */
+.balmz-token-metadata-content{display:flex;align-items:flex-start;gap:14px;margin:14px 0}
+.balmz-token-metadata-content>.asset-icon{width:48px;height:48px;flex:0 0 48px}
+.balmz-token-metadata-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;min-width:0;flex:1}
+.balmz-token-metadata-fields>div{display:grid;gap:4px;min-width:0}
+.balmz-token-metadata-fields small{color:var(--muted,#8192a9);font-size:10px}
+.balmz-token-metadata-fields b,.balmz-token-metadata-fields code{font-size:11px;overflow-wrap:anywhere}
+.balmz-token-metadata-links{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:12px}
+.balmz-token-metadata-links a{color:var(--accent,#ff7a18);font-size:11px;font-weight:700;text-decoration:none}
+.balmz-token-metadata-links a:hover{text-decoration:underline}
+@media(max-width:560px){.balmz-token-metadata-fields{grid-template-columns:1fr}.balmz-token-metadata-content{gap:10px}}
