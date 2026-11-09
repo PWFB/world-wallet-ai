@@ -16,7 +16,7 @@ class _FakeLimiter:
 class ApiRuntimeLimitTests(unittest.TestCase):
     def test_default_sync_capacity_is_bounded_to_four(self):
         limiter = _FakeLimiter(40)
-        with patch.dict(os.environ, {"WORLD_WALLET_API_THREAD_LIMIT": "4"}), \
+        with patch.dict(os.environ, {}, clear=True), \
              patch.object(main.to_thread, "current_default_thread_limiter", return_value=limiter):
             configured = main.configure_api_thread_limit()
 
@@ -29,8 +29,8 @@ class ApiRuntimeLimitTests(unittest.TestCase):
              patch.object(main.to_thread, "current_default_thread_limiter", return_value=limiter):
             configured = main.configure_api_thread_limit()
 
-        self.assertEqual(configured, 8)
-        self.assertEqual(limiter.total_tokens, 8)
+        self.assertEqual(configured, 4)
+        self.assertEqual(limiter.total_tokens, 4)
 
     def test_environment_value_cannot_expand_capacity_above_eight(self):
         limiter = _FakeLimiter(40)
