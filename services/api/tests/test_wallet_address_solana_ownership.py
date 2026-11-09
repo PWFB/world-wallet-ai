@@ -118,3 +118,63 @@ class SolanaWalletAddressOwnershipTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BitcoinWalletAddressOwnershipTests(unittest.TestCase):
+    def test_valid_recoverable_signature_verifies_native_segwit_address(self):
+        from eth_keys import keys
+        from eth_utils import keccak
+        import hashlib
+
+        private_key = keys.PrivateKey(bytes.fromhex("11" * 32))
+        compressed = private_key.public_key.to_compressed_bytes()
+        witness_hash = hashlib.new("ripemd160", hashlib.sha256(compressed).digest()).digest()
+        alphabet = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+        def convert_bits(values):
+            accumulator = 0
+            bits = 0
+            output = []
+            for value in values:
+                accumulator = (accumulator << 8) | value
+                bits += 8
+                while bits >= 5:
+                    bits -= 5
+                    output.append((accumulator >> bits) & 31)
+            if bits:
+                output.append((accumulator << (5 - bits)) & 31)
+            return output
+
+        data = [0] + convert_bits(witness_hash)
+        hrp = "bc"
+        expanded = [ord(c) >> 5 for c in hrp] + [0] + [ord(c) & 31 for c in hrp]
+        generators = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3]
+        polymod = 1
+        for value in expanded + data + [0, 0, 0, 0, 0, 0]:
+            top = polymod >> 25
+            polymod = ((polymod & 0x1ffffff) << 5) ^ value
+            for index, generator in enumerate(generators):
+                if (top >> index) & 1:
+                    polymod ^= generator
+        checksum = polymod ^ 1
+        check = [(checksum >> (5 * (5 - index))) & 31 for index in range(6)]
+        address = "bc1" + "".join(alphabet[value] for value in data + check)
+        message = "World Wallet AI Bitcoin ownership challenge"
+        signature = "0x" + private_key.sign_msg_hash(keccak(message.encode())).to_bytes().hex()
+        challenge = (
+            "bitcoin",
+            address,
+            message,
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+            None,
+        )
+        connection = FakeConnection(challenge)
+        request = main.WalletAddressVerifyRequest(
+            challenge_id="wac_bitcoin_test_challenge",
+            signature=signature,
+        )
+        with patch.object(main, "db", return_value=FakeDatabaseContext(connection)):
+            result = main.verify_wallet_address("wallet_test", request, {"id": "user_test"})
+        self.assertEqual(result["status"], "verified")
+        self.assertTrue(result["ownership_verified"])
+        self.assertIsNotNone(connection.challenge[4])
