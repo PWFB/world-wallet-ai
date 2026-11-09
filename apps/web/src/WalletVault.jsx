@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
-import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic } from "./wallet-addresses.js";
+import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -508,15 +508,58 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           }
         }
 
+        const verificationFailures = [];
+        const verifiedNetworks = [];
+        if (!attachmentFailures.length) {
+          const proofTargets = [
+            ["ethereum", addresses.ethereum, "evm", "m/44'/60'/0'/0/0"],
+            ["bnb", addresses.bnb, "evm", "m/44'/60'/0'/0/0"],
+            ["sepolia", addresses.sepolia, "evm", "m/44'/60'/1'/0/0"],
+            ["solana_mainnet", addresses.solana_mainnet, "solana", 0],
+            ["solana_devnet", addresses.solana_devnet, "solana", 1],
+          ];
+          for (const [proofNetwork, proofAddress, proofType, derivation] of proofTargets) {
+            try {
+              const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses/challenge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+                body: JSON.stringify({ network: proofNetwork, address: proofAddress }),
+              });
+              const challenge = await challengeResponse.json().catch(() => ({}));
+              if (!challengeResponse.ok) throw new Error(challenge.detail || "Challenge request failed.");
+              let proofSignature;
+              if (proofType === "evm") {
+                const proofWallet = HDNodeWallet.fromPhrase(mnemonic, "", derivation);
+                if (proofWallet.address.toLowerCase() !== proofAddress.toLowerCase()) throw new Error("Derived EVM address did not match the saved address.");
+                proofSignature = await proofWallet.signMessage(challenge.message);
+              } else {
+                proofSignature = await signSolanaMessage(mnemonic, derivation, challenge.message);
+              }
+              const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+                body: JSON.stringify({ challenge_id: challenge.challenge_id, signature: proofSignature }),
+              });
+              const verified = await verifyResponse.json().catch(() => ({}));
+              if (!verifyResponse.ok || verified.ownership_verified !== true) throw new Error(verified.detail || "Ownership proof was not accepted.");
+              verifiedNetworks.push(proofNetwork);
+            } catch (error) {
+              verificationFailures.push(proofNetwork + ": " + (error?.message || "verification failed"));
+            }
+          }
+        }
+
         const currentAccountEntries = readVaultForAccount(userId, allowedServerWalletIds)
           .filter(item => item.walletId !== localWalletId && item.walletId !== serverWalletId);
         persistVault([linkedEntry, ...currentAccountEntries], [localWalletId]);
         setSelectedId(serverWalletId);
         setGenerated(current => current ? { ...current, walletId: serverWalletId, walletNumber: serverWalletNumber } : current);
         if (attachmentFailures.length) {
-          setMessage("Wallet " + serverWalletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". The local Receive page still has all derived addresses.");
+          setMessage("Wallet " + serverWalletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". No deposit or gas activation was required.");
+        } else if (verificationFailures.length) {
+          setMessage("Wallet " + serverWalletNumber + " created with all six receive addresses saved. Verified ownership: " + (verifiedNetworks.join(", ") || "none") + ". Proof pending: " + verificationFailures.join("; ") + ". Bitcoin is locally derived and saved; its native proof flow is not yet enabled. No deposit or gas activation was required.");
         } else {
-          setMessage("Wallet " + serverWalletNumber + " created. All mainnet and separate testnet/devnet addresses are saved to this wallet.");
+          setMessage("Wallet " + serverWalletNumber + " created. Ethereum, BNB, Sepolia, Solana Mainnet and Solana Devnet ownership signatures verified. Bitcoin address is locally derived and saved; native Bitcoin proof is not yet enabled. No first payment, deposit or gas activation was required.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
