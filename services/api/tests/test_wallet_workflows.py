@@ -22,7 +22,58 @@ class FakeConnection:
         self.calls.append((query, params))
 
 
+class ProvisioningConnection:
+    def __init__(self):
+        self.statements = []
+        self.committed = False
+
+    def execute(self, query, params=None):
+        self.statements.append((query, params))
+        return None
+
+    def commit(self):
+        self.committed = True
+
+
+class ProvisioningDatabase:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def __enter__(self):
+        return self.connection
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class WalletWorkflowTests(unittest.TestCase):
+    def test_first_time_wallet_provisioning_writes_audit_event(self):
+        from unittest.mock import patch
+        import main
+
+        connection = ProvisioningConnection()
+        provisioned_user = {
+            "id": "user-1",
+            "email": "user@example.com",
+            "name": "New User",
+            "wallet_id": "wallet-new",
+            "wallet_number": "12345678901",
+        }
+        with (
+            patch.object(main, "get_user", side_effect=[None, provisioned_user]),
+            patch.object(main, "db", return_value=ProvisioningDatabase(connection)),
+            patch.object(main, "record_wallet_audit_event") as audit,
+        ):
+            result = main.provision_identity("user@example.com", name="New User")
+
+        self.assertEqual(result["wallet_id"], "wallet-new")
+        self.assertTrue(connection.committed)
+        audit.assert_called_once()
+        audit_kwargs = audit.call_args.kwargs
+        self.assertEqual(audit_kwargs["owner_id"], "usr_" + main.sha("user@example.com")[:24])
+        self.assertEqual(audit_kwargs["wallet_id"], "wallet-new")
+        self.assertEqual(audit_kwargs["action"], "wallet_provisioned")
+
     def test_transaction_reference_is_unique_and_readable(self):
         references = {generate_transaction_reference() for _ in range(500)}
         self.assertEqual(len(references), 500)
