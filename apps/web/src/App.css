@@ -1901,3 +1901,5 @@
 .balmz-token-metadata-links a{color:var(--accent,#ff7a18);font-size:11px;font-weight:700;text-decoration:none}
 .balmz-token-metadata-links a:hover{text-decoration:underline}
 @media(max-width:560px){.balmz-token-metadata-fields{grid-template-columns:1fr}.balmz-token-metadata-content{gap:10px}}
+
+.balmz-token-metadata-description{margin:8px 0;color:var(--muted,#8192a9);font-size:11px;line-height:1.6}
