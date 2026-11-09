@@ -9,6 +9,7 @@ import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
 import OKXWalletInspector from "./OKXWalletInspector.jsx";
 import TokenInteractionAudit from "./TokenInteractionAudit.jsx";
 import FreeBalmzMining from "./FreeBalmzMining.jsx";
+import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -956,6 +957,28 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function persistWalletConnectSessionAccounts(provider, fallbackChainId, fallbackAccounts = []) {
+    const connections = getWalletConnectSessionConnections(
+      provider?.session,
+      fallbackChainId,
+      Array.isArray(fallbackAccounts) ? fallbackAccounts : [],
+    );
+    for (const [index, connection] of connections.entries()) {
+      const networkLabel = ({
+        1: "Ethereum Mainnet",
+        56: "BNB Chain",
+        11155111: "Ethereum Sepolia",
+      })[connection.chainId];
+      persistExternalConnection({
+        ...connection,
+        provider: "walletconnect",
+        label: "WalletConnect · " + networkLabel + " · account " + (index + 1),
+        connectedAt: new Date().toISOString(),
+      });
+    }
+    return connections;
+  }
+
   async function connectInjectedWallet(kind) {
     setWcBusy(true);
     setWcError("");
@@ -1019,8 +1042,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     try {
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [56],
-        optionalChains: [1, 11155111],
+        // Ask for every supported EVM chain as optional. Requiring BNB here
+        // caused wallets to approve only the active chain in some sessions.
+        optionalChains: WALLETCONNECT_CHAINS,
         showQrModal: true,
         methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
         events: ["accountsChanged", "chainChanged", "disconnect"],
@@ -1033,21 +1057,28 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       });
       provider.on("accountsChanged", accounts => {
         const chainId = parseExternalChainId(provider.chainId);
-        const address = accounts?.[0] || "";
-        setWcAccount(address);
-        (Array.isArray(accounts) ? accounts : []).forEach((account, index) => {
-          if (/^0x[a-fA-F0-9]{40}$/.test(account || "") && chainId) persistExternalConnection({ address: account, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-        });
+        const currentAccounts = Array.isArray(accounts) ? accounts : [];
+        setWcAccount(currentAccounts[0] || "");
+        persistWalletConnectSessionAccounts(provider, chainId, currentAccounts);
       });
       provider.on("chainChanged", async chain => {
         const chainId = parseExternalChainId(chain);
         setWcChainId(chainId);
         try {
           const accounts = await provider.request({ method: "eth_accounts" });
-          (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
-            if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-          });
-        } catch {}
+          persistWalletConnectSessionAccounts(provider, chainId, accounts);
+        } catch {
+          persistWalletConnectSessionAccounts(provider, chainId, []);
+        }
+      });
+      provider.on("session_update", async () => {
+        const chainId = parseExternalChainId(provider.chainId);
+        try {
+          const accounts = await provider.request({ method: "eth_accounts" });
+          persistWalletConnectSessionAccounts(provider, chainId, accounts);
+        } catch {
+          persistWalletConnectSessionAccounts(provider, chainId, []);
+        }
       });
       provider.on("disconnect", () => {
         setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
@@ -1061,9 +1092,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       setWcChainId(chainId);
       setWcProvider(provider);
       setWcProviderKind("walletconnect");
-      (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
-        if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-      });
+      persistWalletConnectSessionAccounts(provider, chainId, accounts);
       if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
     } catch (error) {
       setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
