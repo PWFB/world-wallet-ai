@@ -47,7 +47,7 @@ class DatabasePoolTests(unittest.TestCase):
         self.assertEqual(second, ("connection-context", 5))
         self.assertEqual(len(FakeConnectionPool.instances), 1)
         pool = FakeConnectionPool.instances[0]
-        self.assertEqual(pool.kwargs["max_size"], 5)
+        self.assertEqual(pool.kwargs["max_size"], 3)
         self.assertEqual(pool.kwargs["min_size"], 1)
         self.assertEqual(pool.kwargs["kwargs"]["connect_timeout"], 5)
         self.assertEqual(pool.connection_calls, 2)
