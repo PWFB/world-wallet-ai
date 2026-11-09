@@ -4338,13 +4338,16 @@ def list_token_registry(user: dict = Depends(current_user)):
                 token_decimals = verified_erc20_decimals(
                     ETH_RPC_URL, contract_address, "ethereum", chain_checked=True
                 )
-                token_status = "active"
+                if str(r[0]).upper() == "BALMZ" and token_status == "pending_contract":
+                    token_status = "active"
+                elif str(r[0]).upper() == "USDT" and token_status == "catalog_only":
+                    token_status = "active"
             elif registry_network == "bnb" and contract_address:
                 require_bnb_rpc(BSC_RPC_URL)
                 token_decimals = verified_erc20_decimals(
                     BSC_RPC_URL, contract_address, "bnb", chain_checked=True
                 )
-                if token_status == "pending_contract":
+                if str(r[0]).upper() == "BALMZ" and token_status == "pending_contract":
                     token_status = "active"
         except Exception:
             # Never present an unverified token precision or contract as live.
