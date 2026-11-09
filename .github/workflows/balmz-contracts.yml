@@ -1,0 +1,36 @@
+name: BALMZ Contract Checks
+
+on:
+  pull_request:
+    paths:
+      - "contracts/**"
+      - ".github/workflows/balmz-contracts.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "contracts/**"
+      - ".github/workflows/balmz-contracts.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  hardhat:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: contracts
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install contract dependencies
+        run: npm install
+      - name: Compile BALMZ contracts
+        run: npm run compile
+      - name: Run BALMZ contract tests
+        run: npm test
