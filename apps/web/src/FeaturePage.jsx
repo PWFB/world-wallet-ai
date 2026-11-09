@@ -9,6 +9,7 @@ import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
 import OKXWalletInspector from "./OKXWalletInspector.jsx";
 import TokenInteractionAudit from "./TokenInteractionAudit.jsx";
 import FreeBalmzMining from "./FreeBalmzMining.jsx";
+import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
@@ -469,6 +470,20 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     : (activeLocalEntry?.address ? { [activeLocalEntry.network || "ethereum"]: activeLocalEntry.address } : {});
   const localAddressSyncKey = Object.entries(activeLocalAddressSet).map(([networkName, value]) => networkName + ":" + value).sort().join("|");
   const serverAddressSyncKey = walletAddresses.map(item => String(item.network || "") + ":" + String(item.address || "").toLowerCase()).sort().join("|");
+
+  // Read every attached public address when the selected wallet is loaded so
+  // ETH and BNB balances (and any additional address on those chains) appear
+  // together without requiring a separate manual balance check.
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId || !accessToken) return undefined;
+    const generation = balanceRequestGeneration.current;
+    for (const item of visibleAddresses) {
+      if (!item.local) void checkAddressBalance(item);
+    }
+    return () => {
+      if (balanceRequestGeneration.current === generation) balanceRequestGeneration.current += 1;
+    };
+  }, [walletId, addressesLoadedForWallet, accessToken, serverAddressSyncKey]);
 
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId || !accessToken || !activeLocalEntry || !localAddressSyncKey) return;
@@ -956,6 +971,28 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     return Number.isFinite(parsed) ? parsed : null;
   }
 
+  function persistWalletConnectSessionAccounts(provider, fallbackChainId, fallbackAccounts = []) {
+    const connections = getWalletConnectSessionConnections(
+      provider?.session,
+      fallbackChainId,
+      Array.isArray(fallbackAccounts) ? fallbackAccounts : [],
+    );
+    for (const [index, connection] of connections.entries()) {
+      const networkLabel = ({
+        1: "Ethereum Mainnet",
+        56: "BNB Chain",
+        11155111: "Ethereum Sepolia",
+      })[connection.chainId];
+      persistExternalConnection({
+        ...connection,
+        provider: "walletconnect",
+        label: "WalletConnect · " + networkLabel + " · account " + (index + 1),
+        connectedAt: new Date().toISOString(),
+      });
+    }
+    return connections;
+  }
+
   async function connectInjectedWallet(kind) {
     setWcBusy(true);
     setWcError("");
@@ -1019,8 +1056,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     try {
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
-        chains: [56],
-        optionalChains: [1, 11155111],
+        // Ask for every supported EVM chain as optional. Requiring BNB here
+        // caused wallets to approve only the active chain in some sessions.
+        optionalChains: WALLETCONNECT_CHAINS,
         showQrModal: true,
         methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
         events: ["accountsChanged", "chainChanged", "disconnect"],
@@ -1033,21 +1071,28 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       });
       provider.on("accountsChanged", accounts => {
         const chainId = parseExternalChainId(provider.chainId);
-        const address = accounts?.[0] || "";
-        setWcAccount(address);
-        (Array.isArray(accounts) ? accounts : []).forEach((account, index) => {
-          if (/^0x[a-fA-F0-9]{40}$/.test(account || "") && chainId) persistExternalConnection({ address: account, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-        });
+        const currentAccounts = Array.isArray(accounts) ? accounts : [];
+        setWcAccount(currentAccounts[0] || "");
+        persistWalletConnectSessionAccounts(provider, chainId, currentAccounts);
       });
       provider.on("chainChanged", async chain => {
         const chainId = parseExternalChainId(chain);
         setWcChainId(chainId);
         try {
           const accounts = await provider.request({ method: "eth_accounts" });
-          (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
-            if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-          });
-        } catch {}
+          persistWalletConnectSessionAccounts(provider, chainId, accounts);
+        } catch {
+          persistWalletConnectSessionAccounts(provider, chainId, []);
+        }
+      });
+      provider.on("session_update", async () => {
+        const chainId = parseExternalChainId(provider.chainId);
+        try {
+          const accounts = await provider.request({ method: "eth_accounts" });
+          persistWalletConnectSessionAccounts(provider, chainId, accounts);
+        } catch {
+          persistWalletConnectSessionAccounts(provider, chainId, []);
+        }
       });
       provider.on("disconnect", () => {
         setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
@@ -1061,9 +1106,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       setWcChainId(chainId);
       setWcProvider(provider);
       setWcProviderKind("walletconnect");
-      (Array.isArray(accounts) ? accounts : []).forEach((address, index) => {
-        if (/^0x[a-fA-F0-9]{40}$/.test(address || "") && chainId) persistExternalConnection({ address, chainId, provider: "walletconnect", label: "WalletConnect account " + (index + 1), connectedAt: new Date().toISOString() });
-      });
+      persistWalletConnectSessionAccounts(provider, chainId, accounts);
       if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
     } catch (error) {
       setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
@@ -1328,8 +1371,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT" || asset === "BALMZ" || asset === "BALMZ-SEP") {
-      const isBalmz = asset === "BALMZ" || asset === "BALMZ-SEP";
+    } else if (asset === "USDT" || asset === "USDT-BNB" || asset === "BALMZ" || asset === "BALMZ-BNB" || asset === "BALMZ-SEP") {
+      const isBalmz = asset === "BALMZ" || asset === "BALMZ-BNB" || asset === "BALMZ-SEP";
       const contract = isBalmz ? networkConfig.balmz_contract : networkConfig.usdt_contract;
       const configuredDecimals = isBalmz ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
       if (!contract || configuredDecimals == null) throw new Error(asset + " external signing is not configured for this network.");
@@ -1387,7 +1430,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "BALMZ", "BALMZ-SEP"].includes(asset);
+      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
@@ -2207,8 +2250,10 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const tokenUrl = tokenExplorerUrl(transaction);
     const symbol = transaction.asset || transaction.symbol || String(transaction.description || "").split(" • ")[0] || "Unknown asset";
     const network = String(transaction.network || "").toLowerCase();
-    const explorerName = network === "bitcoin" || symbol === "BTC" ? "Blockstream" : network === "bnb" || symbol === "BNB" ? "BscScan" : network === "sepolia" || symbol === "BALMZ-SEP" ? "Sepolia Etherscan" : "Explorer";
+    const explorerName = network === "bitcoin" || symbol === "BTC" ? "Blockstream" : network === "bnb" || symbol === "BNB" || symbol === "USDT-BNB" ? "BscScan" : network === "sepolia" || symbol === "BALMZ-SEP" ? "Sepolia Etherscan" : "Etherscan";
     const balmzFallback = symbol === "BALMZ-SEP" || network === "sepolia" ? "https://sepolia.etherscan.io/" : network === "bnb" ? "https://bscscan.com/" : "https://etherscan.io/tokens";
+    const receiptState = transaction.receipt_state || (["confirmed", "settled"].includes(transaction.status) ? "confirmed" : transaction.status === "failed" && transaction.tx_hash ? "failed" : transaction.status === "reorged" ? "reorged" : transaction.tx_hash ? "pending" : "not_broadcast");
+    const receiptLabel = receiptState === "confirmed" ? "Verified on-chain" : receiptState === "failed" ? "Failed on-chain" : receiptState === "reorged" ? "Reorganisation detected" : receiptState === "pending" ? "Waiting for chain confirmation" : "No blockchain receipt";
     return <section className="content feature-content transaction-detail-view">
       <div className="page-heading"><div><button className="back-btn" onClick={() => setFocusedTransaction?.(null)}>← Back to transaction history</button><p className="eyebrow">TRANSACTION DETAILS</p><h1>{transaction.type || "Transfer"}</h1><p className="muted">{symbol} · {transaction.status || "Recorded"}</p></div>
         <div className="page-actions">{explorerUrl && <a className="primary explorer-button" href={explorerUrl} target="_blank" rel="noopener noreferrer">View on {explorerName} ↗</a>}</div>
@@ -2223,10 +2268,18 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="transaction-detail-wide"><small>Transaction hash</small>{transaction.tx_hash ? <code>{transaction.tx_hash}</code> : <span>Not available — this record may not have been broadcast to a blockchain.</span>}</div>
           <div className="transaction-detail-wide"><small>From address</small>{transaction.from_address || transaction.from ? <code>{transaction.from_address || transaction.from}</code> : <span>Not supplied</span>}</div>
           <div className="transaction-detail-wide"><small>To address</small>{transaction.to_address || transaction.to ? <code>{transaction.to_address || transaction.to}</code> : <span>Not supplied</span>}</div>
+          {transaction.token_contract_address && <div className="transaction-detail-wide"><small>Token contract</small><code>{transaction.token_contract_address}</code></div>}
+          {transaction.block_hash && <div className="transaction-detail-wide"><small>Receipt block hash</small><code>{transaction.block_hash}</code></div>}
+          {transaction.log_index != null && <div><small>Token transfer log index</small><b>{Number(transaction.log_index).toLocaleString()}</b></div>}
           {transaction.description && <div className="transaction-detail-wide"><small>Description</small><span>{transaction.description}</span></div>}
         </div>
-        {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. A missing transaction hash cannot be searched as a confirmed transfer.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
-        {String(symbol).toUpperCase().startsWith("BALMZ") && <div className="token-explorer-row"><div><b>BALMZ token explorer</b><small>{transaction.token_contract_address || transaction.contract_address ? "Open the recorded token contract on its network explorer." : "No token contract address was included in this record; open the network explorer to search for the verified BALMZ token."}</small></div><a href={tokenUrl || balmzFallback} target="_blank" rel="noopener noreferrer">Open token explorer ↗</a></div>}
+        <div className="token-explorer-row"><div><b>On-chain transaction receipt</b><small>{receiptLabel}{transaction.confirmations ? " · " + Number(transaction.confirmations).toLocaleString() + " confirmations" : ""}{transaction.block_height != null ? " · Block " + Number(transaction.block_height).toLocaleString() : ""}</small></div>
+          {explorerUrl ? <a href={explorerUrl} target="_blank" rel="noopener noreferrer">Open receipt on {explorerName} ↗</a> : <span>Receipt link unavailable</span>}
+        </div>
+        {transaction.reference && <div className="security-note">World Wallet AI receipt reference: <code>{transaction.reference}</code>. The explorer is the source for the blockchain receipt and token transfer logs; this reference links the record inside wallet history.</div>}
+        {tokenUrl && <div className="token-explorer-row"><div><b>Token contract explorer</b><small>Open the token contract on the same network as this transaction.</small></div><a href={tokenUrl} target="_blank" rel="noopener noreferrer">Open token contract ↗</a></div>}
+        {explorerUrl ? <div className="security-note">Explorer lookup is read-only and opens this transaction on its recorded network. Pending, failed, or reorged records are not shown as confirmed.</div> : <div className="security-note">No compatible explorer link is available because the transaction hash or network is missing. Check the original record before assuming a blockchain transfer occurred.</div>}
+        {String(symbol).toUpperCase().startsWith("BALMZ") && !tokenUrl && <div className="token-explorer-row"><div><b>BALMZ token explorer</b><small>No verified contract address was included in this record.</small></div><a href={balmzFallback} target="_blank" rel="noopener noreferrer">Open network explorer ↗</a></div>}
       </article>
     </section>;
   }

@@ -22,7 +22,8 @@ const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: null, actual_balance_usd: null, reserved_balance_usd: null, total_received_usd: null, total_sent_usd: null, profit_usd: null, change_24h: null, valuation_complete: false };
 const fallbackActivity = [];
 const walletCoinCatalog = [
-  { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
+  { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Ethereum Mainnet" },
+  { symbol: "BALMZ-BNB", name: "BALMZ Token (BNB Chain)", icon: "B", status: "BNB Chain Mainnet" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
@@ -302,16 +303,19 @@ function App() {
       const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
       const liveRecord = records.find(t => t.wallet_network_connected);
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
+      const bnbMainnetContract = records.find(t => t.network === "bnb" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
       const quote = marketPrices[coin.symbol] || {};
       return {
         ...coin,
         status: coin.symbol === "BALMZ"
-          ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
-          : coin.symbol === "BALMZ-SEP"
-            ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-            : coin.status,
-        registry: liveRecord || mainnetContract || sepoliaContract || records[0] || null,
+          ? (mainnetContract ? "Ethereum Mainnet • contract verified" : "Ethereum Mainnet • deployment pending")
+          : coin.symbol === "BALMZ-BNB"
+            ? (bnbMainnetContract ? "BNB Chain Mainnet • contract verified" : "BNB Chain Mainnet • deployment pending")
+            : coin.symbol === "BALMZ-SEP"
+              ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
+              : coin.status,
+        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || records[0] || null,
         connected: Boolean(liveRecord),
         price_usd: quote.usd == null ? null : Number(quote.usd),
         price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -872,12 +876,34 @@ function App() {
     };
   }, [accessToken, performancePeriod, hasVerifiedMainnetBalance]);
 
+  async function authorizedWalletFetch(url, options = {}) {
+    let token = "";
+    try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    token = token || accessToken || "";
+    const request = currentToken => fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(currentToken ? { Authorization: "Bearer " + currentToken } : {}),
+      },
+      cache: "no-store",
+    });
+    let response = await request(token);
+    if (response.status === 401) {
+      let refreshed = "";
+      try { refreshed = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+      if (refreshed && refreshed !== token) {
+        token = refreshed;
+        response = await request(token);
+      }
+    }
+    return response;
+  }
+
   async function loadDashboardAddresses() {
     if (!accessToken) return;
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", {
-        headers: { Authorization: "Bearer " + accessToken },
-      });
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallet/addresses");
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to load wallet addresses.");
       setDashboardAddresses(data.addresses || []);
@@ -905,9 +931,9 @@ function App() {
     setDashboardAddressBusy(true);
     setDashboardAddressMessage("");
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ network, address, label: dashboardAddressLabel.trim() || (network === "sepolia" ? "Ethereum Sepolia address" : network === "bnb" ? "BNB Chain address" : "Ethereum address") }),
       });
       const data = await response.json();
@@ -1036,9 +1062,8 @@ function App() {
     setSyncBusy(true);
     setSyncMessage("");
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", {
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallet/refresh", {
         method: "POST",
-        headers: { Authorization: "Bearer " + accessToken },
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet sync failed.");
@@ -1628,7 +1653,7 @@ function App() {
         {active === "BALMZ AI" ? <BalmzAI /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP";
+          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP";
           const balanceKnown = Boolean(live && (!contractBasedBalmz || coin?.registry?.contract_address));
           const balance = balanceKnown ? Number(live?.balance || 0) : null;
           const value = live?.value_usd;

@@ -312,7 +312,75 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             "wallet_address": address,
             "usdt_contract": contract,
             "usdt_decimals": 18,
+            "balmz_contract": None,
+            "balmz_decimals": None,
         })
+
+
+    def test_balmz_mainnet_contracts_are_added_only_when_configured_per_chain(self):
+        eth_address = "0x" + "1" * 40
+        bnb_address = "0x" + "2" * 40
+        eth_contract = "0x" + "3" * 40
+        bnb_contract = "0x" + "4" * 40
+        with patch.object(main, "BALMZ_ETH_CONTRACT", eth_contract), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", bnb_contract):
+            rows = main.wallet_sync_token_rows([], eth_address, bnb_address)
+
+        self.assertIn(("BALMZ", "BALMZ Token", "ethereum", eth_contract, None, "active"), rows)
+        self.assertIn(("BALMZ", "BALMZ Token", "bnb", bnb_contract, None, "active"), rows)
+        self.assertEqual(main.wallet_asset_symbol("BALMZ", "ethereum"), "BALMZ")
+        self.assertEqual(main.wallet_asset_symbol("BALMZ", "bnb"), "BALMZ-BNB")
+
+    def test_balmz_mainnet_contract_is_not_invented_when_unconfigured(self):
+        with patch.object(main, "BALMZ_ETH_CONTRACT", ""), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", ""):
+            rows = main.wallet_sync_token_rows([], "0x" + "1" * 40, "0x" + "2" * 40)
+        self.assertFalse(any(str(row[0]).upper() == "BALMZ" for row in rows))
+
+
+    def test_balmz_request_is_qualified_to_bnb_asset_symbol(self):
+        self.assertEqual(main.validate_asset_network("BALMZ", "bnb"), ("BALMZ-BNB", "bnb"))
+        self.assertEqual(main.validate_asset_network("BALMZ-BNB", "bnb"), ("BALMZ-BNB", "bnb"))
+        with self.assertRaises(main.HTTPException):
+            main.validate_asset_network("BALMZ-BNB", "ethereum")
+
+    def test_balmz_bnb_contract_is_required_for_bnb_settlement(self):
+        tx_hash = "0x" + "a" * 64
+        wallet = "0x" + "1" * 40
+        destination = "0x" + "2" * 40
+        contract = "0x" + "3" * 40
+        tx = {"from": wallet, "to": contract, "value": "0x0"}
+        receipt = {
+            "status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc",
+            "logs": [{
+                "address": contract,
+                "topics": [
+                    main.ERC20_TRANSFER_TOPIC,
+                    "0x" + "0" * 24 + wallet[2:],
+                    "0x" + "0" * 24 + destination[2:],
+                ],
+                "data": hex(125 * 10**18),
+            }],
+        }
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash": return tx
+            if method == "eth_getTransactionReceipt": return receipt
+            if method == "eth_blockNumber": return "0x66"
+            if method == "eth_getBlockByNumber": return {"hash": "0xabc"}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "verified_erc20_decimals", return_value=18), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.verify_evm_settlement(
+                tx_hash, "BALMZ-BNB", "bnb", destination, Decimal("125"), wallet
+            )
+
+        self.assertEqual(result["state"], "confirmed")
+        self.assertEqual(result["confirmations"], 3)
 
     def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
         address = "0x" + "1" * 40
@@ -410,6 +478,47 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         conn.execute.assert_called_once()
         self.assertIn("symbol=%s", conn.execute.call_args.args[0])
         self.assertEqual(conn.execute.call_args.args[1], (12.5, "wallet_test", "USDT-BNB"))
+
+    def test_ethereum_usdt_token_history_checks_mainnet_and_contract_decimals(self):
+        wallet = "0x" + "1" * 40
+        contract = main.ETHEREUM_USDT_MAINNET_CONTRACT
+        user = {"wallet_id": "wallet_test"}
+        with (
+            patch.object(main, "wallet_owns_network_address", return_value=True),
+            patch.object(main, "require_ethereum_mainnet_rpc", return_value=1) as chain_check,
+            patch.object(main, "verified_erc20_decimals", return_value=6) as decimals_check,
+            patch.object(main, "evm_block_number", return_value=None),
+        ):
+            imported, warning = main.sync_evm_token_transactions(
+                user, "https://ethereum.example", "ethereum", contract, "USDT",
+                decimals=18, wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertEqual(warning, "latest block unavailable")
+        chain_check.assert_called_once_with("https://ethereum.example")
+        decimals_check.assert_called_once_with(
+            "https://ethereum.example", contract, "ethereum", chain_checked=True
+        )
+
+    def test_ethereum_token_history_stops_before_log_reads_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        calls = []
+
+        def fake_rpc(_url, method, _params):
+            calls.append(method)
+            if method == "eth_chainId":
+                return hex(56)
+            raise AssertionError("Ethereum token logs must not be queried on BNB Chain")
+
+        with patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            imported, warning = main.sync_evm_token_transactions(
+                {"wallet_id": "wallet_test"}, "https://rpc.example", "ethereum",
+                main.ETHEREUM_USDT_MAINNET_CONTRACT, "USDT", wallet_address=wallet,
+            )
+        self.assertEqual(imported, [])
+        self.assertIn("transaction service unavailable", warning)
+        self.assertEqual(calls, ["eth_chainId"])
 
     def test_bnb_token_history_uses_contract_decimals_not_registry_default(self):
         wallet = "0x" + "1" * 40

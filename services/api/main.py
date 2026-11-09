@@ -99,6 +99,7 @@ def normalize_wallet_network(value: str) -> str:
     }
     return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
+ETHEREUM_USDT_MAINNET_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
 USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
@@ -1151,6 +1152,8 @@ def validate_asset_network(asset: str, network: str):
     # request label so reservations never debit Ethereum USDT by accident.
     if symbol == "USDT" and net == "bnb":
         symbol = "USDT-BNB"
+    if symbol == "BALMZ" and net == "bnb":
+        symbol = "BALMZ-BNB"
     allowed = {
         "ETH": {"ethereum"},
         "BNB": {"bnb"},
@@ -1158,6 +1161,7 @@ def validate_asset_network(asset: str, network: str):
         "USDT-BNB": {"bnb"},
         "BTC": {"bitcoin"},
         "BALMZ": {"ethereum"},
+        "BALMZ-BNB": {"bnb"},
         "BALMZ-SEP": {"sepolia"},
         "BALMZ-SOL-DEVNET": {"solana-devnet"},
     }
@@ -1583,7 +1587,10 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
     if not wallet_owns_network_address(user, network, wallet_address):
         return [], f"{network} wallet address is not saved to the active wallet"
     try:
-        if network == "sepolia":
+        if network == "ethereum":
+            require_ethereum_mainnet_rpc(url)
+            decimals = verified_erc20_decimals(url, contract, network, chain_checked=True)
+        elif network == "sepolia":
             require_sepolia_rpc(url)
         elif network == "bnb":
             decimals = verified_erc20_decimals(url, contract, network)
@@ -1686,22 +1693,24 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
                     elif status != "failed" and old_status in {"pending","pending_review","broadcast_pending"} and (old_type == "withdrawal" or old_description in {"Transfer request","Withdrawal request"}):
                         status = "broadcast_pending"
                     conn.execute(
-                        "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s WHERE id=%s AND wallet_id=%s",
-                        (confirmations,item["block_number"],item["block_hash"],item["log_index"],status,tx_id,user["wallet_id"]),
+                        "UPDATE transactions SET confirmations=%s,block_height=%s,block_hash=%s,log_index=%s,status=%s,from_address=%s,destination=%s WHERE id=%s AND wallet_id=%s",
+                        (confirmations,item["block_number"],item["block_hash"],item["log_index"],status,
+                         item["sender"],item["recipient"],tx_id,user["wallet_id"]),
                     )
                 else:
                     description = f"{symbol} {item['direction']} on {network}"
                     conn.execute(
-                        "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash,log_index) "
-                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        "INSERT INTO transactions(id,wallet_id,type,asset,description,amount,status,destination,network,tx_hash,confirmations,block_height,block_hash,log_index,from_address) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (tx_id,user["wallet_id"],item["direction"],symbol,description,item["amount"],status,
-                         item["recipient"] if item["direction"]=="sent" else item["sender"],network,item["tx_hash"],
-                         confirmations,item["block_number"],item["block_hash"],item["log_index"]),
+                         item["recipient"],network,item["tx_hash"],confirmations,item["block_number"],
+                         item["block_hash"],item["log_index"],item["sender"]),
                     )
                 imported.append({
                     "tx_hash":item["tx_hash"],"asset":symbol,"network":network,"type":item["direction"],
                     "amount":item["amount"],"status":status,"confirmations":confirmations,
                     "block_height":item["block_number"],"block_hash":item["block_hash"],"log_index":item["log_index"],
+                    "from_address":item["sender"],"to_address":item["recipient"],
                 })
             if reorg_ids:
                 conn.execute(
@@ -1983,7 +1992,7 @@ def wallet_snapshot(user):
             "BTC": "bitcoin", "ETH": "ethereum", "BNB": "bnb",
             "SOL": "solana_mainnet", "SOL-DEVNET": "solana_devnet",
             "USDT": "ethereum", "USDT-BNB": "bnb", "USDC": "ethereum",
-            "USDC-BNB": "bnb", "BALMZ": "ethereum", "BALMZ-SEP": "sepolia",
+            "USDC-BNB": "bnb", "BALMZ": "ethereum", "BALMZ-BNB": "bnb", "BALMZ-SEP": "sepolia",
             "BALMZ-SOL-DEVNET": "solana_devnet",
         }
         for registry_symbol, registry_network in conn.execute(
@@ -2984,11 +2993,44 @@ def _network_sync_status(user, warnings, updates, transaction_sync_at=None):
 
 def wallet_asset_symbol(symbol: str, network: str) -> str:
     """Keep identical token symbols on different chains in separate wallet assets."""
-    if network == "bnb" and symbol in {"USDT", "USDC"}:
+    if network == "bnb" and symbol in {"USDT", "USDC", "BALMZ"}:
         return f"{symbol}-BNB"
     if network == "sepolia" and symbol == "BALMZ":
         return "BALMZ-SEP"
     return symbol
+
+
+def wallet_sync_token_rows(registry_rows, ethereum_address: str | None = None, bnb_address: str | None = None):
+    """Add known token contracts to read-only sync when registry metadata is pending.
+
+    BALMZ is deliberately included only when its exact chain-specific contract
+    is configured. No address or balance is invented. Decimals for EVM mainnet
+    contracts are always read and validated against the selected chain at sync time.
+    """
+    rows = list(registry_rows or [])
+    known = {
+        (str(row[0]).upper(), str(row[2]).strip().lower())
+        for row in rows if len(row) >= 3
+    }
+
+    ethereum_usdt_contract = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+    if ethereum_address and ethereum_usdt_contract and ("USDT", "ethereum") not in known:
+        rows.append(("USDT", "Tether USD", "ethereum", ethereum_usdt_contract, 6, "active"))
+        known.add(("USDT", "ethereum"))
+
+    if ethereum_address and BALMZ_ETH_CONTRACT and ("BALMZ", "ethereum") not in known:
+        rows.append(("BALMZ", "BALMZ Token", "ethereum", BALMZ_ETH_CONTRACT, None, "active"))
+        known.add(("BALMZ", "ethereum"))
+
+    if bnb_address and USDT_BSC_CONTRACT and ("USDT", "bnb") not in known:
+        rows.append(("USDT", "Tether USD", "bnb", USDT_BSC_CONTRACT, None, "active"))
+        known.add(("USDT", "bnb"))
+
+    if bnb_address and BALMZ_BNB_CONTRACT and ("BALMZ", "bnb") not in known:
+        rows.append(("BALMZ", "BALMZ Token", "bnb", BALMZ_BNB_CONTRACT, None, "active"))
+        known.add(("BALMZ", "bnb"))
+
+    return rows
 
 
 def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
@@ -3014,6 +3056,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             "FROM token_registry WHERE contract_address IS NOT NULL "
             "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
         ).fetchall()
+    token_rows = wallet_sync_token_rows(token_rows, eth_address, bnb_address)
 
     if solana_mainnet_address:
         try:
@@ -3089,12 +3132,17 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
         if not rpc_url or not token_address:
             continue
         try:
-            resolved_decimals = int(decimals)
-            if network == "sepolia":
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc_url)
+                resolved_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
+            elif network == "sepolia":
                 require_sepolia_rpc(rpc_url)
+                resolved_decimals = int(decimals)
             elif network == "bnb":
                 require_bnb_rpc(rpc_url)
                 resolved_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
+            else:
+                resolved_decimals = int(decimals)
             balance = erc20_balance(rpc_url, contract, token_address, resolved_decimals)
             if balance is None:
                 continue
@@ -3133,24 +3181,35 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     if include_transactions:
         imported_transactions = sync_bitcoin_transactions(user, btc_address)
         evm_warnings = []
-        for rpc_url, network, contract, token_symbol, network_address in (
-            (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT, "USDT", eth_address),
-            (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT, "USDT-BNB", bnb_address),
-            (SEPOLIA_RPC_URL, "sepolia", BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", sepolia_address),
-        ):
+        native_sources = (
+            (ETH_RPC_URL, "ethereum", eth_address),
+            (BSC_RPC_URL, "bnb", bnb_address),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_address),
+        )
+        for rpc_url, network, network_address in native_sources:
             if rpc_url and network_address:
                 native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
                 evm_transactions.extend(native_imported)
                 if native_warning:
                     evm_warnings.append(native_warning)
-                if contract:
-                    token_imported, warning = sync_evm_token_transactions(
-                        user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
-                        decimals=18 if network == "sepolia" else 6,
-                    )
-                    evm_transactions.extend(token_imported)
-                    if warning:
-                        evm_warnings.append(warning)
+
+        token_sources = (
+            (ETH_RPC_URL, "ethereum", eth_address, USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT, "USDT"),
+            (ETH_RPC_URL, "ethereum", eth_address, BALMZ_ETH_CONTRACT, "BALMZ"),
+            (BSC_RPC_URL, "bnb", bnb_address, USDT_BSC_CONTRACT, "USDT-BNB"),
+            (BSC_RPC_URL, "bnb", bnb_address, BALMZ_BNB_CONTRACT, "BALMZ-BNB"),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_address, BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP"),
+        )
+        for rpc_url, network, network_address, contract, token_symbol in token_sources:
+            if not rpc_url or not network_address or not contract:
+                continue
+            token_imported, warning = sync_evm_token_transactions(
+                user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                decimals=18 if token_symbol.startswith("BALMZ") else 6,
+            )
+            evm_transactions.extend(token_imported)
+            if warning:
+                evm_warnings.append(warning)
         warnings.extend(evm_warnings)
 
     assets, all_transactions, summary = wallet_snapshot(user)
@@ -4050,7 +4109,7 @@ def transactions(user: dict = Depends(current_user), limit: int = 50, offset: in
         ).fetchone()
         total = int(total_row[0] or 0) if total_row else 0
         rows = conn.execute(
-            "SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at "
+            "SELECT id,type,asset,description,amount,status,tx_hash,confirmations,block_height,network,block_hash,log_index,created_at,reference,from_address,destination "
             "FROM transactions WHERE wallet_id=%s ORDER BY created_at DESC,id DESC LIMIT %s OFFSET %s",
             (wallet_id, limit, offset),
         ).fetchall()
@@ -4060,6 +4119,16 @@ def transactions(user: dict = Depends(current_user), limit: int = 50, offset: in
         "confirmations": int(row[7] or 0), "block_height": row[8], "network": row[9],
         "block_hash": row[10], "log_index": row[11],
         "time": row[12].isoformat() if row[12] else None,
+        "reference": row[13], "from_address": row[14], "to_address": row[15],
+        "receipt_state": ("confirmed" if row[5] in {"confirmed", "settled"} else "failed" if row[5] == "failed" and row[6] else "reorged" if row[5] == "reorged" else "pending" if row[6] else "not_broadcast"),
+        "token_contract_address": (
+            (USDT_BSC_CONTRACT or BSC_USDT_MAINNET_CONTRACT) if row[2] == "USDT-BNB" and row[9] == "bnb"
+            else (USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT) if row[2] == "USDT" and row[9] == "ethereum"
+            else BALMZ_ETH_CONTRACT if row[2] == "BALMZ" and row[9] == "ethereum"
+            else BALMZ_BNB_CONTRACT if row[2] == "BALMZ-BNB" and row[9] == "bnb"
+            else BALMZ_SEPOLIA_CONTRACT if row[2] == "BALMZ-SEP" and row[9] == "sepolia"
+            else None
+        ),
     } for row in rows]
     next_offset = offset + len(txs)
     return {
@@ -4105,15 +4174,24 @@ def sync_transactions(user: dict = Depends(current_user)):
                 warnings.append(native_warning)
             with db() as conn:
                 token_rows = conn.execute(
-                    "SELECT symbol,contract_address,decimals FROM token_registry "
+                    "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
                     "WHERE network=%s AND contract_address IS NOT NULL AND decimals IS NOT NULL AND status='active'",
                     (network,),
                 ).fetchall()
-            for symbol, token_contract, token_decimals in token_rows:
+            network_address = wallet_network_address(user, network)
+            token_rows = wallet_sync_token_rows(
+                token_rows,
+                network_address if network == "ethereum" else None,
+                network_address if network == "bnb" else None,
+            )
+            for symbol, _token_name, token_network, token_contract, token_decimals, _status in token_rows:
+                if token_network != network:
+                    continue
                 transaction_symbol = wallet_asset_symbol(symbol, network)
                 token_imported, warning = sync_evm_token_transactions(
                     user, rpc_url, network, token_contract, transaction_symbol,
-                    decimals=int(token_decimals), wallet_address=wallet_network_address(user, network)
+                    decimals=int(token_decimals) if token_decimals is not None else 18,
+                    wallet_address=network_address
                 )
                 imported.extend(token_imported)
                 if warning:
@@ -4148,14 +4226,44 @@ def wallet_signing_config(user: dict = Depends(current_user)):
     ethereum_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     bitcoin_address = wallet_network_address(user, "bitcoin")
+    ethereum_rpc_verified = False
+    ethereum_usdt_contract = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+    ethereum_usdt_decimals = None
+    if ETH_RPC_URL and ethereum_address:
+        try:
+            require_ethereum_mainnet_rpc(ETH_RPC_URL)
+            ethereum_rpc_verified = True
+            ethereum_usdt_decimals = verified_erc20_decimals(
+                ETH_RPC_URL, ethereum_usdt_contract, "ethereum", chain_checked=True
+            )
+        except Exception:
+            # Do not offer an ERC-20 signing contract unless Ethereum Mainnet was verified.
+            ethereum_rpc_verified = False
+            ethereum_usdt_decimals = None
+
+    ethereum_balmz_decimals = None
+    if ethereum_rpc_verified and BALMZ_ETH_CONTRACT:
+        try:
+            ethereum_balmz_decimals = verified_erc20_decimals(
+                ETH_RPC_URL, BALMZ_ETH_CONTRACT, "ethereum", chain_checked=True
+            )
+        except Exception:
+            ethereum_balmz_decimals = None
+
     bnb_rpc_verified = False
     bnb_usdt_decimals = None
+    bnb_balmz_decimals = None
     if BSC_RPC_URL:
         try:
             require_bnb_rpc(BSC_RPC_URL)
             bnb_rpc_verified = True
             if USDT_BSC_CONTRACT:
                 bnb_usdt_decimals = verified_erc20_decimals(BSC_RPC_URL, USDT_BSC_CONTRACT, "bnb", chain_checked=True)
+            if BALMZ_BNB_CONTRACT:
+                try:
+                    bnb_balmz_decimals = verified_erc20_decimals(BSC_RPC_URL, BALMZ_BNB_CONTRACT, "bnb", chain_checked=True)
+                except Exception:
+                    bnb_balmz_decimals = None
         except Exception:
             # Do not advertise BNB signing details when RPC chain identity is unknown.
             bnb_rpc_verified = False
@@ -4165,11 +4273,11 @@ def wallet_signing_config(user: dict = Depends(current_user)):
         "networks": {
             "ethereum": {
                 "chain_id": "0x1",
-                "wallet_address": ethereum_address if ETH_RPC_URL else None,
-                "usdt_contract": USDT_ETH_CONTRACT or None,
-                "usdt_decimals": erc20_decimals(ETH_RPC_URL, USDT_ETH_CONTRACT) if ETH_RPC_URL and USDT_ETH_CONTRACT else None,
-                "balmz_contract": BALMZ_ETH_CONTRACT or None,
-                "balmz_decimals": erc20_decimals(ETH_RPC_URL, BALMZ_ETH_CONTRACT) if ETH_RPC_URL and BALMZ_ETH_CONTRACT else None,
+                "wallet_address": ethereum_address if ethereum_rpc_verified else None,
+                "usdt_contract": ethereum_usdt_contract if ethereum_rpc_verified else None,
+                "usdt_decimals": ethereum_usdt_decimals if ethereum_rpc_verified else None,
+                "balmz_contract": BALMZ_ETH_CONTRACT if ethereum_balmz_decimals is not None else None,
+                "balmz_decimals": ethereum_balmz_decimals,
             },
             "bnb": {
                 "rpc_verified": bnb_rpc_verified,
@@ -4177,6 +4285,8 @@ def wallet_signing_config(user: dict = Depends(current_user)):
                 "wallet_address": bnb_address if bnb_rpc_verified else None,
                 "usdt_contract": (USDT_BSC_CONTRACT or None) if bnb_rpc_verified else None,
                 "usdt_decimals": bnb_usdt_decimals if bnb_rpc_verified else None,
+                "balmz_contract": BALMZ_BNB_CONTRACT if bnb_rpc_verified and bnb_balmz_decimals is not None else None,
+                "balmz_decimals": bnb_balmz_decimals if bnb_rpc_verified else None,
             },
             # Sepolia is a separate test network. Do not query token metadata here:
             # only the chain-checked sync path may call the configured Sepolia RPC.
@@ -4208,15 +4318,59 @@ def list_token_registry(user: dict = Depends(current_user)):
         supported = registry_network in networks
         token_name = r[1]
         token_decimals = r[4]
-        if registry_network == "bnb" and r[3]:
-            try:
-                token_decimals = verified_erc20_decimals(BSC_RPC_URL, r[3], "bnb")
-            except Exception:
-                # Never publish stale registry precision as verified BNB token metadata.
-                token_decimals = None
-            if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
-                token_name = "Binance-Peg BSC-USD"
-        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        contract_address = r[3]
+        token_status = str(r[6] or "catalog_only")
+
+        # A pending BALMZ catalog row becomes a live Mainnet contract reference
+        # only when the matching Render environment value exists and the RPC
+        # proves the expected chain and a readable ERC-20 decimals() response.
+        if str(r[0]).upper() == "BALMZ" and not contract_address:
+            if registry_network == "ethereum" and BALMZ_ETH_CONTRACT:
+                contract_address = BALMZ_ETH_CONTRACT
+            elif registry_network == "bnb" and BALMZ_BNB_CONTRACT:
+                contract_address = BALMZ_BNB_CONTRACT
+        if str(r[0]).upper() == "USDT" and registry_network == "ethereum" and not contract_address:
+            contract_address = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+
+        try:
+            if registry_network == "ethereum" and contract_address:
+                require_ethereum_mainnet_rpc(ETH_RPC_URL)
+                token_decimals = verified_erc20_decimals(
+                    ETH_RPC_URL, contract_address, "ethereum", chain_checked=True
+                )
+                if str(r[0]).upper() == "BALMZ" and token_status == "pending_contract":
+                    token_status = "active"
+                elif str(r[0]).upper() == "USDT" and token_status == "catalog_only":
+                    token_status = "active"
+            elif registry_network == "bnb" and contract_address:
+                require_bnb_rpc(BSC_RPC_URL)
+                token_decimals = verified_erc20_decimals(
+                    BSC_RPC_URL, contract_address, "bnb", chain_checked=True
+                )
+                if str(r[0]).upper() == "BALMZ" and token_status == "pending_contract":
+                    token_status = "active"
+        except Exception:
+            # Never present an unverified token precision or contract as live.
+            token_decimals = None
+            if str(r[0]).upper() == "BALMZ":
+                contract_address = None
+                token_status = "pending_contract"
+
+        if registry_network == "bnb" and contract_address and str(contract_address).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
+            token_name = "Binance-Peg BSC-USD"
+
+        tokens.append({
+            "symbol": wallet_asset_symbol(str(r[0]), str(r[2]).strip().lower()),
+            "name": token_name,
+            "network": registry_network,
+            "contract_address": contract_address,
+            "decimals": token_decimals,
+            "coingecko_id": r[5],
+            "status": token_status,
+            "metadata_url": r[7],
+            "logo_url": r[8],
+            "wallet_network_connected": supported,
+        })
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
@@ -5526,6 +5680,9 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
             if asset == "BALMZ":
                 contract = BALMZ_ETH_CONTRACT if network == "ethereum" else ""
                 label = "BALMZ"
+            elif asset == "BALMZ-BNB":
+                contract = BALMZ_BNB_CONTRACT if network == "bnb" else ""
+                label = "BALMZ on BNB Chain"
             elif asset == "BALMZ-SEP":
                 contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
                 label = "BALMZ Sepolia"
@@ -5537,7 +5694,7 @@ def verify_evm_settlement(tx_hash: str, asset: str, network: str, destination: s
                 # generic USDT symbol, but never route new BNB reservations
                 # through that label (validate_asset_network canonicalizes it).
                 contract = (
-                    USDT_ETH_CONTRACT if network == "ethereum"
+                    (USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT) if network == "ethereum"
                     else USDT_BSC_CONTRACT if network == "bnb"
                     else ""
                 )
