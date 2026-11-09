@@ -709,7 +709,7 @@ function App() {
                 description: (tx.asset || "") + " • " + (tx.description || "Wallet transaction"),
                 amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + (tx.asset || ""),
                 raw_amount: Number(tx.amount), time: tx.time, status: tx.status,
-                tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height,
+                reference: tx.reference, tx_hash: tx.tx_hash, confirmations: tx.confirmations, block_height: tx.block_height,
               })));
               const verifiedMainnetRead = Array.isArray(live.updates) && live.updates.some(item => ["bitcoin", "ethereum", "bnb", "solana_mainnet"].includes(String(item?.network || "").toLowerCase()));
               if (Array.isArray(live.updates)) {
@@ -788,6 +788,7 @@ function App() {
           raw_amount: Number(tx.amount),
           time: tx.time,
           status: tx.status,
+          reference: tx.reference,
           tx_hash: tx.tx_hash,
           confirmations: Number(tx.confirmations || 0),
           block_height: tx.block_height,
@@ -813,7 +814,7 @@ function App() {
           token_contract_address: tx.token_contract_address || tx.contract_address || null,
           description: tx.asset + " • " + tx.description,
           amount: (Number(tx.amount) >= 0 ? "+" : "") + Number(tx.amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 8 }) + " " + tx.asset,
-          raw_amount: Number(tx.amount), time: tx.time, status: tx.status, tx_hash: tx.tx_hash,
+          raw_amount: Number(tx.amount), time: tx.time, status: tx.status, reference: tx.reference, tx_hash: tx.tx_hash,
           confirmations: Number(tx.confirmations || 0), block_height: tx.block_height, network: tx.network,
           block_hash: tx.block_hash, log_index: tx.log_index,
         })));
@@ -1053,6 +1054,7 @@ function App() {
         raw_amount: Number(tx.amount),
         time: tx.time,
         status: tx.status,
+        reference: tx.reference,
         tx_hash: tx.tx_hash,
         confirmations: Number(tx.confirmations || 0),
         block_height: tx.block_height,
@@ -1865,7 +1867,7 @@ function App() {
 
               <article className="panel activity-panel">
                 <div className="panel-head"><div><h2>On-chain activity</h2><span>Latest saved wallet transactions</span></div><button className="text-btn" onClick={() => setActive("Transactions")}>View all →</button></div>
-                <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small></div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
+                <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small>{a.reference && <small>Ref: {a.reference}</small>}</div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
               </article>
             </div>
 
@@ -1903,6 +1905,7 @@ function App() {
             raw_amount: Number(tx.amount),
             time: tx.time,
             status: tx.status,
+            reference: tx.reference,
             tx_hash: tx.tx_hash,
             confirmations: Number(tx.confirmations || 0),
             block_height: tx.block_height,
