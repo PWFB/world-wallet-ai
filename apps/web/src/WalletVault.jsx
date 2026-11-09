@@ -515,6 +515,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
             ["ethereum", addresses.ethereum, "evm", "m/44'/60'/0'/0/0"],
             ["bnb", addresses.bnb, "evm", "m/44'/60'/0'/0/0"],
             ["sepolia", addresses.sepolia, "evm", "m/44'/60'/1'/0/0"],
+            ["bitcoin", addresses.bitcoin, "bitcoin", "m/84'/0'/0'/0/0"],
             ["solana_mainnet", addresses.solana_mainnet, "solana", 0],
             ["solana_devnet", addresses.solana_devnet, "solana", 1],
           ];
@@ -532,6 +533,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
                 const proofWallet = HDNodeWallet.fromPhrase(mnemonic, "", derivation);
                 if (proofWallet.address.toLowerCase() !== proofAddress.toLowerCase()) throw new Error("Derived EVM address did not match the saved address.");
                 proofSignature = await proofWallet.signMessage(challenge.message);
+              } else if (proofType === "bitcoin") {
+                const proofWallet = HDNodeWallet.fromPhrase(mnemonic, "", derivation);
+                const digest = keccak256(toUtf8Bytes(challenge.message));
+                proofSignature = proofWallet.signingKey.sign(digest).serialized;
               } else {
                 proofSignature = await signSolanaMessage(mnemonic, derivation, challenge.message);
               }
@@ -557,9 +562,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         if (attachmentFailures.length) {
           setMessage("Wallet " + serverWalletNumber + " is saved locally. Some public addresses could not sync: " + attachmentFailures.join("; ") + ". No deposit or gas activation was required.");
         } else if (verificationFailures.length) {
-          setMessage("Wallet " + serverWalletNumber + " created with all six receive addresses saved. Verified ownership: " + (verifiedNetworks.join(", ") || "none") + ". Proof pending: " + verificationFailures.join("; ") + ". Bitcoin is locally derived and saved; its native proof flow is not yet enabled. No deposit or gas activation was required.");
+          setMessage("Wallet " + serverWalletNumber + " created with all six receive addresses saved. Verified ownership: " + (verifiedNetworks.join(", ") || "none") + ". Proof pending: " + verificationFailures.join("; ") + ". No deposit or gas activation was required.");
         } else {
-          setMessage("Wallet " + serverWalletNumber + " created. Ethereum, BNB, Sepolia, Solana Mainnet and Solana Devnet ownership signatures verified. Bitcoin address is locally derived and saved; native Bitcoin proof is not yet enabled. No first payment, deposit or gas activation was required.");
+          setMessage("Wallet " + serverWalletNumber + " created. Ethereum, BNB, Sepolia, Bitcoin Mainnet, Solana Mainnet and Solana Devnet ownership signatures verified. All six receive addresses are saved. No first payment, deposit or gas activation was required.");
         }
         try { await onWalletCreated?.(); } catch {}
       } catch (error) {
