@@ -337,6 +337,51 @@ class SettlementAndWalletToolTests(unittest.TestCase):
             rows = main.wallet_sync_token_rows([], "0x" + "1" * 40, "0x" + "2" * 40)
         self.assertFalse(any(str(row[0]).upper() == "BALMZ" for row in rows))
 
+
+    def test_balmz_request_is_qualified_to_bnb_asset_symbol(self):
+        self.assertEqual(main.validate_asset_network("BALMZ", "bnb"), ("BALMZ-BNB", "bnb"))
+        self.assertEqual(main.validate_asset_network("BALMZ-BNB", "bnb"), ("BALMZ-BNB", "bnb"))
+        with self.assertRaises(main.HTTPException):
+            main.validate_asset_network("BALMZ-BNB", "ethereum")
+
+    def test_balmz_bnb_contract_is_required_for_bnb_settlement(self):
+        tx_hash = "0x" + "a" * 64
+        wallet = "0x" + "1" * 40
+        destination = "0x" + "2" * 40
+        contract = "0x" + "3" * 40
+        tx = {"from": wallet, "to": contract, "value": "0x0"}
+        receipt = {
+            "status": "0x1", "blockNumber": "0x64", "blockHash": "0xabc",
+            "logs": [{
+                "address": contract,
+                "topics": [
+                    main.ERC20_TRANSFER_TOPIC,
+                    "0x" + "0" * 24 + wallet[2:],
+                    "0x" + "0" * 24 + destination[2:],
+                ],
+                "data": hex(125 * 10**18),
+            }],
+        }
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash": return tx
+            if method == "eth_getTransactionReceipt": return receipt
+            if method == "eth_blockNumber": return "0x66"
+            if method == "eth_getBlockByNumber": return {"hash": "0xabc"}
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "BALMZ_BNB_CONTRACT", contract), \
+             patch.object(main, "require_bnb_rpc", return_value=56), \
+             patch.object(main, "verified_erc20_decimals", return_value=18), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main.verify_evm_settlement(
+                tx_hash, "BALMZ-BNB", "bnb", destination, Decimal("125"), wallet
+            )
+
+        self.assertEqual(result["state"], "confirmed")
+        self.assertEqual(result["confirmations"], 3)
+
     def test_bnb_proof_of_reserves_qualifies_usdt_asset_symbol(self):
         address = "0x" + "1" * 40
         contract = "0x" + "2" * 40
