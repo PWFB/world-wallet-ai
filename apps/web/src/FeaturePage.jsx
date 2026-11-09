@@ -1371,8 +1371,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const tx = { from: signer, to: destination };
     if (asset === "ETH" || asset === "BNB") {
       tx.value = "0x" + decimalToUnits(amount, 18).toString(16);
-    } else if (asset === "USDT" || asset === "USDT-BNB" || asset === "BALMZ" || asset === "BALMZ-SEP") {
-      const isBalmz = asset === "BALMZ" || asset === "BALMZ-SEP";
+    } else if (asset === "USDT" || asset === "USDT-BNB" || asset === "BALMZ" || asset === "BALMZ-BNB" || asset === "BALMZ-SEP") {
+      const isBalmz = asset === "BALMZ" || asset === "BALMZ-BNB" || asset === "BALMZ-SEP";
       const contract = isBalmz ? networkConfig.balmz_contract : networkConfig.usdt_contract;
       const configuredDecimals = isBalmz ? networkConfig.balmz_decimals : networkConfig.usdt_decimals;
       if (!contract || configuredDecimals == null) throw new Error(asset + " external signing is not configured for this network.");
@@ -1430,7 +1430,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
-      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-SEP"].includes(asset);
+      const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
       if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
