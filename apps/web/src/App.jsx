@@ -56,11 +56,14 @@ const ASSET_LOGO_URLS = {
 };
 const BALMZ_LOGO_URL = "https://raw.githubusercontent.com/PWFB/world-wallet-ai/assets/balmz-solana-devnet-logo/tools/balmz-solana-devnet/balmz-logo.png";
 
-function AssetIcon({ symbol, fallback = "•" }) {
+function AssetIcon({ symbol, fallback = "•", logoUrl: registryLogoUrl = "" }) {
   const normalizedSymbol = String(symbol || "").trim().toUpperCase();
-  const logoUrl = normalizedSymbol.startsWith("BALMZ")
+  const safeRegistryLogoUrl = /^https:\/\//i.test(String(registryLogoUrl || "").trim())
+    ? String(registryLogoUrl).trim()
+    : "";
+  const logoUrl = safeRegistryLogoUrl || (normalizedSymbol.startsWith("BALMZ")
     ? BALMZ_LOGO_URL
-    : ASSET_LOGO_URLS[normalizedSymbol];
+    : ASSET_LOGO_URLS[normalizedSymbol]);
   return <span className={"asset-icon coin-icon coin-" + String(symbol || "").toLowerCase()}>
     {logoUrl ? <><img src={logoUrl} alt="" width="28" height="28" loading="lazy" style={{ objectFit: "contain", borderRadius: "50%" }} onError={event => { event.currentTarget.style.display = "none"; if (event.currentTarget.nextElementSibling) event.currentTarget.nextElementSibling.style.display = "grid"; }} /><span aria-hidden="true" style={{ display: "none" }}>{fallback}</span></> : fallback}
   </span>;
@@ -333,6 +336,45 @@ function App() {
       }));
     return [...catalog, ...additionalWalletAssets];
   }, [walletCoinCatalog, tokenRegistry, marketPrices, assets]);
+  const [tokenMetadata, setTokenMetadata] = useState(null);
+  useEffect(() => {
+    const selected = walletCoinCatalogWithRegistry.find(item => item.symbol === selectedCoin);
+    const metadataUrl = String(selected?.registry?.metadata_url || "").trim();
+    if (selectedCoin !== "BALMZ-SOL-DEVNET" || !metadataUrl) {
+      setTokenMetadata(null);
+      return undefined;
+    }
+    let cancelled = false;
+    let safeUrl = "";
+    try {
+      const parsed = new URL(metadataUrl);
+      if (parsed.protocol === "https:" && parsed.hostname === "raw.githubusercontent.com") safeUrl = parsed.toString();
+    } catch {}
+    if (!safeUrl) {
+      setTokenMetadata(null);
+      return undefined;
+    }
+    fetch(safeUrl, { cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("Metadata document unavailable");
+        const data = await response.json();
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid token metadata document");
+        const imageUrl = String(data.image || "").trim();
+        let safeImage = "";
+        try {
+          const image = new URL(imageUrl);
+          if (image.protocol === "https:" && image.hostname === "raw.githubusercontent.com") safeImage = image.toString();
+        } catch {}
+        if (!cancelled) setTokenMetadata({
+          name: typeof data.name === "string" ? data.name.slice(0, 100) : "",
+          symbol: typeof data.symbol === "string" ? data.symbol.slice(0, 24) : "",
+          description: typeof data.description === "string" ? data.description.slice(0, 500) : "",
+          image: safeImage,
+        });
+      })
+      .catch(() => { if (!cancelled) setTokenMetadata(null); });
+    return () => { cancelled = true; };
+  }, [selectedCoin, walletCoinCatalogWithRegistry]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [walletAnnouncement, setWalletAnnouncement] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -1610,7 +1652,7 @@ function App() {
             </div>
             <div className="coin-detail-grid">
               <article className="hero-card coin-detail-card">
-                <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} /></div>
+                <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} logoUrl={tokenMetadata?.image || coin?.registry?.logo_url} /></div>
                 <div className="hero-balance">{balanceKnown ? number(balance) : "Unavailable"} <small>{selectedCoin}</small></div>
                 <div className="balance-meta"><span>{contractBasedBalmz && !coin?.registry?.contract_address ? "Contract deployment pending; balance not yet verifiable" : live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : selectedCoin === "BALMZ-SOL-DEVNET" && solReferencePrice > 0 ? "$" + money(solReferencePrice) + " SOL reference" : "Live price unavailable"}</b></div>
               </article>
@@ -1620,6 +1662,28 @@ function App() {
                 <div><small>Network</small><b>{coin?.status || "—"}</b></div>
               </article>
             </div>
+            {isSolanaDevnetBalmz && coin?.registry && <article className="panel balmz-token-metadata-panel">
+              <div className="panel-head">
+                <div><h2>On-chain token metadata</h2><span>Metaplex metadata reference · Solana Devnet only</span></div>
+                <span className="coin-trading-status">Devnet</span>
+              </div>
+              <div className="balmz-token-metadata-content">
+                <AssetIcon symbol={selectedCoin} fallback="B" logoUrl={tokenMetadata?.image || coin.registry.logo_url} />
+                <div className="balmz-token-metadata-fields">
+                  <div><small>Name</small><b>{tokenMetadata?.name || "BALMZ"}</b></div>
+                  <div><small>Symbol</small><b>{tokenMetadata?.symbol || "BALMZ"}</b></div>
+                  <div><small>Decimals</small><b>{coin.registry.decimals == null ? "Unavailable" : coin.registry.decimals}</b></div>
+                  <div><small>Mint address</small><code>{coin.registry.contract_address || "Not registered"}</code></div>
+                </div>
+              </div>
+              {tokenMetadata?.description && <p className="balmz-token-metadata-description">{tokenMetadata.description}</p>}
+              <div className="balmz-token-metadata-links">
+                {coin.registry.metadata_url && <a href={coin.registry.metadata_url} target="_blank" rel="noreferrer">View metadata JSON ↗</a>}
+                {coin.registry.contract_address && <a href={"https://explorer.solana.com/address/" + encodeURIComponent(coin.registry.contract_address) + "?cluster=devnet"} target="_blank" rel="noreferrer">Open mint in Solana Explorer ↗</a>}
+                <a href="https://explorer.solana.com/address/7ZFtewYj5RJA7VgRyoQH2BfQuLxutxLikvgoRGBaPP3B?cluster=devnet" target="_blank" rel="noreferrer">Open Metaplex metadata account ↗</a>
+              </div>
+              <p className="coin-detail-note">This is token identity metadata, not a market listing or price. Devnet BALMZ remains a test token; no Mainnet supply or balance is implied.</p>
+            </article>}
             <div className="coin-action-grid">
               <button onClick={() => { setActive("Receive"); setSelectedCoin(null); }}>Receive</button>
               <button onClick={() => { setActive("Send"); setSelectedCoin(null); }}>Send</button>
@@ -1789,7 +1853,7 @@ function App() {
                     const hasMarketPrice = price > 0;
                     const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
-                      <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} />
+                      <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} logoUrl={c.registry?.logo_url} />
                       <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {live?.network_label || c.status || liveStatus}</small></div>
                       <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol === "BALMZ-SOL-DEVNET" ? `BALMZ market: Not listed • SOL reference: ${Number(marketPrices.SOL?.usd) > 0 ? "$" + money(marketPrices.SOL.usd) : "Unavailable"} • Wallet value: —` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
                       <small className="asset-network">{c.status}</small>
