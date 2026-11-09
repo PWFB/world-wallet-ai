@@ -872,12 +872,34 @@ function App() {
     };
   }, [accessToken, performancePeriod, hasVerifiedMainnetBalance]);
 
+  async function authorizedWalletFetch(url, options = {}) {
+    let token = "";
+    try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    token = token || accessToken || "";
+    const request = currentToken => fetch(url, {
+      ...options,
+      headers: {
+        ...(options.headers || {}),
+        ...(currentToken ? { Authorization: "Bearer " + currentToken } : {}),
+      },
+      cache: "no-store",
+    });
+    let response = await request(token);
+    if (response.status === 401) {
+      let refreshed = "";
+      try { refreshed = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+      if (refreshed && refreshed !== token) {
+        token = refreshed;
+        response = await request(token);
+      }
+    }
+    return response;
+  }
+
   async function loadDashboardAddresses() {
     if (!accessToken) return;
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/addresses", {
-        headers: { Authorization: "Bearer " + accessToken },
-      });
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallet/addresses");
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to load wallet addresses.");
       setDashboardAddresses(data.addresses || []);
@@ -905,9 +927,9 @@ function App() {
     setDashboardAddressBusy(true);
     setDashboardAddressMessage("");
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ network, address, label: dashboardAddressLabel.trim() || (network === "sepolia" ? "Ethereum Sepolia address" : network === "bnb" ? "BNB Chain address" : "Ethereum address") }),
       });
       const data = await response.json();
@@ -1036,9 +1058,8 @@ function App() {
     setSyncBusy(true);
     setSyncMessage("");
     try {
-      const response = await fetch(API_BASE_URL + "/api/v1/wallet/refresh", {
+      const response = await authorizedWalletFetch(API_BASE_URL + "/api/v1/wallet/refresh", {
         method: "POST",
-        headers: { Authorization: "Bearer " + accessToken },
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet sync failed.");
