@@ -859,14 +859,15 @@ def current_user(authorization: str | None = Header(default=None)):
         try:
             with db() as conn:
                 row = conn.execute("""
-                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id
+                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id,w.wallet_number
                     FROM api_keys k JOIN users u ON u.id=k.owner_id
+                    LEFT JOIN wallets w ON w.id=u.active_wallet_id
                     WHERE k.key_hash=%s AND k.revoked_at IS NULL
                 """, (sha(token),)).fetchone()
                 if row:
                     conn.execute("UPDATE api_keys SET last_used_at=NOW() WHERE id=%s", (row[6],))
                     conn.commit()
-                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "phone_number": row[4], "phone_verified": bool(row[5])}
+                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "wallet_number": str(row[7]) if row[7] is not None else None, "phone_number": row[4], "phone_verified": bool(row[5])}
         except HTTPException:
             raise
         except Exception as exc:
@@ -2030,8 +2031,7 @@ def wallet_reconciliation_snapshot(user):
             """
             SELECT a.symbol, a.reserved_balance,
                    COALESCE(SUM(
-                     CASE WHEN t.tx_hash IS NULL
-                               AND t.description IN ('Transfer request','Withdrawal request')
+                     CASE WHEN t.description IN ('Transfer request','Withdrawal request')
                                AND t.status IN ('pending','pending_review','broadcast_pending')
                           THEN -t.amount ELSE 0 END
                    ), 0)
@@ -3869,6 +3869,58 @@ def admin_activity(limit: int = 50, user: dict = Depends(current_user)):
         {"id": row[0], "actor_email": row[1], "action": row[2], "details": row[3], "created_at": row[4].isoformat() if row[4] else None}
         for row in rows
     ]}
+
+
+@app.get("/api/v1/admin/wallet-audit")
+def admin_wallet_audit(
+    limit: int = 50,
+    offset: int = 0,
+    wallet_id: str | None = None,
+    actor_email: str | None = None,
+    user: dict = Depends(current_user),
+):
+    require_world_wallet_admin(user)
+    limit = max(1, min(int(limit), 100))
+    offset = max(0, int(offset))
+    clauses = []
+    params = []
+    if wallet_id and wallet_id.strip():
+        clauses.append("e.wallet_id=%s")
+        params.append(wallet_id.strip())
+    if actor_email and actor_email.strip():
+        clauses.append("lower(e.actor_email)=lower(%s)")
+        params.append(actor_email.strip()[:254])
+    where = " WHERE " + " AND ".join(clauses) if clauses else ""
+    with db() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM wallet_audit_events e" + where,
+            tuple(params),
+        ).fetchone()[0]
+        rows = conn.execute(
+            """
+            SELECT e.id,e.actor_email,e.wallet_id,w.wallet_number,e.action,e.resource,
+                   e.resource_id,e.network,e.reference,e.details,e.created_at
+            FROM wallet_audit_events e
+            JOIN wallets w ON w.id=e.wallet_id
+            """ + where + " ORDER BY e.created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        ).fetchall()
+    record_admin_event(user, "view_wallet_audit")
+    return {
+        "events": [
+            {
+                "id": row[0], "actor_email": row[1], "wallet_id": row[2],
+                "wallet_number": str(row[3]), "action": row[4], "resource": row[5],
+                "resource_id": row[6], "network": row[7], "reference": row[8],
+                "details": row[9], "created_at": row[10].isoformat() if row[10] else None,
+            }
+            for row in rows
+        ],
+        "pagination": {
+            "limit": limit, "offset": offset, "total": int(total),
+            "has_more": offset + len(rows) < int(total),
+        },
+    }
 
 
 @app.get("/api/v1/admin/announcement")
