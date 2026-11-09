@@ -100,7 +100,7 @@ def normalize_wallet_network(value: str) -> str:
     return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
 ETHEREUM_USDT_MAINNET_CONTRACT = "0xdAC17F958D2ee523a2206206994597C13D831ec7"
-USDT_ETH_CONTRACT = (os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT") or ETHEREUM_USDT_MAINNET_CONTRACT).strip()
+USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
@@ -3006,8 +3006,9 @@ def wallet_sync_token_rows(registry_rows, ethereum_address: str | None):
         and str(row[2]).strip().lower() == "ethereum"
         for row in rows
     )
-    if ethereum_address and USDT_ETH_CONTRACT and not has_ethereum_usdt:
-        rows.append(("USDT", "Tether USD", "ethereum", USDT_ETH_CONTRACT, 6, "active"))
+    ethereum_usdt_contract = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+    if ethereum_address and ethereum_usdt_contract and not has_ethereum_usdt:
+        rows.append(("USDT", "Tether USD", "ethereum", ethereum_usdt_contract, 6, "active"))
     return rows
 
 
