@@ -4089,7 +4089,14 @@ def transactions(user: dict = Depends(current_user), limit: int = 50, offset: in
         "block_hash": row[10], "log_index": row[11],
         "time": row[12].isoformat() if row[12] else None,
         "reference": row[13], "from_address": row[14], "to_address": row[15],
-        "receipt_state": ("confirmed" if row[5] in {"confirmed", "settled"} else "failed" if row[5] == "failed" and row[6] else "pending" if row[6] else "not_broadcast"),
+        "receipt_state": ("confirmed" if row[5] in {"confirmed", "settled"} else "failed" if row[5] == "failed" and row[6] else "reorged" if row[5] == "reorged" else "pending" if row[6] else "not_broadcast"),
+        "token_contract_address": (
+            (USDT_BSC_CONTRACT or BSC_USDT_MAINNET_CONTRACT) if row[2] == "USDT-BNB" and row[9] == "bnb"
+            else (USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT) if row[2] == "USDT" and row[9] == "ethereum"
+            else BALMZ_ETH_CONTRACT if row[2] == "BALMZ" and row[9] == "ethereum"
+            else BALMZ_SEPOLIA_CONTRACT if row[2] == "BALMZ-SEP" and row[9] == "sepolia"
+            else None
+        ),
     } for row in rows]
     next_offset = offset + len(txs)
     return {
