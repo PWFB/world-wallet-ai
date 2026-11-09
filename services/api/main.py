@@ -620,10 +620,10 @@ def init_db():
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS log_index INTEGER;
         ALTER TABLE transactions ADD COLUMN IF NOT EXISTS reference TEXT;
         UPDATE transactions
-          SET reference='WWTX-' || upper(md5(id || random()::text || clock_timestamp()::text))
+          SET reference='WWTX-' || upper(substr(md5(id || random()::text || clock_timestamp()::text),1,24))
           WHERE reference IS NULL OR reference='';
         ALTER TABLE transactions ALTER COLUMN reference
-          SET DEFAULT ('WWTX-' || upper(md5(random()::text || clock_timestamp()::text)));
+          SET DEFAULT ('WWTX-' || upper(substr(md5(random()::text || clock_timestamp()::text),1,24)));
         ALTER TABLE transactions ALTER COLUMN reference SET NOT NULL;
         CREATE UNIQUE INDEX IF NOT EXISTS transactions_reference_unique
           ON transactions(reference);
