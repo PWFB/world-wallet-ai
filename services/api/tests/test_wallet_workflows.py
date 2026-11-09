@@ -68,7 +68,7 @@ class WalletWorkflowTests(unittest.TestCase):
         ):
             result = main.provision_identity("user@example.com", name="New User")
 
-        self.assertEqual(result["wallet_id"], "wallet-new")
+        self.assertEqual(result["wallet_id"], expected_wallet_id)
         self.assertTrue(connection.committed)
         audit.assert_called_once()
         audit_kwargs = audit.call_args.kwargs
