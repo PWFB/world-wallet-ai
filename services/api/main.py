@@ -352,7 +352,7 @@ def configure_api_thread_limit():
 
     # Keep synchronous request concurrency conservative on the 512 MiB Render
     # instance. Operators may lower this value, but cannot raise it above eight.
-    # AnyIO's default worker capacity beyond a conservative ceiling.
+    # AnyIO worker capacity stays bounded for the small instance.
     requested_limit = max(2, min(requested_limit, 8))
     try:
         limiter = to_thread.current_default_thread_limiter()
