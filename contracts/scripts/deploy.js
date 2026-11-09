@@ -33,8 +33,9 @@ async function main() {
 
   const address = await token.getAddress();
   const supply = await token.totalSupply();
+  const expectedSupplyRaw = hre.ethers.parseEther(expectedSupply);
   const formattedSupply = hre.ethers.formatUnits(supply, 18);
-  if (formattedSupply !== expectedSupply) {
+  if (supply !== expectedSupplyRaw) {
     throw new Error("Post-deployment supply mismatch: expected " + expectedSupply + ", received " + formattedSupply);
   }
 
