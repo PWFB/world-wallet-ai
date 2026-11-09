@@ -25,4 +25,8 @@ The reconciliation endpoint does not re-query RPC providers and does not claim c
 
 ## Deployment and database boundary
 
-The code adds idempotent schema initialization statements for the reference column and audit table. No Neon query, migration, deployment, signing request, or transaction was executed while preparing this branch. The additive initialization will take effect only when this branch is reviewed and deployed through the normal backend process.
+During branch preparation, no manual Neon migration or SQL write, signing request, or blockchain transaction was executed. PR #228 was subsequently merged into `main` and the merged commit was deployed to both the Render backend and frontend on 9 November 2026.
+
+The backend includes idempotent startup schema initialization for the transaction-reference column and wallet audit table. Render confirmed that the deployed backend application completed startup. This deployment record does not substitute for direct production database inspection or authenticated end-to-end user-flow testing; those checks must be recorded separately.
+
+The settlement and reconciliation boundaries above remain in force after deployment. A successful application deployment does not prove that a wallet has funds, that a transaction has reached chain finality, or that an external wallet has signed or broadcast anything.
