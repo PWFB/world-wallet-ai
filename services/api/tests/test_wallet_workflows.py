@@ -52,11 +52,13 @@ class WalletWorkflowTests(unittest.TestCase):
         import main
 
         connection = ProvisioningConnection()
+        expected_user_id = "usr_" + main.sha("user@example.com")[:24]
+        expected_wallet_id = "wallet_" + main.sha(expected_user_id)[:24]
         provisioned_user = {
-            "id": "user-1",
+            "id": expected_user_id,
             "email": "user@example.com",
             "name": "New User",
-            "wallet_id": "wallet-new",
+            "wallet_id": expected_wallet_id,
             "wallet_number": "12345678901",
         }
         with (
@@ -71,7 +73,7 @@ class WalletWorkflowTests(unittest.TestCase):
         audit.assert_called_once()
         audit_kwargs = audit.call_args.kwargs
         self.assertEqual(audit_kwargs["owner_id"], "usr_" + main.sha("user@example.com")[:24])
-        self.assertEqual(audit_kwargs["wallet_id"], "wallet-new")
+        self.assertEqual(audit_kwargs["wallet_id"], expected_wallet_id)
         self.assertEqual(audit_kwargs["action"], "wallet_provisioned")
 
     def test_transaction_reference_is_unique_and_readable(self):
