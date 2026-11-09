@@ -664,9 +664,13 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [miningMessage, setMiningMessage] = useState("");
   const [miningError, setMiningError] = useState("");
   const requestKeyRef = useRef("");
+  const walletReconciliationRequestRef = useRef(0);
+  const walletAuditRequestRef = useRef(0);
 
   async function loadWalletReconciliation() {
     if (!accessToken) return;
+    const requestId = ++walletReconciliationRequestRef.current;
+    setWalletReconciliation(null);
     setWalletReconciliationBusy(true);
     setWalletReconciliationError("");
     try {
@@ -676,16 +680,20 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet reconciliation could not be loaded.");
-      setWalletReconciliation(data);
+      if (requestId === walletReconciliationRequestRef.current) setWalletReconciliation(data);
     } catch (error) {
-      setWalletReconciliationError(error.message || "Wallet reconciliation could not be loaded.");
+      if (requestId === walletReconciliationRequestRef.current) {
+        setWalletReconciliationError(error.message || "Wallet reconciliation could not be loaded.");
+      }
     } finally {
-      setWalletReconciliationBusy(false);
+      if (requestId === walletReconciliationRequestRef.current) setWalletReconciliationBusy(false);
     }
   }
 
   async function loadAdminWalletAudit() {
     if (!accessToken) return;
+    const requestId = ++walletAuditRequestRef.current;
+    setWalletAuditData(null);
     setWalletAuditBusy(true);
     setWalletAuditError("");
     try {
@@ -695,11 +703,13 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Wallet audit events could not be loaded.");
-      setWalletAuditData(data);
+      if (requestId === walletAuditRequestRef.current) setWalletAuditData(data);
     } catch (error) {
-      setWalletAuditError(error.message || "Wallet audit events could not be loaded.");
+      if (requestId === walletAuditRequestRef.current) {
+        setWalletAuditError(error.message || "Wallet audit events could not be loaded.");
+      }
     } finally {
-      setWalletAuditBusy(false);
+      if (requestId === walletAuditRequestRef.current) setWalletAuditBusy(false);
     }
   }
 
