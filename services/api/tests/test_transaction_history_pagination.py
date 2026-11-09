@@ -11,8 +11,9 @@ import main
 class TransactionHistoryPaginationTests(unittest.TestCase):
     def test_history_page_is_scoped_and_returns_pagination_metadata(self):
         now = datetime(2026, 10, 16, tzinfo=timezone.utc)
-        row = ("tx-1", "received", "ETH", "Ethereum transaction", "1.25",
-               "confirmed", "0xabc", 12, 123, "ethereum", "0xblock", None, now)
+        row = ("tx-1", "received", "USDT", "USDT received on ethereum", "1.25",
+               "confirmed", "0xabc", 12, 123, "ethereum", "0xblock", 3, now,
+               "WWTX-TEST-RECEIPT", "0x" + "1" * 40, "0x" + "2" * 40)
 
         class Cursor:
             def __init__(self, row=None, rows=None):
@@ -42,6 +43,11 @@ class TransactionHistoryPaginationTests(unittest.TestCase):
 
         self.assertEqual(result["transactions"][0]["id"], "tx-1")
         self.assertEqual(result["transactions"][0]["amount"], 1.25)
+        self.assertEqual(result["transactions"][0]["reference"], "WWTX-TEST-RECEIPT")
+        self.assertEqual(result["transactions"][0]["from_address"], "0x" + "1" * 40)
+        self.assertEqual(result["transactions"][0]["to_address"], "0x" + "2" * 40)
+        self.assertEqual(result["transactions"][0]["log_index"], 3)
+        self.assertEqual(result["transactions"][0]["receipt_state"], "confirmed")
         self.assertEqual(result["pagination"], {
             "limit": 1, "offset": 1, "total": 3, "has_more": True, "next_offset": 2,
         })
