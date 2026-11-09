@@ -11,7 +11,9 @@ const accounts = PRIVATE_KEY ? [PRIVATE_KEY] : [];
 module.exports = {
   solidity: "0.8.24",
   networks: {
-    hardhat: {},
+    hardhat: {
+      chainId: Number(process.env.HARDHAT_CHAIN_ID || 31337),
+    },
     ethereum: {
       url: ETH_RPC_URL,
       chainId: 1,
