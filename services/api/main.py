@@ -4318,15 +4318,56 @@ def list_token_registry(user: dict = Depends(current_user)):
         supported = registry_network in networks
         token_name = r[1]
         token_decimals = r[4]
-        if registry_network == "bnb" and r[3]:
-            try:
-                token_decimals = verified_erc20_decimals(BSC_RPC_URL, r[3], "bnb")
-            except Exception:
-                # Never publish stale registry precision as verified BNB token metadata.
-                token_decimals = None
-            if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
-                token_name = "Binance-Peg BSC-USD"
-        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        contract_address = r[3]
+        token_status = str(r[6] or "catalog_only")
+
+        # A pending BALMZ catalog row becomes a live Mainnet contract reference
+        # only when the matching Render environment value exists and the RPC
+        # proves the expected chain and a readable ERC-20 decimals() response.
+        if str(r[0]).upper() == "BALMZ" and not contract_address:
+            if registry_network == "ethereum" and BALMZ_ETH_CONTRACT:
+                contract_address = BALMZ_ETH_CONTRACT
+            elif registry_network == "bnb" and BALMZ_BNB_CONTRACT:
+                contract_address = BALMZ_BNB_CONTRACT
+        if str(r[0]).upper() == "USDT" and registry_network == "ethereum" and not contract_address:
+            contract_address = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+
+        try:
+            if registry_network == "ethereum" and contract_address:
+                require_ethereum_mainnet_rpc(ETH_RPC_URL)
+                token_decimals = verified_erc20_decimals(
+                    ETH_RPC_URL, contract_address, "ethereum", chain_checked=True
+                )
+                token_status = "active"
+            elif registry_network == "bnb" and contract_address:
+                require_bnb_rpc(BSC_RPC_URL)
+                token_decimals = verified_erc20_decimals(
+                    BSC_RPC_URL, contract_address, "bnb", chain_checked=True
+                )
+                if token_status == "pending_contract":
+                    token_status = "active"
+        except Exception:
+            # Never present an unverified token precision or contract as live.
+            token_decimals = None
+            if str(r[0]).upper() == "BALMZ":
+                contract_address = None
+                token_status = "pending_contract"
+
+        if registry_network == "bnb" and contract_address and str(contract_address).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
+            token_name = "Binance-Peg BSC-USD"
+
+        tokens.append({
+            "symbol": wallet_asset_symbol(str(r[0]), str(r[2]).strip().lower()),
+            "name": token_name,
+            "network": registry_network,
+            "contract_address": contract_address,
+            "decimals": token_decimals,
+            "coingecko_id": r[5],
+            "status": token_status,
+            "metadata_url": r[7],
+            "logo_url": r[8],
+            "wallet_network_connected": supported,
+        })
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
