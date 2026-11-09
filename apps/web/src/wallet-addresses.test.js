@@ -5,6 +5,7 @@ import {
   deriveWalletAddresses,
   encryptMnemonic,
   decryptMnemonic,
+  signSolanaMessage,
 } from "./wallet-addresses.js";
 
 const TEST_MNEMONIC = "test test test test test test test test test test test junk";
@@ -65,3 +66,48 @@ function base58DecodedLength(value) {
   }
   return length;
 }
+
+
+test("Solana ownership signatures match the derived mainnet and devnet public keys", async t => {
+  if (!globalThis.crypto?.subtle) {
+    t.skip("WebCrypto is unavailable in this test runtime.");
+    return;
+  }
+  const addresses = await deriveWalletAddresses(TEST_MNEMONIC);
+  for (const [network, accountIndex] of [["solana_mainnet", 0], ["solana_devnet", 1]]) {
+    const message = "World Wallet AI ownership challenge " + network;
+    const signature = await signSolanaMessage(TEST_MNEMONIC, accountIndex, message);
+    const publicBytes = base58Decode(addresses[network]);
+    const publicKey = await crypto.subtle.importKey("raw", publicBytes, { name: "Ed25519" }, false, ["verify"]);
+    const signatureBytes = Uint8Array.from(atob(signature), character => character.charCodeAt(0));
+    assert.equal(await crypto.subtle.verify("Ed25519", publicKey, signatureBytes, new TextEncoder().encode(message)), true);
+  }
+});
+
+function base58Decode(value) {
+  const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+  let number = 0n;
+  for (const character of value) {
+    const digit = alphabet.indexOf(character);
+    assert.notEqual(digit, -1);
+    number = number * 58n + BigInt(digit);
+  }
+  let bytes = [];
+  while (number > 0n) {
+    bytes.unshift(Number(number & 255n));
+    number >>= 8n;
+  }
+  const leading = value.match(/^1*/)?.[0].length || 0;
+  bytes = [...new Array(leading).fill(0), ...bytes];
+  return Uint8Array.from(bytes);
+}
+
+
+test("Bitcoin derivation signs a recoverable ownership challenge", async () => {
+  const { HDNodeWallet, keccak256, toUtf8Bytes, recoverAddress } = await import("ethers");
+  const wallet = HDNodeWallet.fromPhrase(TEST_MNEMONIC, "", "m/84'/0'/0'/0/0");
+  const message = "World Wallet AI Bitcoin ownership challenge";
+  const digest = keccak256(toUtf8Bytes(message));
+  const signature = wallet.signingKey.sign(digest).serialized;
+  assert.equal(recoverAddress(digest, signature), wallet.address);
+});

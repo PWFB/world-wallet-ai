@@ -299,3 +299,45 @@ export async function decryptMnemonic(encryptedValue, password) {
     throw new Error("Could not unlock the encrypted recovery material. Check the vault password.");
   }
 }
+
+
+export async function signSolanaMessage(mnemonicPhrase, accountIndex, message) {
+  if (!Number.isSafeInteger(accountIndex) || accountIndex < 0 || accountIndex > 1) {
+    throw new Error("Unsupported Solana derivation account.");
+  }
+  const seed = await bip39Seed(String(mnemonicPhrase || ""));
+  let digest = await hmacSha512(encoder.encode("ed25519 seed"), seed);
+  let key = digest.slice(0, 32);
+  let chainCode = digest.slice(32, 64);
+  const hardened = 0x80000000;
+  const path = [44 + hardened, 501 + hardened, accountIndex + hardened, hardened];
+  try {
+    for (const index of path) {
+      const data = new Uint8Array(37);
+      data[0] = 0;
+      data.set(key, 1);
+      new DataView(data.buffer).setUint32(33, index, false);
+      digest = await hmacSha512(chainCode, data);
+      key = digest.slice(0, 32);
+      chainCode = digest.slice(32, 64);
+    }
+    const prefix = hexToBytes("302e020100300506032b657004220420");
+    const pkcs8 = new Uint8Array(prefix.length + key.length);
+    pkcs8.set(prefix);
+    pkcs8.set(key, prefix.length);
+    try {
+      const privateKey = await secureCrypto().subtle.importKey("pkcs8", pkcs8, { name: "Ed25519" }, false, ["sign"]);
+      const signature = await secureCrypto().subtle.sign("Ed25519", privateKey, encoder.encode(String(message)));
+      return encodeBase64(new Uint8Array(signature));
+    } finally {
+      pkcs8.fill(0);
+    }
+  } catch (error) {
+    throw new Error("This browser cannot sign the Solana ownership challenge securely.", { cause: error });
+  } finally {
+    seed.fill(0);
+    key.fill(0);
+    chainCode.fill(0);
+    digest.fill(0);
+  }
+}
