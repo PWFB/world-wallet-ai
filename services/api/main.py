@@ -3740,11 +3740,14 @@ def record_portfolio_performance_snapshot(user: dict = Depends(current_user)):
             """,
             (user["wallet_id"], Decimal(str(value)), user["wallet_id"]),
         ).fetchone()
-        latest = inserted[0] if inserted else conn.execute(
-            "SELECT created_at FROM portfolio_performance_snapshots WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 1",
-            (user["wallet_id"],),
-        ).fetchone()
-    return {"recorded": bool(inserted), "timestamp": latest[0].isoformat() if latest and latest[0] else None,
+        latest_row = inserted
+        if latest_row is None:
+            latest_row = conn.execute(
+                "SELECT created_at FROM portfolio_performance_snapshots WHERE wallet_id=%s ORDER BY created_at DESC LIMIT 1",
+                (user["wallet_id"],),
+            ).fetchone()
+    latest_at = latest_row[0] if latest_row else None
+    return {"recorded": bool(inserted), "timestamp": latest_at.isoformat() if latest_at else None,
             "value_usd": float(value), "currency": "USD"}
 
 
