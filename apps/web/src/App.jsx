@@ -22,7 +22,8 @@ const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: null, actual_balance_usd: null, reserved_balance_usd: null, total_received_usd: null, total_sent_usd: null, profit_usd: null, change_24h: null, valuation_complete: false };
 const fallbackActivity = [];
 const walletCoinCatalog = [
-  { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Wallet token" },
+  { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Ethereum Mainnet" },
+  { symbol: "BALMZ-BNB", name: "BALMZ Token (BNB Chain)", icon: "B", status: "BNB Chain Mainnet" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
