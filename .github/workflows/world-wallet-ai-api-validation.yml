@@ -1,0 +1,43 @@
+name: World Wallet AI API validation
+
+on:
+  pull_request:
+    branches:
+      - assets/balmz-solana-devnet-logo
+  push:
+    branches:
+      - feat/pwfb-wallet-operations-workflows
+
+jobs:
+  api-validation:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/api/requirements.txt
+      - name: Install API dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Compile API modules
+        run: python -m compileall -q .
+      - name: Import FastAPI application and verify workflow routes
+        env:
+          PYTHONPATH: .
+        run: |
+          python - <<'PY'
+          from main import app
+          paths = {route.path for route in app.routes}
+          required = {
+              "/api/v1/wallets/{wallet_id}/audit",
+              "/api/v1/wallets/{wallet_id}/reconciliation",
+          }
+          missing = required - paths
+          if missing:
+              raise SystemExit(f"Missing workflow routes: {sorted(missing)}")
+          print("API import and wallet workflow routes: PASS")
+          PY
