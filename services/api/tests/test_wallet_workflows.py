@@ -1,7 +1,11 @@
 import json
 import re
+import sys
 import unittest
 from decimal import Decimal
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wallet_workflows import (
     generate_transaction_reference,
