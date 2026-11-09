@@ -101,3 +101,13 @@ function base58Decode(value) {
   bytes = [...new Array(leading).fill(0), ...bytes];
   return Uint8Array.from(bytes);
 }
+
+
+test("Bitcoin derivation signs a recoverable ownership challenge", async () => {
+  const { HDNodeWallet, keccak256, toUtf8Bytes, recoverAddress } = await import("ethers");
+  const wallet = HDNodeWallet.fromPhrase(TEST_MNEMONIC, "", "m/84'/0'/0'/0/0");
+  const message = "World Wallet AI Bitcoin ownership challenge";
+  const digest = keccak256(toUtf8Bytes(message));
+  const signature = wallet.signingKey.sign(digest).serialized;
+  assert.equal(recoverAddress(digest, signature), wallet.address);
+});
