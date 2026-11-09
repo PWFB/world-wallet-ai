@@ -336,6 +336,45 @@ function App() {
       }));
     return [...catalog, ...additionalWalletAssets];
   }, [walletCoinCatalog, tokenRegistry, marketPrices, assets]);
+  const [tokenMetadata, setTokenMetadata] = useState(null);
+  useEffect(() => {
+    const selected = walletCoinCatalogWithRegistry.find(item => item.symbol === selectedCoin);
+    const metadataUrl = String(selected?.registry?.metadata_url || "").trim();
+    if (selectedCoin !== "BALMZ-SOL-DEVNET" || !metadataUrl) {
+      setTokenMetadata(null);
+      return undefined;
+    }
+    let cancelled = false;
+    let safeUrl = "";
+    try {
+      const parsed = new URL(metadataUrl);
+      if (parsed.protocol === "https:" && parsed.hostname === "raw.githubusercontent.com") safeUrl = parsed.toString();
+    } catch {}
+    if (!safeUrl) {
+      setTokenMetadata(null);
+      return undefined;
+    }
+    fetch(safeUrl, { cache: "no-store" })
+      .then(async response => {
+        if (!response.ok) throw new Error("Metadata document unavailable");
+        const data = await response.json();
+        if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("Invalid token metadata document");
+        const imageUrl = String(data.image || "").trim();
+        let safeImage = "";
+        try {
+          const image = new URL(imageUrl);
+          if (image.protocol === "https:" && image.hostname === "raw.githubusercontent.com") safeImage = image.toString();
+        } catch {}
+        if (!cancelled) setTokenMetadata({
+          name: typeof data.name === "string" ? data.name.slice(0, 100) : "",
+          symbol: typeof data.symbol === "string" ? data.symbol.slice(0, 24) : "",
+          description: typeof data.description === "string" ? data.description.slice(0, 500) : "",
+          image: safeImage,
+        });
+      })
+      .catch(() => { if (!cancelled) setTokenMetadata(null); });
+    return () => { cancelled = true; };
+  }, [selectedCoin, walletCoinCatalogWithRegistry]);
   const [apiStatus, setApiStatus] = useState("loading");
   const [walletAnnouncement, setWalletAnnouncement] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
@@ -1613,7 +1652,7 @@ function App() {
             </div>
             <div className="coin-detail-grid">
               <article className="hero-card coin-detail-card">
-                <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} logoUrl={coin?.registry?.logo_url} /></div>
+                <div className="card-top"><span>AVAILABLE BALANCE</span><AssetIcon symbol={selectedCoin} fallback={coin?.icon || "•"} logoUrl={tokenMetadata?.image || coin?.registry?.logo_url} /></div>
                 <div className="hero-balance">{balanceKnown ? number(balance) : "Unavailable"} <small>{selectedCoin}</small></div>
                 <div className="balance-meta"><span>{contractBasedBalmz && !coin?.registry?.contract_address ? "Contract deployment pending; balance not yet verifiable" : live?.price_available === false || value == null ? "Wallet valuation unavailable" : `${money(value)} USD`}</span><b>{price ? `${money(price)} / coin` : selectedCoin === "BALMZ-SOL-DEVNET" && solReferencePrice > 0 ? "$" + money(solReferencePrice) + " SOL reference" : "Live price unavailable"}</b></div>
               </article>
@@ -1629,14 +1668,15 @@ function App() {
                 <span className="coin-trading-status">Devnet</span>
               </div>
               <div className="balmz-token-metadata-content">
-                <AssetIcon symbol={selectedCoin} fallback="B" logoUrl={coin.registry.logo_url} />
+                <AssetIcon symbol={selectedCoin} fallback="B" logoUrl={tokenMetadata?.image || coin.registry.logo_url} />
                 <div className="balmz-token-metadata-fields">
-                  <div><small>Name</small><b>{coin.registry.name || coin.name || "BALMZ"}</b></div>
-                  <div><small>Symbol</small><b>{coin.registry.symbol || "BALMZ"}</b></div>
+                  <div><small>Name</small><b>{tokenMetadata?.name || "BALMZ"}</b></div>
+                  <div><small>Symbol</small><b>{tokenMetadata?.symbol || "BALMZ"}</b></div>
                   <div><small>Decimals</small><b>{coin.registry.decimals == null ? "Unavailable" : coin.registry.decimals}</b></div>
                   <div><small>Mint address</small><code>{coin.registry.contract_address || "Not registered"}</code></div>
                 </div>
               </div>
+              {tokenMetadata?.description && <p className="balmz-token-metadata-description">{tokenMetadata.description}</p>}
               <div className="balmz-token-metadata-links">
                 {coin.registry.metadata_url && <a href={coin.registry.metadata_url} target="_blank" rel="noreferrer">View metadata JSON ↗</a>}
                 {coin.registry.contract_address && <a href={"https://explorer.solana.com/address/" + encodeURIComponent(coin.registry.contract_address) + "?cluster=devnet"} target="_blank" rel="noreferrer">Open mint in Solana Explorer ↗</a>}
