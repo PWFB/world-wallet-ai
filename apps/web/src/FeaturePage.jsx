@@ -300,8 +300,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     const value = address.trim();
     const cleanLabel = label.trim() || "primary";
     if (!value) return setMessage("Enter a public wallet address.");
-    if (!walletId) return setMessage("Select a wallet first.");
-    setBusy(true); setMessage("");
+    if (!selectedWalletId) return setMessage("Select a wallet first.");
+    setBusy(true);
+    setMessage("");
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
         method: "POST",
