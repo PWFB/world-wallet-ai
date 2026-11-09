@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, parseEther, parseUnits, verifyMessage } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes, verifyMessage } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
