@@ -181,6 +181,8 @@ class WalletDatabaseConnectionScopeTests(unittest.TestCase):
 
         with patch.object(main, "db", side_effect=lambda: _Connection()), \
              patch.object(main, "wallet_owns_network_address", return_value=True), \
+             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \
+             patch.object(main, "verified_erc20_decimals", return_value=6), \
              patch.object(main, "evm_block_number", return_value=10), \
              patch.object(main, "_sync_cursor", return_value=None), \
              patch.object(main, "_set_sync_cursor"), \
