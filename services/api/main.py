@@ -24,9 +24,11 @@ from Crypto.Hash import keccak
 from Crypto.Cipher import AES
 try:
     from services.api.market_price_cache import MarketPriceCache
+    from services.api.balmz_metadata import additional_balmz_registry_entries
 except ModuleNotFoundError:
     # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
     from market_price_cache import MarketPriceCache
+    from balmz_metadata import additional_balmz_registry_entries
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
@@ -98,6 +100,7 @@ USDT_ETH_CONTRACT = os.getenv("WORLD_WALLET_USDT_ETH_CONTRACT", "").strip()
 USDT_BSC_CONTRACT = os.getenv("WORLD_WALLET_USDT_BSC_CONTRACT", "").strip()
 BSC_USDT_MAINNET_CONTRACT = "0x55d398326f99059fF775485246999027B3197955"
 BALMZ_ETH_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_CONTRACT", "").strip()
+BALMZ_BNB_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_BNB_CONTRACT", "").strip()
 BALMZ_SEPOLIA_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_SEPOLIA_CONTRACT", "").strip()
 BALMZ_BNB_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_BNB_CONTRACT", "").strip()
 
@@ -629,6 +632,34 @@ def init_db():
         CREATE INDEX IF NOT EXISTS solana_devnet_deposits_wallet_created_idx
           ON solana_devnet_deposits(wallet_id,created_at DESC);
         """)
+        # BALMZ's BNB and Solana Mainnet records are network-qualified. Addresses
+        # come only from backend environment configuration and remain explicitly
+        # unverified until independent on-chain checks are completed.
+        for entry in additional_balmz_registry_entries(
+            BALMZ_BNB_CONTRACT,
+            BALMZ_SOLANA_MAINNET_MINT,
+        ):
+            conn.execute(
+                """
+                INSERT INTO token_registry(
+                    id,symbol,name,network,contract_address,decimals,coingecko_id,
+                    status,metadata_url,logo_url
+                ) VALUES(%s,%s,%s,%s,%s,%s,NULL,%s,%s,%s)
+                ON CONFLICT(symbol,network) DO UPDATE SET
+                    name=EXCLUDED.name,
+                    contract_address=EXCLUDED.contract_address,
+                    decimals=EXCLUDED.decimals,
+                    status=EXCLUDED.status,
+                    metadata_url=EXCLUDED.metadata_url,
+                    logo_url=EXCLUDED.logo_url
+                """,
+                (
+                    entry["id"], entry["symbol"], entry["name"], entry["network"],
+                    entry["contract_address"], entry["decimals"], entry["status"],
+                    entry["metadata_url"], entry["logo_url"],
+                ),
+            )
+
         if USDT_ETH_CONTRACT and valid_evm_address(USDT_ETH_CONTRACT):
             conn.execute(
                 "UPDATE token_registry SET contract_address=%s,decimals=COALESCE(decimals,6),status='active' "
@@ -3962,7 +3993,12 @@ def list_token_registry(user: dict = Depends(current_user)):
                 token_decimals = None
             if str(r[3]).lower() == BSC_USDT_MAINNET_CONTRACT.lower():
                 token_name = "Binance-Peg BSC-USD"
-        tokens.append({"symbol":r[0],"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
+        asset_symbol = (
+            "BALMZ-BNB" if r[0] == "BALMZ" and registry_network == "bnb"
+            else "BALMZ-SOL" if r[0] == "BALMZ" and registry_network == "solana_mainnet"
+            else r[0]
+        )
+        tokens.append({"symbol":r[0],"asset_symbol":asset_symbol,"name":token_name,"network":r[2],"contract_address":r[3],"decimals":token_decimals,"coingecko_id":r[5],"status":r[6],"metadata_url":r[7],"logo_url":r[8],"wallet_network_connected":supported})
     return {"tokens":tokens,"connected_networks":sorted(networks)}
 
 @app.get("/api/v1/wallets")
