@@ -303,16 +303,19 @@ function App() {
       const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
       const liveRecord = records.find(t => t.wallet_network_connected);
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
+      const bnbMainnetContract = records.find(t => t.network === "bnb" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
       const quote = marketPrices[coin.symbol] || {};
       return {
         ...coin,
         status: coin.symbol === "BALMZ"
-          ? (mainnetContract ? "Ethereum Mainnet • contract registered" : "Ethereum Mainnet • deployment pending")
-          : coin.symbol === "BALMZ-SEP"
-            ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-            : coin.status,
-        registry: liveRecord || mainnetContract || sepoliaContract || records[0] || null,
+          ? (mainnetContract ? "Ethereum Mainnet • contract verified" : "Ethereum Mainnet • deployment pending")
+          : coin.symbol === "BALMZ-BNB"
+            ? (bnbMainnetContract ? "BNB Chain Mainnet • contract verified" : "BNB Chain Mainnet • deployment pending")
+            : coin.symbol === "BALMZ-SEP"
+              ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
+              : coin.status,
+        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || records[0] || null,
         connected: Boolean(liveRecord),
         price_usd: quote.usd == null ? null : Number(quote.usd),
         price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -1650,7 +1653,7 @@ function App() {
         {active === "BALMZ AI" ? <BalmzAI /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-SEP";
+          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP";
           const balanceKnown = Boolean(live && (!contractBasedBalmz || coin?.registry?.contract_address));
           const balance = balanceKnown ? Number(live?.balance || 0) : null;
           const value = live?.value_usd;
