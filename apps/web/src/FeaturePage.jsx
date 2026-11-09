@@ -2328,7 +2328,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
             </div>)}
           </div>
           {(walletReconciliation.exceptions || []).length > 0 && <div className="security-note">
-            **Exceptions**
+            <b>Exceptions</b>
             {(walletReconciliation.exceptions || []).map((item,index) => <div key={(item.type || "exception") + index}>
               {item.type === "reservation_mismatch"
                 ? item.asset + ": reserved " + item.reserved_balance + ", expected " + item.pending_request_reservation
