@@ -476,15 +476,15 @@ function App() {
     setAuthRestoring(false);
   }
 
-  function completeSecurityPinGate() {
-    if (!pendingPinToken) {
-      setPinError("Your secure account session is missing. Please sign in again.");
+  function completeSecurityPinGate(pinSessionToken) {
+    if (typeof pinSessionToken !== "string" || !pinSessionToken.startsWith("wwpin_")) {
+      setPinError("The backend did not issue a valid second-factor session. Please retry.");
       return;
     }
-    try { localStorage.setItem(TOKEN_KEY, pendingPinToken); }
+    try { localStorage.setItem(TOKEN_KEY, pinSessionToken); }
     catch { setPinError("Secure session storage is unavailable on this device."); return; }
     if (pendingPinUser) setUser(pendingPinUser);
-    setAccessToken(pendingPinToken);
+    setAccessToken(pinSessionToken);
     setActive("Dashboard");
     setPinGateOpen(false);
     setPendingPinToken("");
@@ -522,7 +522,7 @@ function App() {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Wallet PIN verification failed.");
-      completeSecurityPinGate();
+      completeSecurityPinGate(data.access_token);
     } catch (error) {
       setPinError(error.message || "Wallet PIN verification failed.");
       setPinInput("");
@@ -711,6 +711,27 @@ function App() {
       if (pinGateOpen && pendingPinToken) {
         if (!cancelled) setAuthRestoring(false);
         return;
+      }
+
+      if (persistedToken.startsWith("wwpin_")) {
+        try {
+          const response = await fetch(API_BASE_URL + "/api/v1/security/pin/session", {
+            headers: { Authorization: "Bearer " + persistedToken, Accept: "application/json" },
+            cache: "no-store",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data.active) {
+            if (!cancelled) {
+              setAccessToken(persistedToken);
+              if (data.user) setUser(data.user);
+              setShowLogin(false);
+              setAuthRestoring(false);
+            }
+            return;
+          }
+        } catch {}
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        persistedToken = "";
       }
 
       if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
@@ -903,7 +924,7 @@ function App() {
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
-        if (response.status === 401) {
+        if (response.status === 401 && !accessToken.startsWith("wwpin_")) {
           const freshToken = await getNeonAccessToken({ forceRefresh: true });
           if (freshToken && freshToken !== accessToken && !cancelled) {
             setAccessToken(freshToken);
@@ -1009,8 +1030,10 @@ function App() {
   }, [accessToken, performancePeriod, hasVerifiedMainnetBalance]);
 
   async function authorizedWalletFetch(url, options = {}) {
-    let token = "";
-    try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    let token = accessToken.startsWith("wwpin_") ? accessToken : "";
+    if (!token) {
+      try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    }
     token = token || accessToken || "";
     const request = currentToken => fetch(url, {
       ...options,
@@ -1021,7 +1044,7 @@ function App() {
       cache: "no-store",
     });
     let response = await request(token);
-    if (response.status === 401) {
+    if (response.status === 401 && !token.startsWith("wwpin_")) {
       let refreshed = "";
       try { refreshed = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
       if (refreshed && refreshed !== token) {
@@ -1132,7 +1155,7 @@ function App() {
         cache: "no-store",
       });
       let response = await makeRequest(token);
-      if (response.status === 401) {
+      if (response.status === 401 && !token.startsWith("wwpin_")) {
         const refreshed = await getNeonAccessToken({ forceRefresh: true });
         if (refreshed && refreshed !== token) {
           token = refreshed;
