@@ -3837,6 +3837,135 @@ def wallet_reconciliation(user: dict = Depends(current_user)):
     return wallet_reconciliation_snapshot(user)
 
 
+@app.get("/api/v1/wallet/activity-trace")
+def wallet_activity_trace(limit: int = 100, offset: int = 0, user: dict = Depends(current_user)):
+    """Chronological, wallet-scoped trace of saved chain transactions and wallet audit actions."""
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Activity trace limit must be between 1 and 100")
+    if offset < 0:
+        raise HTTPException(status_code=400, detail="Activity trace offset cannot be negative")
+    wallet_id = user["wallet_id"]
+    owner_id = user["id"]
+    with db() as conn:
+        total_row = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM transactions WHERE wallet_id=%s) +
+              (SELECT COUNT(*) FROM wallet_audit_events WHERE owner_id=%s AND wallet_id=%s)
+            """,
+            (wallet_id, owner_id, wallet_id),
+        ).fetchone()
+        total = int(total_row[0] or 0) if total_row else 0
+        rows = conn.execute(
+            """
+            SELECT id,event_type,action,resource,resource_id,asset,amount,status,
+                   tx_hash,confirmations,block_height,network,block_hash,log_index,
+                   created_at,reference,from_address,to_address,token_contract_address,details
+            FROM (
+              SELECT
+                t.id::text AS id,
+                'transaction'::text AS event_type,
+                t.type::text AS action,
+                'transaction'::text AS resource,
+                t.id::text AS resource_id,
+                t.asset::text AS asset,
+                t.amount::text AS amount,
+                t.status::text AS status,
+                t.tx_hash::text AS tx_hash,
+                COALESCE(t.confirmations,0)::integer AS confirmations,
+                t.block_height::bigint AS block_height,
+                t.network::text AS network,
+                t.block_hash::text AS block_hash,
+                t.log_index::integer AS log_index,
+                t.created_at AS created_at,
+                t.reference::text AS reference,
+                t.from_address::text AS from_address,
+                t.destination::text AS to_address,
+                CASE
+                  WHEN t.asset='USDT-BNB' AND t.network='bnb' THEN COALESCE(NULLIF(%s,''),%s)
+                  WHEN t.asset='USDT' AND t.network='ethereum' THEN COALESCE(NULLIF(%s,''),%s)
+                  WHEN t.asset='BALMZ' AND t.network='ethereum' THEN NULLIF(%s,'')
+                  WHEN t.asset='BALMZ-BNB' AND t.network='bnb' THEN NULLIF(%s,'')
+                  WHEN t.asset='BALMZ-SEP' AND t.network='sepolia' THEN NULLIF(%s,'')
+                  ELSE NULL
+                END::text AS token_contract_address,
+                COALESCE(t.description,'')::text AS details
+              FROM transactions t
+              WHERE t.wallet_id=%s
+
+              UNION ALL
+
+              SELECT
+                e.id::text AS id,
+                'wallet_action'::text AS event_type,
+                e.action::text AS action,
+                e.resource::text AS resource,
+                e.resource_id::text AS resource_id,
+                NULL::text AS asset,
+                NULL::text AS amount,
+                'recorded'::text AS status,
+                NULL::text AS tx_hash,
+                0::integer AS confirmations,
+                NULL::bigint AS block_height,
+                e.network::text AS network,
+                NULL::text AS block_hash,
+                NULL::integer AS log_index,
+                e.created_at AS created_at,
+                e.reference::text AS reference,
+                NULL::text AS from_address,
+                NULL::text AS to_address,
+                NULL::text AS token_contract_address,
+                e.details::text AS details
+              FROM wallet_audit_events e
+              WHERE e.owner_id=%s AND e.wallet_id=%s
+            ) AS wallet_activity
+            ORDER BY created_at DESC,id DESC
+            LIMIT %s OFFSET %s
+            """,
+            (
+                USDT_BSC_CONTRACT, BSC_USDT_MAINNET_CONTRACT,
+                USDT_ETH_CONTRACT, ETHEREUM_USDT_MAINNET_CONTRACT,
+                BALMZ_ETH_CONTRACT, BALMZ_BNB_CONTRACT, BALMZ_SEPOLIA_CONTRACT,
+                wallet_id, owner_id, wallet_id, limit, offset,
+            ),
+        ).fetchall()
+
+    events = [
+        {
+            "id": row[0], "event_type": row[1], "action": row[2],
+            "resource": row[3], "resource_id": row[4], "asset": row[5],
+            "amount": row[6], "status": row[7], "tx_hash": row[8],
+            "confirmations": int(row[9] or 0), "block_height": row[10],
+            "network": row[11], "block_hash": row[12], "log_index": row[13],
+            "created_at": row[14].isoformat() if row[14] else None,
+            "reference": row[15], "from_address": row[16], "to_address": row[17],
+            "token_contract_address": row[18], "details": row[19],
+            "receipt_state": (
+                "confirmed" if row[7] in {"confirmed", "settled"}
+                else "failed" if row[7] in {"failed", "rejected"}
+                else "reorged" if row[7] == "reorged"
+                else "pending" if row[1] == "transaction" and row[8]
+                else "not_broadcast" if row[1] == "transaction"
+                else "audit_record"
+            ),
+        }
+        for row in rows
+    ]
+    next_offset = offset + len(events)
+    return {
+        "events": events,
+        "pagination": {
+            "limit": limit, "offset": offset, "total": total,
+            "has_more": next_offset < total,
+            "next_offset": next_offset if next_offset < total else None,
+        },
+        "scope": "authenticated active wallet transactions and wallet audit events",
+        "sources": ["transactions", "wallet_audit_events"],
+        "chain_rpc_requeried": False,
+        "note": "This traces saved transaction evidence and application wallet audit events. It does not claim to include transactions that have not yet been imported by the configured chain synchronizers.",
+    }
+
+
 @app.get("/api/v1/wallet/audit")
 def wallet_audit(limit: int = 50, offset: int = 0, user: dict = Depends(current_user)):
     limit = max(1, min(int(limit), 100))
