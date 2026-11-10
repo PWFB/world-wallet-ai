@@ -3861,9 +3861,11 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                     (user["wallet_id"], symbol, name, balance),
                 )
             for balance, symbol in asset_balance_updates:
+                native_names = {"ETH": "Ethereum", "BNB": "BNB", "BTC": "Bitcoin"}
                 conn.execute(
-                    "UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s",
-                    (balance, user["wallet_id"], symbol),
+                    "INSERT INTO assets(wallet_id,symbol,name,balance,price_usd) VALUES(%s,%s,%s,%s,0) "
+                    "ON CONFLICT(wallet_id,symbol) DO UPDATE SET balance=EXCLUDED.balance,name=EXCLUDED.name",
+                    (user["wallet_id"], symbol, native_names.get(symbol, symbol), balance),
                 )
             conn.commit()
 
