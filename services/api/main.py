@@ -498,6 +498,16 @@ def init_db():
         ALTER TABLE wallet_security_pin_sessions ADD COLUMN IF NOT EXISTS token_hash TEXT;
         CREATE UNIQUE INDEX IF NOT EXISTS wallet_security_pin_sessions_token_hash_idx
           ON wallet_security_pin_sessions(token_hash) WHERE token_hash IS NOT NULL;
+        CREATE TABLE IF NOT EXISTS wallet_security_pin_sessions_v2(
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT NOT NULL UNIQUE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMPTZ NOT NULL,
+          revoked_at TIMESTAMPTZ
+        );
+        CREATE INDEX IF NOT EXISTS wallet_security_pin_sessions_v2_user_idx
+          ON wallet_security_pin_sessions_v2(user_id,expires_at DESC);
         CREATE TABLE IF NOT EXISTS wallet_security_pin_recovery(
           id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1000,14 +1010,13 @@ def current_user_without_pin(authorization: str | None = Header(default=None)):
 
 
 def _create_pin_session(conn, user_id: str):
-    # Return a separate opaque second-factor bearer token. Persist only its
-    # digest so a first-factor Neon JWT cannot reuse this PIN verification.
+    # Each device gets its own opaque second-factor bearer. Persist only the
+    # digest; PIN verification on one device never overwrites another device.
     session_token = "wwpin_" + secrets.token_urlsafe(32)
     conn.execute(
-        "INSERT INTO wallet_security_pin_sessions(user_id,token_hash,expires_at) "
-        "VALUES(%s,%s,NOW()+INTERVAL '12 hours') "
-        "ON CONFLICT(user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,created_at=NOW(),expires_at=EXCLUDED.expires_at",
-        (user_id, sha(session_token)),
+        "INSERT INTO wallet_security_pin_sessions_v2(id,user_id,token_hash,expires_at) "
+        "VALUES(%s,%s,%s,NOW()+INTERVAL '12 hours')",
+        ("wwpins_" + secrets.token_urlsafe(18), user_id, sha(session_token)),
     )
     return session_token
 
@@ -1090,10 +1099,10 @@ def current_user(authorization: str | None = Header(default=None)):
             row = conn.execute(
                 """
                 SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,w.wallet_number
-                FROM wallet_security_pin_sessions s
+                FROM wallet_security_pin_sessions_v2 s
                 JOIN users u ON u.id=s.user_id
                 LEFT JOIN wallets w ON w.id=u.active_wallet_id
-                WHERE s.token_hash=%s AND s.expires_at>NOW()
+                WHERE s.token_hash=%s AND s.expires_at>NOW() AND s.revoked_at IS NULL
                 """,
                 (sha(token),),
             ).fetchone()
@@ -1138,9 +1147,12 @@ def wallet_security_pin_status(
         raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
     try:
         with db() as conn:
-            # Lock the account on each fresh application sign-in. A new PIN check
-            # is required after the user closes/reopens the authenticated session.
-            conn.execute("DELETE FROM wallet_security_pin_sessions WHERE user_id=%s", (user["id"],))
+            # Remove only expired/revoked second-factor sessions. A new device
+            # must not invalidate a different device's already verified session.
+            conn.execute(
+                "DELETE FROM wallet_security_pin_sessions_v2 WHERE user_id=%s AND (expires_at<=NOW() OR revoked_at IS NOT NULL)",
+                (user["id"],),
+            )
             row = conn.execute(
                 "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
                 (user["id"],),
@@ -1168,7 +1180,8 @@ def wallet_security_pin_lock(
         token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
         with db() as conn:
             conn.execute(
-                "DELETE FROM wallet_security_pin_sessions WHERE user_id=%s AND token_hash=%s",
+                "UPDATE wallet_security_pin_sessions_v2 SET revoked_at=NOW() "
+                "WHERE user_id=%s AND token_hash=%s AND revoked_at IS NULL",
                 (user["id"], sha(token)),
             )
             conn.commit()
