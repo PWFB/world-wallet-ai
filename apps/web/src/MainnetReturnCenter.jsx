@@ -57,16 +57,14 @@ export default function MainnetReturnCenter({
   const [auditError, setAuditError] = useState("");
 
   function persistDestinations(update) {
-    setDestinations(current => {
-      const next = typeof update === "function" ? update(current) : update;
-      try {
-        const saved = JSON.parse(localStorage.getItem("world_wallet_okx_receiving_addresses_v1") || "{}");
-        const store = saved && typeof saved === "object" ? saved : {};
-        store[activeWalletId] = next;
-        localStorage.setItem("world_wallet_okx_receiving_addresses_v1", JSON.stringify(store));
-      } catch {}
-      return next;
-    });
+    const next = typeof update === "function" ? update(destinations) : update;
+    setDestinations(next);
+    try {
+      const saved = JSON.parse(localStorage.getItem("world_wallet_okx_receiving_addresses_v1") || "{}");
+      const store = saved && typeof saved === "object" ? saved : {};
+      store[activeWalletId] = next;
+      localStorage.setItem("world_wallet_okx_receiving_addresses_v1", JSON.stringify(store));
+    } catch {}
   }
 
   useEffect(() => {
