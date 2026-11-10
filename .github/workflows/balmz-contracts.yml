@@ -35,7 +35,7 @@ jobs:
         with:
           node-version: 22
       - name: Install contract dependencies
-        run: npm install
+        run: npm ci
       - name: Compile BALMZ contracts
         run: npm run compile
       - name: Run BALMZ contract tests
