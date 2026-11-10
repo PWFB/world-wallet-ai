@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 import {
   availableAssetBalance,
@@ -29,6 +29,8 @@ function shorten(value) {
 export default function MainnetReturnCenter({
   assets = [],
   sourceAddresses = [],
+  accessToken = "",
+  apiBaseUrl = "",
   wallet = null,
   externalProvider = null,
   onConnectWalletConnect,
@@ -40,6 +42,37 @@ export default function MainnetReturnCenter({
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [balanceAudit, setBalanceAudit] = useState(null);
+  const [auditBusy, setAuditBusy] = useState(false);
+  const [auditError, setAuditError] = useState("");
+
+
+  async function refreshBalanceVerification() {
+    if (!accessToken || !apiBaseUrl) {
+      setAuditError("Sign in to verify this wallet's live Mainnet balances.");
+      return;
+    }
+    setAuditBusy(true);
+    setAuditError("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/wallet/balance-verification", {
+        headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" },
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Live balance verification could not be completed.");
+      setBalanceAudit(data);
+    } catch (cause) {
+      setAuditError(cause?.message || "Live balance verification failed.");
+      setBalanceAudit(null);
+    } finally {
+      setAuditBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    refreshBalanceVerification();
+  }, [String(wallet?.wallet_id || wallet?.id || ""), accessToken, apiBaseUrl]);
 
   async function connectEvm(network) {
     setBusy(network);
@@ -145,11 +178,24 @@ export default function MainnetReturnCenter({
     }
   }
 
-  const rows = (Array.isArray(assets) ? assets : []).map(asset => ({
-    asset,
-    network: getMainnetAssetNetwork(asset),
-    balance: availableAssetBalance(asset),
-  })).filter(row => row.network && row.network !== "sepolia" && row.network !== "solana_devnet");
+  const rows = balanceAudit
+    ? (Array.isArray(balanceAudit.assets) ? balanceAudit.assets : []).map(audit => ({
+        asset: {
+          symbol: audit.asset,
+          name: audit.name,
+          network: audit.network,
+          available_balance: audit.verified ? audit.available_balance : null,
+        },
+        network: audit.network,
+        balance: audit.verified ? availableAssetBalance({ available_balance: audit.available_balance }) : null,
+        audit,
+      }))
+    : (Array.isArray(assets) ? assets : []).map(asset => ({
+        asset,
+        network: getMainnetAssetNetwork(asset),
+        balance: null,
+        audit: null,
+      })).filter(row => row.network && row.network !== "sepolia" && row.network !== "solana_devnet");
 
   const sourceCountByNetwork = Object.fromEntries(NETWORKS.map(network => [
     network.key,
@@ -220,6 +266,36 @@ export default function MainnetReturnCenter({
 
     <article className="panel action-panel" style={panel}>
       <div className="panel-head">
+        <div><h2>Verified available balances</h2><span>Fresh read-only Mainnet RPC checks across every eligible attached address.</span></div>
+        <button type="button" className="secondary" disabled={auditBusy} onClick={refreshBalanceVerification}>{auditBusy ? "Verifying…" : "↻ Verify balances"}</button>
+      </div>
+      {auditError && <div role="alert" className="feature-error">{auditError}</div>}
+      {!balanceAudit && !auditBusy && <div className="security-note">No live balance verification is available yet. Start the check before relying on displayed balances for a return.</div>}
+      {auditBusy && <div role="status" className="feature-loading">Reading the selected Mainnet RPCs and checking saved ledger balances…</div>}
+      {balanceAudit && <>
+        <div className="feature-grid">
+          <div className="panel action-panel" style={{ padding: 14 }}><small>Verification result</small><b>{balanceAudit.status.replaceAll("_", " ")}</b></div>
+          <div className="panel action-panel" style={{ padding: 14 }}><small>Addresses checked</small><b>{Object.values(balanceAudit.addresses || {}).reduce((sum, item) => sum + Number(item.verified_address_count || 0), 0)}</b></div>
+          <div className="panel action-panel" style={{ padding: 14 }}><small>Observed</small><b>{balanceAudit.observed_at ? new Date(balanceAudit.observed_at).toLocaleString() : "Unavailable"}</b></div>
+        </div>
+        {balanceAudit.warnings?.map((warning, index) => <div className="security-note" key={index}>{warning}</div>)}
+        <div className="tool-list">
+          {(balanceAudit.assets || []).map((item, index) => <div className="tool-row" key={item.network + ":" + item.asset + ":" + index}>
+            <div style={{ minWidth: 0 }}>
+              <b>{item.asset} · {item.network_label}</b>
+              <small>Available: {item.verified ? formatAmount(item.available_balance) + " " + item.asset : "Not verified"}</small>
+              <small>Chain balance: {item.verified ? formatAmount(item.chain_balance) + " " + item.asset : "Unavailable"} · reserved: {formatAmount(item.reserved_balance)} {item.asset}</small>
+              <small>Check: {item.status.replaceAll("_", " ")} · {item.source || "No verified source"}</small>
+              {item.matches_ledger === false && <small>The verified chain balance differs from the ledger. Do not transfer until reconciled.</small>}
+            </div>
+          </div>)}
+        </div>
+      </>}
+      <div className="security-note">A verified chain balance and an available ledger balance are different checks. The return button stays disabled when the two disagree, when the balance is not verified, or when the selected asset has no supported signing route.</div>
+    </article>
+
+    <article className="panel action-panel" style={panel}>
+      <div className="panel-head">
         <div><h2>Available Mainnet assets</h2><span>Available balances supplied by the active World Wallet snapshot; no estimated prices or synthetic balances are used.</span></div>
         <span className="presale-status-pill">{rows.length} asset entries</span>
       </div>
@@ -235,6 +311,8 @@ export default function MainnetReturnCenter({
             String(item.address || "").toLowerCase() !== destination.toLowerCase()
           );
           const canPrepare = balance > 0 &&
+            audit?.verified === true &&
+            audit?.matches_ledger === true &&
             Boolean(destination) &&
             Boolean(source) &&
             isSupportedEvmReturnAsset(symbol, network);
@@ -246,7 +324,11 @@ export default function MainnetReturnCenter({
             ? "Solana Mainnet transfer and receipt settlement are not integrated yet."
             : network === "bitcoin"
               ? "Bitcoin source-signing for this return flow needs a separate verified OKX/Bitcoin settlement integration."
-              : !isSupportedEvmReturnAsset(symbol, network)
+              : !audit || audit.verified !== true
+                ? "Run live Mainnet balance verification before preparing a return."
+                : audit.matches_ledger !== true
+                  ? "Live chain balance does not match the wallet ledger. Reconcile before transferring."
+                  : !isSupportedEvmReturnAsset(symbol, network)
                 ? "This asset is not enabled for the current verified EVM return adapter."
                 : balance <= 0
                   ? "No available balance in the current snapshot."
@@ -260,7 +342,8 @@ export default function MainnetReturnCenter({
           return <div className="tool-row" key={network + ":" + symbol + ":" + index}>
             <div style={{ minWidth: 0 }}>
               <b>{symbol} · {MAINNET_LABELS[network]}</b>
-              <small>Available: {formatAmount(balance)} {symbol}</small>
+              <small>Verified available: {balance === null ? "Not verified" : formatAmount(balance) + " " + symbol}</small>
+              {audit && <small>Balance check: {audit.status.replaceAll("_", " ")} · ledger {audit.ledger_available_balance == null ? "not recorded" : formatAmount(audit.ledger_available_balance) + " " + symbol}</small>}
               <small>To: <code>{shorten(destination)}</code></small>
               {reason && <small>{reason}</small>}
             </div>
