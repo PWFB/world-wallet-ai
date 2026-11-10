@@ -88,6 +88,14 @@ test("BALMZ presale offers wallet-linked early-access registration without enabl
   assert.match(featureSource, /Presale not open/);
 });
 
+test("WizzU Helper is discoverable and opens the guided wallet verification workflow", () => {
+  assert.ok(WALLET_NAVIGATION.EXPLORE.includes("WizzU Helper"));
+  assert.ok(NAVIGATION_ICONS["WizzU Helper"]);
+  assert.match(featureSource, /active === "WizzU Helper"/);
+  assert.match(featureSource, /WalletWizard/);
+  assert.match(appSource, /WizzU Helper/);
+});
+
 test("BALMZ Token Mining is discoverable and has a genuine early-access registration workflow", () => {
   assert.ok(WALLET_NAVIGATION.EXPLORE.includes("Token Mining"));
   assert.ok(ROOT_SHORTCUTS.includes("Token Mining"));
