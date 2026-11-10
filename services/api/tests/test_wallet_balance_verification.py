@@ -56,7 +56,7 @@ class WalletBalanceVerificationTests(unittest.TestCase):
             patch.object(main, "db", return_value=FakeDB(connection)),
             patch.object(main, "ETH_RPC_URL", "https://eth-rpc.invalid"),
             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1),
-            patch.object(main, "evm_balance", return_value=2.5),
+            patch.object(main, "rpc_call", return_value="0x" + format(int(Decimal("2.5") * (Decimal(10) ** 18)), "064x")),
             patch.object(main, "wallet_sync_token_rows", return_value=[]),
         ):
             result = main.wallet_balance_verification_snapshot(user)
