@@ -11,6 +11,9 @@ const OKXWalletInspector = lazy(() => import("./OKXWalletInspector.jsx"));
 const TokenInteractionAudit = lazy(() => import("./TokenInteractionAudit.jsx"));
 const FreeBalmzMining = lazy(() => import("./FreeBalmzMining.jsx"));
 const MainnetReturnCenter = lazy(() => import("./MainnetReturnCenter.jsx"));
+const ActivityTrace = lazy(() => import("./ActivityTrace.jsx"));
+const WalletWizard = lazy(() => import("./WalletWizard.jsx"));
+const ReceiptCenter = lazy(() => import("./ReceiptCenter.jsx"));
 
 // Load the WalletConnect SDK only after the user explicitly starts a connection.
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
@@ -1567,6 +1570,10 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       setActive("Send");
     }}
   />;
+
+  if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
+  if (active === "Wallet Wizard") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
+  if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
 
   if (active === "Wallet Safety") return <WalletSafetyLayer />;
   if (active === "OKX Wallet Inspector") return <OKXWalletInspector accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
