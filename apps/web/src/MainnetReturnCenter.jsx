@@ -38,13 +38,45 @@ export default function MainnetReturnCenter({
   onPrepareTransfer,
   setActive,
 }) {
-  const [destinations, setDestinations] = useState({});
+  const activeWalletId = String(wallet?.wallet_id || wallet?.id || "");
+  const [destinations, setDestinations] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("world_wallet_okx_receiving_addresses_v1") || "{}");
+      return saved && typeof saved === "object" && saved[activeWalletId] && typeof saved[activeWalletId] === "object"
+        ? saved[activeWalletId]
+        : {};
+    } catch {
+      return {};
+    }
+  });
   const [busy, setBusy] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [balanceAudit, setBalanceAudit] = useState(null);
   const [auditBusy, setAuditBusy] = useState(false);
   const [auditError, setAuditError] = useState("");
+
+  function persistDestinations(update) {
+    setDestinations(current => {
+      const next = typeof update === "function" ? update(current) : update;
+      try {
+        const saved = JSON.parse(localStorage.getItem("world_wallet_okx_receiving_addresses_v1") || "{}");
+        const store = saved && typeof saved === "object" ? saved : {};
+        store[activeWalletId] = next;
+        localStorage.setItem("world_wallet_okx_receiving_addresses_v1", JSON.stringify(store));
+      } catch {}
+      return next;
+    });
+  }
+
+  useEffect(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem("world_wallet_okx_receiving_addresses_v1") || "{}");
+      setDestinations(saved?.[activeWalletId] && typeof saved[activeWalletId] === "object" ? saved[activeWalletId] : {});
+    } catch {
+      setDestinations({});
+    }
+  }, [activeWalletId]);
 
 
   async function refreshBalanceVerification() {
@@ -116,7 +148,7 @@ export default function MainnetReturnCenter({
       }
 
       const discovered = connections.length ? connections : [selected];
-      setDestinations(current => ({
+      persistDestinations(current => ({
         ...current,
         ...Object.fromEntries(discovered.map(item => [item.network, item.address])),
       }));
@@ -148,7 +180,7 @@ export default function MainnetReturnCenter({
       }
       const address = normalizeOkxBitcoinAccount(result);
       if (!address) throw new Error("OKX did not return a valid Bitcoin Mainnet receiving address.");
-      setDestinations(current => ({ ...current, bitcoin: address }));
+      persistDestinations(current => ({ ...current, bitcoin: address }));
       setMessage("Bitcoin Mainnet receiving address read from OKX Wallet.");
     } catch (cause) {
       setError(cause?.message || "Could not read the OKX Bitcoin address.");
@@ -169,7 +201,7 @@ export default function MainnetReturnCenter({
       const result = await provider.connect();
       const address = normalizeOkxSolanaAccount(result);
       if (!address) throw new Error("OKX did not return a valid Solana Mainnet public key.");
-      setDestinations(current => ({ ...current, solana_mainnet: address }));
+      persistDestinations(current => ({ ...current, solana_mainnet: address }));
       setMessage("Solana Mainnet receiving address read from OKX Wallet.");
     } catch (cause) {
       setError(cause?.message || "Could not read the OKX Solana address.");
@@ -355,7 +387,7 @@ export default function MainnetReturnCenter({
 
     <article className="panel action-panel" style={panel}>
       <h2>Signing and settlement controls</h2>
-      <p className="muted">A supported EVM return opens the existing Send review with the selected source, network and OKX destination filled in. You still enter the amount, inspect the destination and approve the transaction in OKX. World Wallet AI verifies the returned transaction hash before reconciling wallet accounting.</p>
+      <p className="muted">A supported EVM return opens the existing Send review with the selected source, network and OKX destination filled in. You still enter the amount, inspect the destination and approve the transaction in the connected source wallet. OKX remains the receiving destination. World Wallet AI verifies the returned transaction hash before reconciling wallet accounting.</p>
       <div className="security-note">This is not an automatic sweep. A wallet owner must approve each transfer. Leave enough native ETH or BNB for gas. A transfer is not complete merely because it was prepared or submitted.</div>
       <div className="security-note">Bitcoin and Solana receiving addresses can be displayed, but their source signing and backend receipt-settlement paths are not enabled in this return workflow. Unsupported assets remain blocked. Sepolia and Devnet are excluded.</div>
       <div className="security-note">Active wallet: {wallet?.wallet_number || wallet?.wallet_id || wallet?.id || "Unavailable"} · Mainnet only.</div>
