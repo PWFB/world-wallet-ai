@@ -5947,127 +5947,295 @@ def inspect_wallet_address(request: AddressInspectRequest, user: dict = Depends(
 
 @app.get("/api/v1/wallet/proof-of-reserves")
 def wallet_proof_of_reserves(user: dict = Depends(current_user)):
+    # Keep every attached address visible, but attribute reserve balances only
+    # to addresses that have passed the wallet's explicit ownership challenge.
     addresses = configured_addresses(user)
     if not addresses:
         raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
+
+    verified_addresses = []
+    unverified_addresses = []
+    registry = []
+    warnings = []
+    try:
+        with db() as conn:
+            owned_rows = conn.execute(
+                "SELECT network,address,label,ownership_verified FROM wallet_addresses "
+                "WHERE wallet_id=%s ORDER BY network,CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END,created_at,address",
+                (user["wallet_id"],),
+            ).fetchall()
+            registry_rows = conn.execute(
+                "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
+                "ORDER BY network,symbol"
+            ).fetchall()
+        verified_keys = {
+            (str(row[0] or "").strip().lower(), str(row[1] or "").strip().lower())
+            for row in owned_rows if bool(row[3])
+        }
+        for item in addresses:
+            network = str(item["network"]).strip().lower().replace("-", "_")
+            address = str(item["address"]).strip()
+            owned = (network, address.lower()) in verified_keys
+            inventory_item = {
+                "network": network,
+                "address": address,
+                "label": item.get("label"),
+                "ownership_verified": owned,
+            }
+            if owned:
+                verified_addresses.append(inventory_item)
+            else:
+                unverified_addresses.append(inventory_item)
+        registry = [
+            {
+                "symbol": str(row[0] or "").upper(),
+                "name": str(row[1] or row[0] or "Token"),
+                "network": str(row[2] or "").lower(),
+                "contract_address": str(row[3] or "").strip() or None,
+                "decimals": int(row[4]) if row[4] is not None else None,
+                "status": str(row[5] or "pending"),
+            }
+            for row in registry_rows
+        ]
+    except Exception as exc:
+        logger.warning("Proof-of-reserves inventory lookup failed: error_type=%s", type(exc).__name__)
+        warnings.append("Wallet ownership or token registry records could not be loaded; reserves are not attributed.")
+
     reserves = []
     testnet_assets = []
     token_supplies = []
-    warnings = []
     excluded_networks = []
-    for item in addresses:
-        network = str(item["network"]).strip().lower().replace("-", "_")
+    failed_networks = set()
+    failed_contracts = set()
+    network_blocks = {}
+
+    for item in verified_addresses:
+        network = item["network"]
         address = item["address"]
-        if network == "solana_mainnet":
-            # Native SOL is production-network evidence, kept distinct from the
-            # Devnet BALMZ token and never interpreted as BALMZ presale reserves.
-            try:
-                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
-                native_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
-                slot = rpc_call(SOLANA_MAINNET_RPC_URL, "getSlot", [{"commitment": "confirmed"}])
-                reserves.append({
-                    "network": "solana_mainnet", "address": address, "asset": "SOL",
-                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
-                    "block_number": slot, "source": "Solana Mainnet getBalance (confirmed)",
-                })
-            except Exception:
-                warnings.append("solana-mainnet: native SOL balance unavailable")
+        if network == "sepolia":
+            excluded_networks.append("sepolia")
             continue
         if network == "solana_devnet":
-            # Keep testnet holdings separate from production reserve figures.
             solana_rpc = SOLANA_DEVNET_RPC_URL or "https://api.devnet.solana.com"
             try:
                 require_solana_rpc_cluster(solana_rpc, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
                 native_result = rpc_call(solana_rpc, "getBalance", [address, {"commitment": "confirmed"}])
+                lamports = native_result.get("value") if isinstance(native_result, dict) else None
+                if not isinstance(lamports, int) or lamports < 0:
+                    raise ValueError("Invalid Solana Devnet native balance")
                 testnet_assets.append({
-                    "network": "solana-devnet", "address": address, "asset": "SOL-DEVNET",
-                    "balance": int((native_result or {}).get("value", 0)) / 1_000_000_000,
-                    "block_number": None, "source": "Solana Devnet getBalance (confirmed)",
+                    "network": "solana_devnet", "address": address, "asset": "SOL-DEVNET",
+                    "balance": lamports / 1_000_000_000, "block_number": None,
+                    "source": "Solana Devnet getBalance (confirmed)", "verified": True,
                 })
             except Exception:
                 warnings.append("solana-devnet: native SOL balance unavailable")
             try:
                 token_balance = solana_spl_token_balance(address)
                 testnet_assets.append({
-                    "network": "solana-devnet", "address": address, "asset": "BALMZ-SOL-DEVNET",
+                    "network": "solana_devnet", "address": address, "asset": "BALMZ-SOL-DEVNET",
                     "balance": token_balance, "contract_address": BALMZ_SOLANA_DEVNET_MINT,
                     "block_number": None, "source": "Solana Devnet SPL token account balance (confirmed)",
+                    "verified": True,
                 })
             except Exception:
                 warnings.append("solana-devnet BALMZ: wallet token balance unavailable")
-            try:
-                supply_response = rpc_call(solana_rpc, "getTokenSupply", [BALMZ_SOLANA_DEVNET_MINT, {"commitment": "confirmed"}])
-                supply = (supply_response or {}).get("value") or {}
-                supply_decimals = int(supply.get("decimals", -1))
-                raw_supply = str(supply.get("amount", ""))
-                if supply_decimals != BALMZ_SOLANA_DEVNET_DECIMALS or not raw_supply.isdigit():
-                    raise ValueError("Unexpected BALMZ mint supply response")
-                total_supply = float(supply.get("uiAmountString") or (int(raw_supply) / (10 ** supply_decimals)))
-                token_supplies.append({
-                    "symbol": "BALMZ-SOL-DEVNET", "network": "solana-devnet",
-                    "mint_address": BALMZ_SOLANA_DEVNET_MINT, "decimals": supply_decimals,
-                    "total_supply": total_supply, "raw_amount": raw_supply,
-                    "source": "Solana Devnet getTokenSupply (confirmed)", "commitment": "confirmed",
-                })
-            except Exception:
-                warnings.append("solana-devnet BALMZ: on-chain total supply unavailable")
             continue
-        if network == "sepolia":
-            excluded_networks.append("sepolia")
-            continue
+
         try:
             if network == "bitcoin":
+                balance = btc_balance(address)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("Bitcoin provider returned an invalid balance")
                 reserves.append({
                     "network": network, "address": address, "asset": "BTC",
-                    "balance": btc_balance(address), "block_number": None,
-                    "source": "Blockstream confirmed UTXO data",
+                    "balance": float(balance), "block_number": None,
+                    "source": "Blockstream confirmed UTXO data", "verified": True,
                 })
                 continue
+            if network == "solana_mainnet":
+                require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+                native_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [address, {"commitment": "finalized"}])
+                lamports = native_result.get("value") if isinstance(native_result, dict) else None
+                slot = rpc_call(SOLANA_MAINNET_RPC_URL, "getSlot", [{"commitment": "finalized"}])
+                if not isinstance(lamports, int) or lamports < 0 or not isinstance(slot, int):
+                    raise ValueError("Solana Mainnet returned invalid finalized balance data")
+                reserves.append({
+                    "network": network, "address": address, "asset": "SOL",
+                    "balance": lamports / 1_000_000_000, "block_number": slot,
+                    "source": "Solana Mainnet getBalance (finalized)", "verified": True,
+                })
+                if BALMZ_SOLANA_MAINNET_MINT:
+                    mint_result = _verify_balmz_solana_mainnet_mint(BALMZ_SOLANA_MAINNET_MINT)
+                    if not mint_result.get("production_mint_verified"):
+                        raise ValueError("Production BALMZ Solana mint is not verified")
+                    balmz_balance = _read_verified_solana_spl_balance(
+                        address, BALMZ_SOLANA_MAINNET_MINT,
+                        rpc_url=SOLANA_MAINNET_RPC_URL,
+                        expected_genesis_hash=SOLANA_MAINNET_GENESIS_HASH,
+                        cluster_name="Solana Mainnet",
+                        decimals=BALMZ_SOLANA_DEVNET_DECIMALS,
+                    )
+                    reserves.append({
+                        "network": network, "address": address, "asset": "BALMZ-SOL",
+                        "balance": float(balmz_balance), "contract_address": BALMZ_SOLANA_MAINNET_MINT,
+                        "block_number": slot, "source": "Verified Solana Mainnet BALMZ mint and finalized SPL accounts",
+                        "verified": True,
+                    })
+                continue
+
             rpc = {"ethereum": ETH_RPC_URL, "bnb": BSC_RPC_URL}.get(network)
             if not rpc:
-                warnings.append(f"{network}: RPC is not configured")
+                failed_networks.add(network)
+                warnings.append(f"{network}: Mainnet RPC is not configured")
                 continue
             if network == "ethereum":
                 require_ethereum_mainnet_rpc(rpc)
             elif network == "bnb":
                 require_bnb_rpc(rpc)
+            else:
+                failed_networks.add(network)
+                warnings.append(f"{network}: unsupported reserve network")
+                continue
             raw = rpc_call(rpc, "eth_getBalance", [address, "latest"])
+            if not isinstance(raw, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", raw):
+                raise ValueError("EVM RPC returned an invalid native balance")
             height = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
             reserves.append({
                 "network": network, "address": address, "asset": "BNB" if network == "bnb" else "ETH",
-                "balance": int(raw or "0x0", 16) / 10**18, "block_number": height,
-                "source": "configured JSON-RPC latest state",
+                "balance": int(raw, 16) / 10**18, "block_number": height,
+                "source": "chain-verified JSON-RPC latest state", "verified": True,
             })
-            with db() as conn:
-                tokens = conn.execute(
-                    "SELECT symbol,contract_address,decimals FROM token_registry "
-                    "WHERE network=%s AND status='active' AND contract_address IS NOT NULL AND decimals IS NOT NULL",
-                    (network,),
-                ).fetchall()
-            for symbol, contract, decimals in tokens:
-                asset_symbol = wallet_asset_symbol(symbol, network)
-                try:
-                    reserves.append({
-                        "network": network, "address": address, "asset": asset_symbol,
-                        "balance": erc20_balance(
-                            rpc, contract, address,
-                            verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else int(decimals),
-                        ),
-                        "contract_address": contract, "block_number": height,
-                        "source": "configured ERC-20 contract balanceOf",
-                    })
-                except Exception:
-                    warnings.append(f"{network} {asset_symbol}: token balance unavailable")
-        except Exception:
+            network_blocks[network] = (rpc, height)
+        except Exception as exc:
+            failed_networks.add(network)
+            logger.warning("Proof-of-reserves chain lookup failed: network=%s error_type=%s", network, type(exc).__name__)
             warnings.append(f"{network}: on-chain lookup failed")
+
+    # Enumerate every registered token contract on Ethereum/BNB, including
+    # pending/unconfigured records. Only active contracts with code and verified
+    # decimals are counted as reserves.
+    for token in registry:
+        network = token["network"]
+        if network not in {"ethereum", "bnb"}:
+            continue
+        contract = token["contract_address"]
+        if not contract:
+            continue
+        rpc = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL
+        addresses_for_network = [item["address"] for item in verified_addresses if item["network"] == network]
+        if not rpc or not addresses_for_network:
+            continue
+        contract_key = (network, contract.lower())
+        if token["status"] != "active":
+            failed_contracts.add(contract_key)
+            continue
+        try:
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc)
+            else:
+                require_bnb_rpc(rpc)
+            code = rpc_call(rpc, "eth_getCode", [contract, "latest"])
+            if not isinstance(code, str) or code in {"0x", "0x0"}:
+                raise ValueError("Token address has no contract bytecode")
+            decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
+            height = _hex_int(rpc_call(rpc, "eth_blockNumber", []))
+            for address in addresses_for_network:
+                balance = erc20_balance(rpc, contract, address, decimals)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("Token contract returned an invalid balance")
+                reserves.append({
+                    "network": network,
+                    "address": address,
+                    "asset": wallet_asset_symbol(token["symbol"], network),
+                    "balance": float(balance),
+                    "contract_address": contract,
+                    "decimals": decimals,
+                    "block_number": height,
+                    "source": "verified ERC-20 contract balanceOf",
+                    "verified": True,
+                })
+        except Exception as exc:
+            failed_contracts.add(contract_key)
+            logger.warning("Proof-of-reserves token lookup failed: network=%s asset=%s error_type=%s", network, token["symbol"], type(exc).__name__)
+            warnings.append(f"{network} {token['symbol']}: token contract or balance unavailable")
+
+    # Asset catalogue coverage: every listed asset appears, even when the
+    # token has not yet been deployed, registered, or supported by a chain reader.
+    catalogue = [
+        ("BTC", "Bitcoin", "bitcoin", "native"),
+        ("ETH", "Ethereum", "ethereum", "native"),
+        ("BNB", "BNB Chain", "bnb", "native"),
+        ("USDT", "Tether USD", "ethereum", "erc20"),
+        ("USDT-BNB", "Tether USD (BNB Chain)", "bnb", "erc20"),
+        ("USDC", "USD Coin", "ethereum", "erc20"),
+        ("USDC-BNB", "USD Coin (BNB Chain)", "bnb", "erc20"),
+        ("SOL", "Solana", "solana_mainnet", "native"),
+        ("BALMZ", "BALMZ Token (Ethereum)", "ethereum", "erc20"),
+        ("BALMZ-BNB", "BALMZ Token (BNB Chain)", "bnb", "erc20"),
+        ("BALMZ-SOL", "BALMZ Token (Solana Mainnet)", "solana_mainnet", "spl"),
+        ("XRP", "XRP", "xrp", "unsupported"),
+        ("ADA", "Cardano", "cardano", "unsupported"),
+        ("LTC", "Litecoin", "litecoin", "unsupported"),
+        ("DOGE", "Dogecoin", "dogecoin", "unsupported"),
+    ]
+    catalog_assets = []
+    for symbol, name, network, kind in catalogue:
+        matching = [item for item in reserves if item["asset"] == symbol]
+        token_matches = [item for item in registry if item["symbol"] == symbol.replace("-BNB", "") and item["network"] == network]
+        contract_addresses = sorted({item["contract_address"] for item in token_matches if item.get("contract_address")})
+        if matching:
+            status = "verified_on_chain"
+        elif kind == "unsupported":
+            status = "network_adapter_not_configured"
+        elif kind in {"erc20", "spl"} and not contract_addresses:
+            status = "contract_not_configured"
+        elif network in failed_networks:
+            status = "network_unverified"
+        elif any((network, contract.lower()) in failed_contracts for contract in contract_addresses):
+            status = "contract_or_balance_unverified"
+        else:
+            status = "balance_not_observed"
+        catalog_assets.append({
+            "asset": symbol,
+            "name": name,
+            "network": network,
+            "status": status,
+            "verified": bool(matching),
+            "contract_addresses": contract_addresses,
+            "reserve_rows": len(matching),
+            "note": "Reserve rows are on-chain verified." if matching else "No verified Mainnet reserve row is available for this asset.",
+        })
+
+    smart_contracts = [
+        {
+            "symbol": item["symbol"],
+            "name": item["name"],
+            "network": item["network"],
+            "contract_address": item["contract_address"],
+            "decimals": item["decimals"],
+            "registry_status": item["status"],
+            "verified": bool(item["contract_address"] and item["status"] == "active" and (item["network"], item["contract_address"].lower()) not in failed_contracts),
+        }
+        for item in registry if item["contract_address"]
+    ]
+    warnings = list(dict.fromkeys(warnings))
     return {
-        "status": "partial" if warnings else "snapshot",
-        "scope": "Connected public addresses for this authenticated wallet only",
+        "status": "complete" if not warnings and not unverified_addresses and all(item["verified"] for item in catalog_assets) else "partial",
+        "scope": "All attached addresses and registered token contracts for this authenticated wallet; only ownership-verified addresses contribute to reserves.",
         "as_of": datetime.now(timezone.utc).isoformat(),
-        "reserves": reserves, "testnet_assets": testnet_assets, "token_supplies": token_supplies,
-        "warnings": warnings, "excluded_networks": sorted(set(excluded_networks)),
-        "audited": False, "liabilities_included": False,
-        "note": "This is an on-chain asset snapshot, not an audited proof of reserves or solvency attestation. It excludes platform-wide customer liabilities, off-chain assets, and ownership proof.",
+        "reserves": reserves,
+        "catalog_assets": catalog_assets,
+        "smart_contracts": smart_contracts,
+        "address_inventory": verified_addresses + unverified_addresses,
+        "unverified_addresses": unverified_addresses,
+        "testnet_assets": testnet_assets,
+        "token_supplies": token_supplies,
+        "warnings": warnings,
+        "excluded_networks": sorted(set(excluded_networks)),
+        "audited": False,
+        "liabilities_included": False,
+        "note": "This is a read-only on-chain asset inventory, not an audited proof of reserves or solvency attestation. It excludes platform-wide customer liabilities and off-chain assets. Unknown or unsupported assets remain explicitly unverified and are never assigned a fabricated balance.",
     }
 
 
