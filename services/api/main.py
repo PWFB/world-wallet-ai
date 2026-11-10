@@ -3160,6 +3160,11 @@ def wallet_balance_verification_snapshot(user: dict):
                     if not isinstance(lamports, int) or lamports < 0:
                         raise ValueError("Solana Mainnet returned an invalid native balance")
                     total += Decimal(lamports) / (Decimal(10) ** 9)
+                elif network in {"ethereum", "bnb"}:
+                    raw_balance = rpc_call(config["rpc"], "eth_getBalance", [address, "latest"])
+                    if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", raw_balance):
+                        raise ValueError("EVM RPC returned an invalid native balance")
+                    total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** 18)
                 else:
                     balance = config["native_reader"](config["rpc"], address)
                     if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
@@ -3236,10 +3241,11 @@ def wallet_balance_verification_snapshot(user: dict):
             decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
             total = Decimal("0")
             for address in addresses:
-                balance = erc20_balance(rpc, contract, address, decimals)
-                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
-                    raise ValueError("Token contract returned an invalid balance")
-                total += Decimal(str(balance))
+                balance_data = "0x70a08231" + address[2:].lower().rjust(64, "0")
+                raw_balance = rpc_call(rpc, "eth_call", [{"to": contract, "data": balance_data}, "latest"])
+                if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw_balance):
+                    raise ValueError("Token contract returned an invalid balanceOf response")
+                total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** decimals)
             row = ledger.get(asset_symbol)
             reserved = row["reserved"] if row else Decimal("0")
             ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
@@ -3342,6 +3348,55 @@ def wallet_balance_verification_snapshot(user: dict):
                     "observed_at": observed_at,
                     "note": "Production mint or finalized token-account balance verification failed.",
                 })
+
+    # Surface ledger/catalogue assets with no chain-specific verified adapter.
+    # Their cached ledger values remain visible as ledger-only and are never
+    # presented as current or spendable Mainnet balances.
+    network_for_asset = {
+        "ETH": "ethereum", "BNB": "bnb", "BTC": "bitcoin", "SOL": "solana_mainnet",
+        "USDT": "ethereum", "USDT-BNB": "bnb",
+        "BALMZ": "ethereum", "BALMZ-BNB": "bnb", "BALMZ-SOL": "solana_mainnet",
+        "USDC": "ethereum", "USDC-BNB": "bnb",
+    }
+    network_label_for_asset = {
+        "ethereum": "Ethereum Mainnet", "bnb": "BNB Chain Mainnet",
+        "bitcoin": "Bitcoin Mainnet", "solana_mainnet": "Solana Mainnet",
+    }
+    catalog = {
+        "USDC": ("USD Coin", "ethereum"),
+        "USDC-BNB": ("USD Coin (BNB Chain)", "bnb"),
+        "XRP": ("XRP", None),
+        "ADA": ("Cardano", None),
+        "LTC": ("Litecoin", None),
+        "DOGE": ("Dogecoin", None),
+        "BALMZ": ("BALMZ Token (Ethereum Mainnet)", "ethereum"),
+        "BALMZ-BNB": ("BALMZ Token (BNB Chain)", "bnb"),
+        "BALMZ-SOL": ("BALMZ Token (Solana Mainnet)", "solana_mainnet"),
+    }
+    covered_symbols = {str(item.get("asset") or "").upper() for item in results}
+    symbols_to_report = set(ledger) | set(catalog)
+    testnet_symbols = {"BALMZ-SEP", "BALMZ-SOL-DEVNET", "SOL-DEVNET", "ETH-SEP"}
+    for symbol in sorted(symbols_to_report - covered_symbols - testnet_symbols):
+        name, catalog_network = catalog.get(
+            symbol,
+            (symbol, network_for_asset.get(symbol)),
+        )
+        network = catalog_network or network_for_asset.get(symbol)
+        label = network_label_for_asset.get(network, "Network or adapter not configured")
+        row = ledger.get(symbol)
+        reserved = row["reserved"] if row else Decimal("0")
+        ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
+        status = "contract_not_configured" if symbol.startswith("BALMZ") or symbol.startswith("USDC") else "network_adapter_not_configured"
+        results.append({
+            "asset": symbol, "name": name, "network": network,
+            "network_label": label, "status": status, "verified": False,
+            "available_balance": None, "chain_balance": None,
+            "reserved_balance": float(reserved),
+            "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
+            "matches_ledger": None, "addresses_checked": 0,
+            "source": None, "observed_at": observed_at,
+            "note": "No verified Mainnet contract or network balance adapter is configured. A ledger-only amount is not promoted to a verified available balance.",
+        })
 
     return {
         "wallet_id": wallet_id,
