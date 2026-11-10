@@ -275,7 +275,7 @@ class WalletReceiptUploadRequest(BaseModel):
     issue_category: str = Field(default="other", min_length=2, max_length=40)
     file_name: str = Field(min_length=1, max_length=180)
     content_type: str = Field(min_length=3, max_length=80)
-    content_base64: str = Field(min_length=16, max_length=7_000_000)
+    content_base64: str = Field(min_length=1, max_length=7_000_000)
     transaction_id: str | None = Field(default=None, max_length=100)
     reference: str | None = Field(default=None, max_length=100)
     network: str | None = Field(default=None, max_length=32)
