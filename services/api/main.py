@@ -303,6 +303,18 @@ class WalletAddressRequest(BaseModel):
     label: str = Field(default="primary", min_length=1, max_length=80)
 
 
+class TokenTransferVerifyRequest(BaseModel):
+    network: str = Field(min_length=2, max_length=32)
+    owner_address: str = Field(min_length=42, max_length=42)
+    token_contract_address: str = Field(min_length=42, max_length=42)
+    from_address: str = Field(min_length=42, max_length=42)
+    to_address: str = Field(min_length=42, max_length=42)
+    tx_hash: str = Field(min_length=66, max_length=66)
+    amount_raw: str = Field(min_length=1, max_length=78)
+    log_index: str = Field(min_length=1, max_length=24)
+    block_number: str | None = Field(default=None, max_length=24)
+
+
 class WalletAddressChallengeRequest(BaseModel):
     network: str = Field(min_length=2, max_length=32)
     address: str = Field(min_length=4, max_length=128)
@@ -2416,10 +2428,183 @@ def _format_token_interaction(item, network, owner, balmz_contract):
         "block_number": str(item.get("blockNumber") or "") or None,
         "timestamp": str(item.get("timeStamp") or "") or None,
         "confirmations": str(item.get("confirmations") or "") or None,
+        "log_index": str(item.get("logIndex") or "") or None,
         "balmz_contract_match": bool(
             balmz_contract and contract and contract.lower() == balmz_contract.lower()
         ),
     }
+
+
+
+def _verify_erc20_transfer_log(
+    receipt,
+    *,
+    token_contract: str,
+    from_address: str,
+    to_address: str,
+    amount_raw: int,
+    log_index: int,
+):
+    """Match one indexed transfer to the exact ERC-20 Transfer log in a successful receipt."""
+    if not isinstance(receipt, dict):
+        return False
+    for log in receipt.get("logs") or []:
+        if not isinstance(log, dict):
+            continue
+        topics = log.get("topics") or []
+        if len(topics) < 3 or str(topics[0] or "").lower() != ERC20_TRANSFER_TOPIC.lower():
+            continue
+        if not _same_address(log.get("address"), token_contract):
+            continue
+        topic_from = str(topics[1] or "")
+        topic_to = str(topics[2] or "")
+        if not re.fullmatch(r"0x[0-9a-fA-F]{64}", topic_from):
+            continue
+        if not re.fullmatch(r"0x[0-9a-fA-F]{64}", topic_to):
+            continue
+        if not _same_address("0x" + topic_from[-40:], from_address):
+            continue
+        if not _same_address("0x" + topic_to[-40:], to_address):
+            continue
+        try:
+            found_amount = _hex_int(log.get("data") or "0x0")
+            found_index = _hex_int(log.get("logIndex"))
+        except (TypeError, ValueError):
+            continue
+        if found_amount == amount_raw and found_index == log_index:
+            return True
+    return False
+
+
+@app.post("/api/v1/wallet/token-interactions/verify")
+def verify_wallet_token_interaction(request: TokenTransferVerifyRequest, user: dict = Depends(current_user)):
+    """Independently verify one indexed ERC-20 transfer against its chain receipt."""
+    network = normalize_wallet_network(request.network)
+    rpc_config = {
+        "ethereum": (ETH_RPC_URL, 1),
+        "bnb": (BSC_RPC_URL, 56),
+        "sepolia": (SEPOLIA_RPC_URL, 11155111),
+    }
+    if network not in rpc_config:
+        raise HTTPException(status_code=400, detail="Token transfer verification supports Ethereum, BNB Chain, and Sepolia only")
+
+    owner = request.owner_address.strip()
+    contract = request.token_contract_address.strip()
+    sender = request.from_address.strip()
+    recipient = request.to_address.strip()
+    tx_hash = request.tx_hash.strip()
+    if not all(valid_evm_address(value) for value in (owner, contract, sender, recipient)):
+        raise HTTPException(status_code=400, detail="Invalid token transfer address")
+    if not EVM_TX_HASH_RE.fullmatch(tx_hash):
+        raise HTTPException(status_code=400, detail="Invalid EVM transaction hash")
+    if not _same_address(owner, sender) and not _same_address(owner, recipient):
+        raise HTTPException(status_code=400, detail="The verified wallet address is not a participant in this token transfer")
+    if not request.amount_raw.isdigit():
+        raise HTTPException(status_code=400, detail="Token amount must be an exact unsigned integer in base units")
+    amount_raw = int(request.amount_raw)
+    if amount_raw < 0 or amount_raw >= 2**256:
+        raise HTTPException(status_code=400, detail="Token amount is outside the ERC-20 uint256 range")
+    try:
+        log_index = _hex_int(request.log_index)
+        expected_block = _hex_int(request.block_number) if request.block_number else None
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Invalid transfer log index or block number")
+    if log_index is None or log_index < 0 or (expected_block is not None and expected_block < 0):
+        raise HTTPException(status_code=400, detail="Invalid transfer log index or block number")
+
+    with db() as conn:
+        owned = conn.execute(
+            "SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s) AND ownership_verified=TRUE",
+            (user["wallet_id"], network, owner),
+        ).fetchone()
+    if not owned:
+        raise HTTPException(status_code=403, detail="Only signature-verified addresses attached to the active wallet can verify token history")
+
+    rpc_url, expected_chain_id = rpc_config[network]
+    if not rpc_url:
+        raise HTTPException(status_code=503, detail="Selected network RPC is not configured")
+    try:
+        if network == "ethereum":
+            chain_id = require_ethereum_mainnet_rpc(rpc_url)
+        elif network == "bnb":
+            chain_id = require_bnb_rpc(rpc_url)
+        else:
+            require_sepolia_rpc(rpc_url)
+            chain_id = expected_chain_id
+        if chain_id != expected_chain_id:
+            raise ValueError("RPC chain identity mismatch")
+        transaction = rpc_call(rpc_url, "eth_getTransactionByHash", [tx_hash])
+        if not transaction:
+            return {
+                "verification_status": "not_found", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "message": "Transaction was not found on the selected network RPC.",
+            }
+        receipt = rpc_call(rpc_url, "eth_getTransactionReceipt", [tx_hash])
+        if not receipt:
+            return {
+                "verification_status": "pending", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "confirmations": 0, "required_confirmations": required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS"),
+                "message": "Transaction is known to the RPC but no receipt is available yet.",
+            }
+        receipt_status = str(receipt.get("status") or "").lower()
+        if receipt_status == "0x0":
+            return {
+                "verification_status": "failed", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "confirmations": 0, "message": "The transaction reverted on-chain.",
+            }
+        if receipt_status != "0x1":
+            return {
+                "verification_status": "pending", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "confirmations": 0, "message": "The transaction receipt is not successful yet.",
+            }
+
+        block_number = _hex_int(receipt.get("blockNumber"))
+        block_hash = str(receipt.get("blockHash") or "").lower()
+        if block_number is None or not block_hash or expected_block is not None and expected_block != block_number:
+            return {
+                "verification_status": "not_verified", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "block_number": block_number,
+                "message": "The indexed block number does not match the successful RPC receipt. Refresh token history before retrying.",
+            }
+        canonical_block = rpc_call(rpc_url, "eth_getBlockByNumber", [hex(block_number), False])
+        canonical_hash = str((canonical_block or {}).get("hash") or "").lower()
+        if not canonical_hash or canonical_hash != block_hash:
+            return {
+                "verification_status": "reorged", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "block_number": block_number, "confirmations": 0,
+                "message": "The receipt block is not the canonical block currently reported by the network RPC.",
+            }
+        matching_log = _verify_erc20_transfer_log(
+            receipt, token_contract=contract, from_address=sender, to_address=recipient,
+            amount_raw=amount_raw, log_index=log_index,
+        )
+        if not matching_log:
+            return {
+                "verification_status": "not_verified", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "block_number": block_number,
+                "message": "No matching token contract, sender, recipient, amount, and log index were found in the RPC receipt.",
+            }
+        latest_block = _hex_int(rpc_call(rpc_url, "eth_blockNumber", []))
+        if latest_block is None or latest_block < block_number:
+            raise ValueError("Unable to determine the current canonical block height")
+        confirmations = latest_block - block_number + 1
+        threshold = required_confirmations("WORLD_WALLET_EVM_CONFIRMATIONS")
+        verified = confirmations >= threshold
+        return {
+            "verification_status": "verified" if verified else "pending",
+            "network": network, "chain_id": chain_id, "tx_hash": tx_hash,
+            "token_contract_address": contract, "from_address": sender, "to_address": recipient,
+            "amount_raw": str(amount_raw), "log_index": log_index,
+            "block_number": block_number, "block_hash": block_hash,
+            "confirmations": confirmations, "required_confirmations": threshold,
+            "receipt_status": "success", "evidence_source": "selected network RPC",
+            "message": "Transfer log and canonical receipt verified." if verified else "Transfer log matched; waiting for the configured confirmation threshold.",
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Token transfer verification failed: network=%s error_type=%s", network, type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Selected network RPC could not verify this token transfer") from exc
 
 
 def _format_approval_interaction(item, network, owner):
