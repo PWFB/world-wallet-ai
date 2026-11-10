@@ -43,7 +43,8 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
       const found = (result.pairs || []).filter(pair => pair.chainId === chainId);
       if (!found.length) {
         setToken(null); setPairs([]);
-        throw new Error("No matching " + (network === "solana" ? "Solana" : "BNB Smart Chain") + " market data was returned for this address. Confirm the network and address.");
+        const networkLabel = network === "solana" ? "Solana" : network === "bsc" ? "BNB Smart Chain" : "Ethereum";
+        throw new Error("No matching " + networkLabel + " market data was returned for this address. Confirm the network and address.");
       }
       found.sort((a, b) => Number(b.liquidity?.usd || 0) - Number(a.liquidity?.usd || 0));
       const best = found[0];
@@ -174,7 +175,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
         <button type="submit" disabled={loading}>{loading ? "Scanning…" : "Scan token"}</button>
       </form>
       {error && <p className="balmz-ai-error" role="alert">{error}</p>}
-      {token && <div className="balmz-ai-token-summary"><div className="balmz-ai-token-mark">{token.symbol.slice(0, 1).toUpperCase()}</div><div className="balmz-ai-token-name"><h3>{token.name} <span>{token.symbol}</span></h3><p>{short(token.address)} · {token.chain === "solana" ? "Solana" : "BNB Smart Chain"} · {market?.dexId || "DEX market"}</p></div><a href={market?.url} target="_blank" rel="noreferrer">Open pair ↗</a></div>}
+      {token && <div className="balmz-ai-token-summary"><div className="balmz-ai-token-mark">{token.symbol.slice(0, 1).toUpperCase()}</div><div className="balmz-ai-token-name"><h3>{token.name} <span>{token.symbol}</span></h3><p>{short(token.address)} · {token.chain === "solana" ? "Solana" : token.chain === "bsc" ? "BNB Smart Chain" : "Ethereum"} · {market?.dexId || "DEX market"}</p></div><a href={market?.url} target="_blank" rel="noreferrer">Open pair ↗</a></div>}
       <div className="balmz-ai-metrics">{metrics.map(m => <article key={m.label}><small>{m.label}</small><strong>{m.value}</strong><span>{m.note}</span></article>)}</div>
       <div className="balmz-ai-data-foot">Market values reflect the selected pair and may differ across exchanges. Missing data is shown as unavailable.</div>
     </div>}
