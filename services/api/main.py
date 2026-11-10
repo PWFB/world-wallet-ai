@@ -3005,6 +3005,366 @@ def wallet_erc7702_inspection(user: dict = Depends(current_user)):
     }
 
 
+
+def _read_verified_solana_spl_balance(owner_address: str, mint_address: str, *, rpc_url: str, expected_genesis_hash: str, cluster_name: str, decimals: int):
+    """Read an SPL balance only after validating the selected Solana cluster and mint precision."""
+    if not valid_solana_address(owner_address) or not valid_solana_address(mint_address):
+        raise ValueError("Invalid Solana owner or mint address")
+    if not isinstance(decimals, int) or decimals < 0 or decimals > 18:
+        raise ValueError("Invalid SPL token decimals")
+    require_solana_rpc_cluster(rpc_url, expected_genesis_hash, cluster_name)
+    response = rpc_call(
+        rpc_url,
+        "getTokenAccountsByOwner",
+        [owner_address, {"mint": mint_address}, {"encoding": "jsonParsed", "commitment": "finalized"}],
+    )
+    if not isinstance(response, dict) or not isinstance(response.get("value"), list):
+        raise ValueError("Solana returned an invalid token-account response")
+    raw_total = 0
+    for item in response["value"]:
+        try:
+            info = item["account"]["data"]["parsed"]["info"]
+            token_amount = info["tokenAmount"]
+            if info.get("mint") != mint_address or int(token_amount.get("decimals")) != decimals:
+                raise ValueError("SPL token account mint or decimals mismatch")
+            raw_amount = token_amount.get("amount")
+            if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+                raise ValueError("SPL token account returned an invalid raw amount")
+            raw_total += int(raw_amount)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Solana returned malformed SPL token-account data") from exc
+    return Decimal(raw_total) / (Decimal(10) ** decimals)
+
+
+def wallet_balance_verification_snapshot(user: dict):
+    """Read-only verification of the active wallet's available Mainnet balances across every owned address."""
+    wallet_id = user["wallet_id"]
+    with db() as conn:
+        address_rows = conn.execute(
+            "SELECT network,address,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
+            (wallet_id,),
+        ).fetchall()
+        ledger_rows = conn.execute(
+            "SELECT symbol,balance,reserved_balance FROM assets WHERE wallet_id=%s ORDER BY symbol",
+            (wallet_id,),
+        ).fetchall()
+        registry_rows = conn.execute(
+            "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
+            "WHERE contract_address IS NOT NULL AND status='active' ORDER BY network,symbol",
+        ).fetchall()
+
+    ledger = {
+        str(row[0]): {
+            "actual": Decimal(str(row[1] or 0)),
+            "reserved": Decimal(str(row[2] or 0)),
+        }
+        for row in ledger_rows
+    }
+    networks = ("ethereum", "bnb", "bitcoin", "solana_mainnet")
+    addresses_by_network = {network: [] for network in networks}
+    for row in address_rows:
+        network = str(row[0] or "").strip().lower()
+        address = str(row[1] or "").strip()
+        if network not in addresses_by_network or not address:
+            continue
+        if network in {"ethereum", "bnb"}:
+            if not valid_evm_address(address) or not bool(row[2]):
+                continue
+        elif network == "bitcoin":
+            if not valid_bitcoin_address(address):
+                continue
+        elif network == "solana_mainnet":
+            if not valid_solana_address(address):
+                continue
+        if address.lower() not in {item.lower() for item in addresses_by_network[network]}:
+            addresses_by_network[network].append(address)
+
+    warnings = []
+    results = []
+    observed_at = datetime.now(timezone.utc).isoformat()
+
+    network_config = {
+        "ethereum": {
+            "label": "Ethereum Mainnet",
+            "rpc": ETH_RPC_URL,
+            "identity_check": require_ethereum_mainnet_rpc,
+            "native_symbol": "ETH",
+            "native_name": "Ethereum",
+            "native_reader": evm_balance,
+            "decimals": 18,
+        },
+        "bnb": {
+            "label": "BNB Chain Mainnet",
+            "rpc": BSC_RPC_URL,
+            "identity_check": require_bnb_rpc,
+            "native_symbol": "BNB",
+            "native_name": "BNB",
+            "native_reader": evm_balance,
+            "decimals": 18,
+        },
+        "bitcoin": {
+            "label": "Bitcoin Mainnet",
+            "rpc": "https://blockstream.info/api",
+            "identity_check": lambda _url: True,
+            "native_symbol": "BTC",
+            "native_name": "Bitcoin",
+            "native_reader": lambda _url, address: btc_balance(address),
+            "decimals": 8,
+        },
+        "solana_mainnet": {
+            "label": "Solana Mainnet",
+            "rpc": SOLANA_MAINNET_RPC_URL,
+            "identity_check": lambda url: require_solana_rpc_cluster(url, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet"),
+            "native_symbol": "SOL",
+            "native_name": "Solana",
+            "decimals": 9,
+        },
+    }
+
+    successful_networks = set()
+    for network, config in network_config.items():
+        addresses = addresses_by_network[network]
+        if not addresses:
+            results.append({
+                "asset": config["native_symbol"], "name": config["native_name"],
+                "network": network, "network_label": config["label"],
+                "status": "no_verified_address", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(ledger.get(config["native_symbol"], {}).get("reserved", 0)),
+                "ledger_available_balance": None, "matches_ledger": None,
+                "addresses_checked": 0, "source": None, "observed_at": observed_at,
+                "note": "No valid, attached Mainnet address passed the address eligibility checks.",
+            })
+            continue
+        if not config["rpc"]:
+            warnings.append(config["label"] + " RPC is not configured")
+            results.append({
+                "asset": config["native_symbol"], "name": config["native_name"],
+                "network": network, "network_label": config["label"],
+                "status": "rpc_unavailable", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(ledger.get(config["native_symbol"], {}).get("reserved", 0)),
+                "ledger_available_balance": None, "matches_ledger": None,
+                "addresses_checked": 0, "source": None, "observed_at": observed_at,
+                "note": "No live Mainnet balance is claimed without a verified RPC response.",
+            })
+            continue
+        try:
+            config["identity_check"](config["rpc"])
+            total = Decimal("0")
+            for address in addresses:
+                if network == "solana_mainnet":
+                    raw = rpc_call(config["rpc"], "getBalance", [address, {"commitment": "finalized"}])
+                    lamports = raw.get("value") if isinstance(raw, dict) else None
+                    if not isinstance(lamports, int) or lamports < 0:
+                        raise ValueError("Solana Mainnet returned an invalid native balance")
+                    total += Decimal(lamports) / (Decimal(10) ** 9)
+                else:
+                    balance = config["native_reader"](config["rpc"], address)
+                    if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                        raise ValueError("Mainnet provider returned an invalid native balance")
+                    total += Decimal(str(balance))
+            symbol = config["native_symbol"]
+            row = ledger.get(symbol)
+            reserved = row["reserved"] if row else Decimal("0")
+            ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
+            chain_available = max(total - reserved, Decimal("0"))
+            matches = abs(total - row["actual"]) <= Decimal("0.00000001") if row else None
+            results.append({
+                "asset": symbol, "name": config["native_name"],
+                "network": network, "network_label": config["label"],
+                "status": "verified_match" if matches is True else "verified_mismatch" if matches is False else "verified_no_ledger_row",
+                "verified": True, "chain_balance": float(total),
+                "reserved_balance": float(reserved),
+                "available_balance": float(chain_available),
+                "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
+                "matches_ledger": matches, "addresses_checked": len(addresses),
+                "source": "Finalized Mainnet RPC" if network == "solana_mainnet" else "Mainnet RPC",
+                "observed_at": observed_at,
+                "note": "Available balance is the sum of confirmed balances across verified attached addresses less the wallet's pending reservations.",
+            })
+            successful_networks.add(network)
+        except Exception as exc:
+            logger.warning("Wallet balance verification failed: network=%s error_type=%s", network, type(exc).__name__)
+            warnings.append(config["label"] + " balance verification failed")
+            results.append({
+                "asset": config["native_symbol"], "name": config["native_name"],
+                "network": network, "network_label": config["label"],
+                "status": "rpc_verification_failed", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(ledger.get(config["native_symbol"], {}).get("reserved", 0)),
+                "ledger_available_balance": None, "matches_ledger": None,
+                "addresses_checked": 0, "source": None, "observed_at": observed_at,
+                "note": "RPC identity or balance read failed; the ledger value is not promoted as verified.",
+            })
+
+    # Only active, configured EVM token contracts are checked. Each contract is
+    # read on its own chain and against every eligible address on that chain.
+    token_rows = wallet_sync_token_rows(
+        registry_rows,
+        bool(addresses_by_network["ethereum"]),
+        bool(addresses_by_network["bnb"]),
+    )
+    seen_token_networks = set()
+    for symbol, name, network, contract, registry_decimals, status in token_rows:
+        if network not in {"ethereum", "bnb"} or not contract:
+            continue
+        token_key = (str(symbol).upper(), network, str(contract).lower())
+        if token_key in seen_token_networks:
+            continue
+        seen_token_networks.add(token_key)
+        config = network_config[network]
+        addresses = addresses_by_network[network]
+        asset_symbol = wallet_asset_symbol(str(symbol).upper(), network)
+        if not addresses or network not in successful_networks:
+            results.append({
+                "asset": asset_symbol, "name": str(name), "network": network,
+                "network_label": config["label"], "contract_address": contract,
+                "status": "network_unverified", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(ledger.get(asset_symbol, {}).get("reserved", 0)),
+                "ledger_available_balance": None, "matches_ledger": None,
+                "addresses_checked": 0, "source": None, "observed_at": observed_at,
+                "note": "The underlying network balance could not be verified.",
+            })
+            continue
+        try:
+            rpc = config["rpc"]
+            if rpc_call(rpc, "eth_getCode", [contract, "latest"]) in (None, "0x", "0x0"):
+                raise ValueError("Configured token address has no contract bytecode on this network")
+            decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
+            total = Decimal("0")
+            for address in addresses:
+                balance = erc20_balance(rpc, contract, address, decimals)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("Token contract returned an invalid balance")
+                total += Decimal(str(balance))
+            row = ledger.get(asset_symbol)
+            reserved = row["reserved"] if row else Decimal("0")
+            ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
+            chain_available = max(total - reserved, Decimal("0"))
+            matches = abs(total - row["actual"]) <= (Decimal("1") / (Decimal(10) ** decimals)) if row else None
+            results.append({
+                "asset": asset_symbol, "name": str(name),
+                "network": network, "network_label": config["label"],
+                "contract_address": contract, "decimals": decimals,
+                "status": "verified_match" if matches is True else "verified_mismatch" if matches is False else "verified_no_ledger_row",
+                "verified": True, "chain_balance": float(total),
+                "reserved_balance": float(reserved),
+                "available_balance": float(chain_available),
+                "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
+                "matches_ledger": matches, "addresses_checked": len(addresses),
+                "source": "Chain-verified ERC-20 contract and eth_call",
+                "observed_at": observed_at,
+                "note": "Token balance was read from the configured contract on the matching Mainnet chain.",
+            })
+        except Exception as exc:
+            logger.warning("Wallet token balance verification failed: network=%s asset=%s error_type=%s", network, asset_symbol, type(exc).__name__)
+            warnings.append(config["label"] + " " + asset_symbol + " verification failed")
+            results.append({
+                "asset": asset_symbol, "name": str(name), "network": network,
+                "network_label": config["label"], "contract_address": contract,
+                "status": "contract_unverified", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(ledger.get(asset_symbol, {}).get("reserved", 0)),
+                "ledger_available_balance": None, "matches_ledger": None,
+                "addresses_checked": 0, "source": None, "observed_at": observed_at,
+                "note": "Contract chain, bytecode, decimals or balance read could not be verified.",
+            })
+
+    # Production Solana BALMZ is separate from EVM BALMZ and never inherits the Devnet mint.
+    if addresses_by_network["solana_mainnet"]:
+        mint = BALMZ_SOLANA_MAINNET_MINT
+        symbol = "BALMZ-SOL"
+        row = ledger.get(symbol)
+        reserved = row["reserved"] if row else Decimal("0")
+        if not mint:
+            results.append({
+                "asset": symbol, "name": "BALMZ Token (Solana Mainnet)",
+                "network": "solana_mainnet", "network_label": network_config["solana_mainnet"]["label"],
+                "status": "mint_not_configured", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(reserved), "ledger_available_balance": None,
+                "matches_ledger": None, "addresses_checked": 0, "source": None,
+                "observed_at": observed_at,
+                "note": "The production Mainnet mint is not configured. The Solana Devnet mint is not used as a substitute.",
+            })
+        elif "solana_mainnet" not in successful_networks:
+            results.append({
+                "asset": symbol, "name": "BALMZ Token (Solana Mainnet)",
+                "network": "solana_mainnet", "network_label": network_config["solana_mainnet"]["label"],
+                "status": "network_unverified", "verified": False,
+                "available_balance": None, "chain_balance": None,
+                "reserved_balance": float(reserved), "ledger_available_balance": None,
+                "matches_ledger": None, "addresses_checked": 0, "source": None,
+                "observed_at": observed_at, "note": "Solana Mainnet RPC did not pass verification.",
+            })
+        else:
+            try:
+                mint_check = _verify_balmz_solana_mainnet_mint(mint)
+                if not mint_check.get("production_mint_verified"):
+                    raise ValueError("Production BALMZ Mainnet mint did not pass verification")
+                total = Decimal("0")
+                for address in addresses_by_network["solana_mainnet"]:
+                    total += _read_verified_solana_spl_balance(
+                        address, mint, rpc_url=SOLANA_MAINNET_RPC_URL,
+                        expected_genesis_hash=SOLANA_MAINNET_GENESIS_HASH,
+                        cluster_name="Solana Mainnet", decimals=BALMZ_SOLANA_DEVNET_DECIMALS,
+                    )
+                ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
+                chain_available = max(total - reserved, Decimal("0"))
+                matches = abs(total - row["actual"]) <= Decimal("0.000000001") if row else None
+                results.append({
+                    "asset": symbol, "name": "BALMZ Token (Solana Mainnet)",
+                    "network": "solana_mainnet", "network_label": network_config["solana_mainnet"]["label"],
+                    "contract_address": mint, "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+                    "status": "verified_match" if matches is True else "verified_mismatch" if matches is False else "verified_no_ledger_row",
+                    "verified": True, "chain_balance": float(total),
+                    "reserved_balance": float(reserved),
+                    "available_balance": float(chain_available),
+                    "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
+                    "matches_ledger": matches, "addresses_checked": len(addresses_by_network["solana_mainnet"]),
+                    "source": "Finalized Solana Mainnet mint and token accounts",
+                    "observed_at": observed_at,
+                    "note": "Read from the independently verified production SPL mint; Devnet assets are excluded.",
+                })
+            except Exception as exc:
+                logger.warning("Solana Mainnet BALMZ balance verification failed: error_type=%s", type(exc).__name__)
+                warnings.append("Solana Mainnet BALMZ verification failed")
+                results.append({
+                    "asset": symbol, "name": "BALMZ Token (Solana Mainnet)",
+                    "network": "solana_mainnet", "network_label": network_config["solana_mainnet"]["label"],
+                    "status": "mint_or_balance_unverified", "verified": False,
+                    "available_balance": None, "chain_balance": None,
+                    "reserved_balance": float(reserved), "ledger_available_balance": None,
+                    "matches_ledger": None, "addresses_checked": 0, "source": None,
+                    "observed_at": observed_at,
+                    "note": "Production mint or finalized token-account balance verification failed.",
+                })
+
+    return {
+        "wallet_id": wallet_id,
+        "wallet_number": user.get("wallet_number"),
+        "status": "verified" if results and all(item.get("verified") for item in results if item.get("status") not in {"no_verified_address"}) and not warnings else "verified_with_warnings",
+        "read_only": True,
+        "mainnet_only": True,
+        "observed_at": observed_at,
+        "addresses": {
+            network: {"verified_address_count": len(addresses_by_network[network])}
+            for network in networks
+        },
+        "assets": results,
+        "warnings": warnings,
+        "notice": "Live chain balances are read-only. Available balance equals summed confirmed Mainnet balances across eligible attached addresses minus pending wallet reservations. An RPC failure or unsupported token is never replaced with a fabricated zero.",
+    }
+
+
+@app.get("/api/v1/wallet/balance-verification")
+def wallet_balance_verification(user: dict = Depends(current_user)):
+    """Return fresh read-only Mainnet balances and ledger comparison for the active wallet."""
+    return wallet_balance_verification_snapshot(user)
+
+
 @app.get("/api/v1/wallet")
 def wallet(user: dict = Depends(current_user)):
     assets,_,summary = wallet_snapshot(user)
