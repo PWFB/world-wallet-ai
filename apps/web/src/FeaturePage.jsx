@@ -10,6 +10,7 @@ const WalletSafetyLayer = lazy(() => import("./WalletSafetyLayer.jsx"));
 const OKXWalletInspector = lazy(() => import("./OKXWalletInspector.jsx"));
 const TokenInteractionAudit = lazy(() => import("./TokenInteractionAudit.jsx"));
 const FreeBalmzMining = lazy(() => import("./FreeBalmzMining.jsx"));
+const MainnetReturnCenter = lazy(() => import("./MainnetReturnCenter.jsx"));
 
 // Load the WalletConnect SDK only after the user explicitly starts a connection.
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
@@ -1288,7 +1289,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     </article>
   );
 
-  const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
+  const selectedWalletAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
     selectedWalletAsset?.available_balance ??
     selectedWalletAsset?.available ??
@@ -1427,7 +1428,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const parsedAmount = Number(amount);
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) throw new Error("Enter an amount greater than zero.");
       if (!destination.trim()) throw new Error("Enter a destination address.");
-      const selectedAsset = assets.find(item => item.symbol === asset);
+      const selectedAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
@@ -1489,6 +1490,35 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     } finally { setBusy(false); }
   }
 
+
+  if (active === "Mainnet Return Center") return <MainnetReturnCenter
+    assets={assets}
+    sourceAddresses={withdrawalAddresses}
+    wallet={wallet}
+    setActive={setActive}
+    onEvmProviderConnected={(provider, connection) => {
+      setWcProvider(provider);
+      setWcProviderKind("okx");
+      setWcAccount(connection.address);
+      setWcChainId(connection.chainId);
+      persistExternalConnection({
+        ...connection,
+        provider: "okx",
+        label: "OKX Wallet · " + (connection.network === "ethereum" ? "Ethereum Mainnet" : "BNB Chain Mainnet"),
+        connectedAt: new Date().toISOString(),
+      });
+    }}
+    onPrepareTransfer={({ asset: nextAsset, network: nextNetwork, destination: nextDestination, sourceAddress }) => {
+      setAsset(nextAsset);
+      setNetwork(nextNetwork);
+      setAmount("");
+      setDestination(nextDestination);
+      setNote("Owner-approved return to connected OKX wallet");
+      setSelectedSourceAddress(sourceAddress);
+      setMessage("");
+      setActive("Send");
+    }}
+  />;
 
   if (active === "Wallet Safety") return <WalletSafetyLayer />;
   if (active === "OKX Wallet Inspector") return <OKXWalletInspector accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
