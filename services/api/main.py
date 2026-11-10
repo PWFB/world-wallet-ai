@@ -3881,8 +3881,8 @@ def wallet_reconciliation(user: dict = Depends(current_user)):
 RECEIPT_MAX_BYTES = 5 * 1024 * 1024
 RECEIPT_MIME_SIGNATURES = {
     "application/pdf": (b"%PDF-",),
-    "image/png": (b"\\x89PNG\\r\\n\\x1a\\n",),
-    "image/jpeg": (b"\\xff\\xd8\\xff",),
+    "image/png": (b"\x89PNG\r\n\x1a\n",),
+    "image/jpeg": (b"\xff\xd8\xff",),
     "image/webp": (b"RIFF",),
 }
 
@@ -3939,6 +3939,7 @@ def upload_wallet_receipt(request: WalletReceiptUploadRequest, user: dict = Depe
 
         if (transaction_id or reference) and not linked_transaction:
             link_issue = "reference_unmatched"
+            transaction_id = None
         elif linked_transaction:
             tx_type = str(linked_transaction[1] or "").lower()
             expected_kind = (
@@ -4010,6 +4011,7 @@ def list_wallet_receipts(
     kind: str = "all",
     status: str = "all",
     network: str = "all",
+    issue: str = "all",
     sort: str = "created_at",
     order: str = "desc",
     search: str = "",
@@ -4035,6 +4037,15 @@ def list_wallet_receipts(
         clauses.append("review_status=%s"); params.append(status)
     if network != "all":
         clauses.append("network=%s"); params.append(network)
+    allowed_issues = {
+        "deposit_missing", "deposit_delayed", "withdrawal_delayed",
+        "transfer_not_received", "wrong_network", "amount_mismatch",
+        "fee_issue", "duplicate_charge", "other",
+    }
+    if issue != "all":
+        if issue not in allowed_issues:
+            raise HTTPException(status_code=400, detail="Invalid receipt issue filter")
+        clauses.append("issue_category=%s"); params.append(issue)
     query = str(search or "").strip()[:120]
     if query:
         pattern = "%" + query + "%"
