@@ -1727,7 +1727,22 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         <div className="tool-status"><span className="status-dot"></span><b>{proofData ? (proofData.status === "partial" ? "Partial on-chain snapshot" : "On-chain snapshot") : "Not yet checked"}</b></div>
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
-        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No verified reserve rows loaded. Connect and ownership-verify a public address under Wallets, then refresh.</div>}
+        {proofData?.catalog_assets?.length ? <div className="panel action-panel">
+          <div className="panel-head"><div><h2>Complete asset coverage</h2><span>Every listed asset is shown, including unsupported or unconfigured assets.</span></div><b>{proofData.catalog_assets.filter(item => item.verified).length}/{proofData.catalog_assets.length} verified</b></div>
+          <div className="tool-list">{proofData.catalog_assets.map((item,index)=><div className="tool-row" key={item.asset+":"+item.network+":"+index}>
+            <div style={{minWidth:0}}><b>{item.asset} · {item.network}</b><small>{item.status.replaceAll("_"," ")}</small><small>{item.contract_addresses?.length ? "Contract: "+item.contract_addresses.join(", ") : "No verified contract address recorded"}</small></div>
+            <strong>{item.verified ? "On-chain verified" : "Not verified"}</strong>
+          </div>)}</div>
+        </div> : null}
+        {proofData?.smart_contracts?.length ? <div className="panel action-panel">
+          <div className="panel-head"><div><h2>Attached smart contracts</h2><span>Registered token contracts associated with supported networks.</span></div><b>{proofData.smart_contracts.length} records</b></div>
+          <div className="tool-list">{proofData.smart_contracts.map((item,index)=><div className="tool-row" key={item.network+":"+item.contract_address+":"+index}>
+            <div style={{minWidth:0}}><b>{item.symbol} · {item.network}</b><small>{item.registry_status} · {item.decimals == null ? "decimals unavailable" : item.decimals+" decimals"}</small></div>
+            <code>{item.contract_address}</code><strong>{item.verified ? "Verified registry" : "Pending / unverified"}</strong>
+          </div>)}</div>
+        </div> : null}
+        {proofData?.address_inventory?.length ? <div className="security-note">Attached address inventory: {proofData.address_inventory.length} addresses · {proofData.unverified_addresses?.length || 0} need ownership verification. Only ownership-verified addresses contribute to reserve totals.</div> : null}
         <div className="panel action-panel">
           <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
           <h2>History reconciliation</h2>
