@@ -88,5 +88,202 @@ class TokenInteractionAuditHelpersTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+    def _transfer_receipt(self):
+        log = {
+            "address": self.contract,
+            "topics": [
+                main.ERC20_TRANSFER_TOPIC,
+                "0x" + "0" * 24 + self.owner[2:].lower(),
+                "0x" + "0" * 24 + self.spender[2:].lower(),
+            ],
+            "data": "0x" + format(12345000, "064x"),
+            "logIndex": "0x2",
+        }
+        return {
+            "status": "0x1",
+            "blockNumber": "0x64",
+            "blockHash": "0x" + "a" * 64,
+            "logs": [log],
+        }
+
+    def test_rpc_transfer_log_verification_requires_exact_contract_addresses_amount_and_index(self):
+        receipt = self._transfer_receipt()
+        self.assertTrue(main._verify_erc20_transfer_log(
+            receipt,
+            token_contract=self.contract,
+            from_address=self.owner,
+            to_address=self.spender,
+            amount_raw=12345000,
+            log_index=2,
+        ))
+        for overrides in (
+            {"token_contract": self.spender},
+            {"from_address": self.spender},
+            {"to_address": self.owner},
+            {"amount_raw": 12345001},
+            {"log_index": 3},
+        ):
+            args = {
+                "token_contract": self.contract,
+                "from_address": self.owner,
+                "to_address": self.spender,
+                "amount_raw": 12345000,
+                "log_index": 2,
+            }
+            args.update(overrides)
+            self.assertFalse(main._verify_erc20_transfer_log(receipt, **args))
+
+    def test_token_history_verification_returns_verified_only_after_rpc_confirmations(self):
+        tx_hash = "0x" + "b" * 64
+        receipt = self._transfer_receipt()
+        block_hash = receipt["blockHash"]
+        request = main.TokenTransferVerifyRequest(
+            network="ethereum",
+            owner_address=self.owner,
+            token_contract_address=self.contract,
+            from_address=self.owner,
+            to_address=self.spender,
+            tx_hash=tx_hash,
+            amount_raw="12345000",
+            log_index="2",
+            block_number="100",
+        )
+        class FakeDatabaseContext:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def execute(self, *_args, **_kwargs):
+                return type("Result", (), {"fetchone": lambda _self: (1,)})()
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return {"hash": tx_hash}
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_getBlockByNumber":
+                return {"hash": block_hash}
+            if method == "eth_blockNumber":
+                return "0x66"
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \
+             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc), \
+             patch.object(main, "required_confirmations", return_value=3):
+            result = main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["verification_status"], "verified")
+        self.assertEqual(result["confirmations"], 3)
+        self.assertEqual(result["required_confirmations"], 3)
+        self.assertEqual(result["evidence_source"], "selected network RPC")
+
+    def test_token_history_verification_stays_pending_below_confirmation_threshold(self):
+        tx_hash = "0x" + "b" * 64
+        receipt = self._transfer_receipt()
+        request = main.TokenTransferVerifyRequest(
+            network="ethereum",
+            owner_address=self.owner,
+            token_contract_address=self.contract,
+            from_address=self.owner,
+            to_address=self.spender,
+            tx_hash=tx_hash,
+            amount_raw="12345000",
+            log_index="2",
+            block_number="100",
+        )
+        class FakeDatabaseContext:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def execute(self, *_args, **_kwargs):
+                return type("Result", (), {"fetchone": lambda _self: (1,)})()
+
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getTransactionByHash":
+                return {"hash": tx_hash}
+            if method == "eth_getTransactionReceipt":
+                return receipt
+            if method == "eth_getBlockByNumber":
+                return {"hash": receipt["blockHash"]}
+            if method == "eth_blockNumber":
+                return "0x65"
+            raise AssertionError("Unexpected RPC method: " + method)
+
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \
+             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc), \
+             patch.object(main, "required_confirmations", return_value=3):
+            result = main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
+
+        self.assertEqual(result["verification_status"], "pending")
+        self.assertEqual(result["confirmations"], 2)
+
+    def test_token_history_verification_rejects_addresses_without_signature_ownership_proof(self):
+        from fastapi import HTTPException
+
+        request = main.TokenTransferVerifyRequest(
+            network="ethereum",
+            owner_address=self.owner,
+            token_contract_address=self.contract,
+            from_address=self.owner,
+            to_address=self.spender,
+            tx_hash="0x" + "b" * 64,
+            amount_raw="12345000",
+            log_index="2",
+            block_number="100",
+        )
+        class FakeDatabaseContext:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def execute(self, *_args, **_kwargs):
+                return type("Result", (), {"fetchone": lambda _self: None})()
+
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "require_ethereum_mainnet_rpc") as chain_check:
+            with self.assertRaises(HTTPException) as caught:
+                main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
+
+        self.assertEqual(caught.exception.status_code, 403)
+        chain_check.assert_not_called()
+
+    def test_token_history_verification_fails_closed_on_wrong_network_rpc(self):
+        from fastapi import HTTPException
+
+        request = main.TokenTransferVerifyRequest(
+            network="bnb",
+            owner_address=self.owner,
+            token_contract_address=self.contract,
+            from_address=self.owner,
+            to_address=self.spender,
+            tx_hash="0x" + "b" * 64,
+            amount_raw="12345000",
+            log_index="2",
+            block_number="100",
+        )
+        class FakeDatabaseContext:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def execute(self, *_args, **_kwargs):
+                return type("Result", (), {"fetchone": lambda _self: (1,)})()
+
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "require_bnb_rpc", side_effect=ValueError("wrong chain")), \
+             patch.object(main, "rpc_call") as rpc:
+            with self.assertRaises(HTTPException) as caught:
+                main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
+
+        self.assertEqual(caught.exception.status_code, 503)
+        rpc.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

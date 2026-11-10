@@ -59,6 +59,8 @@ function Panel({ title, children, note }) {
 }
 
 export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
+  const [transferVerifications, setTransferVerifications] = useState({});
+  const [verificationBusyKey, setVerificationBusyKey] = useState("");
   const [networkSelection, setNetworkSelection] = useState(NETWORK_OPTIONS[0].value);
   const [approvalFromBlock, setApprovalFromBlock] = useState("0");
   const [approvalToBlock, setApprovalToBlock] = useState("latest");
@@ -104,6 +106,45 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
   const approvals = networks.reduce((total, network) =>
     total + (network.addresses || []).reduce((count, address) => count + (address.approvals || []).length, 0), 0);
   const hasMore = networks.some(network => (network.addresses || []).some(address => address.pagination?.has_more));
+  const verifiedTransferCount = Object.values(transferVerifications).filter(item => item?.verification_status === "verified").length;
+
+  function transferKey(network, address, tx) {
+    return [network, String(address || "").toLowerCase(), tx.tx_hash || "", tx.log_index ?? ""].join(":");
+  }
+
+  async function verifyTransfer(network, address, tx) {
+    const key = transferKey(network, address.address, tx);
+    setVerificationBusyKey(key);
+    setTransferVerifications(previous => ({ ...previous, [key]: null }));
+    try {
+      const freshToken = await getNeonAccessToken({ forceRefresh: true });
+      const token = freshToken || (isUsableNeonAccessToken(accessToken) ? accessToken : "");
+      if (!token) throw new Error("Your authenticated wallet session is unavailable. Sign in again and retry.");
+      const response = await fetch(apiBaseUrl + "/api/v1/wallet/token-interactions/verify", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json", Accept: "application/json" },
+        cache: "no-store",
+        body: JSON.stringify({
+          network,
+          owner_address: address.address,
+          token_contract_address: tx.token_contract_address,
+          from_address: tx.from_address,
+          to_address: tx.to_address,
+          tx_hash: tx.tx_hash,
+          amount_raw: tx.amount_raw,
+          log_index: tx.log_index,
+          block_number: tx.block_number,
+        }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.detail || "RPC verification failed.");
+      setTransferVerifications(previous => ({ ...previous, [key]: result }));
+    } catch (error) {
+      setTransferVerifications(previous => ({ ...previous, [key]: { verification_status: "error", message: error?.message || "RPC verification failed." } }));
+    } finally {
+      setVerificationBusyKey("");
+    }
+  }
 
   return <section className="content feature-content">
     <div className="page-heading">
@@ -136,6 +177,7 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         <article className="panel action-panel"><small>ERC-20 TRANSFERS · PAGE {data.page}</small><strong>{transfers.toLocaleString()}</strong></article>
         <article className="panel action-panel"><small>APPROVAL EVENTS · PAGE {data.page}</small><strong>{approvals.toLocaleString()}</strong></article>
         <article className="panel action-panel"><small>ACTIVE WALLET SCOPE</small><strong>{networks.reduce((n, item) => n + (item.address_count || 0), 0)} verified addresses</strong></article>
+        <article className="panel action-panel"><small>RPC-VERIFIED TOKEN TRANSFERS</small><strong>{verifiedTransferCount.toLocaleString()}</strong></article>
       </div>
 
       {networks.map(network => <Panel key={network.network} title={network.network.toUpperCase() + " · Chain " + network.chain_id} note={network.status === "scanned" ? "Read-only history returned by Etherscan V2." : network.status.replaceAll("_", " ")}>
@@ -152,13 +194,33 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
           <h3>Token transfers ({(address.token_transfers || []).length})</h3>
           {!address.token_transfers?.length ? <p className="muted">No transfer records on this page.</p> :
             <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 640 }}>
-              <thead><tr><th>Token</th><th>Amount</th><th>Direction</th><th>Transaction</th><th>BALMZ match</th></tr></thead>
+              <thead><tr><th>Token</th><th>Amount</th><th>Direction</th><th>Transaction</th><th>BALMZ match</th><th>RPC verification</th></tr></thead>
               <tbody>{address.token_transfers.map((tx, index) => <tr key={tx.tx_hash || index}>
                 <td>{tx.token_symbol || "Unknown"}<small style={{ display: "block" }}>{tx.token_contract_address || "Contract unavailable"}</small></td>
                 <td>{tx.amount ?? tx.amount_raw} {tx.amount === null ? "raw units" : ""}</td>
                 <td>{String(tx.from_address || "").toLowerCase() === address.address.toLowerCase() ? "Sent" : String(tx.to_address || "").toLowerCase() === address.address.toLowerCase() ? "Received" : "Related"}</td>
                 <td><ExplorerLink network={network.network} hash={tx.tx_hash} /></td>
                 <td>{tx.balmz_contract_match ? "Configured BALMZ contract" : "No configured match"}</td>
+                <td>
+                  {(() => {
+                    const key = transferKey(network.network, address.address, tx);
+                    const verification = transferVerifications[key];
+                    const state = verification?.verification_status;
+                    return <>
+                      {state === "verified" ? <strong className="positive">✓ Verified · {Number(verification.confirmations || 0)} confirmations</strong>
+                        : state === "pending" ? <strong className="neutral">Matching log · {Number(verification.confirmations || 0)}/{Number(verification.required_confirmations || 0)} confirmations</strong>
+                        : state === "failed" ? <strong className="negative">Failed on-chain</strong>
+                        : state === "reorged" ? <strong className="negative">Reorganisation detected</strong>
+                        : state === "not_found" || state === "not_verified" ? <strong className="neutral">Not verified</strong>
+                        : state === "error" ? <strong className="negative">Verification error</strong>
+                        : <strong className="neutral">Not checked</strong>}
+                      <div><button type="button" className="secondary" style={{ marginTop: 6 }} disabled={verificationBusyKey === key || !tx.tx_hash || tx.log_index == null || !tx.token_contract_address || !tx.from_address || !tx.to_address || tx.amount_raw == null} onClick={() => verifyTransfer(network.network, address, tx)}>
+                        {verificationBusyKey === key ? "Checking RPC…" : state ? "Verify again" : "Verify on-chain"}
+                      </button></div>
+                      {verification?.message && <small style={{ display: "block", maxWidth: 260 }}>{verification.message}</small>}
+                    </>;
+                  })()}
+                </td>
               </tr>)}</tbody>
             </table></div>}
 
@@ -185,6 +247,9 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
         <strong>Not established · Claim execution disabled</strong>
         <p className="muted">{data.claim_readiness?.reason}</p>
         <p className="security-note">Transfers and approval permissions are not proof of an unclaimed allocation. One-signature batch claims remain unavailable until each network's verified claim contract, allocation source, replay protection and wallet execution path are reviewed.</p>
+      </Panel>
+      <Panel title="On-chain verification">
+        <p className="muted">Etherscan supplies the indexed token history. A transfer is marked Verified only after the selected network RPC independently matches the exact token contract, sender, recipient, raw token amount, and log index in a successful canonical receipt, and the configured confirmation threshold is met. A public explorer link alone is not verification.</p>
       </Panel>
       <Panel title="Indexing coverage limits">
         <p className="muted">{data.provider_limits?.token_transfers}</p>
