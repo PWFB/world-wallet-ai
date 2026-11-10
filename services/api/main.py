@@ -993,6 +993,31 @@ def _send_pin_recovery_to_super_admin(code: str, account_name: str):
         raise HTTPException(status_code=502, detail="Super Admin Gmail could not receive the recovery code. No PIN was changed.") from exc
 
 
+def _require_user_pin_session(user: dict):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
+    try:
+        with db() as conn:
+            configured = conn.execute(
+                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
+                (user["id"],),
+            ).fetchone()
+            if not configured:
+                raise HTTPException(status_code=403, detail="SECURITY_PIN_SETUP_REQUIRED")
+            active_session = conn.execute(
+                "SELECT 1 FROM wallet_security_pin_sessions WHERE user_id=%s AND expires_at>NOW()",
+                (user["id"],),
+            ).fetchone()
+            if not active_session:
+                raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
+        return user
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN session check failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet security verification is temporarily unavailable") from exc
+
+
 def current_user(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -1003,7 +1028,7 @@ def current_user(authorization: str | None = Header(default=None)):
         user = get_user(IDENTITY_EMAIL)
         if not user:
             raise HTTPException(status_code=401, detail="Wallet user not found")
-        return user
+        return _require_user_pin_session(user)
     # First accept app-issued API keys. Only a SHA-256 digest is stored in PostgreSQL.
     if DATABASE_URL and token.startswith("wwai_"):
         try:
@@ -1023,29 +1048,7 @@ def current_user(authorization: str | None = Header(default=None)):
         except Exception as exc:
             raise HTTPException(status_code=503, detail="API key authentication is temporarily unavailable") from exc
     user = neon_auth_user(token)
-    if DATABASE_URL:
-        try:
-            with db() as conn:
-                configured = conn.execute(
-                    "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
-                    (user["id"],),
-                ).fetchone()
-                if not configured:
-                    raise HTTPException(status_code=403, detail="SECURITY_PIN_SETUP_REQUIRED")
-                active_session = conn.execute(
-                    "SELECT 1 FROM wallet_security_pin_sessions WHERE user_id=%s AND expires_at>NOW()",
-                    (user["id"],),
-                ).fetchone()
-                if not active_session:
-                    raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Wallet PIN session check failed: error_type=%s", type(exc).__name__)
-            raise HTTPException(status_code=503, detail="Wallet security verification is temporarily unavailable") from exc
-    else:
-        raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
-    return user
+    return _require_user_pin_session(user)
 
 
 
@@ -1078,6 +1081,18 @@ def wallet_security_pin_status(
     except Exception as exc:
         logger.warning("Wallet PIN status lookup failed: error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Wallet PIN status is unavailable") from exc
+
+
+@app.post("/api/v1/security/pin/lock")
+def wallet_security_pin_lock(user: dict = Depends(current_user_without_pin)):
+    try:
+        with db() as conn:
+            conn.execute("DELETE FROM wallet_security_pin_sessions WHERE user_id=%s", (user["id"],))
+            conn.commit()
+        return {"ok": True, "locked": True}
+    except Exception as exc:
+        logger.warning("Wallet PIN lock failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet could not be locked") from exc
 
 
 @app.post("/api/v1/security/pin/enroll")
