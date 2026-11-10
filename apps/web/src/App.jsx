@@ -457,7 +457,7 @@ function App() {
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
   async function beginSecurityPinGate(token, signedInUser = null) {
-    if (!isUsableNeonAccessToken(token)) throw new Error("Secure account session is invalid.");
+    if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
     const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
       headers: { Authorization: "Bearer " + token, Accept: "application/json" },
       cache: "no-store",
