@@ -1,4 +1,5 @@
 import os
+import math
 import logging
 import base64
 import hashlib
@@ -3345,7 +3346,7 @@ def wallet_balance_verification_snapshot(user: dict):
     return {
         "wallet_id": wallet_id,
         "wallet_number": user.get("wallet_number"),
-        "status": "verified" if results and all(item.get("verified") for item in results if item.get("status") not in {"no_verified_address"}) and not warnings else "verified_with_warnings",
+        "status": "verified" if results and all(item.get("verified") is True for item in results) and not warnings else "verified_with_warnings",
         "read_only": True,
         "mainnet_only": True,
         "observed_at": observed_at,
