@@ -47,6 +47,11 @@ const money = value => value === null || value === undefined || value === "" || 
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
 async function walletAuthHeaders(accessToken, extra = {}) {
+  // A PIN-session token is already the app's second-factor bearer. Never
+  // replace it with a first-factor Neon token during refresh.
+  if (String(accessToken || "").startsWith("wwpin_")) {
+    return { ...extra, Authorization: "Bearer " + accessToken };
+  }
   const freshToken = await getNeonAccessToken({ forceRefresh: true });
   const token = freshToken || (isUsableNeonAccessToken(accessToken) ? accessToken : "");
   return { ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) };
