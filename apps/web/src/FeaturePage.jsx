@@ -1574,7 +1574,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
   if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
-  if (active === "Wallet Wizard") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
+  if (active === "WizzU Helper") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
   if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
 
   if (active === "Wallet Safety") return <WalletSafetyLayer />;
