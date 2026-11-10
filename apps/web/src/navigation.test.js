@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
+const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
 import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigation.js";
 
 test("sidebar navigation starts with the wallet dashboard", () => {
@@ -93,7 +94,7 @@ test("WizzU Helper is discoverable and opens the guided wallet verification work
   assert.ok(NAVIGATION_ICONS["WizzU Helper"]);
   assert.match(featureSource, /active === "WizzU Helper"/);
   assert.match(featureSource, /WalletWizard/);
-  assert.match(appSource, /WizzU Helper/);
+  assert.match(balmzAiSource, /WizzU Helper/);
 });
 
 test("BALMZ Token Mining is discoverable and has a genuine early-access registration workflow", () => {
