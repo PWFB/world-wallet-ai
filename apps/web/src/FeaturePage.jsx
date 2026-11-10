@@ -1495,6 +1495,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     assets={assets}
     sourceAddresses={withdrawalAddresses}
     wallet={wallet}
+    externalProvider={wcProvider}
+    onConnectWalletConnect={connectWalletConnect}
     setActive={setActive}
     onEvmProviderConnected={(provider, connection) => {
       setWcProvider(provider);
