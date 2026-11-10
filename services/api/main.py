@@ -3068,8 +3068,10 @@ def wallet_balance_verification_snapshot(user: dict):
         address = str(row[1] or "").strip()
         if network not in addresses_by_network or not address:
             continue
+        if not bool(row[2]):
+            continue
         if network in {"ethereum", "bnb"}:
-            if not valid_evm_address(address) or not bool(row[2]):
+            if not valid_evm_address(address):
                 continue
         elif network == "bitcoin":
             if not valid_bitcoin_address(address):
@@ -3672,9 +3674,10 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
             address = str(row[1] or "").strip()
             if not address:
                 continue
-            if network in {"ethereum", "bnb", "sepolia"}:
-                if not valid_evm_address(address) or not bool(row[2]):
-                    continue
+            if not bool(row[2]):
+                continue
+            if network in {"ethereum", "bnb", "sepolia"} and not valid_evm_address(address):
+                continue
             elif network == "bitcoin" and not valid_bitcoin_address(address):
                 continue
             elif network in {"solana_mainnet", "solana_devnet"} and not valid_solana_address(address):
