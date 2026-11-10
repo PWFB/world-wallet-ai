@@ -3725,7 +3725,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 lamports_total += lamports
             sol_balance = float(Decimal(lamports_total) / Decimal(1_000_000_000))
             asset_upserts.append(("SOL", "Solana (Mainnet)", sol_balance))
-            updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance,"addresses_checked":len(solana_mainnet_addresses)})
+            updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance})
         except Exception:
             warnings.append("Solana Mainnet balance service unavailable")
 
@@ -3739,7 +3739,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 btc_total += Decimal(str(btc))
             btc_balance_total = float(btc_total)
             asset_balance_updates.append((btc_balance_total, "BTC"))
-            updates.append({"network":"bitcoin","asset":"BTC","balance":btc_balance_total,"addresses_checked":len(btc_addresses)})
+            updates.append({"network":"bitcoin","asset":"BTC","balance":btc_balance_total})
         except Exception:
             warnings.append("Bitcoin balance service unavailable")
 
@@ -3755,7 +3755,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 lamports_total += lamports
             sol_balance = float(Decimal(lamports_total) / Decimal(1_000_000_000))
             asset_upserts.append(("SOL-DEVNET", "Solana Devnet SOL", sol_balance))
-            updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance,"addresses_checked":len(solana_addresses)})
+            updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
         except Exception:
             warnings.append("Solana Devnet balance service unavailable")
     elif solana_addresses:
@@ -3790,7 +3790,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 eth_total += Decimal(str(balance))
             eth = float(eth_total)
             asset_balance_updates.append((eth, "ETH"))
-            updates.append({"network":"ethereum","asset":"ETH","balance":eth,"addresses_checked":len(eth_addresses)})
+            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
         except Exception:
             warnings.append("Ethereum balance service unavailable")
 
@@ -3805,7 +3805,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 bnb_total += Decimal(str(balance))
             bnb = float(bnb_total)
             asset_balance_updates.append((bnb, "BNB"))
-            updates.append({"network":"bnb","asset":"BNB","balance":bnb,"addresses_checked":len(bnb_addresses)})
+            updates.append({"network":"bnb","asset":"BNB","balance":bnb})
         except Exception as exc:
             logger.warning("BNB Chain balance synchronization failed: error_type=%s", type(exc).__name__)
             warnings.append("BNB Chain balance service unavailable")
@@ -3845,7 +3845,6 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 "balance":balance,
                 "contract_address":contract,
                 "decimals":resolved_decimals,
-                "addresses_checked":len(token_addresses),
             })
         except Exception:
             warnings.append(f"{network} {symbol} token balance service unavailable")
