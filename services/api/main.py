@@ -17,6 +17,7 @@ from anyio import to_thread
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import Response
 from fastapi.middleware.cors import CORSMiddleware
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -268,6 +269,20 @@ class RequestCreate(BaseModel):
     kind: str = Field(min_length=2, max_length=32)
     title: str = Field(min_length=2, max_length=120)
     details: str = Field(default="", max_length=1000)
+
+class WalletReceiptUploadRequest(BaseModel):
+    kind: str = Field(min_length=3, max_length=20)
+    issue_category: str = Field(default="other", min_length=2, max_length=40)
+    file_name: str = Field(min_length=1, max_length=180)
+    content_type: str = Field(min_length=3, max_length=80)
+    content_base64: str = Field(min_length=16, max_length=7_000_000)
+    transaction_id: str | None = Field(default=None, max_length=100)
+    reference: str | None = Field(default=None, max_length=100)
+    network: str | None = Field(default=None, max_length=32)
+    asset: str | None = Field(default=None, max_length=24)
+    notes: str = Field(default="", max_length=1200)
+
+
 
 
 class RequestStatusUpdate(BaseModel):
@@ -608,6 +623,32 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'open', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+        CREATE TABLE IF NOT EXISTS wallet_receipts(
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
+          transaction_id TEXT REFERENCES transactions(id) ON DELETE SET NULL,
+          receipt_kind TEXT NOT NULL CHECK(receipt_kind IN ('deposit','withdrawal','transfer')),
+          issue_category TEXT NOT NULL DEFAULT 'other',
+          reference TEXT,
+          network TEXT,
+          asset TEXT,
+          file_name TEXT NOT NULL,
+          content_type TEXT NOT NULL,
+          size_bytes BIGINT NOT NULL CHECK(size_bytes > 0 AND size_bytes <= 5242880),
+          sha256 TEXT NOT NULL,
+          file_bytes BYTEA NOT NULL,
+          notes TEXT NOT NULL DEFAULT '',
+          review_status TEXT NOT NULL DEFAULT 'submitted',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS wallet_receipts_wallet_created_idx
+          ON wallet_receipts(wallet_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS wallet_receipts_wallet_status_idx
+          ON wallet_receipts(wallet_id,review_status,created_at DESC);
+        CREATE INDEX IF NOT EXISTS wallet_receipts_wallet_kind_idx
+          ON wallet_receipts(wallet_id,receipt_kind,created_at DESC);
         CREATE TABLE IF NOT EXISTS balmz_mining_sessions(
           id TEXT PRIMARY KEY,
           wallet_id TEXT NOT NULL REFERENCES wallets(id) ON DELETE CASCADE,
@@ -3835,6 +3876,210 @@ def wallet_addresses(user: dict = Depends(current_user)):
 @app.get("/api/v1/wallet/reconciliation")
 def wallet_reconciliation(user: dict = Depends(current_user)):
     return wallet_reconciliation_snapshot(user)
+
+
+RECEIPT_MAX_BYTES = 5 * 1024 * 1024
+RECEIPT_MIME_SIGNATURES = {
+    "application/pdf": (b"%PDF-",),
+    "image/png": (b"\\x89PNG\\r\\n\\x1a\\n",),
+    "image/jpeg": (b"\\xff\\xd8\\xff",),
+    "image/webp": (b"RIFF",),
+}
+
+
+def _decode_wallet_receipt(request: WalletReceiptUploadRequest) -> bytes:
+    if request.kind not in {"deposit", "withdrawal", "transfer"}:
+        raise HTTPException(status_code=400, detail="Receipt type must be deposit, withdrawal or transfer")
+    allowed_issues = {
+        "deposit_missing", "deposit_delayed", "withdrawal_delayed",
+        "transfer_not_received", "wrong_network", "amount_mismatch",
+        "fee_issue", "duplicate_charge", "other",
+    }
+    if request.issue_category not in allowed_issues:
+        raise HTTPException(status_code=400, detail="Select a supported receipt issue category")
+    allowed_mime = set(RECEIPT_MIME_SIGNATURES)
+    if request.content_type not in allowed_mime:
+        raise HTTPException(status_code=415, detail="Upload a PDF, PNG, JPG or WebP receipt")
+    try:
+        raw = base64.b64decode(request.content_base64, validate=True)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail="Receipt file data is invalid") from exc
+    if not raw or len(raw) > RECEIPT_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Receipt must be between 1 byte and 5 MB")
+    if request.content_type == "image/webp":
+        signature_ok = len(raw) >= 12 and raw[:4] == b"RIFF" and raw[8:12] == b"WEBP"
+    else:
+        signature_ok = any(raw.startswith(prefix) for prefix in RECEIPT_MIME_SIGNATURES[request.content_type])
+    if not signature_ok:
+        raise HTTPException(status_code=415, detail="The file contents do not match the selected receipt type")
+    return raw
+
+
+@app.post("/api/v1/wallet/receipts")
+def upload_wallet_receipt(request: WalletReceiptUploadRequest, user: dict = Depends(current_user)):
+    raw = _decode_wallet_receipt(request)
+    transaction_id = (request.transaction_id or "").strip() or None
+    reference = (request.reference or "").strip() or None
+    asset = (request.asset or "").strip().upper() or None
+    network = (request.network or "").strip().lower() or None
+    linked_transaction = None
+    link_issue = None
+
+    with db() as conn:
+        if transaction_id:
+            linked_transaction = conn.execute(
+                "SELECT id,type,asset,network,reference FROM transactions WHERE id=%s AND wallet_id=%s",
+                (transaction_id, user["wallet_id"]),
+            ).fetchone()
+        elif reference:
+            linked_transaction = conn.execute(
+                "SELECT id,type,asset,network,reference FROM transactions WHERE reference=%s AND wallet_id=%s",
+                (reference, user["wallet_id"]),
+            ).fetchone()
+
+        if (transaction_id or reference) and not linked_transaction:
+            link_issue = "reference_unmatched"
+        elif linked_transaction:
+            tx_type = str(linked_transaction[1] or "").lower()
+            expected_kind = (
+                "deposit" if tx_type in {"received", "deposit", "deposited"}
+                else "withdrawal" if tx_type in {"withdrawal", "withdraw", "withdrawn"}
+                else "transfer" if tx_type in {"sent", "transfer", "send"}
+                else None
+            )
+            if expected_kind and expected_kind != request.kind:
+                raise HTTPException(status_code=409, detail="Receipt type does not match the linked wallet transaction")
+            if asset and linked_transaction[2] and asset != str(linked_transaction[2]).upper():
+                raise HTTPException(status_code=409, detail="Receipt asset does not match the linked transaction")
+            if network and linked_transaction[3] and network != str(linked_transaction[3]).lower():
+                raise HTTPException(status_code=409, detail="Receipt network does not match the linked transaction")
+            transaction_id = str(linked_transaction[0])
+            reference = str(linked_transaction[4] or reference or "")
+            asset = str(linked_transaction[2] or asset or "").upper() or None
+            network = str(linked_transaction[3] or network or "").lower() or None
+
+        receipt_id = "rcpt_" + secrets.token_urlsafe(18)
+        digest = hashlib.sha256(raw).hexdigest()
+        matched_status = "submitted" if linked_transaction else "needs_matching"
+        if link_issue:
+            matched_status = link_issue
+        conn.execute(
+            """
+            INSERT INTO wallet_receipts(
+              id,owner_id,wallet_id,transaction_id,receipt_kind,issue_category,reference,
+              network,asset,file_name,content_type,size_bytes,sha256,file_bytes,notes,review_status
+            ) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """,
+            (
+                receipt_id, user["id"], user["wallet_id"], transaction_id, request.kind,
+                request.issue_category, reference, network, asset,
+                re.sub(r"[^A-Za-z0-9._ -]", "_", request.file_name)[:180],
+                request.content_type, len(raw), digest, raw, request.notes.strip(), matched_status,
+            ),
+        )
+        record_wallet_audit_event(
+            conn, owner_id=user["id"], wallet_id=user["wallet_id"],
+            actor_email=user.get("email") or ("user:" + str(user["id"])),
+            action="receipt_uploaded", resource="receipt", resource_id=receipt_id,
+            network=network, reference=reference,
+            details={
+                "receipt_kind": request.kind, "issue_category": request.issue_category,
+                "file_name": request.file_name[:180], "size_bytes": len(raw),
+                "sha256": digest, "review_status": matched_status,
+            },
+        )
+        conn.commit()
+
+    return {
+        "receipt": {
+            "id": receipt_id, "kind": request.kind, "issue_category": request.issue_category,
+            "transaction_id": transaction_id, "reference": reference, "network": network,
+            "asset": asset, "file_name": request.file_name[:180], "content_type": request.content_type,
+            "size_bytes": len(raw), "sha256": digest, "review_status": matched_status,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        },
+        "transaction_confirmed": False,
+        "note": "Receipt evidence was saved. Uploading evidence never confirms a deposit, withdrawal or transfer.",
+    }
+
+
+@app.get("/api/v1/wallet/receipts")
+def list_wallet_receipts(
+    limit: int = 100,
+    offset: int = 0,
+    kind: str = "all",
+    status: str = "all",
+    network: str = "all",
+    sort: str = "created_at",
+    order: str = "desc",
+    search: str = "",
+    user: dict = Depends(current_user),
+):
+    if limit < 1 or limit > 100 or offset < 0:
+        raise HTTPException(status_code=400, detail="Receipt page size must be 1-100 and offset cannot be negative")
+    if kind not in {"all", "deposit", "withdrawal", "transfer"}:
+        raise HTTPException(status_code=400, detail="Invalid receipt type filter")
+    if status not in {"all", "submitted", "needs_matching", "reference_unmatched", "under_review", "resolved", "rejected"}:
+        raise HTTPException(status_code=400, detail="Invalid receipt status filter")
+    sort_columns = {
+        "created_at": "created_at", "kind": "receipt_kind", "status": "review_status",
+        "network": "network", "asset": "asset", "reference": "reference",
+    }
+    if sort not in sort_columns or order not in {"asc", "desc"}:
+        raise HTTPException(status_code=400, detail="Invalid receipt sort order")
+    clauses = ["wallet_id=%s"]
+    params = [user["wallet_id"]]
+    if kind != "all":
+        clauses.append("receipt_kind=%s"); params.append(kind)
+    if status != "all":
+        clauses.append("review_status=%s"); params.append(status)
+    if network != "all":
+        clauses.append("network=%s"); params.append(network)
+    query = str(search or "").strip()[:120]
+    if query:
+        pattern = "%" + query + "%"
+        clauses.append("(coalesce(reference,'') ILIKE %s OR coalesce(asset,'') ILIKE %s OR file_name ILIKE %s OR coalesce(issue_category,'') ILIKE %s)")
+        params.extend([pattern, pattern, pattern, pattern])
+    where = " AND ".join(clauses)
+    column = sort_columns[sort]
+    direction = order.upper()
+    with db() as conn:
+        total_row = conn.execute("SELECT COUNT(*) FROM wallet_receipts WHERE " + where, tuple(params)).fetchone()
+        total = int(total_row[0] or 0)
+        rows = conn.execute(
+            "SELECT id,receipt_kind,issue_category,transaction_id,reference,network,asset,file_name,content_type,size_bytes,sha256,review_status,created_at "
+            "FROM wallet_receipts WHERE " + where + f" ORDER BY {column} {direction} NULLS LAST,created_at DESC LIMIT %s OFFSET %s",
+            tuple(params + [limit, offset]),
+        ).fetchall()
+    receipts = [
+        {
+            "id": row[0], "kind": row[1], "issue_category": row[2],
+            "transaction_id": row[3], "reference": row[4], "network": row[5],
+            "asset": row[6], "file_name": row[7], "content_type": row[8],
+            "size_bytes": int(row[9]), "sha256": row[10], "review_status": row[11],
+            "created_at": row[12].isoformat() if row[12] else None,
+            "transaction_confirmed": False,
+        }
+        for row in rows
+    ]
+    return {"receipts": receipts, "pagination": {"limit": limit, "offset": offset, "total": total, "has_more": offset + len(receipts) < total}}
+
+
+@app.get("/api/v1/wallet/receipts/{receipt_id}/file")
+def download_wallet_receipt(receipt_id: str, user: dict = Depends(current_user)):
+    with db() as conn:
+        row = conn.execute(
+            "SELECT file_name,content_type,file_bytes FROM wallet_receipts WHERE id=%s AND wallet_id=%s AND owner_id=%s",
+            (receipt_id, user["wallet_id"], user["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Receipt was not found for the active wallet")
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", str(row[0] or "receipt"))[:180]
+    return Response(
+        content=bytes(row[2]),
+        media_type=row[1],
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}"', "X-Content-Type-Options": "nosniff"},
+    )
 
 
 @app.get("/api/v1/wallet/activity-trace")
