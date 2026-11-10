@@ -72,6 +72,44 @@ class WalletBalanceVerificationTests(unittest.TestCase):
         self.assertTrue(result["read_only"])
         self.assertTrue(result["mainnet_only"])
 
+    def test_sums_all_owned_addresses_and_excludes_unverified_addresses(self):
+        second_owner = "0x2222222222222222222222222222222222222222"
+        unverified_owner = "0x3333333333333333333333333333333333333333"
+        connection = FakeConnection(
+            [
+                ("ethereum", OWNER, True),
+                ("ethereum", second_owner, True),
+                ("ethereum", unverified_owner, False),
+            ],
+            [("ETH", Decimal("3"), Decimal("0.5"))],
+        )
+        user = {"id": "user-test", "wallet_id": "wallet-test"}
+        raw_by_address = {
+            OWNER.lower(): "0x" + format(1 * (10 ** 18), "064x"),
+            second_owner.lower(): "0x" + format(2 * (10 ** 18), "064x"),
+            unverified_owner.lower(): "0x" + format(9 * (10 ** 18), "064x"),
+        }
+
+        def fake_rpc(_url, method, params):
+            self.assertEqual(method, "eth_getBalance")
+            return raw_by_address[params[0].lower()]
+
+        with (
+            patch.object(main, "db", return_value=FakeDB(connection)),
+            patch.object(main, "ETH_RPC_URL", "https://eth-rpc.invalid"),
+            patch.object(main, "require_ethereum_mainnet_rpc", return_value=1),
+            patch.object(main, "rpc_call", side_effect=fake_rpc),
+            patch.object(main, "wallet_sync_token_rows", return_value=[]),
+        ):
+            result = main.wallet_balance_verification_snapshot(user)
+
+        eth = next(item for item in result["assets"] if item["asset"] == "ETH")
+        self.assertEqual(eth["chain_balance"], 3.0)
+        self.assertEqual(eth["available_balance"], 2.5)
+        self.assertEqual(eth["ledger_available_balance"], 2.5)
+        self.assertTrue(eth["matches_ledger"])
+        self.assertEqual(eth["addresses_checked"], 2)
+
     def test_unverified_evm_address_is_not_counted_as_owned_balance(self):
         connection = FakeConnection(
             [("ethereum", OWNER, False)],
