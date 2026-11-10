@@ -500,10 +500,10 @@ function App() {
     setPinError("");
     setPinBusy(true);
     try {
-      if (!/^\\d{6}$/.test(pinInput)) throw new Error("Enter exactly six digits.");
+      if (!/^\d{6}$/.test(pinInput)) throw new Error("Enter exactly six digits.");
       if (pinGateMode === "setup" && pinInput !== pinConfirm) throw new Error("The two PIN entries do not match.");
       if (pinGateMode === "recovery") {
-        if (!/^\\d{6}$/.test(pinRecoveryCode)) throw new Error("Enter the six-digit code from the Super Admin mailbox.");
+        if (!/^\d{6}$/.test(pinRecoveryCode)) throw new Error("Enter the six-digit code from the Super Admin mailbox.");
         if (pinInput !== pinConfirm) throw new Error("The new PIN entries do not match.");
       }
       const endpoint = pinGateMode === "setup"
@@ -1563,12 +1563,12 @@ function App() {
                 <p>{pinGateMode === "setup" ? "The first PIN you choose becomes this account’s six-digit wallet login PIN." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin and choose a new PIN." : "Enter your six-digit PIN to unlock the authenticated wallet session."}</p>
               </div>
             </div>
-            {pinGateMode === "recovery" && <label><span>Super Admin recovery code</span><div className="ww-field"><i>⌗</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinRecoveryCode} onChange={event => setPinRecoveryCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="6-digit admin code" required /></div></label>}
+            {pinGateMode === "recovery" && <label><span>Super Admin recovery code</span><div className="ww-field"><i>⌗</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinRecoveryCode} onChange={event => setPinRecoveryCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit admin code" required /></div></label>}
             <label><span>{pinGateMode === "setup" ? "Create six-digit PIN" : pinGateMode === "recovery" ? "New six-digit PIN" : "Six-digit login PIN"}</span>
-              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinInput} onChange={event => setPinInput(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="••••••" required /></div>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinInput} onChange={event => setPinInput(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="••••••" required /></div>
             </label>
             {(pinGateMode === "setup" || pinGateMode === "recovery") && <label><span>Confirm six-digit PIN</span>
-              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={pinConfirm} onChange={event => setPinConfirm(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter PIN again" required /></div>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={pinConfirm} onChange={event => setPinConfirm(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter PIN again" required /></div>
             </label>}
             {pinError && <div className={/sent only|approval/i.test(pinError) ? "ww-auth-message" : "ww-auth-error"} role="status">{pinError}</div>}
             <button className="ww-auth-submit" type="submit" disabled={pinBusy || pinInput.length !== 6 || ((pinGateMode === "setup" || pinGateMode === "recovery") && pinConfirm.length !== 6) || (pinGateMode === "recovery" && pinRecoveryCode.length !== 6)}>
