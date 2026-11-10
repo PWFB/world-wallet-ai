@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 import {
   availableAssetBalance,
   getMainnetAssetNetwork,
@@ -29,6 +30,8 @@ export default function MainnetReturnCenter({
   assets = [],
   sourceAddresses = [],
   wallet = null,
+  externalProvider = null,
+  onConnectWalletConnect,
   onEvmProviderConnected,
   onPrepareTransfer,
   setActive,
@@ -43,25 +46,50 @@ export default function MainnetReturnCenter({
     setError("");
     setMessage("");
     try {
-      const provider = window.okxwallet;
-      if (!provider || typeof provider.request !== "function") {
-        throw new Error("OKX EVM provider was not detected. Open World Wallet AI in the OKX Wallet DApp browser or use the OKX Wallet extension.");
+      let provider = window.okxwallet && typeof window.okxwallet.request === "function"
+        ? window.okxwallet
+        : null;
+      let isWalletConnectOkx = false;
+      if (!provider && externalProvider && typeof externalProvider.request === "function") {
+        const peerName = String(externalProvider?.session?.peer?.metadata?.name || "");
+        if (/okx/i.test(peerName)) {
+          provider = externalProvider;
+          isWalletConnectOkx = true;
+        }
       }
+      if (!provider) {
+        throw new Error("OKX provider was not detected. Open this page in the OKX Wallet DApp browser/extension, or connect OKX from WalletConnect first.");
+      }
+
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const chainId = await provider.request({ method: "eth_chainId" });
-      const connection = normalizeOkxEvmAccount(accounts, chainId);
-      if (!connection) {
+      let connections = [];
+      if (isWalletConnectOkx) {
+        connections = getWalletConnectSessionConnections(provider.session, chainId, accounts)
+          .filter(item => item.network === "ethereum" || item.network === "bnb");
+      }
+      const selected = connections.find(item => item.network === network)
+        || normalizeOkxEvmAccount(accounts, chainId);
+
+      if (!selected) {
         const actual = Number.parseInt(String(chainId), String(chainId).startsWith("0x") ? 16 : 10);
         throw new Error(actual === 1 || actual === 56
           ? "OKX did not return a valid EVM address."
           : "Switch OKX Wallet to " + MAINNET_LABELS[network] + " and connect again. No network was switched automatically.");
       }
-      if (connection.network !== network) {
-        throw new Error("OKX is currently connected to " + MAINNET_LABELS[connection.network] + ". Switch to " + MAINNET_LABELS[network] + " in OKX and reconnect.");
+      if (selected.network !== network) {
+        throw new Error("OKX is currently connected to " + MAINNET_LABELS[selected.network] + ". Switch to " + MAINNET_LABELS[network] + " in OKX and reconnect.");
       }
-      setDestinations(current => ({ ...current, [network]: connection.address }));
-      onEvmProviderConnected?.(provider, connection);
-      setMessage(MAINNET_LABELS[network] + " receiving address read from OKX Wallet.");
+
+      const discovered = connections.length ? connections : [selected];
+      setDestinations(current => ({
+        ...current,
+        ...Object.fromEntries(discovered.map(item => [item.network, item.address])),
+      }));
+      discovered.forEach(connection => onEvmProviderConnected?.(provider, connection));
+      setMessage(discovered.length > 1
+        ? "Ethereum and BNB Mainnet receiving addresses read from the OKX Wallet session."
+        : MAINNET_LABELS[network] + " receiving address read from OKX Wallet.");
     } catch (cause) {
       setError(cause?.message || "Could not read the OKX EVM address.");
     } finally {
@@ -161,6 +189,14 @@ export default function MainnetReturnCenter({
         <div><h2>Connect network-specific OKX addresses</h2><span>Every receiving address is read separately; Ethereum, BNB, Bitcoin and Solana addresses are never assumed to match.</span></div>
       </div>
       <div className="security-note">Connecting only reads public account addresses. It does not transfer tokens, request a recovery phrase, or grant World Wallet AI custody of your private keys.</div>
+      {!window.okxwallet && onConnectWalletConnect && <div style={{ marginTop: 14 }}>
+        <button type="button" className="secondary" disabled={Boolean(busy)} onClick={async () => {
+          setError("");
+          setMessage("Opening WalletConnect. Select OKX Wallet, approve the session, then read the network addresses.");
+          try { await onConnectWalletConnect(); }
+          catch (cause) { setError(cause?.message || "WalletConnect could not open."); }
+        }}>Connect OKX via WalletConnect</button>
+      </div>}
       <div className="feature-grid">
         {NETWORKS.map(item => <div className="panel action-panel" key={item.key} style={{ padding: 14 }}>
           <small>{item.label}</small>
