@@ -1491,7 +1491,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
 
-  if (active === "Mainnet Return Center") return <MainnetReturnCenter
+  if (active === "Return to OKX") return <MainnetReturnCenter
     assets={assets}
     sourceAddresses={withdrawalAddresses}
     wallet={wallet}
