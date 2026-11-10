@@ -51,6 +51,55 @@ describe("BalmzToken fixed-supply deployment", function () {
     }
   });
 
+  it("rejects deployment from an unauthorized signer on Ethereum and BNB", async function () {
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+
+    if (chainId !== 1 && chainId !== 56) {
+      this.skip();
+    }
+
+    const [unauthorized] = await ethers.getSigners();
+    expect(unauthorized.address.toLowerCase()).to.not.equal(
+      RESERVE_RECIPIENT
+    );
+
+    const factory = await ethers.getContractFactory(
+      "BalmzToken",
+      unauthorized
+    );
+
+    await expect(factory.deploy()).to.be.revertedWith(
+      "Deploy with the approved OKX reserve EOA"
+    );
+  });
+
+  it("rejects deployment on unsupported chain IDs", async function () {
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+
+    if (chainId !== 999) {
+      this.skip();
+    }
+
+    const [signer] = await ethers.getSigners();
+    const factory = await ethers.getContractFactory("BalmzToken", signer);
+
+    await expect(factory.deploy()).to.be.revertedWith(
+      "Unsupported BALMZ deployment chain"
+    );
+  });
+
+  beforeEach(async function () {
+    const chainId = Number((await ethers.provider.getNetwork()).chainId);
+
+    if (
+      chainId === 999 &&
+      this.currentTest.title !==
+        "rejects deployment on unsupported chain IDs"
+    ) {
+      this.skip();
+    }
+  });
+
   it("mints only the approved supply for the selected chain", async function () {
     const { chainId, deployer, token } = await deployToken();
     const reserveWallet = await token.RESERVE_VESTING_WALLET();
