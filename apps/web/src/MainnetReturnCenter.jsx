@@ -66,6 +66,7 @@ export default function MainnetReturnCenter({
       let connections = [];
       if (isWalletConnectOkx) {
         connections = getWalletConnectSessionConnections(provider.session, chainId, accounts)
+          .map(item => ({ ...item, network: item.chainId === 1 ? "ethereum" : item.chainId === 56 ? "bnb" : "" }))
           .filter(item => item.network === "ethereum" || item.network === "bnb");
       }
       const selected = connections.find(item => item.network === network)
