@@ -21,7 +21,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
   const [token, setToken] = useState(null);
   const [pairs, setPairs] = useState([]);
   const [market, setMarket] = useState(null);
-  const [wallet, setWallet] = useState("");
+  const [connectedAddress, setConnectedAddress] = useState("");
   const [walletBalance, setWalletBalance] = useState(null);
   const [loading, setLoading] = useState(false);
   const [walletLoading, setWalletLoading] = useState(false);
@@ -70,7 +70,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
         const result = await provider.connect();
         const pubkey = result?.publicKey?.toString?.() || provider.publicKey?.toString?.();
         if (!pubkey) throw new Error("Wallet did not return a public address.");
-        setWallet(pubkey);
+        setConnectedAddress(pubkey);
         const rpc = await readJson(SOL_RPC, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getBalance", params: [pubkey, { commitment: "finalized" }] }) });
         if (rpc.error) throw new Error(rpc.error.message || "Solana RPC balance lookup failed.");
         setWalletBalance({ amount: Number(rpc.result.value) / 1e9, asset: "SOL", source: "Solana Mainnet finalized RPC" });
@@ -83,7 +83,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
         await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: expectedChain }] });
         const accounts = await provider.request({ method: "eth_requestAccounts" });
         if (!accounts?.[0]) throw new Error("Wallet did not return a public address.");
-        setWallet(accounts[0]);
+        setConnectedAddress(accounts[0]);
         const raw = await readJson(rpcUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "eth_getBalance", params: [accounts[0], "latest"] }) });
         if (raw.error) throw new Error(raw.error.message || label + " RPC balance lookup failed.");
         setWalletBalance({ amount: Number(BigInt(raw.result)) / 1e18, asset: chain === "bsc" ? "BNB" : "ETH", source: label + " Mainnet RPC" });
@@ -133,9 +133,9 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
     <div className="balmz-ai-chainbar">
       <div><span className="balmz-ai-status-dot" /> Network</div>
       <div className="balmz-ai-chain-select">
-        <button className={chain === "ethereum" ? "active" : ""} onClick={() => { setChain("ethereum"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setWallet(""); setWalletBalance(null); setWalletError(""); }}>Ethereum Mainnet</button>
-        <button className={chain === "bsc" ? "active" : ""} onClick={() => { setChain("bsc"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setWallet(""); setWalletBalance(null); setWalletError(""); }}>BNB Chain Mainnet</button>
-        <button className={chain === "solana" ? "active" : ""} onClick={() => { setChain("solana"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setWallet(""); setWalletBalance(null); setWalletError(""); }}>Solana Mainnet</button>
+        <button className={chain === "ethereum" ? "active" : ""} onClick={() => { setChain("ethereum"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setConnectedAddress(""); setWalletBalance(null); setWalletError(""); }}>Ethereum Mainnet</button>
+        <button className={chain === "bsc" ? "active" : ""} onClick={() => { setChain("bsc"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setConnectedAddress(""); setWalletBalance(null); setWalletError(""); }}>BNB Chain Mainnet</button>
+        <button className={chain === "solana" ? "active" : ""} onClick={() => { setChain("solana"); setAddress(""); setToken(null); setPairs([]); setMarket(null); setConnectedAddress(""); setWalletBalance(null); setWalletError(""); }}>Solana Mainnet</button>
       </div>
       <span className="balmz-ai-chain-note">Read-only public data · No trading permissions</span>
     </div>
@@ -166,7 +166,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
 
     {(tab === "Overview" || tab === "Portfolio") && <div className="balmz-ai-columns">
       <section className="panel balmz-ai-wallet-panel"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">◈</span><div><h2>Wallet portfolio</h2><p>Connect an external wallet to inspect its native Mainnet coin balance.</p></div></div><span className="balmz-ai-source">ON-CHAIN RPC</span></div>
-        {!wallet ? <div className="balmz-ai-connect"><div className="balmz-ai-wallet-art">◎</div><h3>Connect your {chain === "solana" ? "Solana" : "EVM"} wallet</h3><p>Only your public address and native coin balance are read. No private key is requested.</p><button onClick={connectWallet} disabled={walletLoading}>{walletLoading ? "Connecting…" : "Connect wallet"}</button></div> : <div className="balmz-ai-wallet-result"><small>CONNECTED ADDRESS</small><strong>{short(wallet)}</strong><small>NATIVE BALANCE · {walletBalance?.source || "Loading"}</small><strong>{walletBalance ? fmt(walletBalance.amount, 8) + " " + walletBalance.asset : "Unavailable"}</strong><button className="balmz-ai-text-button" onClick={() => { setWallet(""); setWalletBalance(null); }}>Disconnect view</button></div>}
+        {!connectedAddress ? <div className="balmz-ai-connect"><div className="balmz-ai-wallet-art">◎</div><h3>Connect your {chain === "solana" ? "Solana" : "EVM"} wallet</h3><p>Only your public address and native coin balance are read. No private key is requested.</p><button onClick={connectWallet} disabled={walletLoading}>{walletLoading ? "Connecting…" : "Connect wallet"}</button></div> : <div className="balmz-ai-wallet-result"><small>CONNECTED ADDRESS</small><strong>{short(connectedAddress)}</strong><small>NATIVE BALANCE · {walletBalance?.source || "Loading"}</small><strong>{walletBalance ? fmt(walletBalance.amount, 8) + " " + walletBalance.asset : "Unavailable"}</strong><button className="balmz-ai-text-button" onClick={() => { setConnectedAddress(""); setWalletBalance(null); }}>Disconnect view</button></div>}
         {walletError && <p className="balmz-ai-error" role="alert">{walletError}</p>}
       </section>
       <section className="panel balmz-ai-activity-panel"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">↗</span><div><h2>Market pairs</h2><p>Highest-liquidity matching pairs returned by the data source.</p></div></div></div>
