@@ -418,9 +418,16 @@ function App() {
   const visibleLocalWalletEntries = accountUserId ? localWalletEntries.filter(entry => entry.ownerUserId
     ? String(entry.ownerUserId) === accountUserId
     : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
-  const [accessToken, setAccessToken] = useState(() => {
-    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
-  });
+  const [accessToken, setAccessToken] = useState("");
+  const [pinGateOpen, setPinGateOpen] = useState(false);
+  const [pendingPinToken, setPendingPinToken] = useState("");
+  const [pendingPinUser, setPendingPinUser] = useState(null);
+  const [pinGateMode, setPinGateMode] = useState("verify");
+  const [pinInput, setPinInput] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [pinRecoveryCode, setPinRecoveryCode] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
   useEffect(() => {
     if (!accessToken) { setWalletAnnouncement(null); return undefined; }
     let cancelled = false;
@@ -449,6 +456,118 @@ function App() {
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  async function beginSecurityPinGate(token, signedInUser = null) {
+    if (!isUsableNeonAccessToken(token)) throw new Error("Secure account session is invalid.");
+    const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
+      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+      cache: "no-store",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "Wallet PIN security could not be checked.");
+    setPendingPinToken(token);
+    setPendingPinUser(signedInUser);
+    setPinGateMode(data.pin_configured ? "verify" : "setup");
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setPinGateOpen(true);
+    setShowLogin(false);
+    setAuthRestoring(false);
+  }
+
+  function completeSecurityPinGate() {
+    if (!pendingPinToken) {
+      setPinError("Your secure account session is missing. Please sign in again.");
+      return;
+    }
+    try { localStorage.setItem(TOKEN_KEY, pendingPinToken); }
+    catch { setPinError("Secure session storage is unavailable on this device."); return; }
+    if (pendingPinUser) setUser(pendingPinUser);
+    setAccessToken(pendingPinToken);
+    setActive("Dashboard");
+    setPinGateOpen(false);
+    setPendingPinToken("");
+    setPendingPinUser(null);
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setShowLogin(false);
+  }
+
+  async function submitSecurityPin() {
+    setPinError("");
+    setPinBusy(true);
+    try {
+      if (!/^\\d{6}$/.test(pinInput)) throw new Error("Enter exactly six digits.");
+      if (pinGateMode === "setup" && pinInput !== pinConfirm) throw new Error("The two PIN entries do not match.");
+      if (pinGateMode === "recovery") {
+        if (!/^\\d{6}$/.test(pinRecoveryCode)) throw new Error("Enter the six-digit code from the Super Admin mailbox.");
+        if (pinInput !== pinConfirm) throw new Error("The new PIN entries do not match.");
+      }
+      const endpoint = pinGateMode === "setup"
+        ? "/api/v1/security/pin/enroll"
+        : pinGateMode === "recovery"
+          ? "/api/v1/security/pin/recovery/complete"
+          : "/api/v1/security/pin/verify";
+      const body = pinGateMode === "recovery"
+        ? { code: pinRecoveryCode, new_pin: pinInput }
+        : { pin: pinInput };
+      const response = await fetch(API_BASE_URL + endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + pendingPinToken },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Wallet PIN verification failed.");
+      completeSecurityPinGate();
+    } catch (error) {
+      setPinError(error.message || "Wallet PIN verification failed.");
+      setPinInput("");
+      if (pinGateMode === "recovery") setPinRecoveryCode("");
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function requestSecurityPinRecovery() {
+    setPinError("");
+    setPinBusy(true);
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/security/pin/recovery/request", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + pendingPinToken },
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not request Super Admin recovery.");
+      setPinGateMode("recovery");
+      setPinInput("");
+      setPinConfirm("");
+      setPinRecoveryCode("");
+      setPinError("A recovery code was sent only to the configured Super Admin Gmail. Ask the administrator to verify your identity and provide approval.");
+    } catch (error) {
+      setPinError(error.message || "Could not request Super Admin recovery.");
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function cancelSecurityPinGate() {
+    try { await authClient.signOut(); } catch {}
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    setPendingPinToken("");
+    setPendingPinUser(null);
+    setPinGateOpen(false);
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setShowLogin(true);
+  }
+
   const [showLogin, setShowLogin] = useState(() => {
     try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
   });
@@ -1142,9 +1261,7 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Login failed");
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      setAccessToken(data.access_token);
-      setUser(data.user || null);
+      await beginSecurityPinGate(data.access_token, data.user || null);
     } catch (error) {
       setLoginError(error.message || "Unable to sign in");
     }
@@ -1207,9 +1324,7 @@ function App() {
       if (!response.ok) throw new Error(data.detail || "Unable to create your account.");
       setLoginPassword("");
       if (data.access_token) {
-        localStorage.setItem(TOKEN_KEY, data.access_token);
-        setUser(data.user || null);
-        setAccessToken(data.access_token);
+        await beginSecurityPinGate(data.access_token, data.user || null);
         setRegisterMode(false);
       } else {
         setRegisterMode(false);
@@ -1274,12 +1389,9 @@ function App() {
         throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
       }
 
-      localStorage.setItem(TOKEN_KEY, token);
-      setUser(signedInUser);
-      setAccessToken(token);
+      await beginSecurityPinGate(token, signedInUser);
       setLoginPassword("");
       setPasswordMode(false);
-      setShowLogin(false);
       setAuthMessage("");
     } catch (error) {
       setLoginError(error.message || "Unable to sign in with password");
@@ -1322,9 +1434,7 @@ function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Invalid or expired code.");
       if (!data.access_token) throw new Error("Secure wallet token was not returned.");
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      setUser(data.user || null);
-      setAccessToken(data.access_token);
+      await beginSecurityPinGate(data.access_token, data.user || null);
       setOtpCode("");
       setOtpRequested(false);
     } catch (error) {
