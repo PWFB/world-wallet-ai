@@ -2568,7 +2568,13 @@ def verify_wallet_token_interaction(request: TokenTransferVerifyRequest, user: d
             }
         canonical_block = rpc_call(rpc_url, "eth_getBlockByNumber", [hex(block_number), False])
         canonical_hash = str((canonical_block or {}).get("hash") or "").lower()
-        if not canonical_hash or canonical_hash != block_hash:
+        if not canonical_hash:
+            return {
+                "verification_status": "pending", "network": network, "chain_id": chain_id,
+                "tx_hash": tx_hash, "block_number": block_number, "confirmations": 0,
+                "message": "The canonical block hash is not available from the network RPC yet.",
+            }
+        if canonical_hash != block_hash:
             return {
                 "verification_status": "reorged", "network": network, "chain_id": chain_id,
                 "tx_hash": tx_hash, "block_number": block_number, "confirmations": 0,
