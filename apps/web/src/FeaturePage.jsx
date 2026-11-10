@@ -13,6 +13,7 @@ const FreeBalmzMining = lazy(() => import("./FreeBalmzMining.jsx"));
 const MainnetReturnCenter = lazy(() => import("./MainnetReturnCenter.jsx"));
 const ActivityTrace = lazy(() => import("./ActivityTrace.jsx"));
 const WalletWizard = lazy(() => import("./WalletWizard.jsx"));
+const BalmzAI = lazy(() => import("./BalmzAI.jsx"));
 const ReceiptCenter = lazy(() => import("./ReceiptCenter.jsx"));
 
 // Load the WalletConnect SDK only after the user explicitly starts a connection.
@@ -1571,6 +1572,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     }}
   />;
 
+  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "Wallet Wizard") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
   if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
