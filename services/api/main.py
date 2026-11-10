@@ -476,9 +476,13 @@ def init_db():
         );
         CREATE TABLE IF NOT EXISTS wallet_security_pin_sessions(
           user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          token_hash TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           expires_at TIMESTAMPTZ NOT NULL
         );
+        ALTER TABLE wallet_security_pin_sessions ADD COLUMN IF NOT EXISTS token_hash TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS wallet_security_pin_sessions_token_hash_idx
+          ON wallet_security_pin_sessions(token_hash) WHERE token_hash IS NOT NULL;
         CREATE TABLE IF NOT EXISTS wallet_security_pin_recovery(
           id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -955,11 +959,16 @@ def current_user_without_pin(authorization: str | None = Header(default=None)):
 
 
 def _create_pin_session(conn, user_id: str):
+    # Return a separate opaque second-factor bearer token. Persist only its
+    # digest so a first-factor Neon JWT cannot reuse this PIN verification.
+    session_token = "wwpin_" + secrets.token_urlsafe(32)
     conn.execute(
-        "INSERT INTO wallet_security_pin_sessions(user_id,expires_at) VALUES(%s,NOW()+INTERVAL '12 hours') "
-        "ON CONFLICT(user_id) DO UPDATE SET created_at=NOW(),expires_at=EXCLUDED.expires_at",
-        (user_id,),
+        "INSERT INTO wallet_security_pin_sessions(user_id,token_hash,expires_at) "
+        "VALUES(%s,%s,NOW()+INTERVAL '12 hours') "
+        "ON CONFLICT(user_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,created_at=NOW(),expires_at=EXCLUDED.expires_at",
+        (user_id, sha(session_token)),
     )
+    return session_token
 
 
 def _send_pin_recovery_to_super_admin(code: str, account_name: str):
@@ -993,29 +1002,38 @@ def _send_pin_recovery_to_super_admin(code: str, account_name: str):
         raise HTTPException(status_code=502, detail="Super Admin Gmail could not receive the recovery code. No PIN was changed.") from exc
 
 
-def _require_user_pin_session(user: dict):
+def current_user(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization[7:].strip()
+    if not token.startswith("wwpin_"):
+        raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
     try:
         with db() as conn:
-            configured = conn.execute(
-                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
-                (user["id"],),
+            row = conn.execute(
+                """
+                SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,w.wallet_number
+                FROM wallet_security_pin_sessions s
+                JOIN users u ON u.id=s.user_id
+                LEFT JOIN wallets w ON w.id=u.active_wallet_id
+                WHERE s.token_hash=%s AND s.expires_at>NOW()
+                """,
+                (sha(token),),
             ).fetchone()
-            if not configured:
-                raise HTTPException(status_code=403, detail="SECURITY_PIN_SETUP_REQUIRED")
-            active_session = conn.execute(
-                "SELECT 1 FROM wallet_security_pin_sessions WHERE user_id=%s AND expires_at>NOW()",
-                (user["id"],),
-            ).fetchone()
-            if not active_session:
-                raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
-        return user
+        if not row:
+            raise HTTPException(status_code=401, detail="Wallet PIN session is expired or invalid. Sign in and verify your PIN again.")
+        return {
+            "id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3],
+            "phone_number": row[4], "phone_verified": bool(row[5]),
+            "wallet_number": str(row[6]) if row[6] is not None else None,
+        }
     except HTTPException:
         raise
     except Exception as exc:
-        logger.warning("Wallet PIN session check failed: error_type=%s", type(exc).__name__)
-        raise HTTPException(status_code=503, detail="Wallet security verification is temporarily unavailable") from exc
+        logger.warning("Wallet PIN session lookup failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet PIN security is temporarily unavailable") from exc
 
 
 def current_user(authorization: str | None = Header(default=None)):
@@ -1053,6 +1071,16 @@ def current_user(authorization: str | None = Header(default=None)):
 
 
 
+@app.get("/api/v1/security/pin/session")
+def wallet_security_pin_session(user: dict = Depends(current_user)):
+    return {
+        "active": True,
+        "wallet_id": user.get("wallet_id"),
+        "expires_in_seconds": 43200,
+        "second_factor": "six_digit_pin",
+    }
+
+
 @app.get("/api/v1/security/pin/status")
 def wallet_security_pin_status(
     authorization: str | None = Header(default=None),
@@ -1084,10 +1112,17 @@ def wallet_security_pin_status(
 
 
 @app.post("/api/v1/security/pin/lock")
-def wallet_security_pin_lock(user: dict = Depends(current_user_without_pin)):
+def wallet_security_pin_lock(
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user),
+):
     try:
+        token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
         with db() as conn:
-            conn.execute("DELETE FROM wallet_security_pin_sessions WHERE user_id=%s", (user["id"],))
+            conn.execute(
+                "DELETE FROM wallet_security_pin_sessions WHERE user_id=%s AND token_hash=%s",
+                (user["id"], sha(token)),
+            )
             conn.commit()
         return {"ok": True, "locked": True}
     except Exception as exc:
@@ -1120,9 +1155,9 @@ def wallet_security_pin_enroll(
                 "INSERT INTO wallet_security_pins(user_id,pin_salt,pin_hash) VALUES(%s,%s,%s)",
                 (user["id"], salt, pin_hash),
             )
-            _create_pin_session(conn, user["id"])
+            pin_session_token = _create_pin_session(conn, user["id"])
             conn.commit()
-        return {"ok": True, "pin_configured": True, "session_expires_in_seconds": 43200}
+        return {"ok": True, "pin_configured": True, "access_token": pin_session_token, "session_expires_in_seconds": 43200}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1167,9 +1202,9 @@ def wallet_security_pin_verify(
                 "UPDATE wallet_security_pins SET failed_attempts=0,locked_until=NULL,updated_at=NOW() WHERE user_id=%s",
                 (user["id"],),
             )
-            _create_pin_session(conn, user["id"])
+            pin_session_token = _create_pin_session(conn, user["id"])
             conn.commit()
-        return {"ok": True, "pin_verified": True, "session_expires_in_seconds": 43200}
+        return {"ok": True, "pin_verified": True, "access_token": pin_session_token, "session_expires_in_seconds": 43200}
     except HTTPException:
         raise
     except Exception as exc:
@@ -1252,9 +1287,9 @@ def wallet_security_pin_recovery_complete(
                 "UPDATE wallet_security_pin_recovery SET used_at=NOW() WHERE id=%s",
                 (row[0],),
             )
-            _create_pin_session(conn, user["id"])
+            pin_session_token = _create_pin_session(conn, user["id"])
             conn.commit()
-        return {"ok": True, "pin_reset": True, "delivery": "super_admin_gmail_only", "session_expires_in_seconds": 43200}
+        return {"ok": True, "pin_reset": True, "delivery": "super_admin_gmail_only", "access_token": pin_session_token, "session_expires_in_seconds": 43200}
     except HTTPException:
         raise
     except Exception as exc:
