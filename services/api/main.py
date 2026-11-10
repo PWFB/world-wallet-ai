@@ -1631,10 +1631,10 @@ def configured_addresses(user):
             (user["wallet_id"],),
         ).fetchall()
     return [
-        {
+        ({
             "network": r[0], "address": r[1], "label": r[2],
-            "ownership_verified": bool(r[3]) if len(r) > 3 else True,
-        }
+            **({"ownership_verified": bool(r[3])} if len(r) > 3 else {}),
+        })
         for r in rows
     ]
 
