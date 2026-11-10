@@ -44,7 +44,7 @@ Use the existing OKX EOA. Do not export a private key, seed phrase, or recovery 
 
 1. Open Remix at https://remix.ethereum.org in a browser with the OKX wallet provider available.
 2. Use the reviewed `BalmzToken.sol` and `BalmzReserveVesting.sol` source files from the same approved release/commit. The token imports and deploys the vesting contract during its constructor; do not compile an older token source or omit the vesting source.
-3. Resolve the OpenZeppelin dependency using the exact version recorded in the approved `contracts/package-lock.json`. The package manifest currently allows `@openzeppelin/contracts` versions compatible with `^5.4.0`; do not assume that this means exactly 5.4.0.
+3. Resolve OpenZeppelin from the approved lockfile. Both `contracts/package.json` and `contracts/package-lock.json` pin `@openzeppelin/contracts` to exactly **5.6.1**. When using the Hardhat project, install with `npm ci` so the compiler uses the lockfile version. If compiling elsewhere, use the exact 5.6.1 dependency and the same complete source/import set.
 4. Compile with Solidity **0.8.24**, optimizer disabled, and the exact source/imports from this repository.
 5. In Deploy & Run, select **Injected Provider - OKX Wallet**. Confirm the network is Ethereum Mainnet (chain ID 1) and the active account is exactly the reserve recipient above.
 6. Deploy `BalmzToken` with **no constructor arguments**. This deployment also creates the vesting contract from inside the token constructor, so review the full transaction and gas estimate in OKX before signing it yourself.
@@ -85,10 +85,10 @@ The backend reads live balances only after a real contract address is configured
 
 ## Hardhat compile, test, and deployment helpers
 
-Install dependencies:
+Install the exact locked dependencies:
 
     cd contracts
-    npm install
+    npm ci
 
 Compile and run the fixed-supply tests:
 
