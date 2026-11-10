@@ -167,10 +167,10 @@ class TokenInteractionAuditHelpersTests(unittest.TestCase):
                 return "0x66"
             raise AssertionError("Unexpected RPC method: " + method)
 
-        with patch.object(main, "db", return_value=FakeDatabaseContext()), \\
-             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \\
-             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \\
-             patch.object(main, "rpc_call", side_effect=fake_rpc), \\
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \
+             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc), \
              patch.object(main, "required_confirmations", return_value=3):
             result = main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
 
@@ -212,10 +212,10 @@ class TokenInteractionAuditHelpersTests(unittest.TestCase):
                 return "0x65"
             raise AssertionError("Unexpected RPC method: " + method)
 
-        with patch.object(main, "db", return_value=FakeDatabaseContext()), \\
-             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \\
-             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \\
-             patch.object(main, "rpc_call", side_effect=fake_rpc), \\
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "ETH_RPC_URL", "https://ethereum.example"), \
+             patch.object(main, "require_ethereum_mainnet_rpc", return_value=1), \
+             patch.object(main, "rpc_call", side_effect=fake_rpc), \
              patch.object(main, "required_confirmations", return_value=3):
             result = main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
 
@@ -244,7 +244,7 @@ class TokenInteractionAuditHelpersTests(unittest.TestCase):
             def execute(self, *_args, **_kwargs):
                 return type("Result", (), {"fetchone": lambda _self: None})()
 
-        with patch.object(main, "db", return_value=FakeDatabaseContext()), \\
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
              patch.object(main, "require_ethereum_mainnet_rpc") as chain_check:
             with self.assertRaises(HTTPException) as caught:
                 main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
@@ -274,9 +274,9 @@ class TokenInteractionAuditHelpersTests(unittest.TestCase):
             def execute(self, *_args, **_kwargs):
                 return type("Result", (), {"fetchone": lambda _self: (1,)})()
 
-        with patch.object(main, "db", return_value=FakeDatabaseContext()), \\
-             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \\
-             patch.object(main, "require_bnb_rpc", side_effect=ValueError("wrong chain")), \\
+        with patch.object(main, "db", return_value=FakeDatabaseContext()), \
+             patch.object(main, "BSC_RPC_URL", "https://bnb.example"), \
+             patch.object(main, "require_bnb_rpc", side_effect=ValueError("wrong chain")), \
              patch.object(main, "rpc_call") as rpc:
             with self.assertRaises(HTTPException) as caught:
                 main.verify_wallet_token_interaction(request, {"wallet_id": "wallet_test"})
