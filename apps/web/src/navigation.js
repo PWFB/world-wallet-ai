@@ -10,7 +10,7 @@ export const ROOT_SHORTCUTS = Object.freeze(["Wallets", "Send", "Receive", "Tran
 
 export const NAVIGATION_ICONS = Object.freeze({
   Dashboard: "⌂", Wallets: "◈", Portfolio: "▥", Send: "↗", Receive: "↙", Deposit: "↓", Withdraw: "↑", Swap: "⇄",
-  Transactions: "↔", Profile: "◎", "Return to OKX": "⇥", "Mainnet Return Center": "↪", Markets: "⌁", Staking: "♧", NFTs: "◇", "Token Mining": "⛏", "BALMZ AI": "✦", "BALMZ Presale": "◉",
+  Transactions: "↔", Profile: "◎", "Return to OKX": "⇥", Markets: "⌁", Staking: "♧", NFTs: "◇", "Token Mining": "⛏", "BALMZ AI": "✦", "BALMZ Presale": "◉",
   "Wallet Connect": "⌘", "Wallet Safety": "⛨", "OKX Wallet Inspector": "◈", "Token Interaction Audit": "⌗", Browser: "⌕", "Address Book": "▤", "Proof of Reserves": "✓",
   "Sepolia Converter": "◇", "Address Converter": "⇄", "Contract Converter": "⌁", "Contract Generator": "✣",
   "Verify Contract": "✓", "API Request": "⌘", "API Keys": "⚿", "Request Center": "◎", "Support Center": "?",
