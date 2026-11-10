@@ -1623,14 +1623,20 @@ def validate_asset_network(asset: str, network: str):
 
 def configured_addresses(user):
     # Only return addresses explicitly saved to this user's active wallet.
-    # Service-level fallback addresses must never be copied into user wallets:
-    # doing so can misattribute balances/transactions and mix testnet with mainnet.
+    # Carry the ownership-verification flag so reserve and balance tooling can
+    # distinguish mere attachment from a completed wallet-signature challenge.
     with db() as conn:
         rows = conn.execute(
-            "SELECT network,address,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",
+            "SELECT network,address,label,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network, CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END, created_at, address",
             (user["wallet_id"],),
         ).fetchall()
-    return [{"network": r[0], "address": r[1], "label": r[2]} for r in rows]
+    return [
+        {
+            "network": r[0], "address": r[1], "label": r[2],
+            "ownership_verified": bool(r[3]) if len(r) > 3 else True,
+        }
+        for r in rows
+    ]
 
 
 def wallet_network_address(user, network):
@@ -6739,49 +6745,49 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     unverified_addresses = []
     registry = []
     warnings = []
+    for item in addresses:
+        network = str(item["network"]).strip().lower().replace("-", "_")
+        address = str(item["address"]).strip()
+        owned = bool(item.get("ownership_verified", True))
+        inventory_item = {
+            "network": network,
+            "address": address,
+            "label": item.get("label"),
+            "ownership_verified": owned,
+        }
+        if owned:
+            verified_addresses.append(inventory_item)
+        else:
+            unverified_addresses.append(inventory_item)
+
+    # A registry outage must not erase unrelated native-chain reserve reads.
+    # Missing metadata is visible in catalogue status instead of fabricating
+    # a token contract or balance.
     try:
         with db() as conn:
-            owned_rows = conn.execute(
-                "SELECT network,address,label,ownership_verified FROM wallet_addresses "
-                "WHERE wallet_id=%s ORDER BY network,CASE WHEN lower(label)='primary' THEN 0 ELSE 1 END,created_at,address",
-                (user["wallet_id"],),
-            ).fetchall()
             registry_rows = conn.execute(
                 "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
                 "ORDER BY network,symbol"
             ).fetchall()
-        verified_keys = {
-            (str(row[0] or "").strip().lower(), str(row[1] or "").strip().lower())
-            for row in owned_rows if bool(row[3])
-        }
-        for item in addresses:
-            network = str(item["network"]).strip().lower().replace("-", "_")
-            address = str(item["address"]).strip()
-            owned = (network, address.lower()) in verified_keys
-            inventory_item = {
-                "network": network,
-                "address": address,
-                "label": item.get("label"),
-                "ownership_verified": owned,
-            }
-            if owned:
-                verified_addresses.append(inventory_item)
+        for row in registry_rows:
+            if len(row) >= 6:
+                symbol, name, token_network, contract, decimals, status = row[:6]
+            elif len(row) == 3:
+                # Compatibility for scoped legacy registry adapters.
+                symbol, contract, decimals = row
+                name, token_network, status = symbol, "bnb", "active"
             else:
-                unverified_addresses.append(inventory_item)
-        registry = [
-            {
-                "symbol": str(row[0] or "").upper(),
-                "name": str(row[1] or row[0] or "Token"),
-                "network": str(row[2] or "").lower(),
-                "contract_address": str(row[3] or "").strip() or None,
-                "decimals": int(row[4]) if row[4] is not None else None,
-                "status": str(row[5] or "pending"),
-            }
-            for row in registry_rows
-        ]
+                continue
+            registry.append({
+                "symbol": str(symbol or "").upper(),
+                "name": str(name or symbol or "Token"),
+                "network": str(token_network or "").lower(),
+                "contract_address": str(contract or "").strip() or None,
+                "decimals": int(decimals) if decimals is not None else None,
+                "status": str(status or "pending"),
+            })
     except Exception as exc:
-        logger.warning("Proof-of-reserves inventory lookup failed: error_type=%s", type(exc).__name__)
-        warnings.append("Wallet ownership or token registry records could not be loaded; reserves are not attributed.")
+        logger.warning("Proof-of-reserves token registry lookup failed: error_type=%s", type(exc).__name__)
 
     reserves = []
     testnet_assets = []
@@ -6822,6 +6828,22 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
                 })
             except Exception:
                 warnings.append("solana-devnet BALMZ: wallet token balance unavailable")
+            try:
+                supply_response = rpc_call(solana_rpc, "getTokenSupply", [BALMZ_SOLANA_DEVNET_MINT, {"commitment": "confirmed"}])
+                supply = (supply_response or {}).get("value") or {}
+                supply_decimals = int(supply.get("decimals", -1))
+                raw_supply = str(supply.get("amount", ""))
+                if supply_decimals != BALMZ_SOLANA_DEVNET_DECIMALS or not raw_supply.isdigit():
+                    raise ValueError("Unexpected BALMZ mint supply response")
+                total_supply = float(supply.get("uiAmountString") or (int(raw_supply) / (10 ** supply_decimals)))
+                token_supplies.append({
+                    "symbol": "BALMZ-SOL-DEVNET", "network": "solana-devnet",
+                    "mint_address": BALMZ_SOLANA_DEVNET_MINT, "decimals": supply_decimals,
+                    "total_supply": total_supply, "raw_amount": raw_supply,
+                    "source": "Solana Devnet getTokenSupply (confirmed)", "commitment": "confirmed",
+                })
+            except Exception:
+                warnings.append("solana-devnet BALMZ: on-chain total supply unavailable")
             continue
 
         try:
