@@ -1078,6 +1078,13 @@ def wallet_security_pin_session(user: dict = Depends(current_user)):
         "wallet_id": user.get("wallet_id"),
         "expires_in_seconds": 43200,
         "second_factor": "six_digit_pin",
+        "user": {
+            "id": user.get("id"),
+            "email": user.get("email"),
+            "name": user.get("name"),
+            "wallet_id": user.get("wallet_id"),
+            "wallet_number": user.get("wallet_number"),
+        },
     }
 
 
