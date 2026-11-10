@@ -30,6 +30,8 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
   const [updatedAt, setUpdatedAt] = useState(null);
   const [question, setQuestion] = useState("");
   const [report, setReport] = useState("");
+  const [aiLoading, setAiLoading] = useState(false);
+  const [includeWalletContext, setIncludeWalletContext] = useState(false);
 
   const scanToken = useCallback(async (target = address, network = chain) => {
     const clean = target.trim();
@@ -103,10 +105,35 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
     ];
   }, [market]);
 
-  function makeReport() {
-    if (!market || !token) { setReport("Scan a token with available market data before generating a report."); return; }
-    const change = market.priceChange?.h24;
-    setReport(token.name + " (" + token.symbol + ") on " + (chain === "solana" ? "Solana" : "BNB Smart Chain") + ". Price: " + usd(market.priceUsd) + "; 24h volume: " + usd(market.volume?.h24) + "; pair liquidity: " + usd(market.liquidity?.usd) + "; 24h pair change: " + (change == null ? "unavailable" : fmt(change) + "%") + ". Source: Dexscreener. This is a metrics summary, not a security audit or investment recommendation. Holder concentration, mint/freeze authority and contract behavior require separate verified on-chain checks.");
+  async function makeReport() {
+    const prompt = question.trim() || (token ? "Summarize the current " + token.symbol + " market metrics, liquidity and important limitations." : "Explain how World Wallet AI verifies balances, reserves and transaction evidence.");
+    if (!accessToken || !apiBaseUrl) { setReport("Sign in to use the BALMZ AI assistant."); return; }
+    setAiLoading(true);
+    setReport("");
+    const marketContext = token && market ? {
+      token_name: token.name,
+      token_symbol: token.symbol,
+      network: token.chain === "solana" ? "Solana Mainnet" : token.chain === "bsc" ? "BNB Chain Mainnet" : "Ethereum Mainnet",
+      price_usd: market.priceUsd ?? null,
+      volume_24h_usd: market.volume?.h24 ?? null,
+      liquidity_usd: market.liquidity?.usd ?? null,
+      change_24h_percent: market.priceChange?.h24 ?? null,
+    } : null;
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/balmz-ai/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
+        body: JSON.stringify({ question: prompt, include_wallet_context: includeWalletContext, market_context: marketContext }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "BALMZ AI could not generate a response.");
+      setReport(data.answer || "BALMZ AI returned an empty response.");
+    } catch (cause) {
+      setReport(cause?.message || "BALMZ AI request failed. Check backend Gemini configuration and try again.");
+    } finally {
+      setAiLoading(false);
+    }
   }
 
   return <section className="balmz-ai-page">
