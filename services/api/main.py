@@ -3,6 +3,9 @@ import math
 import logging
 import base64
 import hashlib
+import hmac
+import smtplib
+from email.message import EmailMessage
 import re
 import secrets
 import time
@@ -41,6 +44,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 # One explicit administrator identity takes precedence over legacy per-feature/demo email settings.
 WORLD_WALLET_ADMIN_EMAIL = os.getenv("WORLD_WALLET_ADMIN_EMAIL", "").strip().lower()
+WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD = os.getenv("WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
 IDENTITY_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_DEMO_EMAIL", "")).strip().lower()
 IDENTITY_PASSWORD = os.getenv("WORLD_WALLET_DEMO_PASSWORD", "")
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
@@ -228,6 +232,16 @@ class PhoneOtpRequest(BaseModel):
 class NeonAuthOtpRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     otp: str = Field(min_length=4, max_length=12)
+
+class SecurityPinRequest(BaseModel):
+    pin: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class SecurityPinRecoveryCompleteRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+    new_pin: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
 
 
 class TransferRequest(BaseModel):
@@ -451,6 +465,32 @@ def init_db():
           requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         CREATE INDEX IF NOT EXISTS phone_otp_requests_phone_time_idx ON phone_otp_requests(phone_number,requested_at DESC);
+        CREATE TABLE IF NOT EXISTS wallet_security_pins(
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          pin_salt TEXT NOT NULL,
+          pin_hash TEXT NOT NULL,
+          failed_attempts INTEGER NOT NULL DEFAULT 0,
+          locked_until TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE TABLE IF NOT EXISTS wallet_security_pin_sessions(
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          expires_at TIMESTAMPTZ NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS wallet_security_pin_recovery(
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          code_salt TEXT NOT NULL,
+          code_hash TEXT NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0,
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS wallet_security_pin_recovery_user_time_idx
+          ON wallet_security_pin_recovery(user_id,created_at DESC);
         CREATE SEQUENCE IF NOT EXISTS wallets_wallet_number_seq
           AS BIGINT MINVALUE 1 MAXVALUE 99999999999 START WITH 10000000000 INCREMENT BY 1 NO CYCLE;
         CREATE TABLE IF NOT EXISTS wallets(
@@ -873,6 +913,86 @@ def neon_auth_user(token: str):
     return user
 
 
+def _validate_six_digit_pin(value: str):
+    pin = str(value or "").strip()
+    if not re.fullmatch(r"\d{6}", pin):
+        raise HTTPException(status_code=400, detail="Enter exactly six digits.")
+    # Avoid the weakest PINs, which are easily guessed even with throttling.
+    if pin in {"000000", "111111", "222222", "333333", "444444", "555555", "666666", "777777", "888888", "999999", "123456", "654321", "121212", "112233"}:
+        raise HTTPException(status_code=400, detail="Choose a less predictable six-digit PIN.")
+    return pin
+
+
+def _pin_hash(value: str, salt_hex: str):
+    # PBKDF2 is built into Python and stores only a salted, slow hash.
+    return hashlib.pbkdf2_hmac("sha256", value.encode("utf-8"), bytes.fromhex(salt_hex), 310_000).hex()
+
+
+def _new_pin_hash(value: str):
+    salt = secrets.token_hex(16)
+    return salt, _pin_hash(value, salt)
+
+
+def _security_user_without_pin(authorization: str | None):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization[7:].strip()
+    if SESSION_TOKEN and token == SESSION_TOKEN:
+        if not IDENTITY_EMAIL:
+            raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
+        user = get_user(IDENTITY_EMAIL)
+        if not user:
+            raise HTTPException(status_code=401, detail="Wallet user not found")
+        return user
+    if token.startswith("wwai_"):
+        raise HTTPException(status_code=403, detail="Use your Neon Auth account session to manage the wallet PIN")
+    return neon_auth_user(token)
+
+
+def current_user_without_pin(authorization: str | None = Header(default=None)):
+    """Authenticate Neon identity for the PIN setup/verify/recovery endpoints only."""
+    return _security_user_without_pin(authorization)
+
+
+def _create_pin_session(conn, user_id: str):
+    conn.execute(
+        "INSERT INTO wallet_security_pin_sessions(user_id,expires_at) VALUES(%s,NOW()+INTERVAL '12 hours') "
+        "ON CONFLICT(user_id) DO UPDATE SET created_at=NOW(),expires_at=EXCLUDED.expires_at",
+        (user_id,),
+    )
+
+
+def _send_pin_recovery_to_super_admin(code: str, account_name: str):
+    admin_email = WORLD_WALLET_ADMIN_EMAIL
+    app_password = WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD
+    if not admin_email or not app_password:
+        raise HTTPException(
+            status_code=503,
+            detail="Super Admin Gmail recovery is not configured. Set WORLD_WALLET_ADMIN_EMAIL and WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD on the backend.",
+        )
+    if "@" not in admin_email:
+        raise HTTPException(status_code=503, detail="Configured Super Admin mailbox is invalid.")
+    message = EmailMessage()
+    message["Subject"] = "World Wallet AI · PIN recovery approval code"
+    message["From"] = admin_email
+    message["To"] = admin_email
+    message.set_content(
+        "A wallet account requested a six-digit security PIN recovery.\n\n"
+        f"Account: {account_name[:160]}\n"
+        f"Recovery code: {code}\n\n"
+        "Share this code only after independently confirming the account owner. "
+        "It expires in 10 minutes and can be used once.\n"
+        "World Wallet AI security service"
+    )
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=20) as smtp:
+            smtp.login(admin_email, app_password)
+            smtp.send_message(message, from_addr=admin_email, to_addrs=[admin_email])
+    except Exception as exc:
+        logger.warning("Super Admin PIN recovery email failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Super Admin Gmail could not receive the recovery code. No PIN was changed.") from exc
+
+
 def current_user(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -902,9 +1022,229 @@ def current_user(authorization: str | None = Header(default=None)):
             raise
         except Exception as exc:
             raise HTTPException(status_code=503, detail="API key authentication is temporarily unavailable") from exc
-    return neon_auth_user(token)
+    user = neon_auth_user(token)
+    if DATABASE_URL:
+        try:
+            with db() as conn:
+                configured = conn.execute(
+                    "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
+                    (user["id"],),
+                ).fetchone()
+                if not configured:
+                    raise HTTPException(status_code=403, detail="SECURITY_PIN_SETUP_REQUIRED")
+                active_session = conn.execute(
+                    "SELECT 1 FROM wallet_security_pin_sessions WHERE user_id=%s AND expires_at>NOW()",
+                    (user["id"],),
+                ).fetchone()
+                if not active_session:
+                    raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Wallet PIN session check failed: error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Wallet security verification is temporarily unavailable") from exc
+    else:
+        raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
+    return user
 
 
+
+
+@app.get("/api/v1/security/pin/status")
+def wallet_security_pin_status(
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user_without_pin),
+):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
+    try:
+        with db() as conn:
+            # Lock the account on each fresh application sign-in. A new PIN check
+            # is required after the user closes/reopens the authenticated session.
+            conn.execute("DELETE FROM wallet_security_pin_sessions WHERE user_id=%s", (user["id"],))
+            row = conn.execute(
+                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
+                (user["id"],),
+            ).fetchone()
+            conn.commit()
+        return {
+            "pin_configured": bool(row),
+            "pin_length": 6,
+            "recovery_delivery": "super_admin_gmail_only",
+            "read_only": True,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN status lookup failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet PIN status is unavailable") from exc
+
+
+@app.post("/api/v1/security/pin/enroll")
+def wallet_security_pin_enroll(
+    request: SecurityPinRequest,
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user_without_pin),
+):
+    pin = _validate_six_digit_pin(request.pin)
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
+    token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    salt, pin_hash = _new_pin_hash(pin)
+    try:
+        with db() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s FOR UPDATE",
+                (user["id"],),
+            ).fetchone()
+            if existing:
+                raise HTTPException(status_code=409, detail="A wallet PIN already exists. Use PIN verification or Super Admin recovery.")
+            conn.execute(
+                "INSERT INTO wallet_security_pins(user_id,pin_salt,pin_hash) VALUES(%s,%s,%s)",
+                (user["id"], salt, pin_hash),
+            )
+            _create_pin_session(conn, user["id"])
+            conn.commit()
+        return {"ok": True, "pin_configured": True, "session_expires_in_seconds": 43200}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN enrollment failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet PIN could not be saved") from exc
+
+
+@app.post("/api/v1/security/pin/verify")
+def wallet_security_pin_verify(
+    request: SecurityPinRequest,
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user_without_pin),
+):
+    pin = _validate_six_digit_pin(request.pin)
+    try:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT pin_salt,pin_hash,failed_attempts,locked_until FROM wallet_security_pins WHERE user_id=%s FOR UPDATE",
+                (user["id"],),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=409, detail="Set up your six-digit wallet PIN first.")
+            if row[3] is not None and row[3] > datetime.now(timezone.utc):
+                raise HTTPException(status_code=429, detail="Wallet PIN is temporarily locked. Try again after the lock expires.")
+            computed = _pin_hash(pin, str(row[0]))
+            if not hmac.compare_digest(computed, str(row[1])):
+                attempts = int(row[2] or 0) + 1
+                if attempts >= 5:
+                    conn.execute(
+                        "UPDATE wallet_security_pins SET failed_attempts=0,locked_until=NOW()+INTERVAL '15 minutes',updated_at=NOW() WHERE user_id=%s",
+                        (user["id"],),
+                    )
+                    conn.commit()
+                    raise HTTPException(status_code=429, detail="Too many incorrect PIN attempts. Wallet login is locked for 15 minutes.")
+                conn.execute(
+                    "UPDATE wallet_security_pins SET failed_attempts=%s,updated_at=NOW() WHERE user_id=%s",
+                    (attempts, user["id"]),
+                )
+                conn.commit()
+                raise HTTPException(status_code=401, detail="Incorrect wallet PIN.")
+            conn.execute(
+                "UPDATE wallet_security_pins SET failed_attempts=0,locked_until=NULL,updated_at=NOW() WHERE user_id=%s",
+                (user["id"],),
+            )
+            _create_pin_session(conn, user["id"])
+            conn.commit()
+        return {"ok": True, "pin_verified": True, "session_expires_in_seconds": 43200}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN verification failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Wallet PIN verification is unavailable") from exc
+
+
+@app.post("/api/v1/security/pin/recovery/request")
+def wallet_security_pin_recovery_request(
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user_without_pin),
+):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Wallet PIN recovery requires the configured database")
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    salt, code_hash = _new_pin_hash(code)
+    recovery_id = "pinrec_" + secrets.token_urlsafe(20)
+    try:
+        with db() as conn:
+            recent = conn.execute(
+                "SELECT COUNT(*) FROM wallet_security_pin_recovery WHERE user_id=%s AND created_at>NOW()-INTERVAL '15 minutes'",
+                (user["id"],),
+            ).fetchone()
+            if recent and int(recent[0]) >= 2:
+                raise HTTPException(status_code=429, detail="Too many PIN recovery requests. Try again later.")
+            conn.execute(
+                "INSERT INTO wallet_security_pin_recovery(id,user_id,code_salt,code_hash,expires_at) "
+                "VALUES(%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",
+                (recovery_id, user["id"], salt, code_hash),
+            )
+            conn.commit()
+        _send_pin_recovery_to_super_admin(code, str(user.get("email") or user["id"]))
+        return {"ok": True, "delivery": "super_admin_gmail_only", "expires_in_seconds": 600}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN recovery request failed: error_type=%s", type(exc).__name__)
+        try:
+            with db() as conn:
+                conn.execute("UPDATE wallet_security_pin_recovery SET used_at=NOW() WHERE id=%s", (recovery_id,))
+                conn.commit()
+        except Exception:
+            pass
+        raise HTTPException(status_code=503, detail="PIN recovery request could not be completed") from exc
+
+
+@app.post("/api/v1/security/pin/recovery/complete")
+def wallet_security_pin_recovery_complete(
+    request: SecurityPinRecoveryCompleteRequest,
+    authorization: str | None = Header(default=None),
+    user: dict = Depends(current_user_without_pin),
+):
+    new_pin = _validate_six_digit_pin(request.new_pin)
+    code = str(request.code).strip()
+    salt, new_hash = _new_pin_hash(new_pin)
+    try:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT id,code_salt,code_hash,attempts FROM wallet_security_pin_recovery "
+                "WHERE user_id=%s AND used_at IS NULL AND expires_at>NOW() ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+                (user["id"],),
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No active Super Admin recovery code exists or the code has expired.")
+            if int(row[3] or 0) >= 5:
+                raise HTTPException(status_code=429, detail="Recovery code is locked after too many incorrect attempts.")
+            computed = _pin_hash(code, str(row[1]))
+            if not hmac.compare_digest(computed, str(row[2])):
+                conn.execute(
+                    "UPDATE wallet_security_pin_recovery SET attempts=attempts+1 WHERE id=%s",
+                    (row[0],),
+                )
+                conn.commit()
+                raise HTTPException(status_code=401, detail="The Super Admin recovery code is invalid.")
+            conn.execute(
+                "UPDATE wallet_security_pins SET pin_salt=%s,pin_hash=%s,failed_attempts=0,locked_until=NULL,updated_at=NOW() WHERE user_id=%s",
+                (salt, new_hash, user["id"]),
+            )
+            conn.execute(
+                "UPDATE wallet_security_pin_recovery SET used_at=NOW() WHERE id=%s",
+                (row[0],),
+            )
+            _create_pin_session(conn, user["id"])
+            conn.commit()
+        return {"ok": True, "pin_reset": True, "delivery": "super_admin_gmail_only", "session_expires_in_seconds": 43200}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Wallet PIN recovery completion failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="PIN recovery could not be completed") from exc
 
 
 def _neon_auth_origin():
