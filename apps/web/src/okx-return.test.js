@@ -12,7 +12,7 @@ import {
 
 const ETH = "0x1111111111111111111111111111111111111111";
 const BTC = "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh";
-const SOL = "8w2P8gXnq3aK4oZt5vYj7uH6mS1cR9dF3kL2nB4pQ6aA";
+const SOL = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN";
 
 test("normalizes hexadecimal and decimal EVM chain IDs", () => {
   assert.equal(normalizeEvmChainId("0x1"), 1);
