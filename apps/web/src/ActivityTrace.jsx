@@ -8,7 +8,7 @@ function short(value) {
 function explorerUrl(event) {
   const hash = String(event?.tx_hash || "").trim();
   if (!hash || !/^[A-Za-z0-9]+$/.test(hash)) return "";
-  const network = String(event?.network || "").toLowerCase().replace(/[\\s-]+/g, "_");
+  const network = String(event?.network || "").toLowerCase().replace(/[\s-]+/g, "_");
   if (network === "bitcoin") return "https://blockstream.info/tx/" + encodeURIComponent(hash);
   if (network === "bnb") return "https://bscscan.com/tx/" + encodeURIComponent(hash);
   if (network === "sepolia") return "https://sepolia.etherscan.io/tx/" + encodeURIComponent(hash);
