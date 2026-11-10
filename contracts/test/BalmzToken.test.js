@@ -7,6 +7,7 @@ const BILLION = 1_000_000_000n * ETHER;
 const TEN_BILLION = 10_000_000_000n * ETHER;
 const CLIFF = 365n * 24n * 60n * 60n;
 const LINEAR_DURATION = 1095n * 24n * 60n * 60n;
+let reserveAccountImpersonated = false;
 
 async function deploymentSigner(chainId) {
   if (chainId === 1 || chainId === 56) {
@@ -17,6 +18,7 @@ async function deploymentSigner(chainId) {
     await network.provider.send("hardhat_impersonateAccount", [
       RESERVE_RECIPIENT,
     ]);
+    reserveAccountImpersonated = true;
     return ethers.getSigner(RESERVE_RECIPIENT);
   }
 
@@ -44,10 +46,11 @@ describe("BalmzToken fixed-supply deployment", function () {
   afterEach(async function () {
     const chainId = Number((await ethers.provider.getNetwork()).chainId);
 
-    if (chainId === 1 || chainId === 56) {
+    if (reserveAccountImpersonated && (chainId === 1 || chainId === 56)) {
       await network.provider.send("hardhat_stopImpersonatingAccount", [
         RESERVE_RECIPIENT,
       ]);
+      reserveAccountImpersonated = false;
     }
   });
 
