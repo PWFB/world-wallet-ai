@@ -708,9 +708,26 @@ function App() {
         // Storage can be unavailable in restricted browser modes.
       }
 
-      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
-        if (!accessToken && !cancelled) setAccessToken(persistedToken);
+      if (pinGateOpen && pendingPinToken) {
         if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
+        if (accessToken === persistedToken) {
+          if (!cancelled) setAuthRestoring(false);
+          return;
+        }
+        if (!cancelled) {
+          try {
+            await beginSecurityPinGate(persistedToken, null);
+          } catch (error) {
+            localStorage.removeItem(TOKEN_KEY);
+            setShowLogin(true);
+            setLoginError(error.message || "Wallet PIN security could not be restored. Please sign in again.");
+          }
+          setAuthRestoring(false);
+        }
         return;
       }
 
@@ -739,13 +756,9 @@ function App() {
           try {
             const token = await getNeonAccessToken();
             if (token) {
-              try { localStorage.setItem(TOKEN_KEY, token); } catch {}
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
               try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
-              setUser(neonSessionUser);
-              setAccessToken(token);
-              setActive("Dashboard");
-              setShowLogin(false);
+              await beginSecurityPinGate(token, neonSessionUser);
               setAuthRestoring(false);
               if (window.location.search) {
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -775,7 +788,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [sessionState.isPending, neonSessionUser, accessToken]);
+  }, [sessionState.isPending, neonSessionUser, accessToken, pinGateOpen, pendingPinToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1486,6 +1499,15 @@ function App() {
 
   async function handleLogout() {
     try {
+      if (accessToken) {
+        await fetch(API_BASE_URL + "/api/v1/security/pin/lock", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+          cache: "no-store",
+        });
+      }
+    } catch {}
+    try {
       await authClient.signOut();
     } catch {
       // Clear the local application session even if the remote sign-out request fails.
@@ -1511,6 +1533,54 @@ function App() {
     setActive(page);
     setRootSearch("");
     setMobileMenuOpen(false);
+  }
+
+  if (pinGateOpen) {
+    return (
+      <div className="ww-auth-shell">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <header className="ww-auth-top ww-auth-top-compact">
+          <div className="ww-auth-brand"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /><b>WORLD WALLET <em>AI</em></b></div>
+          <button className="ww-auth-home" type="button" onClick={cancelSecurityPinGate}>Sign out</button>
+        </header>
+        <section className="ww-auth-layout">
+          <div className="ww-auth-copy">
+            <span className="ww-live-badge"><i /> WALLET SECURITY</span>
+            <h1>Your wallet.<br /><em>Your PIN.</em></h1>
+            <p>Your account password or approved sign-in is the first identity check. This six-digit PIN is the additional wallet unlock required before balances, reserves and transfers are available.</p>
+            <div className="ww-auth-points">
+              <div><b>01</b><span><strong>Six-digit PIN</strong><small>Stored as a salted server-side hash.</small></span></div>
+              <div><b>02</b><span><strong>Attempt protection</strong><small>Five failed attempts trigger a 15-minute lock.</small></span></div>
+              <div><b>03</b><span><strong>Admin-only recovery</strong><small>Recovery codes are delivered only to Super Admin Gmail.</small></span></div>
+            </div>
+          </div>
+          <form className="ww-auth-card" onSubmit={event => { event.preventDefault(); void submitSecurityPin(); }}>
+            <div className="ww-auth-card-head">
+              <div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div>
+              <div>
+                <small>SECOND FACTOR</small>
+                <h2>{pinGateMode === "setup" ? "Create login PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Unlock your wallet"}</h2>
+                <p>{pinGateMode === "setup" ? "The first PIN you choose becomes this account’s six-digit wallet login PIN." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin and choose a new PIN." : "Enter your six-digit PIN to unlock the authenticated wallet session."}</p>
+              </div>
+            </div>
+            {pinGateMode === "recovery" && <label><span>Super Admin recovery code</span><div className="ww-field"><i>⌗</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinRecoveryCode} onChange={event => setPinRecoveryCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="6-digit admin code" required /></div></label>}
+            <label><span>{pinGateMode === "setup" ? "Create six-digit PIN" : pinGateMode === "recovery" ? "New six-digit PIN" : "Six-digit login PIN"}</span>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinInput} onChange={event => setPinInput(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="••••••" required /></div>
+            </label>
+            {(pinGateMode === "setup" || pinGateMode === "recovery") && <label><span>Confirm six-digit PIN</span>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={pinConfirm} onChange={event => setPinConfirm(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter PIN again" required /></div>
+            </label>}
+            {pinError && <div className={/sent only|approval/i.test(pinError) ? "ww-auth-message" : "ww-auth-error"} role="status">{pinError}</div>}
+            <button className="ww-auth-submit" type="submit" disabled={pinBusy || pinInput.length !== 6 || ((pinGateMode === "setup" || pinGateMode === "recovery") && pinConfirm.length !== 6) || (pinGateMode === "recovery" && pinRecoveryCode.length !== 6)}>
+              {pinBusy ? "Checking security…" : pinGateMode === "setup" ? "Save login PIN" : pinGateMode === "recovery" ? "Reset PIN & unlock" : "Unlock World Wallet AI"} <b>→</b>
+            </button>
+            {pinGateMode === "verify" && <button className="ww-text-link" type="button" onClick={() => void requestSecurityPinRecovery()} disabled={pinBusy}>Forgot PIN? Request Super Admin recovery</button>}
+            {pinGateMode === "recovery" && <button className="ww-text-link" type="button" onClick={() => { setPinGateMode("verify"); setPinInput(""); setPinConfirm(""); setPinRecoveryCode(""); setPinError(""); }}>← Back to PIN entry</button>}
+            <p className="ww-auth-note"><span>✓</span> A recovery code is sent only to the configured Super Admin Gmail. The account email does not receive this PIN recovery code.</p>
+          </form>
+        </section>
+      </div>
+    );
   }
 
   if (!accessToken && !showLogin) {
