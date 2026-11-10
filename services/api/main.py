@@ -3774,7 +3774,6 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 "balance": balmz_balance,
                 "contract_address": BALMZ_SOLANA_DEVNET_MINT,
                 "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
-                "addresses_checked": len(solana_addresses),
             })
         except Exception:
             warnings.append("BALMZ Solana Devnet token balance service unavailable")
