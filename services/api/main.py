@@ -1047,6 +1047,40 @@ def current_user(authorization: str | None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Authentication required")
     token = authorization[7:].strip()
+    # Server-side service credentials and explicitly issued API keys remain a
+    # separate integration-authentication path; interactive wallet sessions
+    # must use the second-factor PIN session token below.
+    if SESSION_TOKEN and token == SESSION_TOKEN:
+        if not IDENTITY_EMAIL:
+            raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
+        user = get_user(IDENTITY_EMAIL)
+        if not user:
+            raise HTTPException(status_code=401, detail="Wallet user not found")
+        return user
+    if DATABASE_URL and token.startswith("wwai_"):
+        try:
+            with db() as conn:
+                row = conn.execute(
+                    """
+                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id,w.wallet_number
+                    FROM api_keys k JOIN users u ON u.id=k.owner_id
+                    LEFT JOIN wallets w ON w.id=u.active_wallet_id
+                    WHERE k.key_hash=%s AND k.revoked_at IS NULL
+                    """,
+                    (sha(token),),
+                ).fetchone()
+                if row:
+                    conn.execute("UPDATE api_keys SET last_used_at=NOW() WHERE id=%s", (row[6],))
+                    conn.commit()
+                    return {
+                        "id": row[0], "email": row[1], "name": row[2],
+                        "wallet_id": row[3], "wallet_number": str(row[7]) if row[7] is not None else None,
+                        "phone_number": row[4], "phone_verified": bool(row[5]),
+                    }
+        except Exception as exc:
+            logger.warning("API key authentication failed: error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=503, detail="API key authentication is temporarily unavailable") from exc
+        raise HTTPException(status_code=401, detail="API key is invalid or revoked")
     if not token.startswith("wwpin_"):
         raise HTTPException(status_code=403, detail="SECURITY_PIN_REQUIRED")
     if not DATABASE_URL:
@@ -1075,40 +1109,6 @@ def current_user(authorization: str | None = Header(default=None)):
     except Exception as exc:
         logger.warning("Wallet PIN session lookup failed: error_type=%s", type(exc).__name__)
         raise HTTPException(status_code=503, detail="Wallet PIN security is temporarily unavailable") from exc
-
-
-def current_user(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Authentication required")
-    token = authorization[7:].strip()
-    if SESSION_TOKEN and token == SESSION_TOKEN:
-        if not IDENTITY_EMAIL:
-            raise HTTPException(status_code=503, detail="World Wallet identity is not configured")
-        user = get_user(IDENTITY_EMAIL)
-        if not user:
-            raise HTTPException(status_code=401, detail="Wallet user not found")
-        return _require_user_pin_session(user)
-    # First accept app-issued API keys. Only a SHA-256 digest is stored in PostgreSQL.
-    if DATABASE_URL and token.startswith("wwai_"):
-        try:
-            with db() as conn:
-                row = conn.execute("""
-                    SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,k.id,w.wallet_number
-                    FROM api_keys k JOIN users u ON u.id=k.owner_id
-                    LEFT JOIN wallets w ON w.id=u.active_wallet_id
-                    WHERE k.key_hash=%s AND k.revoked_at IS NULL
-                """, (sha(token),)).fetchone()
-                if row:
-                    conn.execute("UPDATE api_keys SET last_used_at=NOW() WHERE id=%s", (row[6],))
-                    conn.commit()
-                    return {"id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3], "wallet_number": str(row[7]) if row[7] is not None else None, "phone_number": row[4], "phone_verified": bool(row[5])}
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=503, detail="API key authentication is temporarily unavailable") from exc
-    user = neon_auth_user(token)
-    return _require_user_pin_session(user)
-
 
 
 
