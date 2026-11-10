@@ -1343,18 +1343,57 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
-    const provider = wcProvider || window.ethereum;
-    if (!provider || typeof provider.request !== "function") throw new Error("No compatible external EVM wallet is available. Connect an injected wallet or WalletConnect before signing.");
+    const expectedSigner = String(sourceAddress || "").toLowerCase();
+    const providerCandidates = [
+      wcProvider,
+      ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
+      window.ethereum,
+      window.okxwallet,
+    ].filter((candidate, index, all) =>
+      candidate &&
+      typeof candidate.request === "function" &&
+      all.indexOf(candidate) === index
+    );
+    let provider = null;
+    for (const candidate of providerCandidates) {
+      try {
+        const accounts = await candidate.request({ method: "eth_accounts" });
+        if (Array.isArray(accounts) && accounts.some(account =>
+          String(account || "").toLowerCase() === expectedSigner
+        )) {
+          provider = candidate;
+          break;
+        }
+      } catch {}
+    }
+    if (!provider) {
+      for (const candidate of providerCandidates) {
+        try {
+          const accounts = await candidate.request({ method: "eth_requestAccounts" });
+          if (Array.isArray(accounts) && accounts.some(account =>
+            String(account || "").toLowerCase() === expectedSigner
+          )) {
+            provider = candidate;
+            break;
+          }
+        } catch (error) {
+          if (isUserRejectedError(error)) throw error;
+        }
+      }
+    }
+    if (!provider) {
+      throw new Error("Connect the external source wallet that owns the selected attached address before signing. The OKX receiving address is not used as the source signer.");
+    }
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
     const config = await configResponse.json();
     if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
     const networkConfig = config.networks?.[network];
     if (!networkConfig) throw new Error("Signing configuration for " + network + " is not available.");
-    const expectedSigner = sourceAddress || networkConfig.wallet_address;
-    if (!expectedSigner) throw new Error("Select a verified attached source address before signing.");
-    const accounts = await provider.request({ method: "eth_requestAccounts" });
-    const signer = accounts?.[0];
-    if (!signer || signer.toLowerCase() !== expectedSigner.toLowerCase()) {
+    const expectedNetworkSigner = sourceAddress || networkConfig.wallet_address;
+    if (!expectedNetworkSigner) throw new Error("Select a verified attached source address before signing.");
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const signer = accounts?.find(account => String(account || "").toLowerCase() === expectedNetworkSigner.toLowerCase());
+    if (!signer || signer.toLowerCase() !== expectedNetworkSigner.toLowerCase()) {
       throw new Error("Connect the selected verified source address before signing this transaction.");
     }
     let chainId = await provider.request({ method: "eth_chainId" });
@@ -1493,6 +1532,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
   if (active === "Return to OKX") return <MainnetReturnCenter
     assets={assets}
+    accessToken={accessToken}
+    apiBaseUrl={apiBaseUrl}
     sourceAddresses={withdrawalAddresses}
     wallet={wallet}
     externalProvider={wcProvider}
