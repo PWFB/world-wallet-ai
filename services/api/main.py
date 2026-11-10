@@ -4031,7 +4031,7 @@ def list_wallet_receipts(
         raise HTTPException(status_code=400, detail="Invalid receipt status filter")
     sort_columns = {
         "created_at": "created_at", "kind": "receipt_kind", "status": "review_status",
-        "network": "network", "asset": "asset", "reference": "reference",
+        "issue": "issue_category", "network": "network", "asset": "asset", "reference": "reference",
     }
     if sort not in sort_columns or order not in {"asc", "desc"}:
         raise HTTPException(status_code=400, detail="Invalid receipt sort order")
