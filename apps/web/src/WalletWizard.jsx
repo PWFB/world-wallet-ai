@@ -63,7 +63,7 @@ export default function WalletWizard({ accessToken = "", apiBaseUrl = "", wallet
   ];
 
   return <section className="content feature-content wallet-wizard-page">
-    <div className="page-heading"><div><p className="eyebrow">BALMZ AI · GUIDED WALLET HELPER</p><h1>Wallet Wizard Helper</h1><p className="muted">A guided checklist from your authenticated wallet, live balance verification and saved audit records.</p></div><button className="secondary" onClick={() => setActive?.("BALMZ AI")}>BALMZ AI</button></div>
+    <div className="page-heading"><div><p className="eyebrow">BALMZ AI · GUIDED WALLET HELPER</p><h1>WizzU Helper</h1><p className="muted">A guided checklist from your authenticated wallet, live balance verification and saved audit records.</p></div><button className="secondary" onClick={() => setActive?.("BALMZ AI")}>BALMZ AI</button></div>
     <article className="panel action-panel">
       <div className="panel-head"><div><h2>Run wallet checks</h2><span>Read-only. No funds move and no settings are changed.</span></div><button type="button" className="primary" disabled={loading} onClick={runChecks}>{loading ? "Checking wallet…" : "Run guided checks"}</button></div>
       <p className="security-note">Active wallet: {wallet?.wallet_number || wallet?.wallet_id || wallet?.id || "Loading"} · Asset rows in current dashboard: {assets.length}. The helper does not invent missing balances or contract verifications.</p>
