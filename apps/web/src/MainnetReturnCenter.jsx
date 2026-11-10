@@ -341,7 +341,7 @@ export default function MainnetReturnCenter({
                         : "";
           return <div className="tool-row" key={network + ":" + symbol + ":" + index}>
             <div style={{ minWidth: 0 }}>
-              <b>{symbol} · {MAINNET_LABELS[network]}</b>
+              <b>{symbol} · {MAINNET_LABELS[network] || audit?.network_label || "Mainnet network not configured"}</b>
               <small>Verified available: {balance === null ? "Not verified" : formatAmount(balance) + " " + symbol}</small>
               {audit && <small>Balance check: {audit.status.replaceAll("_", " ")} · ledger {audit.ledger_available_balance == null ? "not recorded" : formatAmount(audit.ledger_available_balance) + " " + symbol}</small>}
               <small>To: <code>{shorten(destination)}</code></small>
