@@ -1,16 +1,17 @@
-import { useEffect, useRef, useState } from "react";
-import { EthereumProvider } from "@walletconnect/ethereum-provider";
-import WalletVault from "./WalletVault.jsx";
-import ContractTools from "./ContractTools.jsx";
+import { lazy, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
-import WalletSafetyLayer from "./WalletSafetyLayer.jsx";
-import OKXWalletInspector from "./OKXWalletInspector.jsx";
-import TokenInteractionAudit from "./TokenInteractionAudit.jsx";
-import FreeBalmzMining from "./FreeBalmzMining.jsx";
 import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 
+const WalletVault = lazy(() => import("./WalletVault.jsx"));
+const ContractTools = lazy(() => import("./ContractTools.jsx"));
+const WalletSafetyLayer = lazy(() => import("./WalletSafetyLayer.jsx"));
+const OKXWalletInspector = lazy(() => import("./OKXWalletInspector.jsx"));
+const TokenInteractionAudit = lazy(() => import("./TokenInteractionAudit.jsx"));
+const FreeBalmzMining = lazy(() => import("./FreeBalmzMining.jsx"));
+
+// Load the WalletConnect SDK only after the user explicitly starts a connection.
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
 const WALLETCONNECT_CHAINS = [1, 11155111, 56];
 
@@ -1054,6 +1055,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     setWcBusy(true);
     setWcError("");
     try {
+      const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
       const provider = await EthereumProvider.init({
         projectId: WALLETCONNECT_PROJECT_ID,
         // Ask for every supported EVM chain as optional. Requiring BNB here
