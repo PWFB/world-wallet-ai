@@ -151,6 +151,42 @@ class WalletBalanceVerificationTests(unittest.TestCase):
         self.assertIsNone(eth["ledger_available_balance"])
         self.assertIn("Ethereum Mainnet balance verification failed", result["warnings"])
 
+    def test_unverified_bitcoin_and_solana_addresses_are_never_counted(self):
+        bitcoin = "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"
+        solana = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        connection = FakeConnection(
+            [
+                ("bitcoin", bitcoin, False),
+                ("solana_mainnet", solana, False),
+            ],
+            [
+                ("BTC", Decimal("2"), Decimal("0")),
+                ("SOL", Decimal("3"), Decimal("0")),
+            ],
+        )
+        user = {"id": "user-test", "wallet_id": "wallet-test"}
+        with (
+            patch.object(main, "db", return_value=FakeDB(connection)),
+            patch.object(main, "ETH_RPC_URL", ""),
+            patch.object(main, "BSC_RPC_URL", ""),
+            patch.object(main, "SOLANA_MAINNET_RPC_URL", "https://solana-mainnet.invalid"),
+            patch.object(main, "btc_balance") as btc_reader,
+            patch.object(main, "rpc_call") as rpc_reader,
+            patch.object(main, "wallet_sync_token_rows", return_value=[]),
+        ):
+            result = main.wallet_balance_verification_snapshot(user)
+
+        btc = next(item for item in result["assets"] if item["asset"] == "BTC")
+        sol = next(item for item in result["assets"] if item["asset"] == "SOL")
+        self.assertFalse(btc["verified"])
+        self.assertFalse(sol["verified"])
+        self.assertEqual(btc["status"], "no_verified_address")
+        self.assertEqual(sol["status"], "no_verified_address")
+        self.assertIsNone(btc["available_balance"])
+        self.assertIsNone(sol["available_balance"])
+        btc_reader.assert_not_called()
+        rpc_reader.assert_not_called()
+
     def test_sol_devnet_and_sepolia_rows_are_never_returned_as_mainnet_assets(self):
         connection = FakeConnection(
             [
