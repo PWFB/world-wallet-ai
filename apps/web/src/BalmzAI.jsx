@@ -117,8 +117,8 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
 
     <div className="balmz-ai-columns">
       <article className="panel balmz-ai-wallet-panel">
-        <div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">✦</span><div><h2>Wallet Wizard Helper</h2><p>Check live balances, reserve coverage and reconciliation issues for the active wallet.</p></div></div></div>
-        <button className="balmz-ai-primary" type="button" onClick={() => setActive?.("Wallet Wizard")}>Open Wallet Wizard →</button>
+        <div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">✦</span><div><h2>WizzU Helper</h2><p>Check live balances, reserve coverage and reconciliation issues for the active wallet.</p></div></div></div>
+        <button className="balmz-ai-primary" type="button" onClick={() => setActive?.("WizzU Helper")}>Open WizzU Helper →</button>
       </article>
       <article className="panel balmz-ai-activity-panel">
         <div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">↔</span><div><h2>Transaction Tracing Helper</h2><p>Search saved transactions, receipt states, hashes and wallet audit activities.</p></div></div></div>
