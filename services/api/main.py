@@ -3641,65 +3641,132 @@ def wallet_sync_token_rows(registry_rows, ethereum_address: str | None = None, b
 
 
 def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
+    # Keep the first address as the legacy history cursor target, but balance
+    # reads aggregate every valid, eligible address attached to this wallet.
     eth_address = wallet_network_address(user, "ethereum")
     bnb_address = wallet_network_address(user, "bnb")
     btc_address = wallet_network_address(user, "bitcoin")
     sepolia_address = wallet_network_address(user, "sepolia")
     solana_mainnet_address = wallet_network_address(user, "solana_mainnet")
     solana_address = wallet_network_address(user, "solana_devnet")
-    if not btc_address and not eth_address and not bnb_address and not sepolia_address and not solana_mainnet_address and not solana_address:
+
+    with db() as conn:
+        address_rows = conn.execute(
+            "SELECT network,address,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
+            (user["wallet_id"],),
+        ).fetchall()
+        token_rows = conn.execute(
+            "SELECT symbol,name,network,contract_address,decimals,status "
+            "FROM token_registry WHERE contract_address IS NOT NULL "
+            "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
+        ).fetchall()
+
+    rows_by_network = {}
+    for row in address_rows:
+        rows_by_network.setdefault(str(row[0] or "").strip().lower(), []).append(row)
+
+    def eligible_addresses(network, fallback):
+        rows = rows_by_network.get(network, [])
+        addresses = []
+        for row in rows:
+            address = str(row[1] or "").strip()
+            if not address:
+                continue
+            if network in {"ethereum", "bnb", "sepolia"}:
+                if not valid_evm_address(address) or not bool(row[2]):
+                    continue
+            elif network == "bitcoin" and not valid_bitcoin_address(address):
+                continue
+            elif network in {"solana_mainnet", "solana_devnet"} and not valid_solana_address(address):
+                continue
+            if address.lower() not in {item.lower() for item in addresses}:
+                addresses.append(address)
+        # Compatibility for older tests or deployments where the address
+        # query is unavailable but the existing scoped lookup returned one.
+        if not rows and fallback:
+            addresses = [fallback]
+        return addresses
+
+    eth_addresses = eligible_addresses("ethereum", eth_address)
+    bnb_addresses = eligible_addresses("bnb", bnb_address)
+    btc_addresses = eligible_addresses("bitcoin", btc_address)
+    sepolia_addresses = eligible_addresses("sepolia", sepolia_address)
+    solana_mainnet_addresses = eligible_addresses("solana_mainnet", solana_mainnet_address)
+    solana_addresses = eligible_addresses("solana_devnet", solana_address)
+
+    # The oldest attached address remains the history-cursor target until
+    # per-address cursors are introduced. Never claim full-history coverage
+    # when a wallet has multiple addresses on the same chain.
+    eth_address = eth_addresses[0] if eth_addresses else None
+    bnb_address = bnb_addresses[0] if bnb_addresses else None
+    btc_address = btc_addresses[0] if btc_addresses else None
+    sepolia_address = sepolia_addresses[0] if sepolia_addresses else None
+    solana_mainnet_address = solana_mainnet_addresses[0] if solana_mainnet_addresses else None
+    solana_address = solana_addresses[0] if solana_addresses else None
+
+    if not any((eth_addresses, bnb_addresses, btc_addresses, sepolia_addresses, solana_mainnet_addresses, solana_addresses)):
         raise HTTPException(status_code=503, detail="No wallet address is configured")
 
     updates = []
     warnings = []
     asset_upserts = []
     asset_balance_updates = []
+    token_rows = wallet_sync_token_rows(token_rows, bool(eth_addresses), bool(bnb_addresses))
 
-    # Read registry metadata and release the database connection before any RPC
-    # call. Public blockchain providers can take seconds or time out entirely.
-    with db() as conn:
-        token_rows = conn.execute(
-            "SELECT symbol,name,network,contract_address,decimals,status "
-            "FROM token_registry WHERE contract_address IS NOT NULL "
-            "AND decimals IS NOT NULL AND status='active' ORDER BY symbol,network"
-        ).fetchall()
-    token_rows = wallet_sync_token_rows(token_rows, eth_address, bnb_address)
-
-    if solana_mainnet_address:
+    if solana_mainnet_addresses:
         try:
             require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
-            raw_sol = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [solana_mainnet_address, {"commitment": "confirmed"}])
-            sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+            lamports_total = 0
+            for address in solana_mainnet_addresses:
+                raw_sol = rpc_call(SOLANA_MAINNET_RPC_URL, "getBalance", [address, {"commitment": "finalized"}])
+                lamports = raw_sol.get("value") if isinstance(raw_sol, dict) else None
+                if not isinstance(lamports, int) or lamports < 0:
+                    raise ValueError("Solana Mainnet returned an invalid native balance")
+                lamports_total += lamports
+            sol_balance = float(Decimal(lamports_total) / Decimal(1_000_000_000))
             asset_upserts.append(("SOL", "Solana (Mainnet)", sol_balance))
-            updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance})
+            updates.append({"network":"solana_mainnet","asset":"SOL","balance":sol_balance,"addresses_checked":len(solana_mainnet_addresses)})
         except Exception:
             warnings.append("Solana Mainnet balance service unavailable")
 
-    if btc_address:
+    if btc_addresses:
         try:
-            btc = btc_balance(btc_address)
-            if btc is not None:
-                asset_balance_updates.append((btc, "BTC"))
-                updates.append({"network":"bitcoin","asset":"BTC","balance":btc})
+            btc_total = Decimal("0")
+            for address in btc_addresses:
+                btc = btc_balance(address)
+                if btc is None or not math.isfinite(float(btc)) or float(btc) < 0:
+                    raise ValueError("Bitcoin balance provider returned an invalid balance")
+                btc_total += Decimal(str(btc))
+            btc_balance_total = float(btc_total)
+            asset_balance_updates.append((btc_balance_total, "BTC"))
+            updates.append({"network":"bitcoin","asset":"BTC","balance":btc_balance_total,"addresses_checked":len(btc_addresses)})
         except Exception:
             warnings.append("Bitcoin balance service unavailable")
 
-    if solana_address and SOLANA_DEVNET_RPC_URL:
+    if solana_addresses and SOLANA_DEVNET_RPC_URL:
         try:
             require_solana_rpc_cluster(SOLANA_DEVNET_RPC_URL, SOLANA_DEVNET_GENESIS_HASH, "Solana Devnet")
-            raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [solana_address, {"commitment": "confirmed"}])
-            sol_balance = int((raw_sol or {}).get("value", 0)) / 1_000_000_000
+            lamports_total = 0
+            for address in solana_addresses:
+                raw_sol = rpc_call(SOLANA_DEVNET_RPC_URL, "getBalance", [address, {"commitment": "confirmed"}])
+                lamports = raw_sol.get("value") if isinstance(raw_sol, dict) else None
+                if not isinstance(lamports, int) or lamports < 0:
+                    raise ValueError("Solana Devnet returned an invalid native balance")
+                lamports_total += lamports
+            sol_balance = float(Decimal(lamports_total) / Decimal(1_000_000_000))
             asset_upserts.append(("SOL-DEVNET", "Solana Devnet SOL", sol_balance))
-            # Devnet SOL is stored separately and never clears or overwrites Mainnet SOL.
-            updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance})
+            updates.append({"network":"solana-devnet","asset":"SOL-DEVNET","balance":sol_balance,"addresses_checked":len(solana_addresses)})
         except Exception:
             warnings.append("Solana Devnet balance service unavailable")
-    elif solana_address:
+    elif solana_addresses:
         warnings.append("Solana Devnet RPC is not configured; SOL balance sync skipped")
 
-    if solana_address:
+    if solana_addresses:
         try:
-            balmz_balance = solana_spl_token_balance(solana_address)
+            balmz_total = Decimal("0")
+            for address in solana_addresses:
+                balmz_total += Decimal(str(solana_spl_token_balance(address)))
+            balmz_balance = float(balmz_total)
             asset_upserts.append(("BALMZ-SOL-DEVNET", "BALMZ Token (Solana Devnet)", balmz_balance))
             updates.append({
                 "network": "solana-devnet",
@@ -3707,36 +3774,48 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 "balance": balmz_balance,
                 "contract_address": BALMZ_SOLANA_DEVNET_MINT,
                 "decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
+                "addresses_checked": len(solana_addresses),
             })
         except Exception:
             warnings.append("BALMZ Solana Devnet token balance service unavailable")
 
-    if ETH_RPC_URL and eth_address:
+    if ETH_RPC_URL and eth_addresses:
         try:
             require_ethereum_mainnet_rpc(ETH_RPC_URL)
-            eth = evm_balance(ETH_RPC_URL, eth_address)
+            eth_total = Decimal("0")
+            for address in eth_addresses:
+                balance = evm_balance(ETH_RPC_URL, address)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("Ethereum RPC returned an invalid balance")
+                eth_total += Decimal(str(balance))
+            eth = float(eth_total)
             asset_balance_updates.append((eth, "ETH"))
-            updates.append({"network":"ethereum","asset":"ETH","balance":eth})
+            updates.append({"network":"ethereum","asset":"ETH","balance":eth,"addresses_checked":len(eth_addresses)})
         except Exception:
             warnings.append("Ethereum balance service unavailable")
 
-    if BSC_RPC_URL and bnb_address:
+    if BSC_RPC_URL and bnb_addresses:
         try:
             require_bnb_rpc(BSC_RPC_URL)
-            bnb = evm_balance(BSC_RPC_URL, bnb_address)
+            bnb_total = Decimal("0")
+            for address in bnb_addresses:
+                balance = evm_balance(BSC_RPC_URL, address)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("BNB Chain RPC returned an invalid balance")
+                bnb_total += Decimal(str(balance))
+            bnb = float(bnb_total)
             asset_balance_updates.append((bnb, "BNB"))
-            updates.append({"network":"bnb","asset":"BNB","balance":bnb})
+            updates.append({"network":"bnb","asset":"BNB","balance":bnb,"addresses_checked":len(bnb_addresses)})
         except Exception as exc:
             logger.warning("BNB Chain balance synchronization failed: error_type=%s", type(exc).__name__)
             warnings.append("BNB Chain balance service unavailable")
 
-    # Token decimals and balances are resolved from the verified chain outside
-    # the database lease. In particular, BNB decimals are never taken from the
-    # potentially stale token_registry value.
+    # Token balances are read separately on each network and summed across all
+    # eligible attached addresses. A partial read never overwrites the ledger.
     for symbol, name, network, contract, decimals, status in token_rows:
         rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
-        token_address = eth_address if network == "ethereum" else bnb_address if network == "bnb" else sepolia_address if network == "sepolia" else None
-        if not rpc_url or not token_address:
+        token_addresses = eth_addresses if network == "ethereum" else bnb_addresses if network == "bnb" else sepolia_addresses if network == "sepolia" else []
+        if not rpc_url or not token_addresses:
             continue
         try:
             if network == "ethereum":
@@ -3750,9 +3829,13 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 resolved_decimals = verified_erc20_decimals(rpc_url, contract, network, chain_checked=True)
             else:
                 resolved_decimals = int(decimals)
-            balance = erc20_balance(rpc_url, contract, token_address, resolved_decimals)
-            if balance is None:
-                continue
+            token_total = Decimal("0")
+            for address in token_addresses:
+                balance = erc20_balance(rpc_url, contract, address, resolved_decimals)
+                if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
+                    raise ValueError("Token contract returned an invalid balance")
+                token_total += Decimal(str(balance))
+            balance = float(token_total)
             asset_symbol = wallet_asset_symbol(symbol, network)
             asset_name = f"{name} (BNB Chain)" if asset_symbol.endswith("-BNB") else name
             asset_upserts.append((asset_symbol, asset_name, balance))
@@ -3762,6 +3845,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                 "balance":balance,
                 "contract_address":contract,
                 "decimals":resolved_decimals,
+                "addresses_checked":len(token_addresses),
             })
         except Exception:
             warnings.append(f"{network} {symbol} token balance service unavailable")
