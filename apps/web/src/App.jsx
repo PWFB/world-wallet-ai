@@ -409,6 +409,23 @@ function App() {
     try { localStorage.setItem("world_wallet_last_confirmed_network_balance_v1", JSON.stringify(selectedNetworkBalance)); } catch {}
   }, [selectedNetworkBalance]);
   const [selectedNetworkBalanceBusy, setSelectedNetworkBalanceBusy] = useState(false);
+  const [balanceVerificationReport, setBalanceVerificationReport] = useState(null);
+  const [balanceVerificationError, setBalanceVerificationError] = useState("");
+  const [balanceVerificationBusy, setBalanceVerificationBusy] = useState(false);
+  const verifiedBalancesByAsset = useMemo(() => new Map(
+    (balanceVerificationReport?.assets || [])
+      .filter(item => item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance)))
+      .map(item => [String(item.asset || "").toUpperCase(), item])
+  ), [balanceVerificationReport]);
+  const lastSyncedBalanceByAsset = useMemo(() => {
+    const result = new Map();
+    for (const item of balanceVerificationReport?.assets || []) {
+      if (item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance))) {
+        result.set(String(item.asset || "").toUpperCase(), item);
+      }
+    }
+    return result;
+  }, [balanceVerificationReport]);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [networkStatus, setNetworkStatus] = useState({});
@@ -455,7 +472,10 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
-  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [passwordResetToken, setPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(() => Boolean(new URLSearchParams(window.location.search).get("token")));
   async function beginSecurityPinGate(token, signedInUser = null) {
     if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
     const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
@@ -569,6 +589,8 @@ function App() {
   }
 
   const [showLogin, setShowLogin] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("token") || params.has("password_reset") || params.has("error")) return true;
     try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
   });
   const [loginError, setLoginError] = useState("");
@@ -772,22 +794,29 @@ function App() {
       // back to login while the dashboard is already mounting.
       if (sessionState.isPending) return;
 
-      if (neonSessionUser) {
-        for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
+      if (neonSessionUser || socialReturn) {
+        for (let attempt = 0; attempt < 12 && !cancelled; attempt += 1) {
           try {
-            const token = await getNeonAccessToken();
+            // After Google's top-level OAuth redirect the SDK's React session
+            // can be empty even while the Neon Auth cookie is valid. Exchange
+            // that cookie directly for the backend JWT before deciding sign-in failed.
+            const token = await getNeonAccessToken({ forceRefresh: true });
             if (token) {
+              await beginSecurityPinGate(token, neonSessionUser);
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
               try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
-              await beginSecurityPinGate(token, neonSessionUser);
-              setAuthRestoring(false);
+              if (!cancelled) setAuthRestoring(false);
               if (window.location.search) {
-                window.history.replaceState({}, document.title, window.location.pathname);
+                const params = new URLSearchParams(window.location.search);
+                params.delete("auth_callback");
+                params.delete("password_reset");
+                const next = params.toString();
+                window.history.replaceState({}, document.title, window.location.pathname + (next ? "?" + next : "") + window.location.hash);
               }
               return;
             }
-          } catch {
-            // Keep retrying briefly while Neon Auth finishes the JWT exchange.
+          } catch (error) {
+            if (attempt === 11 && !cancelled) setLoginError(error.message || "Google session could not be exchanged for a secure wallet session.");
           }
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -1383,54 +1412,95 @@ function App() {
       if (!email) throw new Error("Enter your email address.");
       if (!loginPassword) throw new Error("Enter your password.");
 
-      // Sign in directly through Neon Auth in the browser. The browser owns
-      // the Neon Auth session cookie; a server-side relay cannot reliably
-      // recreate that cross-origin cookie session for the /token exchange.
-      const result = await authClient.signIn.email({
-        email,
-        password: loginPassword,
+      // Use one authenticated backend relay for both desktop and mobile. This
+      // avoids a browser SDK cookie/JWT race and returns a JWT the API verifies.
+      const relayResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: loginPassword }),
+        cache: "no-store",
       });
-      if (result?.error) {
-        throw new Error(authErrorMessage(result.error, "Unable to sign in with password."));
-      }
-
-      // First use the browser's Neon Auth session. On native Capacitor builds,
-      // the WebView origin can differ from the website origin and the cross-origin
-      // /token cookie exchange may be blocked. If that happens, retry the same
-      // password sign-in through the backend's existing Neon Auth relay, which
-      // keeps the provider cookie exchange server-side. The API still verifies
-      // the returned JWT signature, issuer, identity, and expiry on every request.
-      let token = await getWalletTokenWithRetry();
-      let signedInUser = result?.data?.user || result?.user || null;
-
-      if (!token) {
-        const relayResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password: loginPassword }),
-          cache: "no-store",
-        });
-        const relayData = await relayResponse.json().catch(() => ({}));
-        if (!relayResponse.ok) {
-          throw new Error(relayData.detail || "Sign-in succeeded, but the secure wallet session could not be completed. Please retry.");
-        }
-        token = relayData.access_token || "";
-        if (!isUsableNeonAccessToken(token)) {
-          throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
-        }
-        signedInUser = relayData.user || signedInUser;
-      }
-
+      const relayData = await relayResponse.json().catch(() => ({}));
+      if (!relayResponse.ok) throw new Error(relayData.detail || "Email or password was not accepted.");
+      const token = relayData.access_token || "";
       if (!isUsableNeonAccessToken(token)) {
         throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
       }
 
-      await beginSecurityPinGate(token, signedInUser);
+      await beginSecurityPinGate(token, relayData.user || null);
       setLoginPassword("");
       setPasswordMode(false);
       setAuthMessage("");
     } catch (error) {
       setLoginError(error.message || "Unable to sign in with password");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function requestPasswordReset() {
+    setLoginError("");
+    setAuthMessage("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your Gmail address first.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password/reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not request the password setup link.");
+      setAuthMessage(data.message || "If the account exists, a password setup link will be sent.");
+    } catch (error) {
+      setLoginError(error.message || "Unable to request a password setup link.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function completePasswordReset() {
+    setLoginError("");
+    setAuthMessage("");
+    setAuthBusy(true);
+    try {
+      if (!passwordResetToken) throw new Error("The password setup link is missing or expired. Request a new one.");
+      if (resetPassword.length < 8) throw new Error("Use a password with at least 8 characters.");
+      if (resetPassword !== resetPasswordConfirm) throw new Error("The two password entries do not match.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: passwordResetToken, new_password: resetPassword }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Password setup link is invalid or expired.");
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Password was updated. Enter your Gmail address to sign in.");
+      const signInResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: resetPassword }),
+        cache: "no-store",
+      });
+      const signedIn = await signInResponse.json().catch(() => ({}));
+      if (!signInResponse.ok || !isUsableNeonAccessToken(signedIn.access_token || "")) {
+        throw new Error("Password updated, but automatic sign-in did not complete. Sign in with the new password.");
+      }
+      await beginSecurityPinGate(signedIn.access_token, signedIn.user || null);
+      setPasswordResetToken("");
+      setResetPassword("");
+      setResetPasswordConfirm("");
+      const params = new URLSearchParams(window.location.search);
+      params.delete("token");
+      params.delete("password_reset");
+      params.delete("error");
+      const rest = params.toString();
+      window.history.replaceState({}, document.title, window.location.pathname + (rest ? "?" + rest : "") + window.location.hash);
+    } catch (error) {
+      setLoginError(error.message || "Password setup failed.");
     } finally {
       setAuthBusy(false);
     }
@@ -1494,9 +1564,15 @@ function App() {
     try {
       sessionStorage.setItem("world_wallet_social_return", provider);
       if (provider === "google") sessionStorage.setItem("world_wallet_google_return", "1");
+      // Production Neon Auth currently trusts the Render frontend origin.
+      // Keep OAuth callbacks on that same origin so desktop browser returns do
+      // not land on an untrusted domain; localhost remains available in dev.
+      const callbackOrigin = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? window.location.origin
+        : "https://world-wallet-ai-frontend.onrender.com";
       const result = await authClient.signIn.social({
         provider,
-        callbackURL: (["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.origin : "https://world-wallet-ai-frontend.onrender.com") + "/?auth_callback=" + provider,
+        callbackURL: callbackOrigin + "/?auth_callback=" + encodeURIComponent(provider),
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, providerName + " Sign-In failed."));
     } catch (error) {
