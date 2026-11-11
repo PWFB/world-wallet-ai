@@ -5713,78 +5713,124 @@ def transactions(user: dict = Depends(current_user), limit: int = 50, offset: in
 def sync_transactions(user: dict = Depends(current_user)):
     imported = []
     warnings = []
-    sepolia_address = wallet_network_address(user, "sepolia")
-    btc_address = wallet_network_address(user, "bitcoin")
-    if btc_address:
+    address_rows = configured_addresses(user)
+    addresses_by_network = {}
+    for item in address_rows:
+        if item.get("ownership_verified") is not True:
+            continue
+        network = normalize_wallet_network(item.get("network") or "")
+        address = str(item.get("address") or "").strip()
+        valid = (
+            valid_evm_address(address) if network in {"ethereum", "bnb", "sepolia"}
+            else valid_bitcoin_address(address) if network == "bitcoin"
+            else valid_solana_address(address) if network in {"solana_mainnet", "solana_devnet"}
+            else False
+        )
+        if valid:
+            bucket = addresses_by_network.setdefault(network, [])
+            if address.lower() not in {value.lower() for value in bucket}:
+                bucket.append(address)
+
+    for btc_address in addresses_by_network.get("bitcoin", []):
         try:
-            balance = btc_balance(btc_address)
-            if balance is not None:
-                with db() as conn:
-                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
-                    conn.commit()
             imported.extend(sync_bitcoin_transactions(user, btc_address))
         except Exception:
-            warnings.append("Bitcoin transaction service unavailable")
-    for rpc_url, network, contract in (
-        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
-        (SEPOLIA_RPC_URL if sepolia_address else "", "sepolia", BALMZ_SEPOLIA_CONTRACT),
-    ):
-        if rpc_url:
-            if network == "sepolia":
-                try:
-                    require_sepolia_rpc(rpc_url)
-                except Exception:
-                    warnings.append("Sepolia RPC chain ID mismatch or unavailable; Sepolia sync skipped.")
-                    continue
-            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, wallet_network_address(user, network))
+            warnings.append("Bitcoin transaction history unavailable for one verified address")
+
+    evm_networks = (
+        (ETH_RPC_URL, "ethereum"),
+        (BSC_RPC_URL, "bnb"),
+        (SEPOLIA_RPC_URL, "sepolia"),
+    )
+    for rpc_url, network in evm_networks:
+        network_addresses = addresses_by_network.get(network, [])
+        if not network_addresses:
+            continue
+        if not rpc_url:
+            warnings.append(f"{network.title()} RPC is not configured; transaction sync skipped.")
+            continue
+        try:
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc_url)
+            elif network == "bnb":
+                require_bnb_rpc(rpc_url)
+            else:
+                require_sepolia_rpc(rpc_url)
+        except Exception:
+            warnings.append(f"{network.title()} RPC chain identity could not be verified; transaction sync skipped.")
+            continue
+
+        for network_address in network_addresses:
+            native_imported, native_warning = sync_evm_native_transactions(
+                user, rpc_url, network, network_address
+            )
             imported.extend(native_imported)
             if native_warning:
                 warnings.append(native_warning)
-            with db() as conn:
-                token_rows = conn.execute(
-                    "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
-                    "WHERE network=%s AND contract_address IS NOT NULL AND decimals IS NOT NULL AND status='active'",
-                    (network,),
-                ).fetchall()
-            network_address = wallet_network_address(user, network)
-            token_rows = wallet_sync_token_rows(
-                token_rows,
-                network_address if network == "ethereum" else None,
-                network_address if network == "bnb" else None,
-            )
-            for symbol, _token_name, token_network, token_contract, token_decimals, _status in token_rows:
-                if token_network != network:
-                    continue
-                transaction_symbol = wallet_asset_symbol(symbol, network)
+
+        with db() as conn:
+            token_rows = conn.execute(
+                "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
+                "WHERE network=%s AND contract_address IS NOT NULL AND status='active'",
+                (network,),
+            ).fetchall()
+        token_rows = wallet_sync_token_rows(
+            token_rows,
+            True if network == "ethereum" else None,
+            True if network == "bnb" else None,
+        )
+        for symbol, _token_name, token_network, token_contract, token_decimals, _status in token_rows:
+            if token_network != network or not token_contract:
+                continue
+            transaction_symbol = wallet_asset_symbol(symbol, network)
+            for network_address in network_addresses:
                 token_imported, warning = sync_evm_token_transactions(
                     user, rpc_url, network, token_contract, transaction_symbol,
-                    decimals=int(token_decimals) if token_decimals is not None else 18,
-                    wallet_address=network_address
+                    decimals=int(token_decimals) if token_decimals is not None else (18 if str(symbol).upper().startswith("BALMZ") else 6),
+                    wallet_address=network_address,
                 )
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
-        elif wallet_network_address(user, network):
-            warnings.append(f"{network.title()} RPC is not configured; {network.title()} transaction sync skipped.")
-    supported_source_configured = bool(btc_address) or any(
-        wallet_network_address(user, network) and rpc_url
+
+    supported_source_configured = bool(addresses_by_network.get("bitcoin")) or any(
+        bool(addresses_by_network.get(network)) and bool(rpc_url)
         for network, rpc_url in (
             ("ethereum", ETH_RPC_URL),
             ("bnb", BSC_RPC_URL),
             ("sepolia", SEPOLIA_RPC_URL),
         )
     )
-    if not imported and not supported_source_configured:
-        detail = (
-            "Sepolia transaction history is not yet supported by live sync."
-            if sepolia_address
-            else "No live transaction source is configured for this wallet."
+    if not supported_source_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="No ownership-verified address has a supported live transaction-history source.",
         )
-        raise HTTPException(status_code=503, detail=detail)
-    assets,tx,summary = wallet_snapshot(user)
-    return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
-            "transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
+    # Address-level cursors can observe the same transaction from more than one
+    # wallet address. Return a de-duplicated response while preserving its chain
+    # and asset identity.
+    unique_imported = []
+    seen = set()
+    for item in imported:
+        key = (
+            str(item.get("tx_hash") or ""),
+            str(item.get("network") or ""),
+            str(item.get("asset") or ""),
+            str(item.get("log_index") if item.get("log_index") is not None else ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_imported.append(item)
+    assets, tx, summary = wallet_snapshot(user)
+    return {
+        "status": "synced_with_warnings" if warnings else "synced",
+        "imported": unique_imported,
+        "warnings": sorted(set(warnings)),
+        "transactions": tx,
+        "assets": assets,
+        "wallet": {**summary, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
+    }
 
 
 
