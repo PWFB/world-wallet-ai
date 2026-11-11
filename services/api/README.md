@@ -21,11 +21,38 @@ Configure these variables in the backend deployment environment (for example, Re
 
 The backend sends the Demo or Pro key in the appropriate request header. The frontend calls the World Wallet API, so the API key is never bundled into the web app.
 
-## Google sign-in
+## Google, Gmail, email and password authentication
 
-The web app starts Google OAuth through Neon Auth (`authClient.signIn.social({ provider: "google" })`). Enable the Google provider in the Neon Auth configuration used by this deployment and register the exact callback/redirect URI shown by Neon Auth. The frontend's `VITE_NEON_AUTH_URL` must point to that same Neon Auth instance. OAuth client secrets belong only in the provider configuration, never in GitHub or frontend environment variables.
+World Wallet AI uses Neon Auth (Better Auth) for customer account authentication. The production branch has the Google OAuth provider registered, email/password sign-in enabled, and the frontend starts Google OAuth with `authClient.signIn.social({ provider: "google" })`.
 
-The legacy backend `GOOGLE_CLIENT_ID` setting is used only by the separate `/api/v1/auth/google` credential-verification endpoint; it does not replace configuring the Neon Auth Google provider.
+Production auth settings currently use:
+- Email/password sign-in and new sign-ups enabled.
+- Email verification required, with OTP verification.
+- Verification emails enabled at sign-up and for unverified sign-ins.
+- Automatic sign-in after successful email verification.
+- Sessions revoked after a successful password reset.
+- Google OAuth provider registered in Neon Auth; its client secret remains in provider configuration and is never committed to this repository.
+
+The frontend `VITE_NEON_AUTH_URL` must point to the same Neon Auth base URL as the backend's `NEON_AUTH_BASE_URL`. For the currently linked production Neon Auth branch, the base URL is the one returned by Neon Auth configuration for the `World wallet Ai` project. Keep the Render frontend and backend pointed to that same Auth branch. The registered production trusted origin is `https://world-wallet-ai-frontend.onrender.com`. Keep the exact OAuth callback URL registered with Google/Neon Auth; do not add wildcard redirects.
+
+The password lifecycle is handled by Neon Auth:
+- Sign-up requires a verified email and the app's configured registration checks.
+- Email OTP sign-in sends a one-time code through the configured Neon Auth mail provider.
+- Password sign-in posts credentials to the backend Neon Auth relay; plaintext passwords are forwarded only to the Auth provider over TLS and are not stored in World Wallet AI application tables.
+- Forgot-password requests use Neon Auth's one-time reset flow. The API returns a generic response to avoid exposing whether an email has an account.
+- Password reset requires the email-issued token and a new password of at least eight characters. Neon Auth revokes the user's sessions after reset; the app then requires sign-in and the World Wallet AI security PIN gate again.
+
+### Gmail delivery boundary
+
+The current Neon Auth email provider is Neon Auth's shared sender (`auth@mail.myneon.app`, display name **World Wallet AI**). This provider sends account verification, OTP and password-reset mail. It is not a Gmail sender.
+
+The backend separately uses Gmail SMTP over TLS for Super Admin PIN-recovery approval messages. Configure these values only in the backend service environment:
+- `WORLD_WALLET_ADMIN_EMAIL` — the administrator Gmail mailbox.
+- `WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD` — a Google App Password for that mailbox (not the user's normal Google password).
+
+That Gmail SMTP channel is restricted to Super Admin PIN recovery; it does not replace Neon Auth's account verification or password-reset mail provider. Do not log, commit, or expose the App Password. A Gmail-branded sender for customer verification and reset emails requires a custom SMTP provider to be configured for Neon Auth; the connected Neon controls currently expose no SMTP-provider update action. Do not claim Gmail delivery for customer auth mail until a real test email confirms it.
+
+Google OAuth secrets belong only in Neon Auth provider configuration. Never store a Google account password in World Wallet AI or ask users for it; the user signs in through Google's OAuth consent flow.
 
 ## Sepolia wallet
 
