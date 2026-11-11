@@ -1,6 +1,9 @@
 import { Address, beginCell } from "@ton/core";
 
 export function jettonAmountToUnits(amount, decimals) {
+  if (decimals === null || decimals === undefined || decimals === "") {
+    throw new Error("Jetton decimals are missing or invalid; transfer is disabled.");
+  }
   const scale = Number(decimals);
   if (!Number.isInteger(scale) || scale < 0 || scale > 30) {
     throw new Error("Jetton decimals are missing or invalid; transfer is disabled.");
