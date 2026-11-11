@@ -6,7 +6,9 @@ This runbook covers **read-only readiness checks** for the World Wallet AI BALMZ
 
 - Presale target: **$7 USD per BALMZ-SOL token**.
 - Launch target: **1 BALMZ-SOL = 1 SOL**. This is a target, not a guaranteed market price; it requires a disclosed liquidity/pricing mechanism.
-- Planned supply: **1,000,000,000 tokens with 9 decimals**. This is not a production fact until the Mainnet mint is verified and the authority policy is enforced.
+- Approved global maximum: **31,000,000,000 BALMZ** across Ethereum Mainnet, BNB Chain Mainnet, Solana Mainnet and the approved reserve allocation.
+- Solana Mainnet allocation: **10,000,000,000 BALMZ with 9 decimals**. The **1,000,000,000 BALMZ initial presale tranche is included within this allocation**, leaving 9,000,000,000 BALMZ in the remainder of the Solana allocation. It is not additional supply.
+- These are approved allocation targets, not proof of deployed or circulating Mainnet supply. Confirm actual mint supply and authorities directly on Mainnet.
 - Existing mint `HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF` is **Solana Devnet only** and must never be used as the production presale mint.
 - Real payments remain disabled until production mint, receiving address, settlement verification, duplicate/replay protection, and operational checks are complete.
 

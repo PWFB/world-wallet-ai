@@ -36,7 +36,7 @@ def mainnet_rpc(_url, method, _params):
             },
         }
     if method == "getTokenSupply":
-        return {"value": {"amount": str(1_000_000_000 * (10 ** 9)), "decimals": 9, "uiAmountString": "1000000000"}}
+        return {"value": {"amount": str(10_000_000_000 * (10 ** 9)), "decimals": 9, "uiAmountString": "10000000000"}}
     raise AssertionError("Unexpected RPC method: " + method)
 
 
@@ -56,7 +56,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(result["readiness"]["payment_verification_implemented"])
         self.assertTrue(result["warnings"])
 
-    def test_verified_one_billion_mainnet_mint_does_not_enable_presale(self):
+    def test_verified_ten_billion_solana_allocation_does_not_enable_presale(self):
         with (
             patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", VALID_MINT),
             patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
@@ -67,7 +67,13 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertTrue(result["readiness"]["production_mint_verified"])
         self.assertTrue(result["readiness"]["supply_matches_target"])
         self.assertTrue(result["readiness"]["mint_authority_revoked"])
-        self.assertEqual(result["observed_supply"], 1_000_000_000)
+        self.assertEqual(result["observed_supply"], 10_000_000_000)
+        self.assertEqual(result["target_supply"], 10_000_000_000)
+        self.assertEqual(result["solana_mainnet_allocation"], 10_000_000_000)
+        self.assertEqual(result["initial_presale_tranche"], 1_000_000_000)
+        self.assertTrue(result["initial_presale_tranche_within_allocation"])
+        self.assertEqual(result["remaining_solana_allocation_after_initial_tranche"], 9_000_000_000)
+        self.assertEqual(result["global_max_supply"], 31_000_000_000)
         self.assertTrue(result["receiving_address_configured"])
         self.assertTrue(result["presale_receiving_address_mainnet_verified"])
         self.assertTrue(result["presale_receiving_address_account_exists"])

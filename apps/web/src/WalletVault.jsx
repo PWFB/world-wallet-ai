@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes, verifyMessage } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
+import { verifyEip1271Signature, verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
+import { encodeOkxWalletCoreSelfExecution, isExpectedOkxWalletCoreDelegation, OKX_WALLETCORE_IMPLEMENTATION } from "./okx-walletcore.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -42,6 +44,23 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [revealedPrivateKey, setRevealedPrivateKey] = useState("");
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
+  const [typedDataDomainJson, setTypedDataDomainJson] = useState("");
+  const [typedDataTypesJson, setTypedDataTypesJson] = useState("");
+  const [typedDataValueJson, setTypedDataValueJson] = useState("");
+  const [typedDataSignature, setTypedDataSignature] = useState("");
+  const [typedDataResult, setTypedDataResult] = useState(null);
+  const [smartWalletNetwork, setSmartWalletNetwork] = useState("ethereum");
+  const [smartWalletBusy, setSmartWalletBusy] = useState(false);
+  const [smartWalletResult, setSmartWalletResult] = useState(null);
+  const [smartWalletAddress, setSmartWalletAddress] = useState("0xBbDb482aE0895e496676eC84501d2945a404FF2C");
+  const [smartWalletMessage, setSmartWalletMessage] = useState("");
+  const [smartWalletSignature, setSmartWalletSignature] = useState("");
+  const [smartWalletTransferType, setSmartWalletTransferType] = useState("native");
+  const [smartWalletTransferRecipient, setSmartWalletTransferRecipient] = useState("");
+  const [smartWalletTransferAmount, setSmartWalletTransferAmount] = useState("");
+  const [smartWalletTokenAddress, setSmartWalletTokenAddress] = useState("");
+  const [smartWalletTxBusy, setSmartWalletTxBusy] = useState(false);
+  const [smartWalletTxResult, setSmartWalletTxResult] = useState(null);
   const [verifyAddressInput, setVerifyAddressInput] = useState("");
   const [verifyMessageInput, setVerifyMessageInput] = useState("");
   const [verifySignatureInput, setVerifySignatureInput] = useState("");
@@ -812,16 +831,55 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   }
 
   async function signLocalMessage() {
-    if (!unlocked) return setMessage("Unlock a local wallet first.");
+    if (!unlocked) return setMessage("Unlock a World Wallet AI local vault wallet first.");
     if (!signMessage.trim()) return setMessage("Enter a message to sign.");
     setBusy(true);
     setMessage("");
     try {
       const signed = await unlocked.signMessage(signMessage);
+      const verified = verifyEvmMessageSignature(signMessage, signed, unlocked.address);
       setSignature(signed);
-      setMessage("Message signed locally. This is an off-chain signature, not a blockchain transaction.");
+      setVerifyAddressInput(unlocked.address);
+      setVerifyMessageInput(signMessage);
+      setVerifySignatureInput(signed);
+      setVerifyResult({
+        ok: verified.valid,
+        text: verified.valid ? "Verified inside World Wallet AI: recovered signer matches the unlocked local wallet." : "The signature did not match the unlocked local wallet.",
+        recovered: verified.recoveredAddress,
+      });
+      setMessage("Message signed and cryptographically verified inside World Wallet AI. This is an off-chain signature, not a blockchain transaction.");
     } catch (error) {
-      setMessage(error.message || "Signing failed.");
+      setMessage(error?.message || "Signing or local signature verification failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function readTypedDataInputs() {
+    let domain; let types; let value;
+    try { domain = JSON.parse(typedDataDomainJson); } catch { throw new Error("Typed-data domain must be valid JSON."); }
+    try { types = JSON.parse(typedDataTypesJson); } catch { throw new Error("Typed-data types must be valid JSON."); }
+    try { value = JSON.parse(typedDataValueJson); } catch { throw new Error("Typed-data message must be valid JSON."); }
+    return { domain, types, value };
+  }
+
+  async function signLocalTypedData() {
+    if (!unlocked) return setTypedDataResult({ ok: false, text: "Unlock a World Wallet AI local vault wallet first." });
+    setBusy(true);
+    setTypedDataResult(null);
+    try {
+      const { domain, types, value } = readTypedDataInputs();
+      const signed = await unlocked.signTypedData(domain, types, value);
+      const verified = verifyEvmTypedDataSignature(domain, types, value, signed, unlocked.address);
+      setTypedDataSignature(signed);
+      setTypedDataResult({
+        ok: verified.valid,
+        text: verified.valid ? "EIP-712 signature verified inside World Wallet AI. Recovered signer matches the unlocked local wallet." : "EIP-712 signer did not match the unlocked local wallet.",
+        recovered: verified.recoveredAddress,
+      });
+      setMessage("Typed data signed and cryptographically verified inside World Wallet AI. No transaction was sent.");
+    } catch (error) {
+      setTypedDataResult({ ok: false, text: error?.message || "Typed-data signing failed." });
     } finally {
       setBusy(false);
     }
@@ -829,33 +887,314 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
 
   function verifySignedMessage() {
     setVerifyResult(null);
-    const addressToCheck = verifyAddressInput.trim();
-    const messageToCheck = verifyMessageInput;
-    const signatureToCheck = verifySignatureInput.trim();
-    if (!isAddress(addressToCheck)) {
-      setVerifyResult({ ok: false, text: "Enter a valid EVM wallet address." });
-      return;
-    }
-    if (!messageToCheck) {
-      setVerifyResult({ ok: false, text: "Enter the exact original message that was signed." });
-      return;
-    }
-    if (!/^0x[0-9a-fA-F]{130}$/.test(signatureToCheck)) {
-      setVerifyResult({ ok: false, text: "Enter a 65-byte EVM message signature (0x followed by 130 hexadecimal characters)." });
-      return;
-    }
     try {
-      const recovered = verifyMessage(messageToCheck, signatureToCheck);
-      const matches = recovered.toLowerCase() === addressToCheck.toLowerCase();
+      const result = verifyEvmMessageSignature(
+        verifyMessageInput,
+        verifySignatureInput.trim(),
+        verifyAddressInput.trim(),
+      );
       setVerifyResult({
-        ok: matches,
-        text: matches
-          ? "Signature valid: the recovered signer matches the supplied address."
-          : "Signature does not match this address. Check the exact message, signature, and network wallet address.",
-        recovered,
+        ok: result.valid,
+        text: result.valid
+          ? "Signature valid: the recovered EOA signer matches the supplied address."
+          : "Signature is cryptographically valid but does not match the expected address.",
+        recovered: result.recoveredAddress,
       });
-    } catch {
-      setVerifyResult({ ok: false, text: "Signature could not be decoded as a standard EVM personal-message signature." });
+    } catch (error) {
+      setVerifyResult({ ok: false, text: error?.message || "Signature verification failed." });
+    }
+  }
+
+  function verifyTypedDataLocalSignature() {
+    setTypedDataResult(null);
+    try {
+      const { domain, types, value } = readTypedDataInputs();
+      const result = verifyEvmTypedDataSignature(domain, types, value, typedDataSignature.trim(), verifyAddressInput.trim() || unlocked?.address || "");
+      setTypedDataResult({
+        ok: result.valid,
+        text: result.valid
+          ? "EIP-712 signature valid: recovered EOA signer matches the expected address."
+          : "EIP-712 signature is valid but does not match the expected address.",
+        recovered: result.recoveredAddress,
+      });
+    } catch (error) {
+      setTypedDataResult({ ok: false, text: error?.message || "EIP-712 verification failed." });
+    }
+  }
+
+  async function signAndVerifyExternalSmartWalletMessage() {
+    setSmartWalletBusy(true);
+    setSmartWalletResult(null);
+    let provider;
+    try {
+      if (!unlocked) throw new Error("Unlock the matching World Wallet AI local vault wallet first.");
+      if (unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The unlocked local vault address does not match the external smart-wallet address. No signature was created.");
+      }
+      if (!smartWalletMessage.trim()) throw new Error("Enter the exact message you want to sign.");
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+
+      // The private key remains in the unlocked encrypted local vault. It is
+      // never sent to the backend or to the external OKX wallet application.
+      const signature = await unlocked.signMessage(smartWalletMessage);
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const delegationCode = await provider.getCode(smartWalletAddress.trim());
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("The account is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Signing is blocked.");
+      }
+      const verified = await verifyEip1271Signature(
+        provider,
+        smartWalletAddress.trim(),
+        hashMessage(smartWalletMessage),
+        signature,
+        config.chainId,
+      );
+      if (!verified.valid) {
+        throw new Error("The smart wallet did not accept the locally created signature. No transaction was sent.");
+      }
+      setSmartWalletSignature(signature);
+      setSmartWalletResult({
+        ok: true,
+        text: "Signed inside World Wallet AI and verified by the smart wallet on " + config.label + ". EIP-1271 returned the valid magic value.",
+        walletAddress: verified.walletAddress,
+        chainId: verified.chainId,
+        magicValue: verified.magicValue,
+      });
+      setMessage("The matching local vault key signed the message inside World Wallet AI. The smart wallet accepted the signature. No transaction was sent.");
+    } catch (error) {
+      setSmartWalletResult({ ok: false, text: error?.message || "In-app smart-wallet signing failed." });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletBusy(false);
+    }
+  }
+
+  async function signAndSendOkxWalletCoreTransfer() {
+    setSmartWalletTxBusy(true);
+    setSmartWalletTxResult(null);
+    let provider;
+    let broadcastHash = "";
+    let explorer = smartWalletNetwork === "bnb" ? "https://bscscan.com/tx/" : "https://etherscan.io/tx/";
+    try {
+      if (!unlocked) throw new Error("Unlock the matching World Wallet AI local vault wallet first.");
+      if (unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The unlocked local vault address does not match the smart wallet. No transaction was signed.");
+      }
+      if (!isAddress(smartWalletTransferRecipient.trim())) throw new Error("Enter a valid recipient address.");
+      if (smartWalletTransferRecipient.trim().toLowerCase() === "0x0000000000000000000000000000000000000000") {
+        throw new Error("The zero address is not a valid transfer recipient.");
+      }
+      if (smartWalletTransferRecipient.trim().toLowerCase() === smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The smart wallet address cannot be used as its own transfer recipient.");
+      }
+      if (!smartWalletTransferAmount.trim()) throw new Error("Enter an amount greater than zero.");
+
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet", nativeSymbol: "ETH" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet", nativeSymbol: "BNB" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const chain = await provider.getNetwork();
+      if (chain.chainId !== BigInt(config.chainId)) throw new Error("RPC chain ID does not match the selected network.");
+
+      const walletAddress = smartWalletAddress.trim();
+      const delegationCode = await provider.getCode(walletAddress);
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("This address is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Transaction signing is blocked.");
+      }
+
+      let calls;
+      let actionLabel;
+      let nativeAmount = 0n;
+      let erc20Expectation = null;
+      if (smartWalletTransferType === "native") {
+        try { nativeAmount = parseEther(smartWalletTransferAmount.trim()); } catch { throw new Error("Enter a valid " + config.nativeSymbol + " amount."); }
+        if (nativeAmount <= 0n) throw new Error("Transfer amount must be greater than zero.");
+        calls = [{ target: smartWalletTransferRecipient.trim(), value: nativeAmount, data: "0x" }];
+        actionLabel = "Send " + smartWalletTransferAmount.trim() + " " + config.nativeSymbol + " to " + smartWalletTransferRecipient.trim();
+      } else {
+        if (!isAddress(smartWalletTokenAddress.trim())) throw new Error("Enter a valid ERC-20 token contract address.");
+        const token = new Contract(
+          smartWalletTokenAddress.trim(),
+          [
+            "function decimals() view returns (uint8)",
+            "function symbol() view returns (string)",
+            "function balanceOf(address) view returns (uint256)",
+            "function transfer(address,uint256) returns (bool)",
+            "event Transfer(address indexed from,address indexed to,uint256 value)",
+          ],
+          provider,
+        );
+        const tokenCode = await provider.getCode(smartWalletTokenAddress.trim());
+        if (!tokenCode || tokenCode === "0x") throw new Error("The token contract has no code on the selected network.");
+        const decimals = Number(await token.decimals());
+        if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error("Token decimals are outside the supported safe range.");
+        let tokenAmount;
+        try { tokenAmount = parseUnits(smartWalletTransferAmount.trim(), decimals); } catch { throw new Error("Enter a valid token amount using at most " + decimals + " decimal places."); }
+        if (tokenAmount <= 0n) throw new Error("Token transfer amount must be greater than zero.");
+        const tokenBalance = await token.balanceOf(walletAddress);
+        if (tokenBalance < tokenAmount) throw new Error("The verified on-chain token balance is insufficient for this transfer.");
+        const simulatedTransfer = await token.transfer.staticCall(
+          smartWalletTransferRecipient.trim(),
+          tokenAmount,
+          { from: walletAddress },
+        );
+        if (simulatedTransfer !== true) {
+          throw new Error("The token contract did not simulate a successful standard ERC-20 transfer. No transaction was sent.");
+        }
+        const symbol = String(await token.symbol()).slice(0, 24);
+        const data = token.interface.encodeFunctionData("transfer", [smartWalletTransferRecipient.trim(), tokenAmount]);
+        calls = [{ target: smartWalletTokenAddress.trim(), value: 0n, data }];
+        erc20Expectation = {
+          tokenAddress: smartWalletTokenAddress.trim().toLowerCase(),
+          from: walletAddress.toLowerCase(),
+          to: smartWalletTransferRecipient.trim().toLowerCase(),
+          amount: tokenAmount,
+          iface: token.interface,
+        };
+        actionLabel = "Send " + smartWalletTransferAmount.trim() + " " + symbol + " from " + smartWalletTokenAddress.trim() + " to " + smartWalletTransferRecipient.trim();
+      }
+
+      const data = encodeOkxWalletCoreSelfExecution(calls);
+      const fee = await provider.getFeeData();
+      const feePerGas = fee.maxFeePerGas ?? fee.gasPrice;
+      if (!feePerGas || feePerGas <= 0n) throw new Error("The selected RPC did not return usable gas-fee data.");
+      const estimate = await provider.estimateGas({ from: walletAddress, to: walletAddress, data });
+      const gasLimit = (estimate * 120n) / 100n;
+      const maximumGasCost = gasLimit * feePerGas;
+      const nativeBalance = await provider.getBalance(walletAddress);
+      if (nativeBalance < maximumGasCost + nativeAmount) {
+        throw new Error("Insufficient on-chain " + config.nativeSymbol + " for the transfer amount and estimated network fee.");
+      }
+      const feeText = formatEther(maximumGasCost) + " " + config.nativeSymbol + " maximum estimated network fee";
+      const confirmation = [
+        "World Wallet AI will sign locally and submit this WalletCore transaction.",
+        "Network: " + config.label,
+        "Wallet: " + walletAddress,
+        "Action: " + actionLabel,
+        "Gas limit: " + gasLimit.toString(),
+        "Estimated fee ceiling: " + feeText,
+        "The transaction is signed by the matching local vault key. No OKX app approval will be requested.",
+        "Continue?",
+      ].join("\n\n");
+      if (!window.confirm(confirmation)) {
+        setSmartWalletTxResult({ ok: false, text: "Transaction cancelled. Nothing was signed or submitted." });
+        return;
+      }
+
+      const signer = unlocked.connect(provider);
+      const txRequest = { to: walletAddress, data, gasLimit, chainId: config.chainId };
+      if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
+        txRequest.maxFeePerGas = fee.maxFeePerGas;
+        txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas;
+      } else {
+        txRequest.gasPrice = fee.gasPrice;
+      }
+      const tx = await signer.sendTransaction(txRequest);
+      broadcastHash = tx.hash;
+      setSmartWalletTxResult({ ok: false, pending: true, text: "Transaction broadcast. Waiting for the first confirmation…", txHash: tx.hash, explorer });
+      const receipt = await tx.wait(1);
+      if (!receipt || Number(receipt.status) !== 1) throw new Error("The WalletCore transaction did not confirm successfully.");
+      if (erc20Expectation) {
+        const transferVerified = receipt.logs.some(log => {
+          if (String(log.address || "").toLowerCase() !== erc20Expectation.tokenAddress) return false;
+          try {
+            const parsed = erc20Expectation.iface.parseLog(log);
+            return parsed?.name === "Transfer"
+              && String(parsed.args.from).toLowerCase() === erc20Expectation.from
+              && String(parsed.args.to).toLowerCase() === erc20Expectation.to
+              && BigInt(parsed.args.value) === erc20Expectation.amount;
+          } catch {
+            return false;
+          }
+        });
+        if (!transferVerified) {
+          setSmartWalletTxResult({
+            ok: false,
+            txConfirmed: true,
+            pending: false,
+            text: "The WalletCore transaction confirmed, but an exact ERC-20 Transfer event for the requested token, sender, recipient and amount was not found. Token delivery is not verified; do not assume the recipient received the requested amount.",
+            txHash: tx.hash,
+            explorer,
+            blockNumber: receipt.blockNumber,
+            action: actionLabel,
+          });
+          return;
+        }
+      }
+      setSmartWalletTxResult({
+        ok: true,
+        pending: false,
+        text: "WalletCore transaction confirmed on " + config.label + ".",
+        txHash: tx.hash,
+        explorer,
+        blockNumber: receipt.blockNumber,
+        action: actionLabel,
+      });
+    } catch (error) {
+      setSmartWalletTxResult({
+        ok: false,
+        pending: false,
+        text: broadcastHash
+          ? "Transaction was broadcast but confirmation or the post-send check failed: " + (error?.shortMessage || error?.message || "Unknown error")
+          : (error?.shortMessage || error?.message || "WalletCore transaction was not submitted."),
+        txHash: broadcastHash,
+        explorer,
+      });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletTxBusy(false);
+    }
+  }
+
+  async function verifyExternalSmartWalletMessage() {
+    setSmartWalletBusy(true);
+    setSmartWalletResult(null);
+    let provider;
+    try {
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+      if (!smartWalletMessage) throw new Error("Enter the exact original message.");
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const delegationCode = await provider.getCode(smartWalletAddress.trim());
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("The account is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Verification is blocked.");
+      }
+      const result = await verifyEip1271Signature(
+        provider,
+        smartWalletAddress.trim(),
+        hashMessage(smartWalletMessage),
+        smartWalletSignature.trim(),
+        config.chainId,
+      );
+      setSmartWalletResult({
+        ok: result.valid,
+        text: result.valid
+          ? "Verified by the smart wallet on " + config.label + ": ERC-1271 returned the valid magic value."
+          : "The smart wallet rejected this signature on " + config.label + ".",
+        walletAddress: result.walletAddress,
+        chainId: result.chainId,
+        magicValue: result.magicValue,
+      });
+    } catch (error) {
+      setSmartWalletResult({ ok: false, text: error?.message || "Smart-wallet verification failed." });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletBusy(false);
     }
   }
 
@@ -1118,19 +1457,32 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setSmartWalletSignature(""); setSmartWalletResult(null); setSmartWalletTxResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
-        <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
+        <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message inside World Wallet AI"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
         <div className="wallet-message-signing">
           <h3>Verify a signed message</h3>
-          <p className="muted">Recover the signer from an EVM personal-message signature. This verifies a message signature only; it does not authorize or verify a blockchain transaction.</p>
-          <label>Expected wallet address<input value={verifyAddressInput} onChange={event => { setVerifyAddressInput(event.target.value); setVerifyResult(null); }} placeholder="0x…" autoComplete="off" /></label>
+          <p className="muted">World Wallet AI recovers the EOA signer locally and compares it with the expected address. A valid message signature is not a transaction confirmation.</p>
+          <label>Expected wallet address<input value={verifyAddressInput} onChange={event => { setVerifyAddressInput(event.target.value); setVerifyResult(null); setTypedDataResult(null); }} placeholder="0x…" autoComplete="off" /></label>
           <label>Exact signed message<textarea rows="3" value={verifyMessageInput} onChange={event => { setVerifyMessageInput(event.target.value); setVerifyResult(null); }} placeholder="Paste the exact original message" /></label>
           <label>Signature<input value={verifySignatureInput} onChange={event => { setVerifySignatureInput(event.target.value); setVerifyResult(null); }} placeholder="0x…" autoComplete="off" /></label>
           <button className="secondary" disabled={busy} onClick={verifySignedMessage}>Verify message signature</button>
           {verifyResult && <div className={verifyResult.ok ? "feature-success" : "feature-error"}>{verifyResult.text}{verifyResult.recovered && <div><small>Recovered signer: <code>{verifyResult.recovered}</code></small></div>}</div>}
         </div>
+        <div className="wallet-message-signing">
+          <h3>Sign and verify EIP-712 typed data</h3>
+          <p className="muted">Structured-data signatures are created only by the unlocked encrypted local vault wallet. The domain should include the intended chain ID and verifying contract where applicable.</p>
+          <label>EIP-712 domain JSON<textarea rows="3" value={typedDataDomainJson} onChange={event => { setTypedDataDomainJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"name":"My dApp","version":"1","chainId":1}' /></label>
+          <label>EIP-712 types JSON<textarea rows="4" value={typedDataTypesJson} onChange={event => { setTypedDataTypesJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"Permit":[{"name":"owner","type":"address"},{"name":"spender","type":"address"},{"name":"value","type":"uint256"}]}' /></label>
+          <label>EIP-712 message JSON<textarea rows="4" value={typedDataValueJson} onChange={event => { setTypedDataValueJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"owner":"0x…","spender":"0x…","value":"1000"}' /></label>
+          <button className="secondary" disabled={busy || !typedDataDomainJson.trim() || !typedDataTypesJson.trim() || !typedDataValueJson.trim()} onClick={signLocalTypedData}>Sign typed data inside World Wallet AI</button>
+          {typedDataSignature && <label>Typed-data signature<textarea rows="3" value={typedDataSignature} onChange={event => { setTypedDataSignature(event.target.value); setTypedDataResult(null); }} placeholder="Paste a 65-byte EIP-712 signature to verify" /></label>}
+          <button className="secondary" disabled={busy || !typedDataSignature.trim()} onClick={verifyTypedDataLocalSignature}>Verify EIP-712 signature</button>
+          {typedDataResult && <div className={typedDataResult.ok ? "feature-success" : "feature-error"}>{typedDataResult.text}{typedDataResult.recovered && <div><small>Recovered signer: <code>{typedDataResult.recovered}</code></small></div>}</div>}
+        </div>
+        <p className="security-note">This local signing panel cannot sign for an external OKX-held address such as 0xbb unless that address's authorized signing key is available through a supported wallet session. Never import or reveal a seed phrase or private key to bypass that boundary. External EIP-1271 smart-wallet verification is available separately below; this local signing panel still signs only for the unlocked local EOA.</p>
+
         {selected?.network === "sepolia" && <div className="wallet-message-signing">
           <h3>Send Sepolia test ETH</h3>
           <label>Recipient address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
@@ -1150,8 +1502,46 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           </div>
         </div>}
       </div>}
+    <div className="wallet-message-signing">
+      <h3>Verify external OKX smart-wallet signature</h3>
+      <p className="muted">Read-only verification for your existing 0xbb EIP-7702 account. World Wallet AI calls isValidSignature on the selected network and accepts only the EIP-1271 magic value. This check does not unlock or access the wallet's private key.</p>
+      <label>Wallet address<input value={smartWalletAddress} onChange={event => { setSmartWalletAddress(event.target.value); setSmartWalletResult(null); setSmartWalletTxResult(null); }} placeholder="0x smart-wallet address" autoComplete="off" /></label>
+      <label>Verification network<select value={smartWalletNetwork} onChange={event => { setSmartWalletNetwork(event.target.value); setSmartWalletResult(null); setSmartWalletTxResult(null); }}>
+        <option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option>
+      </select></label>
+      <label>Exact signed message<textarea rows="3" value={smartWalletMessage} onChange={event => { setSmartWalletMessage(event.target.value); setSmartWalletResult(null); }} placeholder="Paste the exact message that was signed" /></label>
+      <div className="security-note">{unlocked
+        ? unlocked.address.toLowerCase() === smartWalletAddress.trim().toLowerCase()
+          ? "The unlocked World Wallet AI vault address matches this smart wallet. Local in-app signing is available."
+          : "The unlocked vault address does not match this smart wallet. Signing is disabled."
+        : "Unlock a local vault wallet whose public address exactly matches this smart wallet. Import/recovery material stays on this device; never paste it into chat or send it to the backend."}</div>
+      <button className="primary feature-submit" disabled={smartWalletBusy || !unlocked || unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase() || !smartWalletMessage.trim()} onClick={signAndVerifyExternalSmartWalletMessage}>{smartWalletBusy ? "Signing and verifying…" : "Sign and verify with World Wallet AI"}</button>
+      <label>Existing signature<input value={smartWalletSignature} onChange={event => { setSmartWalletSignature(event.target.value); setSmartWalletResult(null); }} placeholder="Paste signature from the authorized wallet session" autoComplete="off" /></label>
+      <button className="secondary" disabled={smartWalletBusy || !smartWalletAddress.trim() || !smartWalletMessage || !smartWalletSignature.trim()} onClick={verifyExternalSmartWalletMessage}>{smartWalletBusy ? "Checking smart wallet…" : "Verify signature inside World Wallet AI"}</button>
+      {smartWalletResult && <div className={smartWalletResult.ok ? "feature-success" : "feature-error"}>{smartWalletResult.text}{smartWalletResult.walletAddress && <div><small>Wallet: <code>{smartWalletResult.walletAddress}</code> · Chain ID {smartWalletResult.chainId} · Return: <code>{smartWalletResult.magicValue}</code></small></div>}</div>}
+      <p className="security-note">This verifies a signature already supplied to World Wallet AI. It creates a signature only when the unlocked encrypted local vault contains the exact owner key for this address. This requires the user to import or recover that key locally; a different wallet key cannot sign as 0xbb. If the deployed implementation rejects or does not support ERC-1271, verification fails closed.</p>
+      <div className="wallet-message-signing">
+        <h3>Send from this smart wallet inside World Wallet AI</h3>
+        <p className="muted">Native ETH/BNB and ERC-20 transfers only. The app checks chain ID, exact EIP-7702 WalletCore delegation, recipient, live token balance and gas estimate. It signs a WalletCore self-call with the matching locally unlocked key.</p>
+        <label>Transfer type<select value={smartWalletTransferType} onChange={event => { setSmartWalletTransferType(event.target.value); setSmartWalletTxResult(null); }}>
+          <option value="native">Native {smartWalletNetwork === "bnb" ? "BNB" : "ETH"}</option>
+          <option value="erc20">ERC-20 token</option>
+        </select></label>
+        <label>Recipient address<input value={smartWalletTransferRecipient} onChange={event => { setSmartWalletTransferRecipient(event.target.value); setSmartWalletTxResult(null); }} placeholder="0x…" autoComplete="off" /></label>
+        {smartWalletTransferType === "erc20" && <label>ERC-20 token contract<input value={smartWalletTokenAddress} onChange={event => { setSmartWalletTokenAddress(event.target.value); setSmartWalletTxResult(null); }} placeholder="0x token contract" autoComplete="off" /></label>}
+        <label>Amount<input inputMode="decimal" value={smartWalletTransferAmount} onChange={event => { setSmartWalletTransferAmount(event.target.value); setSmartWalletTxResult(null); }} placeholder="0.01" /></label>
+        <button className="primary feature-submit" disabled={smartWalletTxBusy || !unlocked || unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase() || !smartWalletTransferRecipient.trim() || !smartWalletTransferAmount.trim() || (smartWalletTransferType === "erc20" && !smartWalletTokenAddress.trim())} onClick={signAndSendOkxWalletCoreTransfer}>{smartWalletTxBusy ? "Signing / waiting for confirmation…" : "Sign and send inside World Wallet AI"}</button>
+        {smartWalletTxResult && <div className={smartWalletTxResult.ok ? "feature-success" : "feature-error"}>
+          {smartWalletTxResult.text}
+          {smartWalletTxResult.action && <div><small>{smartWalletTxResult.action}</small></div>}
+          {smartWalletTxResult.txHash && <div><small>Transaction: <a href={smartWalletTxResult.explorer + smartWalletTxResult.txHash} target="_blank" rel="noreferrer">{smartWalletTxResult.txHash} ↗</a></small></div>}
+          {smartWalletTxResult.blockNumber && <div><small>Confirmed block: {smartWalletTxResult.blockNumber}</small></div>}
+        </div>}
+        <p className="security-note">This sends a real transaction and spends funds and network gas. The button remains disabled unless the unlocked local vault address exactly matches the smart wallet. Always review the recipient, token contract, amount and fee ceiling in the confirmation prompt. No OKX app approval is requested by this local signing path.</p>
+      </div>
+    </div>
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
-      <div className="security-note">Local signing supports message signatures and direct Sepolia test ETH transfers. Mainnet, BNB Chain, and ERC-20 transaction signing continue to use the existing external-wallet flow and configured contract support.</div>
+      <div className="security-note">Local signing supports message signatures, typed-data signatures, direct Sepolia test transfers, and WalletCore native/selected ERC-20 transfers for an unlocked matching EIP-7702 owner key. The WalletCore route is guarded by an exact delegation-code check and explicit transaction confirmation.</div>
     </article>
   </section>;
 }

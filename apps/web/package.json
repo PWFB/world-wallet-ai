@@ -14,7 +14,8 @@
     "cap:open:android": "cap open android",
     "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js src/verified-balances.test.js",
     "test:navigation": "node --test src/navigation.test.js",
-    "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js"
+    "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js",
+    "test:wallet-signatures": "node --test src/wallet-signatures.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
