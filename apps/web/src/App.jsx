@@ -1024,6 +1024,38 @@ function App() {
 
   useEffect(() => {
     if (!accessToken) {
+      setBalanceVerificationReport(null);
+      setBalanceVerificationError("");
+      setBalanceVerificationBusy(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setBalanceVerificationBusy(true);
+    setBalanceVerificationError("");
+    fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
+      headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" },
+      cache: "no-store",
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Verified Mainnet balances could not be loaded.");
+        if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report.");
+        if (!cancelled) setBalanceVerificationReport(data);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setBalanceVerificationReport(null);
+          setBalanceVerificationError(error.message || "Verified balance service unavailable.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setBalanceVerificationBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [accessToken, wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
+    if (!accessToken) {
       setPerformance({ points: [], period: performancePeriod });
       return;
     }
@@ -1214,9 +1246,12 @@ function App() {
         setDashboardAddresses(currentAddresses);
       }
       if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
-      const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
+      const matches = currentAddresses.filter(item =>
+        normalizeNetwork(item.network) === normalizedSelectedNetwork &&
+        item.ownership_verified === true
+      );
       const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
-      if (!chosen) throw new Error("No address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets to inspect its existing public address.");
+      if (!chosen) throw new Error("No ownership-verified address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets, attach the correct public address and complete its signature verification.");
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
       if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
       const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
