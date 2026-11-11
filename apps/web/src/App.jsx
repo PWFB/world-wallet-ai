@@ -1031,6 +1031,10 @@ function App() {
       return undefined;
     }
     let cancelled = false;
+    const activeWalletIdForReport = String(wallet?.wallet_id || wallet?.id || "");
+    setBalanceVerificationReport(current =>
+      current && String(current.wallet_id || "") === activeWalletIdForReport ? current : null
+    );
     setBalanceVerificationBusy(true);
     setBalanceVerificationError("");
     fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
@@ -1236,7 +1240,12 @@ function App() {
       };
       const mainnetAsset = mainnetNativeSymbols[normalizedSelectedNetwork];
       if (mainnetAsset) {
-        let report = forceAddressRefresh ? null : balanceVerificationReport;
+        const activeWalletId = String(wallet?.wallet_id || wallet?.id || user?.wallet_id || "");
+        let report = !forceAddressRefresh &&
+          balanceVerificationReport &&
+          String(balanceVerificationReport.wallet_id || "") === activeWalletId
+          ? balanceVerificationReport
+          : null;
         if (!report) {
           const verificationResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification");
           const verificationData = await verificationResponse.json().catch(() => ({}));
