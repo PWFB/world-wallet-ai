@@ -366,8 +366,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setBusy(true);
     setMessage("");
     try {
-      const freshToken = await getNeonAccessToken();
-      const sessionToken = freshToken || accessToken;
+      const sessionToken = String(accessToken || "").startsWith("wwpin_")
+      ? accessToken
+      : (await getNeonAccessToken()) || accessToken;
       if (!sessionToken) throw new Error("No valid sign-in session.");
       const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
         method: "POST",
@@ -479,8 +480,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       setMessage("Wallet created locally. Mainnet and separate testnet/devnet receiving addresses are ready. Save the recovery phrase securely.");
 
       try {
-        const freshToken = await getNeonAccessToken();
-        const sessionToken = freshToken || accessToken;
+        const sessionToken = String(accessToken || "").startsWith("wwpin_")
+        ? accessToken
+        : (await getNeonAccessToken()) || accessToken;
         if (!sessionToken) throw new Error("No valid sign-in session.");
         const profileResponse = await fetch(apiBaseUrl + "/api/v1/wallets", {
           method: "POST",
