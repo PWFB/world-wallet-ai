@@ -495,7 +495,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     if (!walletId || addressesLoadedForWallet !== walletId || !accessToken) return undefined;
     const generation = balanceRequestGeneration.current;
     for (const item of visibleAddresses) {
-      if (!item.local) void checkAddressBalance(item);
+      // TonAPI has much tighter anonymous rate limits; the active TON Connect
+      // account is refreshed in TonWalletConnect and other saved TON accounts
+      // stay manual to avoid flooding the indexer.
+      if (!item.local && !["ton_mainnet", "ton_testnet"].includes(item.network)) void checkAddressBalance(item);
     }
     return () => {
       if (balanceRequestGeneration.current === generation) balanceRequestGeneration.current += 1;
