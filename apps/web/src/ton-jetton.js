@@ -48,7 +48,7 @@ export function buildJettonTransferPayload({
   }
   // TEP-74 transfer#0f8a7ea5. The connected wallet signs the outer TON
   // message; this body is sent to the sender's Jetton wallet contract.
-  return beginCell()
+  const boc = beginCell()
     .storeUint(0x0f8a7ea5, 32)
     .storeUint(query, 64)
     .storeCoins(BigInt(amountUnits))
@@ -58,6 +58,12 @@ export function buildJettonTransferPayload({
     .storeCoins(forward)
     .storeBit(0) // empty forward_payload
     .endCell()
-    .toBoc()
-    .toString("base64");
+    .toBoc();
+
+  // Convert Uint8Array bytes to base64 without relying on Node Buffer globals.
+  let binary = "";
+  for (let offset = 0; offset < boc.length; offset += 0x8000) {
+    binary += String.fromCharCode(...boc.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
