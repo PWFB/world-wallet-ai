@@ -219,6 +219,16 @@ class NeonAuthCredentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=1, max_length=128)
 
+
+class NeonAuthPasswordResetRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
+
+class NeonAuthPasswordResetCompleteRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=4096)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class NeonAuthRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=5, max_length=254)
@@ -1366,6 +1376,12 @@ def wallet_security_pin_recovery_complete(
 
 
 def _neon_auth_origin():
+    # The production Neon Auth instance is explicitly trusted for the Render
+    # frontend origin. Prefer that origin even when additional app origins are
+    # configured for CORS, because Neon Auth maintains its own trusted-domain list.
+    production_origin = "https://world-wallet-ai-frontend.onrender.com"
+    if production_origin in TRUSTED_ORIGINS:
+        return production_origin
     return TRUSTED_ORIGINS[0] if TRUSTED_ORIGINS else "http://localhost:5173"
 
 
@@ -1399,29 +1415,12 @@ def _neon_auth_sign_in(path: str, body: dict):
         with httpx.Client(timeout=15, follow_redirects=False) as client:
             response = client.post(base + path, json=body, headers=headers)
             if not response.is_success:
-                # If the credentials are rejected because this email has no Neon Auth
-                # account yet, create the account using the password the user supplied.
-                # If the email already exists, sign-up will fail and we keep the normal
-                # generic authentication error; this never bypasses an existing password.
-                if path == "/sign-in/email" and response.status_code in {400, 401}:
-                    signup_body = {
-                        "name": "World Wallet User",
-                        "email": str(body.get("email", "")).strip().lower(),
-                        "password": str(body.get("password", "")),
-                    }
-                    signup = client.post(base + "/sign-up/email", json=signup_body, headers=headers)
-                    if signup.is_success:
-                        response = signup
-                    else:
-                        raise HTTPException(
-                            status_code=response.status_code if response.status_code < 500 else 502,
-                            detail=_neon_auth_error(response),
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=response.status_code if response.status_code < 500 else 502,
-                        detail=_neon_auth_error(response),
-                    )
+                # Sign-in must never turn a rejected password into account
+                # creation. Registration is an explicit, separately verified flow.
+                raise HTTPException(
+                    status_code=response.status_code if response.status_code < 500 else 502,
+                    detail=_neon_auth_error(response),
+                )
             payload = _neon_auth_json(response)
             token_response = client.get(base + "/token", headers={
                 "Accept": "application/json",
@@ -1672,6 +1671,7 @@ def wallet_owns_network_address(user, network, address):
     return any(
         str(item.get("network") or "").strip().lower() == normalized_network
         and str(item.get("address") or "").strip().lower() == normalized_address
+        and item.get("ownership_verified") is True
         for item in configured_addresses(user)
     )
 
@@ -1927,7 +1927,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
             return [], "latest block unavailable"
 
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
-        source = network + ":native"
+        source = network + ":native:" + sha(wallet_address.lower())[:16]
         native_asset = "ETH" if network == "ethereum" else ("BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else network.upper())
         wallet_lower = wallet_address.lower()
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
@@ -2075,7 +2075,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         if latest is None:
             return [], "latest block unavailable"
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")), 100000))
-        source = network + ":" + symbol.lower()
+        source = network + ":" + symbol.lower() + ":" + sha(wallet_address.lower())[:16]
 
         # Only the cursor query uses a DB connection; log/receipt RPCs run without one.
         with db() as cursor_conn:
@@ -2715,6 +2715,40 @@ def neon_password_login(request: NeonAuthCredentials):
         "password": request.password,
         "rememberMe": True,
     })
+
+
+@app.post("/api/v1/auth/neon/password/reset/request")
+def neon_password_reset_request(request: NeonAuthPasswordResetRequest):
+    """Send an email-verified password setup/reset link through Neon Auth."""
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    email = request.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    redirect_to = _neon_auth_origin().rstrip("/") + "/?password_reset=1"
+    _neon_auth_post("/request-password-reset", {
+        "email": email,
+        "redirectTo": redirect_to,
+    })
+    # Keep the response generic so callers cannot enumerate account addresses.
+    return {
+        "ok": True,
+        "message": "If an account is registered for this email, a password setup link has been sent.",
+    }
+
+
+@app.post("/api/v1/auth/neon/password/reset")
+def neon_password_reset_complete(request: NeonAuthPasswordResetCompleteRequest):
+    """Complete the email-verified password reset issued by Neon Auth."""
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    if len(request.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Use a password with at least 8 characters.")
+    _neon_auth_post("/reset-password", {
+        "token": request.token,
+        "newPassword": request.new_password,
+    })
+    return {"ok": True, "message": "Password updated. Sign in with your new password."}
 
 def _normalise_phone_number(value: str) -> str:
     phone = re.sub(r"[\s()-]", "", value or "")
@@ -3506,7 +3540,7 @@ def wallet_balance_verification_snapshot(user: dict):
     wallet_id = user["wallet_id"]
     with db() as conn:
         address_rows = conn.execute(
-            "SELECT network,address,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
+            "SELECT network,address,ownership_verified,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
             (wallet_id,),
         ).fetchall()
         ledger_rows = conn.execute(
@@ -3619,23 +3653,30 @@ def wallet_balance_verification_snapshot(user: dict):
         try:
             config["identity_check"](config["rpc"])
             total = Decimal("0")
+            address_balances = []
             for address in addresses:
                 if network == "solana_mainnet":
                     raw = rpc_call(config["rpc"], "getBalance", [address, {"commitment": "finalized"}])
                     lamports = raw.get("value") if isinstance(raw, dict) else None
                     if not isinstance(lamports, int) or lamports < 0:
                         raise ValueError("Solana Mainnet returned an invalid native balance")
-                    total += Decimal(lamports) / (Decimal(10) ** 9)
+                    address_balance = Decimal(lamports) / (Decimal(10) ** 9)
                 elif network in {"ethereum", "bnb"}:
                     raw_balance = rpc_call(config["rpc"], "eth_getBalance", [address, "latest"])
                     if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", raw_balance):
                         raise ValueError("EVM RPC returned an invalid native balance")
-                    total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** 18)
+                    address_balance = Decimal(int(raw_balance, 16)) / (Decimal(10) ** 18)
                 else:
                     balance = config["native_reader"](config["rpc"], address)
                     if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
                         raise ValueError("Mainnet provider returned an invalid native balance")
-                    total += Decimal(str(balance))
+                    address_balance = Decimal(str(balance))
+                total += address_balance
+                address_balances.append({
+                    "address": address,
+                    "chain_balance": float(address_balance),
+                    "verified": True,
+                })
             symbol = config["native_symbol"]
             row = ledger.get(symbol)
             reserved = row["reserved"] if row else Decimal("0")
@@ -3651,6 +3692,7 @@ def wallet_balance_verification_snapshot(user: dict):
                 "available_balance": float(chain_available),
                 "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                 "matches_ledger": matches, "addresses_checked": len(addresses),
+                "address_balances": address_balances,
                 "source": "Finalized Mainnet RPC" if network == "solana_mainnet" else "Mainnet RPC",
                 "observed_at": observed_at,
                 "note": "Available balance is the sum of confirmed balances across verified attached addresses less the wallet's pending reservations.",
@@ -3706,12 +3748,19 @@ def wallet_balance_verification_snapshot(user: dict):
                 raise ValueError("Configured token address has no contract bytecode on this network")
             decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
             total = Decimal("0")
+            address_balances = []
             for address in addresses:
                 balance_data = "0x70a08231" + address[2:].lower().rjust(64, "0")
                 raw_balance = rpc_call(rpc, "eth_call", [{"to": contract, "data": balance_data}, "latest"])
                 if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw_balance):
                     raise ValueError("Token contract returned an invalid balanceOf response")
-                total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** decimals)
+                address_balance = Decimal(int(raw_balance, 16)) / (Decimal(10) ** decimals)
+                total += address_balance
+                address_balances.append({
+                    "address": address,
+                    "chain_balance": float(address_balance),
+                    "verified": True,
+                })
             row = ledger.get(asset_symbol)
             reserved = row["reserved"] if row else Decimal("0")
             ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
@@ -3727,6 +3776,7 @@ def wallet_balance_verification_snapshot(user: dict):
                 "available_balance": float(chain_available),
                 "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                 "matches_ledger": matches, "addresses_checked": len(addresses),
+                "address_balances": address_balances,
                 "source": "Chain-verified ERC-20 contract and eth_call",
                 "observed_at": observed_at,
                 "note": "Token balance was read from the configured contract on the matching Mainnet chain.",
@@ -3778,12 +3828,19 @@ def wallet_balance_verification_snapshot(user: dict):
                 if not mint_check.get("production_mint_verified"):
                     raise ValueError("Production BALMZ Mainnet mint did not pass verification")
                 total = Decimal("0")
+                address_balances = []
                 for address in addresses_by_network["solana_mainnet"]:
-                    total += _read_verified_solana_spl_balance(
+                    address_balance = _read_verified_solana_spl_balance(
                         address, mint, rpc_url=SOLANA_MAINNET_RPC_URL,
                         expected_genesis_hash=SOLANA_MAINNET_GENESIS_HASH,
                         cluster_name="Solana Mainnet", decimals=BALMZ_SOLANA_DEVNET_DECIMALS,
                     )
+                    total += address_balance
+                    address_balances.append({
+                        "address": address,
+                        "chain_balance": float(address_balance),
+                        "verified": True,
+                    })
                 ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
                 chain_available = max(total - reserved, Decimal("0"))
                 matches = abs(total - row["actual"]) <= Decimal("0.000000001") if row else None
@@ -3797,6 +3854,7 @@ def wallet_balance_verification_snapshot(user: dict):
                     "available_balance": float(chain_available),
                     "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                     "matches_ledger": matches, "addresses_checked": len(addresses_by_network["solana_mainnet"]),
+                    "address_balances": address_balances,
                     "source": "Finalized Solana Mainnet mint and token accounts",
                     "observed_at": observed_at,
                     "note": "Read from the independently verified production SPL mint; Devnet assets are excluded.",
@@ -3873,6 +3931,32 @@ def wallet_balance_verification_snapshot(user: dict):
         "observed_at": observed_at,
         "addresses": {
             network: {"verified_address_count": len(addresses_by_network[network])}
+            for network in networks
+        },
+        "addresses_detail": {
+            network: [
+                {"address": address, "ownership_verified": True, "status": "verified"}
+                for address in addresses_by_network[network]
+            ]
+            for network in networks
+        },
+        "attached_addresses_detail": {
+            network: [
+                {
+                    "address": str(row[1]),
+                    "label": str((row[3] if len(row) > 3 else None) or "Wallet address"),
+                    "ownership_verified": bool(row[2]),
+                    "status": "verified" if bool(row[2]) else "ownership_proof_required",
+                }
+                for row in address_rows
+                if str(row[0] or "").strip().lower() == network
+                and str(row[1] or "").strip()
+                and (
+                    valid_evm_address(str(row[1]).strip()) if network in {"ethereum", "bnb"}
+                    else valid_bitcoin_address(str(row[1]).strip()) if network == "bitcoin"
+                    else valid_solana_address(str(row[1]).strip())
+                )
+            ]
             for network in networks
         },
         "assets": results,
@@ -4681,37 +4765,66 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     imported_transactions = []
     evm_transactions = []
     if include_transactions:
-        imported_transactions = sync_bitcoin_transactions(user, btc_address)
+        # Import history for every ownership-verified address saved to this wallet.
+        # Each EVM native/token cursor is scoped to its address so one address
+        # cannot advance another address's history checkpoint.
+        for source_address in btc_addresses:
+            imported_transactions.extend(sync_bitcoin_transactions(user, source_address))
+
         evm_warnings = []
         native_sources = (
-            (ETH_RPC_URL, "ethereum", eth_address),
-            (BSC_RPC_URL, "bnb", bnb_address),
-            (SEPOLIA_RPC_URL, "sepolia", sepolia_address),
+            (ETH_RPC_URL, "ethereum", eth_addresses),
+            (BSC_RPC_URL, "bnb", bnb_addresses),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_addresses),
         )
-        for rpc_url, network, network_address in native_sources:
-            if rpc_url and network_address:
+        for rpc_url, network, network_addresses in native_sources:
+            if not rpc_url:
+                if network_addresses:
+                    evm_warnings.append(f"{network} transaction RPC is not configured")
+                continue
+            for network_address in network_addresses:
                 native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
                 evm_transactions.extend(native_imported)
                 if native_warning:
                     evm_warnings.append(native_warning)
 
-        token_sources = (
-            (ETH_RPC_URL, "ethereum", eth_address, USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT, "USDT"),
-            (ETH_RPC_URL, "ethereum", eth_address, BALMZ_ETH_CONTRACT, "BALMZ"),
-            (BSC_RPC_URL, "bnb", bnb_address, USDT_BSC_CONTRACT, "USDT-BNB"),
-            (BSC_RPC_URL, "bnb", bnb_address, BALMZ_BNB_CONTRACT, "BALMZ-BNB"),
-            (SEPOLIA_RPC_URL, "sepolia", sepolia_address, BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP"),
+        token_sources = []
+        token_source_keys = set()
+        for symbol, name, network, contract, decimals, status in token_rows:
+            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
+            network_addresses = eth_addresses if network == "ethereum" else bnb_addresses if network == "bnb" else sepolia_addresses if network == "sepolia" else []
+            if rpc_url and contract and network_addresses and status == "active":
+                asset_symbol = wallet_asset_symbol(str(symbol).upper(), network)
+                key = (network, str(contract).lower(), asset_symbol)
+                token_source_keys.add(key)
+                token_sources.append((rpc_url, network, network_addresses, contract, asset_symbol, decimals))
+
+        # Registry-driven sources cover arbitrary active tokens. Explicitly
+        # configured production contracts remain available for history too,
+        # including existing deployments whose registry row is not yet active.
+        configured_token_sources = (
+            (ETH_RPC_URL, "ethereum", eth_addresses, USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT, "USDT", 6),
+            (ETH_RPC_URL, "ethereum", eth_addresses, BALMZ_ETH_CONTRACT, "BALMZ", 18),
+            (BSC_RPC_URL, "bnb", bnb_addresses, USDT_BSC_CONTRACT or BSC_USDT_MAINNET_CONTRACT, "USDT-BNB", 18),
+            (BSC_RPC_URL, "bnb", bnb_addresses, BALMZ_BNB_CONTRACT, "BALMZ-BNB", 18),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_addresses, BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", 18),
         )
-        for rpc_url, network, network_address, contract, token_symbol in token_sources:
-            if not rpc_url or not network_address or not contract:
+        for rpc_url, network, network_addresses, contract, token_symbol, decimals in configured_token_sources:
+            key = (network, str(contract or "").lower(), token_symbol)
+            if not rpc_url or not contract or not network_addresses or key in token_source_keys:
                 continue
-            token_imported, warning = sync_evm_token_transactions(
-                user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
-                decimals=18 if token_symbol.startswith("BALMZ") else 6,
-            )
-            evm_transactions.extend(token_imported)
-            if warning:
-                evm_warnings.append(warning)
+            token_source_keys.add(key)
+            token_sources.append((rpc_url, network, network_addresses, contract, token_symbol, decimals))
+
+        for rpc_url, network, network_addresses, contract, token_symbol, decimals in token_sources:
+            for network_address in network_addresses:
+                token_imported, warning = sync_evm_token_transactions(
+                    user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                    decimals=int(decimals) if decimals is not None else (18 if token_symbol.startswith("BALMZ") else 6),
+                )
+                evm_transactions.extend(token_imported)
+                if warning:
+                    evm_warnings.append(warning)
         warnings.extend(evm_warnings)
 
     assets, all_transactions, summary = wallet_snapshot(user)
@@ -4721,7 +4834,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
         pass
     # A configured address is not proof that history synced successfully. Only publish a
     # success timestamp when every configured transaction source completed without warnings.
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and any((btc_addresses, eth_addresses, bnb_addresses, sepolia_addresses)) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {
@@ -5646,78 +5759,124 @@ def transactions(user: dict = Depends(current_user), limit: int = 50, offset: in
 def sync_transactions(user: dict = Depends(current_user)):
     imported = []
     warnings = []
-    sepolia_address = wallet_network_address(user, "sepolia")
-    btc_address = wallet_network_address(user, "bitcoin")
-    if btc_address:
+    address_rows = configured_addresses(user)
+    addresses_by_network = {}
+    for item in address_rows:
+        if item.get("ownership_verified") is not True:
+            continue
+        network = normalize_wallet_network(item.get("network") or "")
+        address = str(item.get("address") or "").strip()
+        valid = (
+            valid_evm_address(address) if network in {"ethereum", "bnb", "sepolia"}
+            else valid_bitcoin_address(address) if network == "bitcoin"
+            else valid_solana_address(address) if network in {"solana_mainnet", "solana_devnet"}
+            else False
+        )
+        if valid:
+            bucket = addresses_by_network.setdefault(network, [])
+            if address.lower() not in {value.lower() for value in bucket}:
+                bucket.append(address)
+
+    for btc_address in addresses_by_network.get("bitcoin", []):
         try:
-            balance = btc_balance(btc_address)
-            if balance is not None:
-                with db() as conn:
-                    conn.execute("UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol='BTC'", (balance,user["wallet_id"]))
-                    conn.commit()
             imported.extend(sync_bitcoin_transactions(user, btc_address))
         except Exception:
-            warnings.append("Bitcoin transaction service unavailable")
-    for rpc_url, network, contract in (
-        (ETH_RPC_URL, "ethereum", USDT_ETH_CONTRACT),
-        (BSC_RPC_URL, "bnb", USDT_BSC_CONTRACT),
-        (SEPOLIA_RPC_URL if sepolia_address else "", "sepolia", BALMZ_SEPOLIA_CONTRACT),
-    ):
-        if rpc_url:
-            if network == "sepolia":
-                try:
-                    require_sepolia_rpc(rpc_url)
-                except Exception:
-                    warnings.append("Sepolia RPC chain ID mismatch or unavailable; Sepolia sync skipped.")
-                    continue
-            native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, wallet_network_address(user, network))
+            warnings.append("Bitcoin transaction history unavailable for one verified address")
+
+    evm_networks = (
+        (ETH_RPC_URL, "ethereum"),
+        (BSC_RPC_URL, "bnb"),
+        (SEPOLIA_RPC_URL, "sepolia"),
+    )
+    for rpc_url, network in evm_networks:
+        network_addresses = addresses_by_network.get(network, [])
+        if not network_addresses:
+            continue
+        if not rpc_url:
+            warnings.append(f"{network.title()} RPC is not configured; transaction sync skipped.")
+            continue
+        try:
+            if network == "ethereum":
+                require_ethereum_mainnet_rpc(rpc_url)
+            elif network == "bnb":
+                require_bnb_rpc(rpc_url)
+            else:
+                require_sepolia_rpc(rpc_url)
+        except Exception:
+            warnings.append(f"{network.title()} RPC chain identity could not be verified; transaction sync skipped.")
+            continue
+
+        for network_address in network_addresses:
+            native_imported, native_warning = sync_evm_native_transactions(
+                user, rpc_url, network, network_address
+            )
             imported.extend(native_imported)
             if native_warning:
                 warnings.append(native_warning)
-            with db() as conn:
-                token_rows = conn.execute(
-                    "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
-                    "WHERE network=%s AND contract_address IS NOT NULL AND decimals IS NOT NULL AND status='active'",
-                    (network,),
-                ).fetchall()
-            network_address = wallet_network_address(user, network)
-            token_rows = wallet_sync_token_rows(
-                token_rows,
-                network_address if network == "ethereum" else None,
-                network_address if network == "bnb" else None,
-            )
-            for symbol, _token_name, token_network, token_contract, token_decimals, _status in token_rows:
-                if token_network != network:
-                    continue
-                transaction_symbol = wallet_asset_symbol(symbol, network)
+
+        with db() as conn:
+            token_rows = conn.execute(
+                "SELECT symbol,name,network,contract_address,decimals,status FROM token_registry "
+                "WHERE network=%s AND contract_address IS NOT NULL AND status='active'",
+                (network,),
+            ).fetchall()
+        token_rows = wallet_sync_token_rows(
+            token_rows,
+            True if network == "ethereum" else None,
+            True if network == "bnb" else None,
+        )
+        for symbol, _token_name, token_network, token_contract, token_decimals, _status in token_rows:
+            if token_network != network or not token_contract:
+                continue
+            transaction_symbol = wallet_asset_symbol(symbol, network)
+            for network_address in network_addresses:
                 token_imported, warning = sync_evm_token_transactions(
                     user, rpc_url, network, token_contract, transaction_symbol,
-                    decimals=int(token_decimals) if token_decimals is not None else 18,
-                    wallet_address=network_address
+                    decimals=int(token_decimals) if token_decimals is not None else (18 if str(symbol).upper().startswith("BALMZ") else 6),
+                    wallet_address=network_address,
                 )
                 imported.extend(token_imported)
                 if warning:
                     warnings.append(warning)
-        elif wallet_network_address(user, network):
-            warnings.append(f"{network.title()} RPC is not configured; {network.title()} transaction sync skipped.")
-    supported_source_configured = bool(btc_address) or any(
-        wallet_network_address(user, network) and rpc_url
+
+    supported_source_configured = bool(addresses_by_network.get("bitcoin")) or any(
+        bool(addresses_by_network.get(network)) and bool(rpc_url)
         for network, rpc_url in (
             ("ethereum", ETH_RPC_URL),
             ("bnb", BSC_RPC_URL),
             ("sepolia", SEPOLIA_RPC_URL),
         )
     )
-    if not imported and not supported_source_configured:
-        detail = (
-            "Sepolia transaction history is not yet supported by live sync."
-            if sepolia_address
-            else "No live transaction source is configured for this wallet."
+    if not supported_source_configured:
+        raise HTTPException(
+            status_code=503,
+            detail="No ownership-verified address has a supported live transaction-history source.",
         )
-        raise HTTPException(status_code=503, detail=detail)
-    assets,tx,summary = wallet_snapshot(user)
-    return {"status":"synced_with_warnings" if warnings else "synced","imported":imported,"warnings":warnings,
-            "transactions":tx,"assets":assets,"wallet":{**summary,"wallet_id":user["wallet_id"],"owner_id":user["id"]}}
+    # Address-level cursors can observe the same transaction from more than one
+    # wallet address. Return a de-duplicated response while preserving its chain
+    # and asset identity.
+    unique_imported = []
+    seen = set()
+    for item in imported:
+        key = (
+            str(item.get("tx_hash") or ""),
+            str(item.get("network") or ""),
+            str(item.get("asset") or ""),
+            str(item.get("log_index") if item.get("log_index") is not None else ""),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_imported.append(item)
+    assets, tx, summary = wallet_snapshot(user)
+    return {
+        "status": "synced_with_warnings" if warnings else "synced",
+        "imported": unique_imported,
+        "warnings": sorted(set(warnings)),
+        "transactions": tx,
+        "assets": assets,
+        "wallet": {**summary, "wallet_id": user["wallet_id"], "owner_id": user["id"]},
+    }
 
 
 
@@ -6101,11 +6260,13 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
             raise HTTPException(status_code=404, detail="Wallet not found")
         comparison = "lower(address)=lower(%s)" if network in {"ethereum", "sepolia", "bnb"} else "address=%s"
         attached = conn.execute(
-            f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",
+            f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",
             (wallet_id, network, address),
         ).fetchone()
         if not attached:
             raise HTTPException(status_code=404, detail="Attach this public address to the selected wallet before checking its balance")
+        if not bool(attached[0]):
+            raise HTTPException(status_code=403, detail="Prove ownership of this public address before requesting its balance")
     try:
         if network == "ethereum":
             rpc_url, asset = ETH_RPC_URL, "ETH"

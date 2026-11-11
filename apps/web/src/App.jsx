@@ -5,7 +5,8 @@ import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigatio
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
-import { cachedBalanceMatchesNetwork, defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
+import { defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
+import { indexVerifiedBalances } from "./verified-balances.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
@@ -24,11 +25,13 @@ const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Ethereum Mainnet" },
   { symbol: "BALMZ-BNB", name: "BALMZ Token (BNB Chain)", icon: "B", status: "BNB Chain Mainnet" },
+  { symbol: "BALMZ-SOL", name: "BALMZ Token (Solana Mainnet)", icon: "B", status: "Solana Mainnet" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum", icon: "Ξ", status: "Ethereum" },
-  { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum / BNB Chain" },
+  { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum Mainnet" },
+  { symbol: "USDT-BNB", name: "Tether USD (BNB Chain)", icon: "$", status: "BNB Chain Mainnet" },
   { symbol: "BNB", name: "BNB", icon: "◆", status: "BNB Chain" },
   { symbol: "USDC", name: "USD Coin", icon: "$", status: "Supported asset catalog" },
   { symbol: "SOL", name: "Solana", icon: "S", status: "Supported asset catalog" },
@@ -305,6 +308,7 @@ function App() {
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
       const bnbMainnetContract = records.find(t => t.network === "bnb" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
+      const solanaMainnetContract = records.find(t => t.network === "solana_mainnet" && t.contract_address && t.status === "active");
       const quote = marketPrices[coin.symbol] || {};
       return {
         ...coin,
@@ -314,8 +318,10 @@ function App() {
             ? (bnbMainnetContract ? "BNB Chain Mainnet • contract verified" : "BNB Chain Mainnet • deployment pending")
             : coin.symbol === "BALMZ-SEP"
               ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-              : coin.status,
-        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || records[0] || null,
+              : coin.symbol === "BALMZ-SOL"
+                ? (solanaMainnetContract ? "Solana Mainnet • mint verified" : "Solana Mainnet • mint pending verification")
+                : coin.status,
+        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || solanaMainnetContract || records[0] || null,
         connected: Boolean(liveRecord),
         price_usd: quote.usd == null ? null : Number(quote.usd),
         price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -396,19 +402,29 @@ function App() {
   const balanceRequestIdRef = useRef(0);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
-  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
-    try {
-      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
-      const savedNetwork = readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
-      return cachedBalanceMatchesNetwork(cached, savedNetwork) ? cached : null;
-    } catch { return null; }
-  });
+  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
   useEffect(() => {
     if (!selectedNetworkBalance || !Number.isFinite(Number(selectedNetworkBalance.balance))) return;
     try { localStorage.setItem("world_wallet_last_confirmed_network_balance_v1", JSON.stringify(selectedNetworkBalance)); } catch {}
   }, [selectedNetworkBalance]);
   const [selectedNetworkBalanceBusy, setSelectedNetworkBalanceBusy] = useState(false);
+  const [balanceVerificationReport, setBalanceVerificationReport] = useState(null);
+  const [balanceVerificationError, setBalanceVerificationError] = useState("");
+  const [balanceVerificationBusy, setBalanceVerificationBusy] = useState(false);
+  const verifiedBalancesByAsset = useMemo(
+    () => indexVerifiedBalances(balanceVerificationReport),
+    [balanceVerificationReport],
+  );
+  const lastSyncedBalanceByAsset = useMemo(() => {
+    const result = new Map();
+    for (const item of balanceVerificationReport?.assets || []) {
+      if (item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance))) {
+        result.set(String(item.asset || "").toUpperCase(), item);
+      }
+    }
+    return result;
+  }, [balanceVerificationReport]);
   const [lastSyncedAt, setLastSyncedAt] = useState(null);
   const [liveWallet, setLiveWallet] = useState({ status: "checking", mode: "read_only", addresses: [], networks: [], message: "" });
   const [networkStatus, setNetworkStatus] = useState({});
@@ -455,7 +471,10 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
-  const [recoveryMode, setRecoveryMode] = useState(false);
+  const [passwordResetToken, setPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
+  const [recoveryMode, setRecoveryMode] = useState(() => Boolean(new URLSearchParams(window.location.search).get("token")));
   async function beginSecurityPinGate(token, signedInUser = null) {
     if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
     const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
@@ -569,6 +588,8 @@ function App() {
   }
 
   const [showLogin, setShowLogin] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("token") || params.has("password_reset") || params.has("error")) return true;
     try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
   });
   const [loginError, setLoginError] = useState("");
@@ -772,22 +793,29 @@ function App() {
       // back to login while the dashboard is already mounting.
       if (sessionState.isPending) return;
 
-      if (neonSessionUser) {
-        for (let attempt = 0; attempt < 8 && !cancelled; attempt += 1) {
+      if (neonSessionUser || socialReturn) {
+        for (let attempt = 0; attempt < 12 && !cancelled; attempt += 1) {
           try {
-            const token = await getNeonAccessToken();
+            // After Google's top-level OAuth redirect the SDK's React session
+            // can be empty even while the Neon Auth cookie is valid. Exchange
+            // that cookie directly for the backend JWT before deciding sign-in failed.
+            const token = await getNeonAccessToken({ forceRefresh: true });
             if (token) {
+              await beginSecurityPinGate(token, neonSessionUser);
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
               try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
-              await beginSecurityPinGate(token, neonSessionUser);
-              setAuthRestoring(false);
+              if (!cancelled) setAuthRestoring(false);
               if (window.location.search) {
-                window.history.replaceState({}, document.title, window.location.pathname);
+                const params = new URLSearchParams(window.location.search);
+                params.delete("auth_callback");
+                params.delete("password_reset");
+                const next = params.toString();
+                window.history.replaceState({}, document.title, window.location.pathname + (next ? "?" + next : "") + window.location.hash);
               }
               return;
             }
-          } catch {
-            // Keep retrying briefly while Neon Auth finishes the JWT exchange.
+          } catch (error) {
+            if (attempt === 11 && !cancelled) setLoginError(error.message || "Google session could not be exchanged for a secure wallet session.");
           }
           await new Promise(resolve => setTimeout(resolve, 500));
         }
@@ -995,6 +1023,42 @@ function App() {
 
   useEffect(() => {
     if (!accessToken) {
+      setBalanceVerificationReport(null);
+      setBalanceVerificationError("");
+      setBalanceVerificationBusy(false);
+      return undefined;
+    }
+    let cancelled = false;
+    const activeWalletIdForReport = String(wallet?.wallet_id || wallet?.id || "");
+    setBalanceVerificationReport(current =>
+      current && String(current.wallet_id || "") === activeWalletIdForReport ? current : null
+    );
+    setBalanceVerificationBusy(true);
+    setBalanceVerificationError("");
+    fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
+      headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" },
+      cache: "no-store",
+    })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.detail || "Verified Mainnet balances could not be loaded.");
+        if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report.");
+        if (!cancelled) setBalanceVerificationReport(data);
+      })
+      .catch(error => {
+        if (!cancelled) {
+          setBalanceVerificationReport(null);
+          setBalanceVerificationError(error.message || "Verified balance service unavailable.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setBalanceVerificationBusy(false);
+      });
+    return () => { cancelled = true; };
+  }, [accessToken, wallet?.wallet_id, wallet?.id]);
+
+  useEffect(() => {
+    if (!accessToken) {
       setPerformance({ points: [], period: performancePeriod });
       return;
     }
@@ -1166,6 +1230,55 @@ function App() {
     };
     try {
       const normalizedSelectedNetwork = requestedNetwork;
+      const mainnetNativeSymbols = {
+        ethereum: "ETH",
+        bnb: "BNB",
+        bitcoin: "BTC",
+        solana_mainnet: "SOL",
+      };
+      const mainnetAsset = mainnetNativeSymbols[normalizedSelectedNetwork];
+      if (mainnetAsset) {
+        const activeWalletId = String(wallet?.wallet_id || wallet?.id || user?.wallet_id || "");
+        let report = !forceAddressRefresh &&
+          balanceVerificationReport &&
+          String(balanceVerificationReport.wallet_id || "") === activeWalletId
+          ? balanceVerificationReport
+          : null;
+        if (!report) {
+          const verificationResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification");
+          const verificationData = await verificationResponse.json().catch(() => ({}));
+          if (!verificationResponse.ok) throw new Error(verificationData.detail || "Verified Mainnet balance check failed.");
+          report = verificationData;
+          setBalanceVerificationReport(verificationData);
+          setBalanceVerificationError("");
+        }
+        const observation = (report.assets || []).find(item =>
+          String(item.asset || "").toUpperCase() === mainnetAsset &&
+          normalizeNetworkId(item.network) === normalizedSelectedNetwork
+        );
+        if (!observation || observation.verified !== true || observation.available_balance == null) {
+          throw new Error(observation?.note || "No ownership-verified Mainnet balance is available for this network.");
+        }
+        const aggregateBalance = Number(observation.available_balance);
+        if (!Number.isFinite(aggregateBalance) || aggregateBalance < 0) {
+          throw new Error("The verified balance service returned an invalid amount.");
+        }
+        if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
+        const firstAddress = observation.address_balances?.[0]?.address || "";
+        setSelectedNetworkAddress(firstAddress);
+        setSelectedNetworkBalance({
+          network: normalizedSelectedNetwork,
+          balance: aggregateBalance,
+          asset: mainnetAsset,
+          address: firstAddress,
+          addresses_checked: Number(observation.addresses_checked || 0),
+          ownership_verified: true,
+          verified: true,
+          syncedAt: observation.observed_at,
+        });
+        setSelectedNetworkBalanceMessage("Verified aggregate balance across " + Number(observation.addresses_checked || 0) + " owned address(es).");
+        return;
+      }
       let walletId = forceAddressRefresh ? "" : (balanceWalletIdRef.current || wallet?.wallet_id || wallet?.id || user?.wallet_id);
       let currentAddresses = dashboardAddresses;
       const hasCachedAddress = !forceAddressRefresh && currentAddresses.some(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
@@ -1185,9 +1298,12 @@ function App() {
         setDashboardAddresses(currentAddresses);
       }
       if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
-      const matches = currentAddresses.filter(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
+      const matches = currentAddresses.filter(item =>
+        normalizeNetwork(item.network) === normalizedSelectedNetwork &&
+        item.ownership_verified === true
+      );
       const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
-      if (!chosen) throw new Error("No address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets to inspect its existing public address.");
+      if (!chosen) throw new Error("No ownership-verified address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets, attach the correct public address and complete its signature verification.");
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
       if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
       const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
@@ -1197,7 +1313,7 @@ function App() {
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
-      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
+      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, ownership_verified: true, verified: true, syncedAt: data.synced_at });
       setSelectedNetworkBalanceMessage("Balance updated.");
     } catch (error) {
       // Keep the last confirmed balance visible if a refresh fails.
@@ -1383,54 +1499,95 @@ function App() {
       if (!email) throw new Error("Enter your email address.");
       if (!loginPassword) throw new Error("Enter your password.");
 
-      // Sign in directly through Neon Auth in the browser. The browser owns
-      // the Neon Auth session cookie; a server-side relay cannot reliably
-      // recreate that cross-origin cookie session for the /token exchange.
-      const result = await authClient.signIn.email({
-        email,
-        password: loginPassword,
+      // Use one authenticated backend relay for both desktop and mobile. This
+      // avoids a browser SDK cookie/JWT race and returns a JWT the API verifies.
+      const relayResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: loginPassword }),
+        cache: "no-store",
       });
-      if (result?.error) {
-        throw new Error(authErrorMessage(result.error, "Unable to sign in with password."));
-      }
-
-      // First use the browser's Neon Auth session. On native Capacitor builds,
-      // the WebView origin can differ from the website origin and the cross-origin
-      // /token cookie exchange may be blocked. If that happens, retry the same
-      // password sign-in through the backend's existing Neon Auth relay, which
-      // keeps the provider cookie exchange server-side. The API still verifies
-      // the returned JWT signature, issuer, identity, and expiry on every request.
-      let token = await getWalletTokenWithRetry();
-      let signedInUser = result?.data?.user || result?.user || null;
-
-      if (!token) {
-        const relayResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password: loginPassword }),
-          cache: "no-store",
-        });
-        const relayData = await relayResponse.json().catch(() => ({}));
-        if (!relayResponse.ok) {
-          throw new Error(relayData.detail || "Sign-in succeeded, but the secure wallet session could not be completed. Please retry.");
-        }
-        token = relayData.access_token || "";
-        if (!isUsableNeonAccessToken(token)) {
-          throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
-        }
-        signedInUser = relayData.user || signedInUser;
-      }
-
+      const relayData = await relayResponse.json().catch(() => ({}));
+      if (!relayResponse.ok) throw new Error(relayData.detail || "Email or password was not accepted.");
+      const token = relayData.access_token || "";
       if (!isUsableNeonAccessToken(token)) {
         throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
       }
 
-      await beginSecurityPinGate(token, signedInUser);
+      await beginSecurityPinGate(token, relayData.user || null);
       setLoginPassword("");
       setPasswordMode(false);
       setAuthMessage("");
     } catch (error) {
       setLoginError(error.message || "Unable to sign in with password");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function requestPasswordReset() {
+    setLoginError("");
+    setAuthMessage("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your Gmail address first.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password/reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not request the password setup link.");
+      setAuthMessage(data.message || "If the account exists, a password setup link will be sent.");
+    } catch (error) {
+      setLoginError(error.message || "Unable to request a password setup link.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function completePasswordReset() {
+    setLoginError("");
+    setAuthMessage("");
+    setAuthBusy(true);
+    try {
+      if (!passwordResetToken) throw new Error("The password setup link is missing or expired. Request a new one.");
+      if (resetPassword.length < 8) throw new Error("Use a password with at least 8 characters.");
+      if (resetPassword !== resetPasswordConfirm) throw new Error("The two password entries do not match.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/password/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: passwordResetToken, new_password: resetPassword }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Password setup link is invalid or expired.");
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Password was updated. Enter your Gmail address to sign in.");
+      const signInResponse = await fetch(API_BASE_URL + "/api/v1/auth/neon/password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password: resetPassword }),
+        cache: "no-store",
+      });
+      const signedIn = await signInResponse.json().catch(() => ({}));
+      if (!signInResponse.ok || !isUsableNeonAccessToken(signedIn.access_token || "")) {
+        throw new Error("Password updated, but automatic sign-in did not complete. Sign in with the new password.");
+      }
+      await beginSecurityPinGate(signedIn.access_token, signedIn.user || null);
+      setPasswordResetToken("");
+      setResetPassword("");
+      setResetPasswordConfirm("");
+      const params = new URLSearchParams(window.location.search);
+      params.delete("token");
+      params.delete("password_reset");
+      params.delete("error");
+      const rest = params.toString();
+      window.history.replaceState({}, document.title, window.location.pathname + (rest ? "?" + rest : "") + window.location.hash);
+    } catch (error) {
+      setLoginError(error.message || "Password setup failed.");
     } finally {
       setAuthBusy(false);
     }
@@ -1494,9 +1651,15 @@ function App() {
     try {
       sessionStorage.setItem("world_wallet_social_return", provider);
       if (provider === "google") sessionStorage.setItem("world_wallet_google_return", "1");
+      // Production Neon Auth currently trusts the Render frontend origin.
+      // Keep OAuth callbacks on that same origin so desktop browser returns do
+      // not land on an untrusted domain; localhost remains available in dev.
+      const callbackOrigin = ["localhost", "127.0.0.1"].includes(window.location.hostname)
+        ? window.location.origin
+        : "https://world-wallet-ai-frontend.onrender.com";
       const result = await authClient.signIn.social({
         provider,
-        callbackURL: (["localhost", "127.0.0.1"].includes(window.location.hostname) ? window.location.origin : "https://world-wallet-ai-frontend.onrender.com") + "/?auth_callback=" + provider,
+        callbackURL: callbackOrigin + "/?auth_callback=" + encodeURIComponent(provider),
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, providerName + " Sign-In failed."));
     } catch (error) {
@@ -1697,29 +1860,93 @@ function App() {
     ...(Array.isArray(wallet.unpriced_assets) ? wallet.unpriced_assets : []),
     ...assetDerivedUnpriced,
   ])];
-  const walletHasCompleteValuation = wallet.valuation_complete !== false && wallet.available_balance_usd != null;
-  const walletPartialValue = wallet.partial_available_balance_usd != null
-    ? wallet.partial_available_balance_usd
-    : assets.reduce((total, asset) => {
-      if (asset.value_usd != null && Number.isFinite(Number(asset.value_usd))) return total + Number(asset.value_usd);
-      const price = Number(asset.price_usd ?? asset.live_price_usd ?? 0);
-      const balance = Number(asset.balance || 0);
-      return price > 0 && Number.isFinite(price) && Number.isFinite(balance) ? total + price * balance : total;
-    }, 0);
+  const verifiedValuationRows = (balanceVerificationReport?.assets || []).filter(item =>
+    item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance))
+  );
+  const verifiedPricedRows = verifiedValuationRows.filter(item =>
+    Number(marketPrices[String(item.asset || "").replace(/-BNB$/, "")]?.usd || 0) > 0
+  );
+  const verifiedValuationUnpricedRows = verifiedValuationRows.filter(item =>
+    Number(item.available_balance) > 0 &&
+    !(Number(marketPrices[String(item.asset || "").replace(/-BNB$/, "")]?.usd || 0) > 0)
+  );
+  const unverifiedLedgerHoldings = (balanceVerificationReport?.assets || []).filter(item =>
+    item?.verified !== true && Number(item?.ledger_available_balance || 0) > 0
+  );
+  const walletPartialValue = verifiedPricedRows.reduce((total, item) => {
+    const baseSymbol = String(item.asset || "").replace(/-BNB$/, "");
+    const price = Number(marketPrices[baseSymbol]?.usd || 0);
+    return total + Number(item.available_balance) * price;
+  }, 0);
+  const walletHasCompleteValuation = Boolean(balanceVerificationReport)
+    && balanceVerificationReport.status === "verified"
+    && wallet.valuation_complete !== false
+    && verifiedValuationRows.length > 0
+    && verifiedPricedRows.length === verifiedValuationRows.length
+    && verifiedValuationUnpricedRows.length === 0
+    && unverifiedLedgerHoldings.length === 0;
   const walletCanShowPartialValue = !walletHasCompleteValuation
-    && walletPartialValue != null
+    && verifiedPricedRows.length > 0
     && Number.isFinite(Number(walletPartialValue))
-    && (Number(walletPartialValue) > 0 || walletUnpricedAssets.length === 0);
-  const walletBalanceText = walletHasCompleteValuation
-    ? money(wallet.available_balance_usd)
-    : walletCanShowPartialValue ? money(walletPartialValue) : "Valuation unavailable";
+    && (walletPartialValue > 0 || verifiedPricedRows.every(item => Number(item.available_balance) === 0));
+  const walletBalanceText = walletHasCompleteValuation || walletCanShowPartialValue
+    ? money(walletPartialValue)
+    : "Valuation unavailable";
   const walletBalanceCaption = walletHasCompleteValuation
-    ? "≈ " + number(wallet.available_balance_usd) + " USD available"
+    ? "≈ " + number(walletPartialValue) + " USD · chain-verified available balances"
     : walletCanShowPartialValue
-      ? "Partial value of priced assets" + (walletUnpricedAssets.length ? " · unpriced: " + walletUnpricedAssets.join(", ") : "")
-      : walletUnpricedAssets.length
-        ? "No verified USD quote for: " + walletUnpricedAssets.join(", ")
-        : "Portfolio valuation unavailable";
+      ? "Partial USD value of chain-verified, priced assets only · unsupported or unverified assets excluded"
+      : balanceVerificationBusy ? "Checking verified Mainnet balances…"
+        : balanceVerificationError || "Portfolio valuation unavailable until a chain balance and market quote can be verified";
+
+  const traceAddressRows = dashboardAddresses.length
+    ? dashboardAddresses
+    : Object.entries(balanceVerificationReport?.attached_addresses_detail || {}).flatMap(([network, rows]) =>
+      (rows || []).map(item => ({ ...item, network }))
+    );
+  const traceNetworkLabels = {
+    ethereum: "Ethereum Mainnet",
+    bnb: "BNB Chain Mainnet",
+    bitcoin: "Bitcoin Mainnet",
+    solana_mainnet: "Solana Mainnet",
+    sepolia: "Ethereum Sepolia (testnet)",
+    solana_devnet: "Solana Devnet (testnet)",
+  };
+  const traceReportedSymbols = new Set((balanceVerificationReport?.assets || []).map(item => String(item.asset || "").toUpperCase()));
+  const traceAssetRows = [
+    ...(balanceVerificationReport?.assets || []),
+    ...walletCoinCatalogWithRegistry
+      .filter(item => !traceReportedSymbols.has(String(item.symbol || "").toUpperCase()))
+      .map(item => {
+        const symbol = String(item.symbol || "").toUpperCase();
+        const notes = {
+          ADA: "Cardano CIP-30 address, ownership proof, balance and history adapter is not configured.",
+          XRP: "XRP Ledger address, ownership proof, balance and history adapter is not configured.",
+          LTC: "Litecoin address, ownership proof, balance and history adapter is not configured.",
+          DOGE: "Dogecoin address, ownership proof, balance and history adapter is not configured.",
+          USDC: "No active verified USDC token contract is configured for this wallet network.",
+          "BALMZ-SOL": "Solana Mainnet BALMZ mint is not configured or could not be verified.",
+          "BALMZ-SEP": "Sepolia is a testnet and is excluded from the Mainnet balance report.",
+          "BALMZ-SOL-DEVNET": "Solana Devnet is a testnet and is excluded from the Mainnet balance report.",
+          BALMZ: "Ethereum Mainnet BALMZ contract is not configured or could not be verified.",
+          "BALMZ-BNB": "BNB Chain BALMZ contract is not configured or could not be verified.",
+        };
+        return {
+          asset: symbol,
+          name: item.name,
+          network: null,
+          network_label: item.status || "Network adapter unavailable",
+          status: "unavailable_unverified",
+          verified: false,
+          available_balance: null,
+          chain_balance: null,
+          contract_address: item.registry?.contract_address || null,
+          note: notes[symbol] || "No active contract/mint and ownership-verified chain reader is available for this asset.",
+          source: null,
+          addresses_checked: 0,
+        };
+      }),
+  ];
 
   const walletUnpricedReceivedAssets = Array.isArray(wallet.unpriced_received_assets) ? wallet.unpriced_received_assets : [];
   const walletPartialReceived = wallet.partial_total_received_usd;
@@ -1763,11 +1990,11 @@ function App() {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
       <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /><b>WORLD WALLET <em>AI</em></b></div><button className="ww-auth-home" type="button" onClick={() => { setShowLogin(false); setLoginError(""); setAuthMessage(""); }}>← Back to home</button></header>
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
-      <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use a one-time code sent to your email.":"Sign in to your World Wallet AI account."}</p></div></div>
+      <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use the secure link sent to your registered Gmail account to set or reset your password.":"Sign in to your World Wallet AI account."}</p></div></div>
       {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("");setAuthMessage("")}}>Password</button><button type="button" className={!passwordMode&&authMethod==="email"?"active":""} onClick={() => {setPasswordMode(false);setAuthMethod("email");setOtpRequested(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Email OTP</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button><button type="button" className={authMethod==="twitter"?"active google-tab":""} onClick={() => {setAuthMethod("twitter");setPasswordMode(false);setLoginError("")}}>𝕏&nbsp; X</button><button type="button" className={authMethod==="telegram"?"active google-tab":""} onClick={() => {setAuthMethod("telegram");setPasswordMode(false);setLoginError("")}}>✈ Telegram</button></div>}
       {registerMode?<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Phone number</span><div className="ww-field"><i>☎</i><input type="tel" value={registerPhone} onChange={e=>setRegisterPhone(e.target.value)} placeholder="+2348012345678" autoComplete="tel" inputMode="tel" maxLength={20} required/></div><small className="ww-phone-hint">Include your country code, e.g. +234 for Nigeria.</small></label><div className="ww-phone-verify-row"><button className="ww-text-link ww-phone-send-code" type="button" onClick={requestRegisterPhoneOtp} disabled={authBusy}>{authBusy?"Requesting code…":registerPhoneOtpSent?"Resend SMS code":"Send SMS verification code"}</button></div>{registerPhoneOtpSent&&<label><span>SMS verification code</span><div className="ww-field"><i>⌗</i><input type="text" value={registerPhoneOtp} onChange={e=>setRegisterPhoneOtp(e.target.value.replace(/\D/g,"").slice(0,10))} placeholder="Enter code from SMS" inputMode="numeric" autoComplete="one-time-code" maxLength={10} required/></div><small className="ww-phone-hint">Your account is created only after the server verifies this code.</small></label>}<label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Registration failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><div className="ww-register-social"><span>Or create your account with</span><button type="button" onClick={()=>handleSocialSignIn("twitter")} disabled={authBusy}>𝕏&nbsp; Continue with X</button><button type="button" onClick={()=>handleSocialSignIn("telegram")} disabled={authBusy}>✈ Continue with Telegram</button><button type="button" onClick={()=>handleSocialSignIn("google")} disabled={authBusy}>G&nbsp; Continue with Google</button></div><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>:!recoveryMode&&["google","github","twitter","telegram"].includes(authMethod)?<div className="ww-auth-form"><button className={"ww-auth-submit ww-google-button ww-social-"+authMethod} type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":({github:"Continue with GitHub",twitter:"Continue with X",telegram:"Continue with Telegram",google:"Continue with Google"}[authMethod])}</button><p className="ww-auth-note"><span>✓</span> {({github:"GitHub sign-in requires GitHub to be enabled in Neon Auth.",twitter:"X sign-in requires the Twitter/X OAuth provider and credentials to be enabled in Neon Auth.",telegram:"Telegram sign-in requires a configured Telegram authentication provider and verified bot/domain integration.",google:"Google authentication is handled by Neon Auth."}[authMethod])}</p></div>:
       <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
-      {recoveryMode?(otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify code &amp; sign in <b>→</b></button></>:<button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send recovery code <b>→</b></button>):
+      {recoveryMode?(passwordResetToken?<><label><span>New password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={resetPassword} onChange={e=>setResetPassword(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" minLength={8} required/></div></label><label><span>Confirm new password</span><div className="ww-field"><i>⌑</i><input type="password" value={resetPasswordConfirm} onChange={e=>setResetPasswordConfirm(e.target.value)} placeholder="Confirm new password" autoComplete="new-password" minLength={8} required/></div></label><button className="ww-auth-submit" type="button" onClick={completePasswordReset} disabled={authBusy}>{authBusy?"Updating password…":"Set password & enter wallet"} <b>→</b></button></>:<><p className="ww-auth-note">We will send a one-time password setup link to the Gmail address registered to this account. You must open that email to choose a new password.</p><button className="ww-auth-submit" type="button" onClick={requestPasswordReset} disabled={authBusy}>{authBusy?"Sending setup link…":"Send password setup / reset link"} <b>→</b></button></>):
       passwordMode?<><label><span>Password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/><button type="button" className="ww-password-toggle" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? "◉" : "◌"}</button></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
       otpRequested?<><label><span>6-digit code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" pattern="[0-9]{6}" maxLength="6" value={otpCode} onChange={e=>setOtpCode(e.target.value)} placeholder="000000" autoComplete="one-time-code" required/></div></label><button className="ww-auth-submit" type="button" onClick={verifyEmailOtp} disabled={authBusy||otpCode.length!==6}>Verify &amp; enter wallet <b>→</b></button><button className="ww-text-link" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send a new code</button></>:<><button className="ww-auth-submit" type="button" onClick={requestEmailOtp} disabled={authBusy}>Send secure code <b>→</b></button><button className="ww-text-link" type="button" onClick={() => setPasswordMode(true)}>Use email &amp; password</button></>}
       {recoveryMode&&<button className="ww-text-link" type="button" onClick={() => {setRecoveryMode(false);setOtpRequested(false);setOtpCode("");setLoginError("")}}>← Back to sign in</button>}
@@ -1856,10 +2083,13 @@ function App() {
         {active === "BALMZ AI" ? <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP";
-          const balanceKnown = Boolean(live && (!contractBasedBalmz || coin?.registry?.contract_address));
-          const balance = balanceKnown ? Number(live?.balance || 0) : null;
-          const value = live?.value_usd;
+          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP" || selectedCoin === "BALMZ-SOL";
+          const verifiedAsset = verifiedBalancesByAsset.get(String(selectedCoin || "").toUpperCase());
+          const balanceKnown = Boolean(verifiedAsset);
+          const balance = balanceKnown ? Number(verifiedAsset.available_balance) : null;
+          const value = balanceKnown && Number(marketPrices[selectedCoin.replace(/-BNB$/, "")]?.usd || 0) > 0
+            ? balance * Number(marketPrices[selectedCoin.replace(/-BNB$/, "")]?.usd)
+            : null;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
           const solReferencePrice = selectedCoin === "BALMZ-SOL-DEVNET" ? Number(marketPrices.SOL?.usd || 0) : 0;
           const isSolanaDevnetBalmz = selectedCoin === "BALMZ-SOL-DEVNET";
@@ -1980,13 +2210,64 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{assets.some(asset => asset.symbol === "BALMZ") ? number(assets.find(asset => asset.symbol === "BALMZ")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Last confirmed Mainnet data retained" : assets.some(asset => asset.symbol === "BALMZ") ? "Mainnet token balance" : "Not yet verified on Mainnet"}</b><div className="stat-source">Ethereum Mainnet only · no Devnet or Sepolia test tokens included.</div></article>
-              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SEP") ? number(assets.find(asset => asset.symbol === "BALMZ-SEP")?.balance || 0) : "—"} <small>BALMZ-SEP</small></strong><b className="neutral">Sepolia testnet only · excluded from Mainnet valuation.</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "BALMZ-SOL-DEVNET")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">Solana Devnet only · excluded from Mainnet valuation.</b></article>
-              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{assets.some(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet") ? number(assets.find(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Mainnet only · production balance.</b></article>
-              <article className="stat-card solana-devnet-balance-card"><span>Solana Devnet SOL (testnet)</span><strong>{assets.some(asset => asset.symbol === "SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "SOL-DEVNET")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Devnet test SOL only · not Mainnet SOL · no USD valuation.</b></article>
+              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ") ? number(verifiedBalancesByAsset.get("BALMZ").available_balance) : "Unavailable"} <small>BALMZ</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ")?.status || "No verified Mainnet contract/address balance"}</b><div className="stat-source">Ethereum Mainnet only · based on the ownership-verified ERC-20 contract balance.</div></article>
+              <article className="stat-card"><span>BALMZ · BNB Chain Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-BNB") ? number(verifiedBalancesByAsset.get("BALMZ-BNB").available_balance) : "Unavailable"} <small>BALMZ-BNB</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-BNB")?.status || "No verified BNB Mainnet contract/address balance"}</b></article>
+              <article className="stat-card"><span>BALMZ · Solana Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-SOL") ? number(verifiedBalancesByAsset.get("BALMZ-SOL").available_balance) : "Unavailable"} <small>BALMZ-SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-SOL")?.status || "Mainnet mint or address not verified"}</b></article>
+              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>Unavailable <small>BALMZ-SEP</small></strong><b className="neutral">Testnet balance is not included in this Mainnet verification report.</b></article>
+              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>Unavailable <small>BALMZ-SOL-DEVNET</small></strong><b className="neutral">Testnet balance is separate and requires its own verified testnet read.</b></article>
+              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{verifiedBalancesByAsset.has("SOL") ? number(verifiedBalancesByAsset.get("SOL").available_balance) : "Unavailable"} <small>SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("SOL")?.status || "No verified Solana Mainnet address balance"}</b></article>
             </div>
 
+
+            <article className="panel wallet-address-trace-panel">
+              <div className="panel-head">
+                <div><h2>Verified network addresses &amp; asset trace</h2><span>Public addresses and contract balances returned by the read-only chain verifier</span></div>
+                <button type="button" className="text-btn" onClick={() => {
+                  setBalanceVerificationBusy(true);
+                  fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
+                    .catch(error => setBalanceVerificationError(error.message || "Balance verification unavailable."))
+                    .finally(() => setBalanceVerificationBusy(false));
+                }} disabled={balanceVerificationBusy}>{balanceVerificationBusy ? "Checking…" : "↻ Refresh verified balances"}</button>
+              </div>
+              {balanceVerificationError && <div className="market-price-error" role="status">{balanceVerificationError}</div>}
+              {!balanceVerificationReport ? <div className="live-chart-empty">No verified balance report is available yet. {balanceVerificationBusy ? "Checking configured Mainnet readers…" : "Check the authenticated wallet session and network RPC configuration."}</div> : <>
+                <div className="coin-catalog-note">{balanceVerificationReport.notice}</div>
+                {traceAddressRows.map(addressRow => {
+                  const network = normalizeNetworkId(addressRow.network);
+                  const observations = (balanceVerificationReport.assets || []).flatMap(asset =>
+                    (asset.address_balances || [])
+                      .filter(item => String(item.address).toLowerCase() === String(addressRow.address).toLowerCase())
+                      .map(item => ({ asset, item }))
+                  );
+                  const selectedTestnetRead = ["sepolia", "solana_devnet"].includes(network)
+                    && selectedNetworkBalance?.verified === true
+                    && selectedNetworkBalance?.network === network
+                    && String(selectedNetworkBalance?.address || "").toLowerCase() === String(addressRow.address).toLowerCase();
+                  return <div className="tool-row" key={network + ":" + addressRow.address}>
+                    <div><b>{traceNetworkLabels[network] || network}</b><small>{addressRow.ownership_verified === true ? "Ownership verified · public address" : "Attached · ownership proof required"}</small></div>
+                    <code>{addressRow.address}</code>
+                    <button type="button" className="secondary" onClick={() => navigator.clipboard?.writeText(addressRow.address)}>Copy</button>
+                    <div className="address-balance-trace">
+                      {addressRow.ownership_verified !== true
+                        ? <span>Balance hidden until this address passes its wallet-signature ownership check.</span>
+                        : observations.length
+                          ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>)
+                          : selectedTestnetRead
+                            ? <span><b>{number(selectedNetworkBalance.balance)} {selectedNetworkBalance.asset}</b> <small>Live read from the selected testnet RPC · {selectedNetworkBalance.syncedAt ? new Date(selectedNetworkBalance.syncedAt).toLocaleString() : "verified read"}</small></span>
+                            : <span>{["sepolia", "solana_devnet"].includes(network) ? "Testnet address verified; switch to this test network to request its balance." : "Address verified; no supported Mainnet asset balance observation returned."}</span>}
+                    </div>
+                  </div>;
+                })}
+                <div className="asset-list verified-asset-report-list">
+                  {traceAssetRows.map((item,index) => <div className="asset-row" key={String(item.asset) + ":" + String(item.network) + ":" + String(item.contract_address || index)}>
+                    <div className="asset-name"><b>{item.asset}</b><small>{item.network_label || item.network || "Network adapter not configured"} · {item.status}</small></div>
+                    <div className="asset-balance"><b>{item.verified === true && item.available_balance != null ? number(item.available_balance) + " " + item.asset : "Unavailable"}</b><small>{item.verified === true ? (item.addresses_checked || 0) + " ownership-verified address(es) · " + (item.source || "chain read") : (item.note || "No verified chain result; no balance is displayed.")}</small></div>
+                    {item.contract_address && <code>{item.contract_address}</code>}
+                  </div>)}
+                </div>
+              </>}
+            </article>
 
             <article className="panel market-prices-panel">
               <div className="panel-head">
@@ -2062,7 +2343,7 @@ function App() {
 
               <article className="panel assets-panel">
                 <div className="panel-head">
-                  <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} assets in catalog • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} network-ready • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
+                  <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} catalog assets • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} registry-ready • {verifiedBalancesByAsset.size} chain-verified balances</span></div>
                   <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
                 </div>
                 <div className="coin-toolbar">
@@ -2074,19 +2355,24 @@ function App() {
                 </div>
                 <div className="asset-list">{walletCoinCatalogWithRegistry
                   .filter(c => !coinSearch.trim() || `${c.symbol} ${c.name}`.toLowerCase().includes(coinSearch.trim().toLowerCase()))
-                  .filter(c => coinFilter === "all" || Number((assets.find(a => a.symbol === c.symbol) || {}).balance || 0) !== 0)
+                  .filter(c => coinFilter === "all" || (verifiedBalancesByAsset.has(String(c.symbol).toUpperCase()) && Number(verifiedBalancesByAsset.get(String(c.symbol).toUpperCase()).available_balance) !== 0))
                   .map(c => {
                     const live = assets.find(a => a.symbol === c.symbol);
-                    const balance = live ? live.balance : 0;
-                    const value = live?.value_usd;
-                    const price = Number(live?.price_usd || c.price_usd || marketPrices[c.symbol]?.usd || 0);
+                    const verified = verifiedBalancesByAsset.get(String(c.symbol).toUpperCase()) || null;
+                    const balanceKnown = Boolean(verified);
+                    const balance = balanceKnown ? Number(verified.available_balance) : null;
+                    const price = Number(marketPrices[String(c.symbol).replace(/-BNB$/, "")]?.usd || live?.price_usd || c.price_usd || 0);
                     const hasMarketPrice = price > 0;
-                    const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
+                    const value = balanceKnown && hasMarketPrice ? balance * price : null;
+                    const liveStatus = verified
+                      ? "Ownership-verified chain balance"
+                      : (balanceVerificationReport?.assets || []).find(item => String(item.asset).toUpperCase() === String(c.symbol).toUpperCase())?.note
+                        || (balanceVerificationBusy ? "Balance verification in progress" : "Balance unavailable · no verified chain result");
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} logoUrl={c.registry?.logo_url} />
-                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {live?.network_label || c.status || liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol === "BALMZ-SOL-DEVNET" ? `BALMZ market: Not listed • SOL reference: ${Number(marketPrices.SOL?.usd) > 0 ? "$" + money(marketPrices.SOL.usd) : "Unavailable"} • Wallet value: —` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
-                      <small className="asset-network">{c.status}</small>
+                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {verified?.network_label || c.status || liveStatus}</small></div>
+                      <div className="asset-balance"><b>{balanceKnown ? number(balance) + " " + c.symbol : "Unavailable"}</b><small>{balanceKnown ? (hasMarketPrice ? `Verified price: ${money(price)}/coin • Value: ${money(value)}` : "Chain-verified quantity · USD valuation unavailable") : liveStatus}</small></div>
+                      <small className="asset-network">{verified?.status || c.status}</small>
                     </button>;
                   })}
                 </div>

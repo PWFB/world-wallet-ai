@@ -660,7 +660,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         user = {"wallet_id": "wallet_test"}
         with patch.object(main, "configured_addresses", return_value=[
-            {"network": "sepolia", "address": wallet, "label": "testnet"}
+            {"network": "sepolia", "address": wallet, "label": "testnet", "ownership_verified": True}
         ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_token_transactions(
                 user, "https://rpc.example", "sepolia", contract, "BALMZ-SEP",
@@ -778,7 +778,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         user = {"wallet_id": "wallet_test"}
         with patch.object(main, "configured_addresses", return_value=[
-            {"network": "sepolia", "address": wallet, "label": "testnet"}
+            {"network": "sepolia", "address": wallet, "label": "testnet", "ownership_verified": True}
         ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_native_transactions(
                 user, "https://rpc.example", "sepolia", wallet_address=wallet
@@ -794,6 +794,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         sepolia_address = "0x" + "1" * 40
         contract = "0x" + "2" * 40
         with patch.object(main, "db") as mocked_db, \
+             patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": sepolia_address, "label": "testnet", "ownership_verified": True}]), \
              patch.object(main, "wallet_network_address", side_effect=lambda _user, network: sepolia_address if network == "sepolia" else None), \
              patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
              patch.object(main, "BALMZ_SEPOLIA_CONTRACT", contract), \
