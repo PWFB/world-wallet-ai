@@ -86,6 +86,7 @@ BALMZ_SOLANA_DEVNET_DECIMALS = 9
 BALMZ_SOLANA_MAINNET_MINT = os.getenv("WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT", "").strip()
 BALMZ_PRESALE_RECEIVING_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS", "").strip()
 BALMZ_PRESALE_PRICE_USD = Decimal("7.00")
+BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
 # Backward-compatible name: this verifier target is the full Solana Mainnet allocation.
@@ -5082,7 +5083,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "initial_presale_tranche": BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE,
         "initial_presale_tranche_within_allocation": True,
         "remaining_solana_allocation_after_initial_tranche": BALMZ_SOLANA_MAINNET_ALLOCATION - BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE,
-        "global_max_supply": 31_000_000_000,
+        "global_max_supply": BALMZ_GLOBAL_MAX_SUPPLY,
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
