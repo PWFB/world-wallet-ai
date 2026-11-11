@@ -401,7 +401,7 @@ function App() {
     try {
       const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
       const savedNetwork = readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
-      return cachedBalanceMatchesNetwork(cached, savedNetwork) ? cached : null;
+      return cachedBalanceMatchesNetwork(cached, savedNetwork) && cached.verified === true && cached.ownership_verified === true ? cached : null;
     } catch { return null; }
   });
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
@@ -1262,7 +1262,7 @@ function App() {
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
-      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, syncedAt: data.synced_at });
+      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, ownership_verified: true, verified: true, syncedAt: data.synced_at });
       setSelectedNetworkBalanceMessage("Balance updated.");
     } catch (error) {
       // Keep the last confirmed balance visible if a refresh fails.
