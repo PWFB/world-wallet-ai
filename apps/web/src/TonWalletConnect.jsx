@@ -154,6 +154,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
     try {
       if (!wallet || !network || !address) throw new Error("Connect a TON wallet on Mainnet or Testnet first.");
       if (!selectedJetton) throw new Error("Select a Jetton balance to transfer.");
+      if (selectedJetton.is_scam) throw new Error("This Jetton is flagged as potentially unsafe; transfer is blocked.");
       if (selectedJetton.decimals === null || selectedJetton.decimals === undefined) {
         throw new Error("This Jetton has no valid decimal metadata. Transfer is disabled rather than guessing its precision.");
       }
@@ -247,7 +248,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
                 </div>}
                 <label>Recipient TON address<input value={jettonRecipient} onChange={event => setJettonRecipient(event.target.value)} placeholder="EQ… / UQ… / raw TON address" autoComplete="off" /></label>
                 <label>Amount ({selectedJetton?.symbol || "Jetton"})<input value={jettonAmount} onChange={event => setJettonAmount(event.target.value)} placeholder="0.0" inputMode="decimal" /></label>
-                <button className="primary" type="button" onClick={sendJetton} disabled={!supportedChain || jettonSending || !selectedJetton || !selectedJetton.master_address || selectedJetton.decimals == null || !selectedJetton.wallet_address || !jettonRecipient.trim() || !jettonAmount.trim()}>{jettonSending ? "Waiting for wallet…" : "Review and send Jetton →"}</button>
+                <button className="primary" type="button" onClick={sendJetton} disabled={!supportedChain || jettonSending || !selectedJetton || selectedJetton.is_scam || !selectedJetton.master_address || selectedJetton.decimals == null || !selectedJetton.wallet_address || !jettonRecipient.trim() || !jettonAmount.trim()}>{jettonSending ? "Waiting for wallet…" : "Review and send Jetton →"}</button>
                 {selectedJetton?.is_scam && <p className="feature-error">This Jetton is flagged as potentially unsafe. Verify its master contract independently before proceeding.</p>}
                 {jettonSendMessage && <div className={/failed|cancelled|invalid|disabled|unavailable/i.test(jettonSendMessage) ? "feature-error" : "security-note"} role="status">{jettonSendMessage}</div>}
               </>
