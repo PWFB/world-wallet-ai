@@ -3540,7 +3540,7 @@ def wallet_balance_verification_snapshot(user: dict):
     wallet_id = user["wallet_id"]
     with db() as conn:
         address_rows = conn.execute(
-            "SELECT network,address,ownership_verified FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
+            "SELECT network,address,ownership_verified,label FROM wallet_addresses WHERE wallet_id=%s ORDER BY network,address",
             (wallet_id,),
         ).fetchall()
         ledger_rows = conn.execute(
@@ -3944,6 +3944,7 @@ def wallet_balance_verification_snapshot(user: dict):
             network: [
                 {
                     "address": str(row[1]),
+                    "label": str(row[3] or "Wallet address"),
                     "ownership_verified": bool(row[2]),
                     "status": "verified" if bool(row[2]) else "ownership_proof_required",
                 }
