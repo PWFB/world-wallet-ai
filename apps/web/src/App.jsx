@@ -30,7 +30,8 @@ const walletCoinCatalog = [
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum", icon: "Ξ", status: "Ethereum" },
-  { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum / BNB Chain" },
+  { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum Mainnet" },
+  { symbol: "USDT-BNB", name: "Tether USD (BNB Chain)", icon: "$", status: "BNB Chain Mainnet" },
   { symbol: "BNB", name: "BNB", icon: "◆", status: "BNB Chain" },
   { symbol: "USDC", name: "USD Coin", icon: "$", status: "Supported asset catalog" },
   { symbol: "SOL", name: "Solana", icon: "S", status: "Supported asset catalog" },
@@ -1911,6 +1912,41 @@ function App() {
     sepolia: "Ethereum Sepolia (testnet)",
     solana_devnet: "Solana Devnet (testnet)",
   };
+  const traceReportedSymbols = new Set((balanceVerificationReport?.assets || []).map(item => String(item.asset || "").toUpperCase()));
+  const traceAssetRows = [
+    ...(balanceVerificationReport?.assets || []),
+    ...walletCoinCatalogWithRegistry
+      .filter(item => !traceReportedSymbols.has(String(item.symbol || "").toUpperCase()))
+      .map(item => {
+        const symbol = String(item.symbol || "").toUpperCase();
+        const notes = {
+          ADA: "Cardano CIP-30 address, ownership proof, balance and history adapter is not configured.",
+          XRP: "XRP Ledger address, ownership proof, balance and history adapter is not configured.",
+          LTC: "Litecoin address, ownership proof, balance and history adapter is not configured.",
+          DOGE: "Dogecoin address, ownership proof, balance and history adapter is not configured.",
+          USDC: "No active verified USDC token contract is configured for this wallet network.",
+          "BALMZ-SOL": "Solana Mainnet BALMZ mint is not configured or could not be verified.",
+          "BALMZ-SEP": "Sepolia is a testnet and is excluded from the Mainnet balance report.",
+          "BALMZ-SOL-DEVNET": "Solana Devnet is a testnet and is excluded from the Mainnet balance report.",
+          BALMZ: "Ethereum Mainnet BALMZ contract is not configured or could not be verified.",
+          "BALMZ-BNB": "BNB Chain BALMZ contract is not configured or could not be verified.",
+        };
+        return {
+          asset: symbol,
+          name: item.name,
+          network: null,
+          network_label: item.status || "Network adapter unavailable",
+          status: "unavailable_unverified",
+          verified: false,
+          available_balance: null,
+          chain_balance: null,
+          contract_address: item.registry?.contract_address || null,
+          note: notes[symbol] || "No active contract/mint and ownership-verified chain reader is available for this asset.",
+          source: null,
+          addresses_checked: 0,
+        };
+      }),
+  ];
 
   const walletUnpricedReceivedAssets = Array.isArray(wallet.unpriced_received_assets) ? wallet.unpriced_received_assets : [];
   const walletPartialReceived = wallet.partial_total_received_usd;
@@ -2224,7 +2260,7 @@ function App() {
                   </div>;
                 })}
                 <div className="asset-list verified-asset-report-list">
-                  {(balanceVerificationReport.assets || []).map((item,index) => <div className="asset-row" key={String(item.asset) + ":" + String(item.network) + ":" + String(item.contract_address || index)}>
+                  {traceAssetRows.map((item,index) => <div className="asset-row" key={String(item.asset) + ":" + String(item.network) + ":" + String(item.contract_address || index)}>
                     <div className="asset-name"><b>{item.asset}</b><small>{item.network_label || item.network || "Network adapter not configured"} · {item.status}</small></div>
                     <div className="asset-balance"><b>{item.verified === true && item.available_balance != null ? number(item.available_balance) + " " + item.asset : "Unavailable"}</b><small>{item.verified === true ? (item.addresses_checked || 0) + " ownership-verified address(es) · " + (item.source || "chain read") : (item.note || "No verified chain result; no balance is displayed.")}</small></div>
                     {item.contract_address && <code>{item.contract_address}</code>}
