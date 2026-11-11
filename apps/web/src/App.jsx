@@ -2117,6 +2117,47 @@ function App() {
             </div>
 
 
+            <article className="panel wallet-address-trace-panel">
+              <div className="panel-head">
+                <div><h2>Verified network addresses &amp; asset trace</h2><span>Public addresses and contract balances returned by the read-only chain verifier</span></div>
+                <button type="button" className="text-btn" onClick={() => {
+                  setBalanceVerificationBusy(true);
+                  fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
+                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
+                    .catch(error => setBalanceVerificationError(error.message || "Balance verification unavailable."))
+                    .finally(() => setBalanceVerificationBusy(false));
+                }} disabled={balanceVerificationBusy}>{balanceVerificationBusy ? "Checking…" : "↻ Refresh verified balances"}</button>
+              </div>
+              {balanceVerificationError && <div className="market-price-error" role="status">{balanceVerificationError}</div>}
+              {!balanceVerificationReport ? <div className="live-chart-empty">No verified balance report is available yet. {balanceVerificationBusy ? "Checking configured Mainnet readers…" : "Check the authenticated wallet session and network RPC configuration."}</div> : <>
+                <div className="coin-catalog-note">{balanceVerificationReport.notice}</div>
+                {Object.entries(balanceVerificationReport.addresses_detail || {}).flatMap(([network, addressRows]) =>
+                  (addressRows || []).map(addressRow => {
+                    const observations = (balanceVerificationReport.assets || []).flatMap(asset =>
+                      (asset.address_balances || [])
+                        .filter(item => String(item.address).toLowerCase() === String(addressRow.address).toLowerCase())
+                        .map(item => ({ asset, item }))
+                    );
+                    return <div className="tool-row" key={network + ":" + addressRow.address}>
+                      <div><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet"})[network] || network}</b><small>Ownership verified · public address</small></div>
+                      <code>{addressRow.address}</code>
+                      <button type="button" className="secondary" onClick={() => navigator.clipboard?.writeText(addressRow.address)}>Copy</button>
+                      <div className="address-balance-trace">
+                        {observations.length ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>) : <span>Address verified; no supported asset balance observation returned.</span>}
+                      </div>
+                    </div>;
+                  })
+                )}
+                <div className="asset-list verified-asset-report-list">
+                  {(balanceVerificationReport.assets || []).map((item,index) => <div className="asset-row" key={String(item.asset) + ":" + String(item.network) + ":" + String(item.contract_address || index)}>
+                    <div className="asset-name"><b>{item.asset}</b><small>{item.network_label || item.network || "Network adapter not configured"} · {item.status}</small></div>
+                    <div className="asset-balance"><b>{item.verified === true && item.available_balance != null ? number(item.available_balance) + " " + item.asset : "Unavailable"}</b><small>{item.verified === true ? (item.addresses_checked || 0) + " ownership-verified address(es) · " + (item.source || "chain read") : (item.note || "No verified chain result; no balance is displayed.")}</small></div>
+                    {item.contract_address && <code>{item.contract_address}</code>}
+                  </div>)}
+                </div>
+              </>}
+            </article>
+
             <article className="panel market-prices-panel">
               <div className="panel-head">
                 <div><h2>Live market prices</h2><span>Spot quotes from CoinGecko · refreshed every 60 seconds</span></div>
@@ -2191,7 +2232,7 @@ function App() {
 
               <article className="panel assets-panel">
                 <div className="panel-head">
-                  <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} assets in catalog • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} network-ready • {assets.filter(a => Number(a.balance || 0) !== 0).length} with balance</span></div>
+                  <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} catalog assets • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} registry-ready • {verifiedBalancesByAsset.size} chain-verified balances</span></div>
                   <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
                 </div>
                 <div className="coin-toolbar">
@@ -2203,19 +2244,24 @@ function App() {
                 </div>
                 <div className="asset-list">{walletCoinCatalogWithRegistry
                   .filter(c => !coinSearch.trim() || `${c.symbol} ${c.name}`.toLowerCase().includes(coinSearch.trim().toLowerCase()))
-                  .filter(c => coinFilter === "all" || Number((assets.find(a => a.symbol === c.symbol) || {}).balance || 0) !== 0)
+                  .filter(c => coinFilter === "all" || (verifiedBalancesByAsset.has(String(c.symbol).toUpperCase()) && Number(verifiedBalancesByAsset.get(String(c.symbol).toUpperCase()).available_balance) !== 0))
                   .map(c => {
                     const live = assets.find(a => a.symbol === c.symbol);
-                    const balance = live ? live.balance : 0;
-                    const value = live?.value_usd;
-                    const price = Number(live?.price_usd || c.price_usd || marketPrices[c.symbol]?.usd || 0);
+                    const verified = verifiedBalancesByAsset.get(String(c.symbol).toUpperCase()) || null;
+                    const balanceKnown = Boolean(verified);
+                    const balance = balanceKnown ? Number(verified.available_balance) : null;
+                    const price = Number(marketPrices[String(c.symbol).replace(/-BNB$/, "")]?.usd || live?.price_usd || c.price_usd || 0);
                     const hasMarketPrice = price > 0;
-                    const liveStatus = c.registry?.status === "pending_contract" ? "Contract pending" : live ? (Number(live.actual_balance || live.balance || 0) > 0 ? "Live balance" : "Connected • 0 balance") : c.connected ? "Network connected • 0 balance" : "Catalog only • live wallet not connected";
+                    const value = balanceKnown && hasMarketPrice ? balance * price : null;
+                    const liveStatus = verified
+                      ? "Ownership-verified chain balance"
+                      : (balanceVerificationReport?.assets || []).find(item => String(item.asset).toUpperCase() === String(c.symbol).toUpperCase())?.note
+                        || (balanceVerificationBusy ? "Balance verification in progress" : "Balance unavailable · no verified chain result");
                     return <button type="button" className="asset-row asset-row-button" key={c.symbol} onClick={() => setSelectedCoin(c.symbol)}>
                       <AssetIcon symbol={c.symbol} fallback={c.icon || "•"} logoUrl={c.registry?.logo_url} />
-                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {live?.network_label || c.status || liveStatus}</small></div>
-                      <div className="asset-balance"><b>{number(balance)} {c.symbol}</b><small>{hasMarketPrice ? `Price: ${money(price)}/coin${c.price_24h_change == null ? "" : ` • 24h ${Number(c.price_24h_change) >= 0 ? "+" : ""}${Number(c.price_24h_change).toFixed(2)}%`} • Wallet value: ${live?.price_available === false || value == null ? "unavailable" : money(value)}` : c.symbol === "BALMZ-SOL-DEVNET" ? `BALMZ market: Not listed • SOL reference: ${Number(marketPrices.SOL?.usd) > 0 ? "$" + money(marketPrices.SOL.usd) : "Unavailable"} • Wallet value: —` : c.symbol.startsWith("BALMZ") ? "Price: Not listed • Wallet value: —" : "Price: Unavailable • Wallet value: —"}</small></div>
-                      <small className="asset-network">{c.status}</small>
+                      <div className="asset-name"><b>{c.symbol}</b><small>{c.name} • {verified?.network_label || c.status || liveStatus}</small></div>
+                      <div className="asset-balance"><b>{balanceKnown ? number(balance) + " " + c.symbol : "Unavailable"}</b><small>{balanceKnown ? (hasMarketPrice ? `Verified price: ${money(price)}/coin • Value: ${money(value)}` : "Chain-verified quantity · USD valuation unavailable") : liveStatus}</small></div>
+                      <small className="asset-network">{verified?.status || c.status}</small>
                     </button>;
                   })}
                 </div>
