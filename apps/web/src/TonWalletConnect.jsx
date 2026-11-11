@@ -58,6 +58,9 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       if (data.jettons_warning) setJettonsMessage(data.jettons_warning);
       else if (!next.length) setJettonsMessage("No Jetton balances were returned for this address.");
     } catch (error) {
+      // Never carry one wallet's Jetton list into another account's send form.
+      setJettons([]);
+      setSelectedJettonAddress("");
       setJettonsAvailable(false);
       setJettonsMessage(error?.message || "Jetton index is unavailable.");
     } finally {
@@ -68,6 +71,14 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
   useEffect(() => {
     if (!wallet || !walletId || !address || !network) return undefined;
     const key = [walletId, network, address].join(":");
+    if (lastAttached.current !== key) {
+      // Clear balances immediately when the selected wallet, account or TON
+      // network changes so stale Jettons cannot be used to build a transfer.
+      setJettons([]);
+      setSelectedJettonAddress("");
+      setJettonsAvailable(false);
+      setJettonsMessage("");
+    }
     if (lastAttached.current === key) {
       void refreshJettons();
       return undefined;
