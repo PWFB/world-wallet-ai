@@ -4770,11 +4770,32 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
                     evm_warnings.append(native_warning)
 
         token_sources = []
+        token_source_keys = set()
         for symbol, name, network, contract, decimals, status in token_rows:
             rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
             network_addresses = eth_addresses if network == "ethereum" else bnb_addresses if network == "bnb" else sepolia_addresses if network == "sepolia" else []
             if rpc_url and contract and network_addresses and status == "active":
-                token_sources.append((rpc_url, network, network_addresses, contract, wallet_asset_symbol(str(symbol).upper(), network), decimals))
+                asset_symbol = wallet_asset_symbol(str(symbol).upper(), network)
+                key = (network, str(contract).lower(), asset_symbol)
+                token_source_keys.add(key)
+                token_sources.append((rpc_url, network, network_addresses, contract, asset_symbol, decimals))
+
+        # Registry-driven sources cover arbitrary active tokens. Explicitly
+        # configured production contracts remain available for history too,
+        # including existing deployments whose registry row is not yet active.
+        configured_token_sources = (
+            (ETH_RPC_URL, "ethereum", eth_addresses, USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT, "USDT", 6),
+            (ETH_RPC_URL, "ethereum", eth_addresses, BALMZ_ETH_CONTRACT, "BALMZ", 18),
+            (BSC_RPC_URL, "bnb", bnb_addresses, USDT_BSC_CONTRACT or BSC_USDT_MAINNET_CONTRACT, "USDT-BNB", 18),
+            (BSC_RPC_URL, "bnb", bnb_addresses, BALMZ_BNB_CONTRACT, "BALMZ-BNB", 18),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_addresses, BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP", 18),
+        )
+        for rpc_url, network, network_addresses, contract, token_symbol, decimals in configured_token_sources:
+            key = (network, str(contract or "").lower(), token_symbol)
+            if not rpc_url or not contract or not network_addresses or key in token_source_keys:
+                continue
+            token_source_keys.add(key)
+            token_sources.append((rpc_url, network, network_addresses, contract, token_symbol, decimals))
 
         for rpc_url, network, network_addresses, contract, token_symbol, decimals in token_sources:
             for network_address in network_addresses:
