@@ -1228,6 +1228,50 @@ function App() {
     };
     try {
       const normalizedSelectedNetwork = requestedNetwork;
+      const mainnetNativeSymbols = {
+        ethereum: "ETH",
+        bnb: "BNB",
+        bitcoin: "BTC",
+        solana_mainnet: "SOL",
+      };
+      const mainnetAsset = mainnetNativeSymbols[normalizedSelectedNetwork];
+      if (mainnetAsset) {
+        let report = forceAddressRefresh ? null : balanceVerificationReport;
+        if (!report) {
+          const verificationResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification");
+          const verificationData = await verificationResponse.json().catch(() => ({}));
+          if (!verificationResponse.ok) throw new Error(verificationData.detail || "Verified Mainnet balance check failed.");
+          report = verificationData;
+          setBalanceVerificationReport(verificationData);
+          setBalanceVerificationError("");
+        }
+        const observation = (report.assets || []).find(item =>
+          String(item.asset || "").toUpperCase() === mainnetAsset &&
+          normalizeNetworkId(item.network) === normalizedSelectedNetwork
+        );
+        if (!observation || observation.verified !== true || observation.available_balance == null) {
+          throw new Error(observation?.note || "No ownership-verified Mainnet balance is available for this network.");
+        }
+        const aggregateBalance = Number(observation.available_balance);
+        if (!Number.isFinite(aggregateBalance) || aggregateBalance < 0) {
+          throw new Error("The verified balance service returned an invalid amount.");
+        }
+        if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
+        const firstAddress = observation.address_balances?.[0]?.address || "";
+        setSelectedNetworkAddress(firstAddress);
+        setSelectedNetworkBalance({
+          network: normalizedSelectedNetwork,
+          balance: aggregateBalance,
+          asset: mainnetAsset,
+          address: firstAddress,
+          addresses_checked: Number(observation.addresses_checked || 0),
+          ownership_verified: true,
+          verified: true,
+          syncedAt: observation.observed_at,
+        });
+        setSelectedNetworkBalanceMessage("Verified aggregate balance across " + Number(observation.addresses_checked || 0) + " owned address(es).");
+        return;
+      }
       let walletId = forceAddressRefresh ? "" : (balanceWalletIdRef.current || wallet?.wallet_id || wallet?.id || user?.wallet_id);
       let currentAddresses = dashboardAddresses;
       const hasCachedAddress = !forceAddressRefresh && currentAddresses.some(item => normalizeNetwork(item.network) === normalizedSelectedNetwork);
