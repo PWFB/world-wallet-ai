@@ -5081,6 +5081,8 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "solana_mainnet_allocation": BALMZ_SOLANA_MAINNET_ALLOCATION,
         "initial_presale_tranche": BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE,
         "initial_presale_tranche_within_allocation": True,
+        "remaining_solana_allocation_after_initial_tranche": BALMZ_SOLANA_MAINNET_ALLOCATION - BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE,
+        "global_max_supply": 31_000_000_000,
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
