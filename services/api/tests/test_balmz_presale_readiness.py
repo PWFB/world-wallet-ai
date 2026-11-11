@@ -36,7 +36,7 @@ def mainnet_rpc(_url, method, _params):
             },
         }
     if method == "getTokenSupply":
-        return {"value": {"amount": str(10_000_000_000 * (10 ** 9)), "decimals": 9, "uiAmountString": "1000000000"}}
+        return {"value": {"amount": str(10_000_000_000 * (10 ** 9)), "decimals": 9, "uiAmountString": "10000000000"}}
     raise AssertionError("Unexpected RPC method: " + method)
 
 
