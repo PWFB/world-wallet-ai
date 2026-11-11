@@ -12,6 +12,8 @@ test("converts Jetton amounts using metadata decimals without float rounding", (
   assert.equal(jettonAmountToUnits("0.00000001", 8), "1");
   assert.throws(() => jettonAmountToUnits("1.0000001", 6));
   assert.throws(() => jettonAmountToUnits("1", null));
+  assert.throws(() => jettonAmountToUnits("1", undefined));
+  assert.throws(() => jettonAmountToUnits("1", ""));
   assert.throws(() => jettonAmountToUnits("0", 9));
 });
 
