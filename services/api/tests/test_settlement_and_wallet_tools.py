@@ -397,6 +397,8 @@ class SettlementAndWalletToolTests(unittest.TestCase):
                 return hex(2 * 10**18)
             if method == "eth_blockNumber":
                 return hex(100)
+            if method == "eth_getCode":
+                return "0x6000"
             raise AssertionError("Unexpected RPC method: " + method)
 
         with (

@@ -418,9 +418,16 @@ function App() {
   const visibleLocalWalletEntries = accountUserId ? localWalletEntries.filter(entry => entry.ownerUserId
     ? String(entry.ownerUserId) === accountUserId
     : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
-  const [accessToken, setAccessToken] = useState(() => {
-    try { return localStorage.getItem(TOKEN_KEY) || ""; } catch { return ""; }
-  });
+  const [accessToken, setAccessToken] = useState("");
+  const [pinGateOpen, setPinGateOpen] = useState(false);
+  const [pendingPinToken, setPendingPinToken] = useState("");
+  const [pendingPinUser, setPendingPinUser] = useState(null);
+  const [pinGateMode, setPinGateMode] = useState("verify");
+  const [pinInput, setPinInput] = useState("");
+  const [pinConfirm, setPinConfirm] = useState("");
+  const [pinRecoveryCode, setPinRecoveryCode] = useState("");
+  const [pinError, setPinError] = useState("");
+  const [pinBusy, setPinBusy] = useState(false);
   useEffect(() => {
     if (!accessToken) { setWalletAnnouncement(null); return undefined; }
     let cancelled = false;
@@ -449,6 +456,118 @@ function App() {
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
   const [recoveryMode, setRecoveryMode] = useState(false);
+  async function beginSecurityPinGate(token, signedInUser = null) {
+    if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
+    const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
+      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
+      cache: "no-store",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.detail || "Wallet PIN security could not be checked.");
+    setPendingPinToken(token);
+    setPendingPinUser(signedInUser);
+    setPinGateMode(data.pin_configured ? "verify" : "setup");
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setPinGateOpen(true);
+    setShowLogin(false);
+    setAuthRestoring(false);
+  }
+
+  function completeSecurityPinGate(pinSessionToken) {
+    if (typeof pinSessionToken !== "string" || !pinSessionToken.startsWith("wwpin_")) {
+      setPinError("The backend did not issue a valid second-factor session. Please retry.");
+      return;
+    }
+    try { localStorage.setItem(TOKEN_KEY, pinSessionToken); }
+    catch { setPinError("Secure session storage is unavailable on this device."); return; }
+    if (pendingPinUser) setUser(pendingPinUser);
+    setAccessToken(pinSessionToken);
+    setActive("Dashboard");
+    setPinGateOpen(false);
+    setPendingPinToken("");
+    setPendingPinUser(null);
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setShowLogin(false);
+  }
+
+  async function submitSecurityPin() {
+    setPinError("");
+    setPinBusy(true);
+    try {
+      if (!/^\d{6}$/.test(pinInput)) throw new Error("Enter exactly six digits.");
+      if (pinGateMode === "setup" && pinInput !== pinConfirm) throw new Error("The two PIN entries do not match.");
+      if (pinGateMode === "recovery") {
+        if (!/^\d{6}$/.test(pinRecoveryCode)) throw new Error("Enter the six-digit code from the Super Admin mailbox.");
+        if (pinInput !== pinConfirm) throw new Error("The new PIN entries do not match.");
+      }
+      const endpoint = pinGateMode === "setup"
+        ? "/api/v1/security/pin/enroll"
+        : pinGateMode === "recovery"
+          ? "/api/v1/security/pin/recovery/complete"
+          : "/api/v1/security/pin/verify";
+      const body = pinGateMode === "recovery"
+        ? { code: pinRecoveryCode, new_pin: pinInput }
+        : { pin: pinInput };
+      const response = await fetch(API_BASE_URL + endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer " + pendingPinToken },
+        body: JSON.stringify(body),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Wallet PIN verification failed.");
+      completeSecurityPinGate(data.access_token);
+    } catch (error) {
+      setPinError(error.message || "Wallet PIN verification failed.");
+      setPinInput("");
+      if (pinGateMode === "recovery") setPinRecoveryCode("");
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function requestSecurityPinRecovery() {
+    setPinError("");
+    setPinBusy(true);
+    try {
+      const response = await fetch(API_BASE_URL + "/api/v1/security/pin/recovery/request", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + pendingPinToken },
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not request Super Admin recovery.");
+      setPinGateMode("recovery");
+      setPinInput("");
+      setPinConfirm("");
+      setPinRecoveryCode("");
+      setPinError("A recovery code was sent only to the configured Super Admin Gmail. Ask the administrator to verify your identity and provide approval.");
+    } catch (error) {
+      setPinError(error.message || "Could not request Super Admin recovery.");
+    } finally {
+      setPinBusy(false);
+    }
+  }
+
+  async function cancelSecurityPinGate() {
+    try { await authClient.signOut(); } catch {}
+    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    setPendingPinToken("");
+    setPendingPinUser(null);
+    setPinGateOpen(false);
+    setPinInput("");
+    setPinConfirm("");
+    setPinRecoveryCode("");
+    setPinError("");
+    setShowLogin(true);
+  }
+
   const [showLogin, setShowLogin] = useState(() => {
     try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
   });
@@ -589,9 +708,47 @@ function App() {
         // Storage can be unavailable in restricted browser modes.
       }
 
-      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
-        if (!accessToken && !cancelled) setAccessToken(persistedToken);
+      if (pinGateOpen && pendingPinToken) {
         if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      if (persistedToken.startsWith("wwpin_")) {
+        try {
+          const response = await fetch(API_BASE_URL + "/api/v1/security/pin/session", {
+            headers: { Authorization: "Bearer " + persistedToken, Accept: "application/json" },
+            cache: "no-store",
+          });
+          const data = await response.json().catch(() => ({}));
+          if (response.ok && data.active) {
+            if (!cancelled) {
+              setAccessToken(persistedToken);
+              if (data.user) setUser(data.user);
+              setShowLogin(false);
+              setAuthRestoring(false);
+            }
+            return;
+          }
+        } catch {}
+        try { localStorage.removeItem(TOKEN_KEY); } catch {}
+        persistedToken = "";
+      }
+
+      if (persistedToken && isUsableNeonAccessToken(persistedToken)) {
+        if (accessToken === persistedToken) {
+          if (!cancelled) setAuthRestoring(false);
+          return;
+        }
+        if (!cancelled) {
+          try {
+            await beginSecurityPinGate(persistedToken, null);
+          } catch (error) {
+            localStorage.removeItem(TOKEN_KEY);
+            setShowLogin(true);
+            setLoginError(error.message || "Wallet PIN security could not be restored. Please sign in again.");
+          }
+          setAuthRestoring(false);
+        }
         return;
       }
 
@@ -620,13 +777,9 @@ function App() {
           try {
             const token = await getNeonAccessToken();
             if (token) {
-              try { localStorage.setItem(TOKEN_KEY, token); } catch {}
               try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
               try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
-              setUser(neonSessionUser);
-              setAccessToken(token);
-              setActive("Dashboard");
-              setShowLogin(false);
+              await beginSecurityPinGate(token, neonSessionUser);
               setAuthRestoring(false);
               if (window.location.search) {
                 window.history.replaceState({}, document.title, window.location.pathname);
@@ -656,7 +809,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [sessionState.isPending, neonSessionUser, accessToken]);
+  }, [sessionState.isPending, neonSessionUser, accessToken, pinGateOpen, pendingPinToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -771,7 +924,7 @@ function App() {
       const authHeaders = { Authorization: `Bearer ${accessToken}` };
       try {
         let response = await fetch(`${API_BASE_URL}/api/v1/transactions`, { headers: authHeaders });
-        if (response.status === 401) {
+        if (response.status === 401 && !accessToken.startsWith("wwpin_")) {
           const freshToken = await getNeonAccessToken({ forceRefresh: true });
           if (freshToken && freshToken !== accessToken && !cancelled) {
             setAccessToken(freshToken);
@@ -877,8 +1030,10 @@ function App() {
   }, [accessToken, performancePeriod, hasVerifiedMainnetBalance]);
 
   async function authorizedWalletFetch(url, options = {}) {
-    let token = "";
-    try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    let token = accessToken.startsWith("wwpin_") ? accessToken : "";
+    if (!token) {
+      try { token = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
+    }
     token = token || accessToken || "";
     const request = currentToken => fetch(url, {
       ...options,
@@ -889,7 +1044,7 @@ function App() {
       cache: "no-store",
     });
     let response = await request(token);
-    if (response.status === 401) {
+    if (response.status === 401 && !token.startsWith("wwpin_")) {
       let refreshed = "";
       try { refreshed = await getNeonAccessToken({ forceRefresh: true }) || ""; } catch {}
       if (refreshed && refreshed !== token) {
@@ -1000,7 +1155,7 @@ function App() {
         cache: "no-store",
       });
       let response = await makeRequest(token);
-      if (response.status === 401) {
+      if (response.status === 401 && !token.startsWith("wwpin_")) {
         const refreshed = await getNeonAccessToken({ forceRefresh: true });
         if (refreshed && refreshed !== token) {
           token = refreshed;
@@ -1142,9 +1297,7 @@ function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Login failed");
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      setAccessToken(data.access_token);
-      setUser(data.user || null);
+      await beginSecurityPinGate(data.access_token, data.user || null);
     } catch (error) {
       setLoginError(error.message || "Unable to sign in");
     }
@@ -1207,9 +1360,7 @@ function App() {
       if (!response.ok) throw new Error(data.detail || "Unable to create your account.");
       setLoginPassword("");
       if (data.access_token) {
-        localStorage.setItem(TOKEN_KEY, data.access_token);
-        setUser(data.user || null);
-        setAccessToken(data.access_token);
+        await beginSecurityPinGate(data.access_token, data.user || null);
         setRegisterMode(false);
       } else {
         setRegisterMode(false);
@@ -1274,12 +1425,9 @@ function App() {
         throw new Error("Neon Auth did not return a valid secure wallet session. Please retry.");
       }
 
-      localStorage.setItem(TOKEN_KEY, token);
-      setUser(signedInUser);
-      setAccessToken(token);
+      await beginSecurityPinGate(token, signedInUser);
       setLoginPassword("");
       setPasswordMode(false);
-      setShowLogin(false);
       setAuthMessage("");
     } catch (error) {
       setLoginError(error.message || "Unable to sign in with password");
@@ -1322,9 +1470,7 @@ function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Invalid or expired code.");
       if (!data.access_token) throw new Error("Secure wallet token was not returned.");
-      localStorage.setItem(TOKEN_KEY, data.access_token);
-      setUser(data.user || null);
-      setAccessToken(data.access_token);
+      await beginSecurityPinGate(data.access_token, data.user || null);
       setOtpCode("");
       setOtpRequested(false);
     } catch (error) {
@@ -1376,6 +1522,15 @@ function App() {
 
   async function handleLogout() {
     try {
+      if (accessToken) {
+        await fetch(API_BASE_URL + "/api/v1/security/pin/lock", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+          cache: "no-store",
+        });
+      }
+    } catch {}
+    try {
       await authClient.signOut();
     } catch {
       // Clear the local application session even if the remote sign-out request fails.
@@ -1401,6 +1556,54 @@ function App() {
     setActive(page);
     setRootSearch("");
     setMobileMenuOpen(false);
+  }
+
+  if (pinGateOpen) {
+    return (
+      <div className="ww-auth-shell">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <header className="ww-auth-top ww-auth-top-compact">
+          <div className="ww-auth-brand"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /><b>WORLD WALLET <em>AI</em></b></div>
+          <button className="ww-auth-home" type="button" onClick={cancelSecurityPinGate}>Sign out</button>
+        </header>
+        <section className="ww-auth-layout">
+          <div className="ww-auth-copy">
+            <span className="ww-live-badge"><i /> WALLET SECURITY</span>
+            <h1>Your wallet.<br /><em>Your PIN.</em></h1>
+            <p>Your account password or approved sign-in is the first identity check. This six-digit PIN is the additional wallet unlock required before balances, reserves and transfers are available.</p>
+            <div className="ww-auth-points">
+              <div><b>01</b><span><strong>Six-digit PIN</strong><small>Stored as a salted server-side hash.</small></span></div>
+              <div><b>02</b><span><strong>Attempt protection</strong><small>Five failed attempts trigger a 15-minute lock.</small></span></div>
+              <div><b>03</b><span><strong>Admin-only recovery</strong><small>Recovery codes are delivered only to Super Admin Gmail.</small></span></div>
+            </div>
+          </div>
+          <form className="ww-auth-card" onSubmit={event => { event.preventDefault(); void submitSecurityPin(); }}>
+            <div className="ww-auth-card-head">
+              <div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div>
+              <div>
+                <small>SECOND FACTOR</small>
+                <h2>{pinGateMode === "setup" ? "Create login PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Unlock your wallet"}</h2>
+                <p>{pinGateMode === "setup" ? "The first PIN you choose becomes this account’s six-digit wallet login PIN." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin and choose a new PIN." : "Enter your six-digit PIN to unlock the authenticated wallet session."}</p>
+              </div>
+            </div>
+            {pinGateMode === "recovery" && <label><span>Super Admin recovery code</span><div className="ww-field"><i>⌗</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinRecoveryCode} onChange={event => setPinRecoveryCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6-digit admin code" required /></div></label>}
+            <label><span>{pinGateMode === "setup" ? "Create six-digit PIN" : pinGateMode === "recovery" ? "New six-digit PIN" : "Six-digit login PIN"}</span>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} autoComplete="one-time-code" value={pinInput} onChange={event => setPinInput(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="••••••" required /></div>
+            </label>
+            {(pinGateMode === "setup" || pinGateMode === "recovery") && <label><span>Confirm six-digit PIN</span>
+              <div className="ww-field"><i>⌑</i><input type="password" inputMode="numeric" pattern="[0-9]{6}" maxLength={6} value={pinConfirm} onChange={event => setPinConfirm(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter PIN again" required /></div>
+            </label>}
+            {pinError && <div className={/sent only|approval/i.test(pinError) ? "ww-auth-message" : "ww-auth-error"} role="status">{pinError}</div>}
+            <button className="ww-auth-submit" type="submit" disabled={pinBusy || pinInput.length !== 6 || ((pinGateMode === "setup" || pinGateMode === "recovery") && pinConfirm.length !== 6) || (pinGateMode === "recovery" && pinRecoveryCode.length !== 6)}>
+              {pinBusy ? "Checking security…" : pinGateMode === "setup" ? "Save login PIN" : pinGateMode === "recovery" ? "Reset PIN & unlock" : "Unlock World Wallet AI"} <b>→</b>
+            </button>
+            {pinGateMode === "verify" && <button className="ww-text-link" type="button" onClick={() => void requestSecurityPinRecovery()} disabled={pinBusy}>Forgot PIN? Request Super Admin recovery</button>}
+            {pinGateMode === "recovery" && <button className="ww-text-link" type="button" onClick={() => { setPinGateMode("verify"); setPinInput(""); setPinConfirm(""); setPinRecoveryCode(""); setPinError(""); }}>← Back to PIN entry</button>}
+            <p className="ww-auth-note"><span>✓</span> A recovery code is sent only to the configured Super Admin Gmail. The account email does not receive this PIN recovery code.</p>
+          </form>
+        </section>
+      </div>
+    );
   }
 
   if (!accessToken && !showLogin) {
@@ -1650,7 +1853,7 @@ function App() {
 
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
-        {active === "BALMZ AI" ? <BalmzAI /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
+        {active === "BALMZ AI" ? <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
           const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP";

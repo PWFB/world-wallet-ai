@@ -10,6 +10,11 @@ const WalletSafetyLayer = lazy(() => import("./WalletSafetyLayer.jsx"));
 const OKXWalletInspector = lazy(() => import("./OKXWalletInspector.jsx"));
 const TokenInteractionAudit = lazy(() => import("./TokenInteractionAudit.jsx"));
 const FreeBalmzMining = lazy(() => import("./FreeBalmzMining.jsx"));
+const MainnetReturnCenter = lazy(() => import("./MainnetReturnCenter.jsx"));
+const ActivityTrace = lazy(() => import("./ActivityTrace.jsx"));
+const WalletWizard = lazy(() => import("./WalletWizard.jsx"));
+const BalmzAI = lazy(() => import("./BalmzAI.jsx"));
+const ReceiptCenter = lazy(() => import("./ReceiptCenter.jsx"));
 
 // Load the WalletConnect SDK only after the user explicitly starts a connection.
 const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
@@ -46,6 +51,11 @@ const money = value => value === null || value === undefined || value === "" || 
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
 async function walletAuthHeaders(accessToken, extra = {}) {
+  // A PIN-session token is already the app's second-factor bearer. Never
+  // replace it with a first-factor Neon token during refresh.
+  if (String(accessToken || "").startsWith("wwpin_")) {
+    return { ...extra, Authorization: "Bearer " + accessToken };
+  }
   const freshToken = await getNeonAccessToken({ forceRefresh: true });
   const token = freshToken || (isUsableNeonAccessToken(accessToken) ? accessToken : "");
   return { ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) };
@@ -1288,7 +1298,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     </article>
   );
 
-  const selectedWalletAsset = assets.find(item => item.symbol === asset) || null;
+  const selectedWalletAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset) || null;
   const selectedAssetAvailable = Math.max(0, Number(
     selectedWalletAsset?.available_balance ??
     selectedWalletAsset?.available ??
@@ -1342,18 +1352,57 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
-    const provider = wcProvider || window.ethereum;
-    if (!provider || typeof provider.request !== "function") throw new Error("No compatible external EVM wallet is available. Connect an injected wallet or WalletConnect before signing.");
+    const expectedSigner = String(sourceAddress || "").toLowerCase();
+    const providerCandidates = [
+      wcProvider,
+      ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
+      window.ethereum,
+      window.okxwallet,
+    ].filter((candidate, index, all) =>
+      candidate &&
+      typeof candidate.request === "function" &&
+      all.indexOf(candidate) === index
+    );
+    let provider = null;
+    for (const candidate of providerCandidates) {
+      try {
+        const accounts = await candidate.request({ method: "eth_accounts" });
+        if (Array.isArray(accounts) && accounts.some(account =>
+          String(account || "").toLowerCase() === expectedSigner
+        )) {
+          provider = candidate;
+          break;
+        }
+      } catch {}
+    }
+    if (!provider) {
+      for (const candidate of providerCandidates) {
+        try {
+          const accounts = await candidate.request({ method: "eth_requestAccounts" });
+          if (Array.isArray(accounts) && accounts.some(account =>
+            String(account || "").toLowerCase() === expectedSigner
+          )) {
+            provider = candidate;
+            break;
+          }
+        } catch (error) {
+          if (isUserRejectedError(error)) throw error;
+        }
+      }
+    }
+    if (!provider) {
+      throw new Error("Connect the external source wallet that owns the selected attached address before signing. The OKX receiving address is not used as the source signer.");
+    }
     const configResponse = await fetch(apiBaseUrl + "/api/v1/wallet/signing-config", { headers: { Authorization: "Bearer " + accessToken } });
     const config = await configResponse.json();
     if (!configResponse.ok) throw new Error(config.detail || "External wallet signing is not configured.");
     const networkConfig = config.networks?.[network];
     if (!networkConfig) throw new Error("Signing configuration for " + network + " is not available.");
-    const expectedSigner = sourceAddress || networkConfig.wallet_address;
-    if (!expectedSigner) throw new Error("Select a verified attached source address before signing.");
-    const accounts = await provider.request({ method: "eth_requestAccounts" });
-    const signer = accounts?.[0];
-    if (!signer || signer.toLowerCase() !== expectedSigner.toLowerCase()) {
+    const expectedNetworkSigner = sourceAddress || networkConfig.wallet_address;
+    if (!expectedNetworkSigner) throw new Error("Select a verified attached source address before signing.");
+    const accounts = await provider.request({ method: "eth_accounts" });
+    const signer = accounts?.find(account => String(account || "").toLowerCase() === expectedNetworkSigner.toLowerCase());
+    if (!signer || signer.toLowerCase() !== expectedNetworkSigner.toLowerCase()) {
       throw new Error("Connect the selected verified source address before signing this transaction.");
     }
     let chainId = await provider.request({ method: "eth_chainId" });
@@ -1427,7 +1476,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       const parsedAmount = Number(amount);
       if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) throw new Error("Enter an amount greater than zero.");
       if (!destination.trim()) throw new Error("Enter a destination address.");
-      const selectedAsset = assets.find(item => item.symbol === asset);
+      const selectedAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
       const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
@@ -1489,6 +1538,44 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     } finally { setBusy(false); }
   }
 
+
+  if (active === "Return to OKX") return <MainnetReturnCenter
+    assets={assets}
+    accessToken={accessToken}
+    apiBaseUrl={apiBaseUrl}
+    sourceAddresses={withdrawalAddresses}
+    wallet={wallet}
+    externalProvider={wcProvider}
+    onConnectWalletConnect={connectWalletConnect}
+    setActive={setActive}
+    onEvmProviderConnected={(provider, connection) => {
+      setWcProvider(provider);
+      setWcProviderKind("okx");
+      setWcAccount(connection.address);
+      setWcChainId(connection.chainId);
+      persistExternalConnection({
+        ...connection,
+        provider: "okx",
+        label: "OKX Wallet · " + (connection.network === "ethereum" ? "Ethereum Mainnet" : "BNB Chain Mainnet"),
+        connectedAt: new Date().toISOString(),
+      });
+    }}
+    onPrepareTransfer={({ asset: nextAsset, network: nextNetwork, destination: nextDestination, sourceAddress }) => {
+      setAsset(nextAsset);
+      setNetwork(nextNetwork);
+      setAmount("");
+      setDestination(nextDestination);
+      setNote("Owner-approved return to connected OKX wallet");
+      setSelectedSourceAddress(sourceAddress);
+      setMessage("");
+      setActive("Send");
+    }}
+  />;
+
+  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
+  if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
+  if (active === "WizzU Helper") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
+  if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
 
   if (active === "Wallet Safety") return <WalletSafetyLayer />;
   if (active === "OKX Wallet Inspector") return <OKXWalletInspector accessToken={accessToken} apiBaseUrl={apiBaseUrl} />;
@@ -1654,7 +1741,22 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         <div className="tool-status"><span className="status-dot"></span><b>{proofData ? (proofData.status === "partial" ? "Partial on-chain snapshot" : "On-chain snapshot") : "Not yet checked"}</b></div>
         <p className="muted">{proofData?.scope || "Connected addresses only. Load a snapshot to read confirmed Bitcoin and latest EVM balances."}</p>
         {proofData?.as_of && <div className="security-note">Snapshot time: {new Date(proofData.as_of).toLocaleString()}</div>}
-        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No snapshot loaded. Connect a public address under Wallets, then refresh.</div>}
+        {proofData?.reserves?.length ? <div className="tool-list">{proofData.reserves.map((item,index)=><div className="tool-row" key={item.network+item.address+item.asset+index}><div><b>{item.asset} · {item.network.toUpperCase()}</b><small>{item.block_number == null ? "Confirmed chain data" : "Block "+Number(item.block_number).toLocaleString()}</small><small>{item.source}</small></div><code>{item.address}</code><strong>{item.balance == null ? "Unavailable" : number(item.balance)+" "+item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No verified reserve rows loaded. Connect and ownership-verify a public address under Wallets, then refresh.</div>}
+        {proofData?.catalog_assets?.length ? <div className="panel action-panel">
+          <div className="panel-head"><div><h2>Complete asset coverage</h2><span>Every listed asset is shown, including unsupported or unconfigured assets.</span></div><b>{proofData.catalog_assets.filter(item => item.verified).length}/{proofData.catalog_assets.length} verified</b></div>
+          <div className="tool-list">{proofData.catalog_assets.map((item,index)=><div className="tool-row" key={item.asset+":"+item.network+":"+index}>
+            <div style={{minWidth:0}}><b>{item.asset} · {item.network}</b><small>{item.status.replaceAll("_"," ")}</small><small>{item.contract_addresses?.length ? "Contract: "+item.contract_addresses.join(", ") : "No verified contract address recorded"}</small></div>
+            <strong>{item.verified ? "On-chain verified" : "Not verified"}</strong>
+          </div>)}</div>
+        </div> : null}
+        {proofData?.smart_contracts?.length ? <div className="panel action-panel">
+          <div className="panel-head"><div><h2>Attached smart contracts</h2><span>Registered token contracts associated with supported networks.</span></div><b>{proofData.smart_contracts.length} records</b></div>
+          <div className="tool-list">{proofData.smart_contracts.map((item,index)=><div className="tool-row" key={item.network+":"+item.contract_address+":"+index}>
+            <div style={{minWidth:0}}><b>{item.symbol} · {item.network}</b><small>{item.registry_status} · {item.decimals == null ? "decimals unavailable" : item.decimals+" decimals"}</small></div>
+            <code>{item.contract_address}</code><strong>{item.verified ? "Verified registry" : "Pending / unverified"}</strong>
+          </div>)}</div>
+        </div> : null}
+        {proofData?.address_inventory?.length ? <div className="security-note">Attached address inventory: {proofData.address_inventory.length} addresses · {proofData.unverified_addresses?.length || 0} need ownership verification. Only ownership-verified addresses contribute to reserve totals.</div> : null}
         <div className="panel action-panel">
           <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
           <h2>History reconciliation</h2>
