@@ -118,15 +118,6 @@ test("ERC-1271 refuses missing code and call failures", async () => {
   );
 });
 
-import assert from "node:assert/strict";
-import test from "node:test";
-import { Interface } from "ethers";
-import {
-  OKX_EIP7702_CODE_PREFIX,
-  OKX_WALLETCORE_IMPLEMENTATION,
-  encodeOkxWalletCoreSelfExecution,
-  isExpectedOkxWalletCoreDelegation,
-} from "./okx-walletcore.js";
 
 test("recognizes only the exact configured OKX WalletCore EIP-7702 delegation", () => {
   const code = OKX_EIP7702_CODE_PREFIX + OKX_WALLETCORE_IMPLEMENTATION.slice(2);
