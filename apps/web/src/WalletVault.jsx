@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, formatUnits, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
 import { verifyEip1271Signature, verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
+import { encodeOkxWalletCoreSelfExecution, isExpectedOkxWalletCoreDelegation } from "./okx-walletcore.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -54,6 +55,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [smartWalletAddress, setSmartWalletAddress] = useState("0xBbDb482aE0895e496676eC84501d2945a404FF2C");
   const [smartWalletMessage, setSmartWalletMessage] = useState("");
   const [smartWalletSignature, setSmartWalletSignature] = useState("");
+  const [smartWalletTransferType, setSmartWalletTransferType] = useState("native");
+  const [smartWalletTransferRecipient, setSmartWalletTransferRecipient] = useState("");
+  const [smartWalletTransferAmount, setSmartWalletTransferAmount] = useState("");
+  const [smartWalletTokenAddress, setSmartWalletTokenAddress] = useState("");
+  const [smartWalletTxBusy, setSmartWalletTxBusy] = useState(false);
+  const [smartWalletTxResult, setSmartWalletTxResult] = useState(null);
   const [verifyAddressInput, setVerifyAddressInput] = useState("");
   const [verifyMessageInput, setVerifyMessageInput] = useState("");
   const [verifySignatureInput, setVerifySignatureInput] = useState("");
@@ -963,6 +970,136 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     }
   }
 
+  async function signAndSendOkxWalletCoreTransfer() {
+    setSmartWalletTxBusy(true);
+    setSmartWalletTxResult(null);
+    let provider;
+    let broadcastHash = "";
+    let explorer = smartWalletNetwork === "bnb" ? "https://bscscan.com/tx/" : "https://etherscan.io/tx/";
+    try {
+      if (!unlocked) throw new Error("Unlock the matching World Wallet AI local vault wallet first.");
+      if (unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The unlocked local vault address does not match the smart wallet. No transaction was signed.");
+      }
+      if (!isAddress(smartWalletTransferRecipient.trim())) throw new Error("Enter a valid recipient address.");
+      if (!smartWalletTransferAmount.trim()) throw new Error("Enter an amount greater than zero.");
+
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet", nativeSymbol: "ETH" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet", nativeSymbol: "BNB" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const chain = await provider.getNetwork();
+      if (chain.chainId !== BigInt(config.chainId)) throw new Error("RPC chain ID does not match the selected network.");
+
+      const walletAddress = smartWalletAddress.trim();
+      const delegationCode = await provider.getCode(walletAddress);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode)) {
+        throw new Error("This address is not delegated to the expected OKX WalletCore implementation on " + config.label + ". Transaction signing is blocked.");
+      }
+
+      let calls;
+      let actionLabel;
+      let nativeAmount = 0n;
+      if (smartWalletTransferType === "native") {
+        try { nativeAmount = parseEther(smartWalletTransferAmount.trim()); } catch { throw new Error("Enter a valid " + config.nativeSymbol + " amount."); }
+        if (nativeAmount <= 0n) throw new Error("Transfer amount must be greater than zero.");
+        calls = [{ target: smartWalletTransferRecipient.trim(), value: nativeAmount, data: "0x" }];
+        actionLabel = "Send " + smartWalletTransferAmount.trim() + " " + config.nativeSymbol + " to " + smartWalletTransferRecipient.trim();
+      } else {
+        if (!isAddress(smartWalletTokenAddress.trim())) throw new Error("Enter a valid ERC-20 token contract address.");
+        const token = new Contract(
+          smartWalletTokenAddress.trim(),
+          [
+            "function decimals() view returns (uint8)",
+            "function symbol() view returns (string)",
+            "function balanceOf(address) view returns (uint256)",
+            "function transfer(address,uint256) returns (bool)",
+          ],
+          provider,
+        );
+        const tokenCode = await provider.getCode(smartWalletTokenAddress.trim());
+        if (!tokenCode || tokenCode === "0x") throw new Error("The token contract has no code on the selected network.");
+        const decimals = Number(await token.decimals());
+        if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new Error("Token decimals are outside the supported safe range.");
+        let tokenAmount;
+        try { tokenAmount = parseUnits(smartWalletTransferAmount.trim(), decimals); } catch { throw new Error("Enter a valid token amount using at most " + decimals + " decimal places."); }
+        if (tokenAmount <= 0n) throw new Error("Token transfer amount must be greater than zero.");
+        const tokenBalance = await token.balanceOf(walletAddress);
+        if (tokenBalance < tokenAmount) throw new Error("The verified on-chain token balance is insufficient for this transfer.");
+        const symbol = String(await token.symbol()).slice(0, 24);
+        const data = token.interface.encodeFunctionData("transfer", [smartWalletTransferRecipient.trim(), tokenAmount]);
+        calls = [{ target: smartWalletTokenAddress.trim(), value: 0n, data }];
+        actionLabel = "Send " + smartWalletTransferAmount.trim() + " " + symbol + " from " + smartWalletTokenAddress.trim() + " to " + smartWalletTransferRecipient.trim();
+      }
+
+      const data = encodeOkxWalletCoreSelfExecution(calls);
+      const fee = await provider.getFeeData();
+      const feePerGas = fee.maxFeePerGas ?? fee.gasPrice;
+      if (!feePerGas || feePerGas <= 0n) throw new Error("The selected RPC did not return usable gas-fee data.");
+      const estimate = await provider.estimateGas({ from: walletAddress, to: walletAddress, data });
+      const gasLimit = (estimate * 120n) / 100n;
+      const maximumGasCost = gasLimit * feePerGas;
+      const nativeBalance = await provider.getBalance(walletAddress);
+      if (nativeBalance < maximumGasCost + nativeAmount) {
+        throw new Error("Insufficient on-chain " + config.nativeSymbol + " for the transfer amount and estimated network fee.");
+      }
+      const feeText = formatEther(maximumGasCost) + " " + config.nativeSymbol + " maximum estimated network fee";
+      const confirmation = [
+        "World Wallet AI will sign locally and submit this WalletCore transaction.",
+        "Network: " + config.label,
+        "Wallet: " + walletAddress,
+        "Action: " + actionLabel,
+        "Gas limit: " + gasLimit.toString(),
+        "Estimated fee ceiling: " + feeText,
+        "The transaction is signed by the matching local vault key. No OKX app approval will be requested.",
+        "Continue?",
+      ].join("\n\n");
+      if (!window.confirm(confirmation)) {
+        setSmartWalletTxResult({ ok: false, text: "Transaction cancelled. Nothing was signed or submitted." });
+        return;
+      }
+
+      const signer = unlocked.connect(provider);
+      const txRequest = { to: walletAddress, data, gasLimit, chainId: config.chainId };
+      if (fee.maxFeePerGas && fee.maxPriorityFeePerGas) {
+        txRequest.maxFeePerGas = fee.maxFeePerGas;
+        txRequest.maxPriorityFeePerGas = fee.maxPriorityFeePerGas;
+      } else {
+        txRequest.gasPrice = fee.gasPrice;
+      }
+      const tx = await signer.sendTransaction(txRequest);
+      broadcastHash = tx.hash;
+      setSmartWalletTxResult({ ok: false, pending: true, text: "Transaction broadcast. Waiting for the first confirmation…", txHash: tx.hash, explorer });
+      const receipt = await tx.wait(1);
+      if (!receipt || Number(receipt.status) !== 1) throw new Error("The WalletCore transaction did not confirm successfully.");
+      setSmartWalletTxResult({
+        ok: true,
+        pending: false,
+        text: "WalletCore transaction confirmed on " + config.label + ".",
+        txHash: tx.hash,
+        explorer,
+        blockNumber: receipt.blockNumber,
+        action: actionLabel,
+      });
+    } catch (error) {
+      setSmartWalletTxResult({
+        ok: false,
+        pending: false,
+        text: broadcastHash
+          ? "Transaction was broadcast but confirmation or the post-send check failed: " + (error?.shortMessage || error?.message || "Unknown error")
+          : (error?.shortMessage || error?.message || "WalletCore transaction was not submitted."),
+        txHash: broadcastHash,
+        explorer,
+      });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletTxBusy(false);
+    }
+  }
+
   async function verifyExternalSmartWalletMessage() {
     setSmartWalletBusy(true);
     setSmartWalletResult(null);
@@ -1322,9 +1459,28 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <button className="secondary" disabled={smartWalletBusy || !smartWalletAddress.trim() || !smartWalletMessage || !smartWalletSignature.trim()} onClick={verifyExternalSmartWalletMessage}>{smartWalletBusy ? "Checking smart wallet…" : "Verify signature inside World Wallet AI"}</button>
       {smartWalletResult && <div className={smartWalletResult.ok ? "feature-success" : "feature-error"}>{smartWalletResult.text}{smartWalletResult.walletAddress && <div><small>Wallet: <code>{smartWalletResult.walletAddress}</code> · Chain ID {smartWalletResult.chainId} · Return: <code>{smartWalletResult.magicValue}</code></small></div>}</div>}
       <p className="security-note">This verifies a signature already supplied to World Wallet AI. It creates a signature only when the unlocked encrypted local vault contains the exact owner key for this address. This requires the user to import or recover that key locally; a different wallet key cannot sign as 0xbb. If the deployed implementation rejects or does not support ERC-1271, verification fails closed.</p>
+      <div className="wallet-message-signing">
+        <h3>Send from this smart wallet inside World Wallet AI</h3>
+        <p className="muted">Native ETH/BNB and ERC-20 transfers only. The app checks chain ID, exact EIP-7702 WalletCore delegation, recipient, live token balance and gas estimate. It signs a WalletCore self-call with the matching locally unlocked key.</p>
+        <label>Transfer type<select value={smartWalletTransferType} onChange={event => { setSmartWalletTransferType(event.target.value); setSmartWalletTxResult(null); }}>
+          <option value="native">Native {smartWalletNetwork === "bnb" ? "BNB" : "ETH"}</option>
+          <option value="erc20">ERC-20 token</option>
+        </select></label>
+        <label>Recipient address<input value={smartWalletTransferRecipient} onChange={event => { setSmartWalletTransferRecipient(event.target.value); setSmartWalletTxResult(null); }} placeholder="0x…" autoComplete="off" /></label>
+        {smartWalletTransferType === "erc20" && <label>ERC-20 token contract<input value={smartWalletTokenAddress} onChange={event => { setSmartWalletTokenAddress(event.target.value); setSmartWalletTxResult(null); }} placeholder="0x token contract" autoComplete="off" /></label>}
+        <label>Amount<input inputMode="decimal" value={smartWalletTransferAmount} onChange={event => { setSmartWalletTransferAmount(event.target.value); setSmartWalletTxResult(null); }} placeholder="0.01" /></label>
+        <button className="primary feature-submit" disabled={smartWalletTxBusy || !unlocked || unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase() || !smartWalletTransferRecipient.trim() || !smartWalletTransferAmount.trim() || (smartWalletTransferType === "erc20" && !smartWalletTokenAddress.trim())} onClick={signAndSendOkxWalletCoreTransfer}>{smartWalletTxBusy ? "Signing / waiting for confirmation…" : "Sign and send inside World Wallet AI"}</button>
+        {smartWalletTxResult && <div className={smartWalletTxResult.ok ? "feature-success" : "feature-error"}>
+          {smartWalletTxResult.text}
+          {smartWalletTxResult.action && <div><small>{smartWalletTxResult.action}</small></div>}
+          {smartWalletTxResult.txHash && <div><small>Transaction: <a href={smartWalletTxResult.explorer + smartWalletTxResult.txHash} target="_blank" rel="noreferrer">{smartWalletTxResult.txHash} ↗</a></small></div>}
+          {smartWalletTxResult.blockNumber && <div><small>Confirmed block: {smartWalletTxResult.blockNumber}</small></div>}
+        </div>}
+        <p className="security-note">This sends a real transaction and spends funds and network gas. The button remains disabled unless the unlocked local vault address exactly matches the smart wallet. Always review the recipient, token contract, amount and fee ceiling in the confirmation prompt. No OKX app approval is requested by this local signing path.</p>
+      </div>
     </div>
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
-      <div className="security-note">Local signing supports message signatures and direct Sepolia test ETH transfers. Mainnet, BNB Chain, and ERC-20 transaction signing continue to use the existing external-wallet flow and configured contract support.</div>
+      <div className="security-note">Local signing supports message signatures, typed-data signatures, direct Sepolia test transfers, and WalletCore native/selected ERC-20 transfers for an unlocked matching EIP-7702 owner key. The WalletCore route is guarded by an exact delegation-code check and explicit transaction confirmation.</div>
     </article>
   </section>;
 }
