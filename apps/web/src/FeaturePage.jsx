@@ -446,7 +446,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
       if (requestGeneration !== balanceRequestGeneration.current) return;
-      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance || 0), asset: data.asset || item.network, syncedAt: data.synced_at, error: "" } }));
+      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance ?? 0), asset: data.asset || item.network, jettons: Array.isArray(data.jettons) ? data.jettons : [], jettons_available: data.jettons_available, jettons_warning: data.jettons_warning || "", metadata_standard: data.metadata_standard || "", ownership_verified: data.ownership_verified === true, syncedAt: data.synced_at, error: "" } }));
     } catch (error) {
       if (requestGeneration !== balanceRequestGeneration.current) return;
       setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: false, error: error.message || "Balance check failed." } }));
