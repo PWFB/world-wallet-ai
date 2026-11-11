@@ -6260,11 +6260,13 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
             raise HTTPException(status_code=404, detail="Wallet not found")
         comparison = "lower(address)=lower(%s)" if network in {"ethereum", "sepolia", "bnb"} else "address=%s"
         attached = conn.execute(
-            f"SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",
+            f"SELECT ownership_verified FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND {comparison}",
             (wallet_id, network, address),
         ).fetchone()
         if not attached:
             raise HTTPException(status_code=404, detail="Attach this public address to the selected wallet before checking its balance")
+        if not bool(attached[0]):
+            raise HTTPException(status_code=403, detail="Prove ownership of this public address before requesting its balance")
     try:
         if network == "ethereum":
             rpc_url, asset = ETH_RPC_URL, "ETH"
