@@ -4740,37 +4740,45 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
     imported_transactions = []
     evm_transactions = []
     if include_transactions:
-        imported_transactions = sync_bitcoin_transactions(user, btc_address)
+        # Import history for every ownership-verified address saved to this wallet.
+        # Each EVM native/token cursor is scoped to its address so one address
+        # cannot advance another address's history checkpoint.
+        for source_address in btc_addresses:
+            imported_transactions.extend(sync_bitcoin_transactions(user, source_address))
+
         evm_warnings = []
         native_sources = (
-            (ETH_RPC_URL, "ethereum", eth_address),
-            (BSC_RPC_URL, "bnb", bnb_address),
-            (SEPOLIA_RPC_URL, "sepolia", sepolia_address),
+            (ETH_RPC_URL, "ethereum", eth_addresses),
+            (BSC_RPC_URL, "bnb", bnb_addresses),
+            (SEPOLIA_RPC_URL, "sepolia", sepolia_addresses),
         )
-        for rpc_url, network, network_address in native_sources:
-            if rpc_url and network_address:
+        for rpc_url, network, network_addresses in native_sources:
+            if not rpc_url:
+                if network_addresses:
+                    evm_warnings.append(f"{network} transaction RPC is not configured")
+                continue
+            for network_address in network_addresses:
                 native_imported, native_warning = sync_evm_native_transactions(user, rpc_url, network, network_address)
                 evm_transactions.extend(native_imported)
                 if native_warning:
                     evm_warnings.append(native_warning)
 
-        token_sources = (
-            (ETH_RPC_URL, "ethereum", eth_address, USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT, "USDT"),
-            (ETH_RPC_URL, "ethereum", eth_address, BALMZ_ETH_CONTRACT, "BALMZ"),
-            (BSC_RPC_URL, "bnb", bnb_address, USDT_BSC_CONTRACT, "USDT-BNB"),
-            (BSC_RPC_URL, "bnb", bnb_address, BALMZ_BNB_CONTRACT, "BALMZ-BNB"),
-            (SEPOLIA_RPC_URL, "sepolia", sepolia_address, BALMZ_SEPOLIA_CONTRACT, "BALMZ-SEP"),
-        )
-        for rpc_url, network, network_address, contract, token_symbol in token_sources:
-            if not rpc_url or not network_address or not contract:
-                continue
-            token_imported, warning = sync_evm_token_transactions(
-                user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
-                decimals=18 if token_symbol.startswith("BALMZ") else 6,
-            )
-            evm_transactions.extend(token_imported)
-            if warning:
-                evm_warnings.append(warning)
+        token_sources = []
+        for symbol, name, network, contract, decimals, status in token_rows:
+            rpc_url = ETH_RPC_URL if network == "ethereum" else BSC_RPC_URL if network == "bnb" else SEPOLIA_RPC_URL if network == "sepolia" else None
+            network_addresses = eth_addresses if network == "ethereum" else bnb_addresses if network == "bnb" else sepolia_addresses if network == "sepolia" else []
+            if rpc_url and contract and network_addresses and status == "active":
+                token_sources.append((rpc_url, network, network_addresses, contract, wallet_asset_symbol(str(symbol).upper(), network), decimals))
+
+        for rpc_url, network, network_addresses, contract, token_symbol, decimals in token_sources:
+            for network_address in network_addresses:
+                token_imported, warning = sync_evm_token_transactions(
+                    user, rpc_url, network, contract, token_symbol, wallet_address=network_address,
+                    decimals=int(decimals) if decimals is not None else (18 if token_symbol.startswith("BALMZ") else 6),
+                )
+                evm_transactions.extend(token_imported)
+                if warning:
+                    evm_warnings.append(warning)
         warnings.extend(evm_warnings)
 
     assets, all_transactions, summary = wallet_snapshot(user)
@@ -4780,7 +4788,7 @@ def _sync_wallet_impl(user: dict, *, include_transactions: bool = True):
         pass
     # A configured address is not proof that history synced successfully. Only publish a
     # success timestamp when every configured transaction source completed without warnings.
-    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and (btc_address or eth_address or bnb_address or sepolia_address) and not warnings else None
+    last_transaction_sync_at = datetime.now(timezone.utc).isoformat() if include_transactions and any((btc_addresses, eth_addresses, bnb_addresses, sepolia_addresses)) and not warnings else None
     network_status = _network_sync_status(user, warnings, updates, last_transaction_sync_at)
     last_balance_sync_at = datetime.now(timezone.utc).isoformat() if updates else None
     return {
