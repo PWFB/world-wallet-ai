@@ -3944,7 +3944,7 @@ def wallet_balance_verification_snapshot(user: dict):
             network: [
                 {
                     "address": str(row[1]),
-                    "label": str(row[3] or "Wallet address"),
+                    "label": str((row[3] if len(row) > 3 else None) or "Wallet address"),
                     "ownership_verified": bool(row[2]),
                     "status": "verified" if bool(row[2]) else "ownership_proof_required",
                 }
