@@ -1081,6 +1081,10 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <button type="button" className="secondary" disabled={busy} onClick={downloadEncryptedBackup}>Download encrypted backup</button>
         {!unlocked && <small className="muted">Unlock this wallet below first. World Wallet AI checks the decrypted recovery material against the saved public addresses before attachment.</small>}
       </div>}
+      {selected?.serverWalletId && <div className="feature-grid">
+        <button type="button" className="primary" disabled={busy || !unlocked || !unlockedAddresses} onClick={verifySelectedWalletAddresses}>Verify attached network addresses →</button>
+        {!unlocked && <small className="muted">For older wallets, unlock the encrypted local copy first. This re-proves the attached public addresses using local signatures only.</small>}
+      </div>}
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
