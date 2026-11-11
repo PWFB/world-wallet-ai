@@ -307,6 +307,7 @@ function App() {
       const mainnetContract = records.find(t => t.network === "ethereum" && t.contract_address && t.status === "active");
       const bnbMainnetContract = records.find(t => t.network === "bnb" && t.contract_address && t.status === "active");
       const sepoliaContract = records.find(t => t.network === "sepolia" && t.contract_address && t.status === "active");
+      const solanaMainnetContract = records.find(t => t.network === "solana_mainnet" && t.contract_address && t.status === "active");
       const quote = marketPrices[coin.symbol] || {};
       return {
         ...coin,
@@ -316,8 +317,10 @@ function App() {
             ? (bnbMainnetContract ? "BNB Chain Mainnet • contract verified" : "BNB Chain Mainnet • deployment pending")
             : coin.symbol === "BALMZ-SEP"
               ? (sepoliaContract ? "Ethereum Sepolia • contract registered • testnet" : "Ethereum Sepolia • deployment pending • testnet")
-              : coin.status,
-        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || records[0] || null,
+              : coin.symbol === "BALMZ-SOL"
+                ? (solanaMainnetContract ? "Solana Mainnet • mint verified" : "Solana Mainnet • mint pending verification")
+                : coin.status,
+        registry: liveRecord || mainnetContract || bnbMainnetContract || sepoliaContract || solanaMainnetContract || records[0] || null,
         connected: Boolean(liveRecord),
         price_usd: quote.usd == null ? null : Number(quote.usd),
         price_24h_change: quote.usd_24h_change == null ? null : Number(quote.usd_24h_change),
@@ -1875,6 +1878,7 @@ function App() {
     return total + Number(item.available_balance) * price;
   }, 0);
   const walletHasCompleteValuation = Boolean(balanceVerificationReport)
+    && balanceVerificationReport.status === "verified"
     && wallet.valuation_complete !== false
     && verifiedValuationRows.length > 0
     && verifiedPricedRows.length === verifiedValuationRows.length
