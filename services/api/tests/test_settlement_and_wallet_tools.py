@@ -660,7 +660,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         user = {"wallet_id": "wallet_test"}
         with patch.object(main, "configured_addresses", return_value=[
-            {"network": "sepolia", "address": wallet, "label": "testnet"}
+            {"network": "sepolia", "address": wallet, "label": "testnet", "ownership_verified": True}
         ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_token_transactions(
                 user, "https://rpc.example", "sepolia", contract, "BALMZ-SEP",
@@ -778,7 +778,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
         user = {"wallet_id": "wallet_test"}
         with patch.object(main, "configured_addresses", return_value=[
-            {"network": "sepolia", "address": wallet, "label": "testnet"}
+            {"network": "sepolia", "address": wallet, "label": "testnet", "ownership_verified": True}
         ]), patch.object(main, "rpc_call", side_effect=fake_rpc):
             imported, warning = main.sync_evm_native_transactions(
                 user, "https://rpc.example", "sepolia", wallet_address=wallet
