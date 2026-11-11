@@ -13,19 +13,11 @@ export const authClient = createAuthClient(authUrl, {
 });
 
 async function requestTokenEndpoint() {
-  // Neon Auth's Better Auth JWT plugin exposes /token and the SDK's
-  // jwtClient plugin exposes the same endpoint as authClient.token().
-  // Prefer the SDK method so its configured fetch/cookie behavior is retained.
-  if (typeof authClient.token === "function") {
-    try {
-      const result = await authClient.token();
-      const token = extractNeonToken(result);
-      if (isUsableNeonAccessToken(token)) return token;
-    } catch {
-      // Try the documented endpoint directly as a compatibility fallback.
-    }
-  }
+  if (!authUrl) return "";
 
+  // Use Neon Auth's documented /token endpoint first. In the pinned
+  // @neondatabase/auth beta, SDK token helpers can surface a cached session
+  // token instead of the short-lived API JWT expected by this backend.
   try {
     const response = await fetch(authUrl.replace(/\/$/, "") + "/token", {
       method: "GET",
@@ -39,7 +31,25 @@ async function requestTokenEndpoint() {
       if (isUsableNeonAccessToken(token)) return token;
     }
   } catch {
-    // The caller can keep the UI stable and ask the user to sign in again.
+    // The SDK compatibility paths below may still have a valid session token.
+  }
+
+  if (typeof authClient.token === "function") {
+    try {
+      const token = extractNeonToken(await authClient.token());
+      if (isUsableNeonAccessToken(token)) return token;
+    } catch {
+      // Try getJWTToken() as the final SDK compatibility path.
+    }
+  }
+
+  if (typeof authClient.getJWTToken === "function") {
+    try {
+      const token = extractNeonToken(await authClient.getJWTToken());
+      if (isUsableNeonAccessToken(token)) return token;
+    } catch {
+      // The caller handles an unavailable or expired session.
+    }
   }
 
   return "";
@@ -47,17 +57,8 @@ async function requestTokenEndpoint() {
 
 export async function getNeonAccessToken({ forceRefresh = false } = {}) {
   if (!authUrl) return "";
-
-  // A forced refresh must hit the JWT endpoint; getJWTToken() can return the
-  // token held in the SDK's current session state rather than force a new JWT.
-  if (forceRefresh) return requestTokenEndpoint();
-
-  try {
-    const token = extractNeonToken(await authClient.getJWTToken());
-    if (isUsableNeonAccessToken(token)) return token;
-  } catch {
-    // Fall through to the JWT endpoint during session restoration.
-  }
-
+  // Always exchange the authenticated Neon cookie for the API JWT. forceRefresh
+  // is retained for compatibility with existing callers and documentation.
+  void forceRefresh;
   return requestTokenEndpoint();
 }
