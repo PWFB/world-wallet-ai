@@ -1808,29 +1808,43 @@ function App() {
     ...(Array.isArray(wallet.unpriced_assets) ? wallet.unpriced_assets : []),
     ...assetDerivedUnpriced,
   ])];
-  const walletHasCompleteValuation = wallet.valuation_complete !== false && wallet.available_balance_usd != null;
-  const walletPartialValue = wallet.partial_available_balance_usd != null
-    ? wallet.partial_available_balance_usd
-    : assets.reduce((total, asset) => {
-      if (asset.value_usd != null && Number.isFinite(Number(asset.value_usd))) return total + Number(asset.value_usd);
-      const price = Number(asset.price_usd ?? asset.live_price_usd ?? 0);
-      const balance = Number(asset.balance || 0);
-      return price > 0 && Number.isFinite(price) && Number.isFinite(balance) ? total + price * balance : total;
-    }, 0);
+  const verifiedValuationRows = (balanceVerificationReport?.assets || []).filter(item =>
+    item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance))
+  );
+  const verifiedPricedRows = verifiedValuationRows.filter(item =>
+    Number(marketPrices[String(item.asset || "").replace(/-BNB$/, "")]?.usd || 0) > 0
+  );
+  const verifiedValuationUnpricedRows = verifiedValuationRows.filter(item =>
+    Number(item.available_balance) > 0 &&
+    !(Number(marketPrices[String(item.asset || "").replace(/-BNB$/, "")]?.usd || 0) > 0)
+  );
+  const unverifiedLedgerHoldings = (balanceVerificationReport?.assets || []).filter(item =>
+    item?.verified !== true && Number(item?.ledger_available_balance || 0) > 0
+  );
+  const walletPartialValue = verifiedPricedRows.reduce((total, item) => {
+    const baseSymbol = String(item.asset || "").replace(/-BNB$/, "");
+    const price = Number(marketPrices[baseSymbol]?.usd || 0);
+    return total + Number(item.available_balance) * price;
+  }, 0);
+  const walletHasCompleteValuation = Boolean(balanceVerificationReport)
+    && wallet.valuation_complete !== false
+    && verifiedValuationRows.length > 0
+    && verifiedPricedRows.length === verifiedValuationRows.length
+    && verifiedValuationUnpricedRows.length === 0
+    && unverifiedLedgerHoldings.length === 0;
   const walletCanShowPartialValue = !walletHasCompleteValuation
-    && walletPartialValue != null
+    && verifiedPricedRows.length > 0
     && Number.isFinite(Number(walletPartialValue))
-    && (Number(walletPartialValue) > 0 || walletUnpricedAssets.length === 0);
-  const walletBalanceText = walletHasCompleteValuation
-    ? money(wallet.available_balance_usd)
-    : walletCanShowPartialValue ? money(walletPartialValue) : "Valuation unavailable";
+    && (walletPartialValue > 0 || verifiedPricedRows.every(item => Number(item.available_balance) === 0));
+  const walletBalanceText = walletHasCompleteValuation || walletCanShowPartialValue
+    ? money(walletPartialValue)
+    : "Valuation unavailable";
   const walletBalanceCaption = walletHasCompleteValuation
-    ? "≈ " + number(wallet.available_balance_usd) + " USD available"
+    ? "≈ " + number(walletPartialValue) + " USD · chain-verified available balances"
     : walletCanShowPartialValue
-      ? "Partial value of priced assets" + (walletUnpricedAssets.length ? " · unpriced: " + walletUnpricedAssets.join(", ") : "")
-      : walletUnpricedAssets.length
-        ? "No verified USD quote for: " + walletUnpricedAssets.join(", ")
-        : "Portfolio valuation unavailable";
+      ? "Partial USD value of chain-verified, priced assets only · unsupported or unverified assets excluded"
+      : balanceVerificationBusy ? "Checking verified Mainnet balances…"
+        : balanceVerificationError || "Portfolio valuation unavailable until a chain balance and market quote can be verified";
 
   const walletUnpricedReceivedAssets = Array.isArray(wallet.unpriced_received_assets) ? wallet.unpriced_received_assets : [];
   const walletPartialReceived = wallet.partial_total_received_usd;
@@ -1967,10 +1981,13 @@ function App() {
         {active === "BALMZ AI" ? <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
-          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP";
-          const balanceKnown = Boolean(live && (!contractBasedBalmz || coin?.registry?.contract_address));
-          const balance = balanceKnown ? Number(live?.balance || 0) : null;
-          const value = live?.value_usd;
+          const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP" || selectedCoin === "BALMZ-SOL";
+          const verifiedAsset = verifiedBalancesByAsset.get(String(selectedCoin || "").toUpperCase());
+          const balanceKnown = Boolean(verifiedAsset);
+          const balance = balanceKnown ? Number(verifiedAsset.available_balance) : null;
+          const value = balanceKnown && Number(marketPrices[selectedCoin.replace(/-BNB$/, "")]?.usd || 0) > 0
+            ? balance * Number(marketPrices[selectedCoin.replace(/-BNB$/, "")]?.usd)
+            : null;
           const price = Number(live?.price_usd || marketPrices[selectedCoin]?.usd || 0);
           const solReferencePrice = selectedCoin === "BALMZ-SOL-DEVNET" ? Number(marketPrices.SOL?.usd || 0) : 0;
           const isSolanaDevnetBalmz = selectedCoin === "BALMZ-SOL-DEVNET";
@@ -2091,11 +2108,12 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{assets.some(asset => asset.symbol === "BALMZ") ? number(assets.find(asset => asset.symbol === "BALMZ")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">{apiStatus === "error" ? "Last confirmed Mainnet data retained" : assets.some(asset => asset.symbol === "BALMZ") ? "Mainnet token balance" : "Not yet verified on Mainnet"}</b><div className="stat-source">Ethereum Mainnet only · no Devnet or Sepolia test tokens included.</div></article>
-              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SEP") ? number(assets.find(asset => asset.symbol === "BALMZ-SEP")?.balance || 0) : "—"} <small>BALMZ-SEP</small></strong><b className="neutral">Sepolia testnet only · excluded from Mainnet valuation.</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>{assets.some(asset => asset.symbol === "BALMZ-SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "BALMZ-SOL-DEVNET")?.balance || 0) : "—"} <small>BALMZ</small></strong><b className="neutral">Solana Devnet only · excluded from Mainnet valuation.</b></article>
-              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{assets.some(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet") ? number(assets.find(asset => asset.symbol === "SOL" && asset.network === "solana_mainnet")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Mainnet only · production balance.</b></article>
-              <article className="stat-card solana-devnet-balance-card"><span>Solana Devnet SOL (testnet)</span><strong>{assets.some(asset => asset.symbol === "SOL-DEVNET") ? number(assets.find(asset => asset.symbol === "SOL-DEVNET")?.balance || 0) : "—"} <small>SOL</small></strong><b className="neutral">Solana Devnet test SOL only · not Mainnet SOL · no USD valuation.</b></article>
+              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ") ? number(verifiedBalancesByAsset.get("BALMZ").available_balance) : "Unavailable"} <small>BALMZ</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ")?.status || "No verified Mainnet contract/address balance"}</b><div className="stat-source">Ethereum Mainnet only · based on the ownership-verified ERC-20 contract balance.</div></article>
+              <article className="stat-card"><span>BALMZ · BNB Chain Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-BNB") ? number(verifiedBalancesByAsset.get("BALMZ-BNB").available_balance) : "Unavailable"} <small>BALMZ-BNB</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-BNB")?.status || "No verified BNB Mainnet contract/address balance"}</b></article>
+              <article className="stat-card"><span>BALMZ · Solana Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-SOL") ? number(verifiedBalancesByAsset.get("BALMZ-SOL").available_balance) : "Unavailable"} <small>BALMZ-SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-SOL")?.status || "Mainnet mint or address not verified"}</b></article>
+              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>Unavailable <small>BALMZ-SEP</small></strong><b className="neutral">Testnet balance is not included in this Mainnet verification report.</b></article>
+              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>Unavailable <small>BALMZ-SOL-DEVNET</small></strong><b className="neutral">Testnet balance is separate and requires its own verified testnet read.</b></article>
+              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{verifiedBalancesByAsset.has("SOL") ? number(verifiedBalancesByAsset.get("SOL").available_balance) : "Unavailable"} <small>SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("SOL")?.status || "No verified Solana Mainnet address balance"}</b></article>
             </div>
 
 
