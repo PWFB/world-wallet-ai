@@ -1003,6 +1003,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       let calls;
       let actionLabel;
       let nativeAmount = 0n;
+      let erc20Expectation = null;
       if (smartWalletTransferType === "native") {
         try { nativeAmount = parseEther(smartWalletTransferAmount.trim()); } catch { throw new Error("Enter a valid " + config.nativeSymbol + " amount."); }
         if (nativeAmount <= 0n) throw new Error("Transfer amount must be greater than zero.");
@@ -1017,6 +1018,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
             "function symbol() view returns (string)",
             "function balanceOf(address) view returns (uint256)",
             "function transfer(address,uint256) returns (bool)",
+            "event Transfer(address indexed from,address indexed to,uint256 value)",
           ],
           provider,
         );
@@ -1029,9 +1031,24 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         if (tokenAmount <= 0n) throw new Error("Token transfer amount must be greater than zero.");
         const tokenBalance = await token.balanceOf(walletAddress);
         if (tokenBalance < tokenAmount) throw new Error("The verified on-chain token balance is insufficient for this transfer.");
+        const simulatedTransfer = await token.transfer.staticCall(
+          smartWalletTransferRecipient.trim(),
+          tokenAmount,
+          { from: walletAddress },
+        );
+        if (simulatedTransfer !== true) {
+          throw new Error("The token contract did not simulate a successful standard ERC-20 transfer. No transaction was sent.");
+        }
         const symbol = String(await token.symbol()).slice(0, 24);
         const data = token.interface.encodeFunctionData("transfer", [smartWalletTransferRecipient.trim(), tokenAmount]);
         calls = [{ target: smartWalletTokenAddress.trim(), value: 0n, data }];
+        erc20Expectation = {
+          tokenAddress: smartWalletTokenAddress.trim().toLowerCase(),
+          from: walletAddress.toLowerCase(),
+          to: smartWalletTransferRecipient.trim().toLowerCase(),
+          amount: tokenAmount,
+          iface: token.interface,
+        };
         actionLabel = "Send " + smartWalletTransferAmount.trim() + " " + symbol + " from " + smartWalletTokenAddress.trim() + " to " + smartWalletTransferRecipient.trim();
       }
 
@@ -1075,6 +1092,33 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       setSmartWalletTxResult({ ok: false, pending: true, text: "Transaction broadcast. Waiting for the first confirmation…", txHash: tx.hash, explorer });
       const receipt = await tx.wait(1);
       if (!receipt || Number(receipt.status) !== 1) throw new Error("The WalletCore transaction did not confirm successfully.");
+      if (erc20Expectation) {
+        const transferVerified = receipt.logs.some(log => {
+          if (String(log.address || "").toLowerCase() !== erc20Expectation.tokenAddress) return false;
+          try {
+            const parsed = erc20Expectation.iface.parseLog(log);
+            return parsed?.name === "Transfer"
+              && String(parsed.args.from).toLowerCase() === erc20Expectation.from
+              && String(parsed.args.to).toLowerCase() === erc20Expectation.to
+              && BigInt(parsed.args.value) === erc20Expectation.amount;
+          } catch {
+            return false;
+          }
+        });
+        if (!transferVerified) {
+          setSmartWalletTxResult({
+            ok: false,
+            txConfirmed: true,
+            pending: false,
+            text: "The WalletCore transaction confirmed, but an exact ERC-20 Transfer event for the requested token, sender, recipient and amount was not found. Token delivery is not verified; do not assume the recipient received the requested amount.",
+            txHash: tx.hash,
+            explorer,
+            blockNumber: receipt.blockNumber,
+            action: actionLabel,
+          });
+          return;
+        }
+      }
       setSmartWalletTxResult({
         ok: true,
         pending: false,
