@@ -5,7 +5,7 @@ import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigatio
 const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
-import { cachedBalanceMatchesNetwork, defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
+import { defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
 import { indexVerifiedBalances } from "./verified-balances.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
@@ -398,13 +398,7 @@ function App() {
   const balanceRequestIdRef = useRef(0);
   const balanceWalletIdRef = useRef("");
   const [selectedNetworkAddress, setSelectedNetworkAddress] = useState("");
-  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(() => {
-    try {
-      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_network_balance_v1") || "null");
-      const savedNetwork = readSelectedNetwork(localStorage.getItem("world_wallet_selected_network_v1"));
-      return cachedBalanceMatchesNetwork(cached, savedNetwork) && cached.verified === true && cached.ownership_verified === true ? cached : null;
-    } catch { return null; }
-  });
+  const [selectedNetworkBalance, setSelectedNetworkBalance] = useState(null);
   const [selectedNetworkBalanceMessage, setSelectedNetworkBalanceMessage] = useState("");
   useEffect(() => {
     if (!selectedNetworkBalance || !Number.isFinite(Number(selectedNetworkBalance.balance))) return;
