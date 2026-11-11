@@ -6,6 +6,7 @@ const FeaturePage = lazy(() => import("./FeaturePage.jsx"));
 import { authClient, getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { cachedBalanceMatchesNetwork, defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, readSelectedNetwork } from "./network-selection.js";
+import { indexVerifiedBalances } from "./verified-balances.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
@@ -413,11 +414,10 @@ function App() {
   const [balanceVerificationReport, setBalanceVerificationReport] = useState(null);
   const [balanceVerificationError, setBalanceVerificationError] = useState("");
   const [balanceVerificationBusy, setBalanceVerificationBusy] = useState(false);
-  const verifiedBalancesByAsset = useMemo(() => new Map(
-    (balanceVerificationReport?.assets || [])
-      .filter(item => item?.verified === true && item.available_balance != null && Number.isFinite(Number(item.available_balance)))
-      .map(item => [String(item.asset || "").toUpperCase(), item])
-  ), [balanceVerificationReport]);
+  const verifiedBalancesByAsset = useMemo(
+    () => indexVerifiedBalances(balanceVerificationReport),
+    [balanceVerificationReport],
+  );
   const lastSyncedBalanceByAsset = useMemo(() => {
     const result = new Map();
     for (const item of balanceVerificationReport?.assets || []) {
