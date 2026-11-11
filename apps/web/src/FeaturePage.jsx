@@ -67,6 +67,8 @@ function transactionExplorerUrl(transaction) {
   if (!hash) return "";
   const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  if (network === "ton_testnet") return `https://testnet.tonviewer.com/transaction/${encodeURIComponent(hash)}`;
+  if (network === "ton_mainnet" || asset === "TON") return `https://tonviewer.com/transaction/${encodeURIComponent(hash)}`;
   if (network === "solana_devnet" || asset === "BALMZ-SOL-DEVNET") return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}?cluster=devnet`;
   if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
   if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
@@ -96,6 +98,7 @@ function tokenExplorerUrl(transaction) {
 
 const RECEIVE_ASSET_OPTIONS = [
   { symbol: "SOL", name: "Solana" },
+  { symbol: "TON", name: "Toncoin" },
   { symbol: "BTC", name: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum" },
   { symbol: "BNB", name: "BNB" },
@@ -112,6 +115,7 @@ const networksForAsset = symbol => ({
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
   SOL: [{ value: "solana_mainnet", label: "Solana Mainnet" }],
+  TON: [{ value: "ton_mainnet", label: "TON Mainnet" }, { value: "ton_testnet", label: "TON Testnet (testnet)" }],
   USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
@@ -2227,7 +2231,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <h3>Step 1 · Choose a destination address</h3>
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet",ton_mainnet:"TON Mainnet",ton_testnet:"TON Testnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" || item.network === "ton_testnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
@@ -2256,7 +2260,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           {renderIncomingHistoryPanel("Deposit history", "No verified deposits are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Never share your secret phrase</b><p>A deposit only needs the correct public receiving address. Never provide a seed phrase or private key to a sender.</p></div></article>
-          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia is for testing only. Do not send real mainnet funds to a Sepolia address.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia, Solana Devnet and TON Testnet are for testing only. Do not send real mainnet funds to a testnet address.</p></div></article>
         </aside>
       </div>
     </section>;
@@ -2288,7 +2292,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet",ton_mainnet:"TON Mainnet",ton_testnet:"TON Testnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" || item.network === "ton_testnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               {item.local && <small className="muted">{item.generated ? "Generated for this self-custody wallet" : "Connected external public address"}{item.walletNumber ? " · Wallet ID " + item.walletNumber : ""}. No private key is sent to the server.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
