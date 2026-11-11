@@ -1561,6 +1561,18 @@ def valid_ton_address(address: str) -> bool:
     return raw[34:36] == expected
 
 
+def _ton_raw_address(address: str) -> str:
+    """Convert an already-validated friendly address to canonical workchain:hash form."""
+    value = str(address or "").strip()
+    if re.fullmatch(r"(?:-1|0):[0-9a-fA-F]{64}", value):
+        workchain, account_hash = value.split(":", 1)
+        return workchain + ":" + account_hash.lower()
+    encoded = value.replace("-", "+").replace("_", "/")
+    raw = base64.b64decode(encoded, validate=True)
+    workchain = int.from_bytes(raw[1:2], "big", signed=True)
+    return f"{workchain}:{raw[2:34].hex()}"
+
+
 def _tonapi_headers() -> dict:
     return {"Authorization": f"Bearer {TONAPI_API_KEY}"} if TONAPI_API_KEY else {}
 
@@ -1587,7 +1599,8 @@ def _ton_decimal_amount(raw_amount, decimals):
 def ton_account_snapshot(network: str, address: str) -> dict:
     """Read Toncoin and Jetton data from the network-specific TonAPI indexer."""
     base_url = TONAPI_TESTNET_BASE_URL if network == "ton_testnet" else TONAPI_MAINNET_BASE_URL
-    account_path = "/accounts/" + address.replace(":", "%3A").replace("+", "%2B").replace("/", "%2F")
+    canonical_address = _ton_raw_address(address)
+    account_path = "/accounts/" + canonical_address.replace(":", "%3A")
     account = _tonapi_get(base_url, account_path)
     raw_balance = account.get("balance")
     if raw_balance is None or not str(raw_balance).isdigit():
@@ -1627,6 +1640,8 @@ def ton_account_snapshot(network: str, address: str) -> dict:
                 "amount_raw": str(raw_amount),
                 "balance": _ton_decimal_amount(raw_amount, decimals),
                 "metadata_source": "TonAPI Jetton metadata (TEP-64 indexed)",
+                "verification": jetton.get("verification"),
+                "is_scam": bool(jetton.get("is_scam", False)),
                 "wallet_address": wallet_address.get("address") if isinstance(wallet_address, dict) else None,
             })
     except Exception as exc:
