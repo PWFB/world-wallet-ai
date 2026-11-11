@@ -1376,6 +1376,12 @@ def wallet_security_pin_recovery_complete(
 
 
 def _neon_auth_origin():
+    # The production Neon Auth instance is explicitly trusted for the Render
+    # frontend origin. Prefer that origin even when additional app origins are
+    # configured for CORS, because Neon Auth maintains its own trusted-domain list.
+    production_origin = "https://world-wallet-ai-frontend.onrender.com"
+    if production_origin in TRUSTED_ORIGINS:
+        return production_origin
     return TRUSTED_ORIGINS[0] if TRUSTED_ORIGINS else "http://localhost:5173"
 
 
