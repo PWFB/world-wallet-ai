@@ -44,7 +44,7 @@ The password lifecycle is handled by Neon Auth:
 
 ### Gmail delivery boundary
 
-The current Neon Auth email provider is Neon Auth's shared sender (`auth@mail.myneon.app`, display name **World Wallet AI**). This provider sends account verification, OTP and password-reset mail. It is not a Gmail sender.
+The current Neon Auth email provider is the shared Neon sender (`auth@mail.myneon.app`, provider sender name **Neon Auth**). The Neon Auth application name has been set to **World Wallet AI**, but the shared provider still reports its sender name as Neon Auth. This provider sends account verification, OTP and password-reset mail. It is not a Gmail sender.
 
 The backend separately uses Gmail SMTP over TLS for Super Admin PIN-recovery approval messages. Configure these values only in the backend service environment:
 - `WORLD_WALLET_ADMIN_EMAIL` — the administrator Gmail mailbox.
