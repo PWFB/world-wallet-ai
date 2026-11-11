@@ -794,6 +794,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         sepolia_address = "0x" + "1" * 40
         contract = "0x" + "2" * 40
         with patch.object(main, "db") as mocked_db, \
+             patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": sepolia_address, "label": "testnet", "ownership_verified": True}]), \
              patch.object(main, "wallet_network_address", side_effect=lambda _user, network: sepolia_address if network == "sepolia" else None), \
              patch.object(main, "SEPOLIA_RPC_URL", "https://sepolia.example"), \
              patch.object(main, "BALMZ_SEPOLIA_CONTRACT", contract), \
