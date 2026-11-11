@@ -1170,7 +1170,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       {unlocked && <div className="wallet-message-signing">
         <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
-        <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message locally"}</button>
+        <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message inside World Wallet AI"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
         <div className="wallet-message-signing">
           <h3>Verify a signed message</h3>
@@ -1188,7 +1188,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           <label>EIP-712 types JSON<textarea rows="4" value={typedDataTypesJson} onChange={event => { setTypedDataTypesJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"Permit":[{"name":"owner","type":"address"},{"name":"spender","type":"address"},{"name":"value","type":"uint256"}]}' /></label>
           <label>EIP-712 message JSON<textarea rows="4" value={typedDataValueJson} onChange={event => { setTypedDataValueJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"owner":"0x…","spender":"0x…","value":"1000"}' /></label>
           <button className="secondary" disabled={busy || !typedDataDomainJson.trim() || !typedDataTypesJson.trim() || !typedDataValueJson.trim()} onClick={signLocalTypedData}>Sign typed data inside World Wallet AI</button>
-          {typedDataSignature && <label>Typed-data signature<textarea readOnly rows="3" value={typedDataSignature} /></label>}
+          {typedDataSignature && <label>Typed-data signature<textarea rows="3" value={typedDataSignature} onChange={event => { setTypedDataSignature(event.target.value); setTypedDataResult(null); }} placeholder="Paste a 65-byte EIP-712 signature to verify" /></label>}
           <button className="secondary" disabled={busy || !typedDataSignature.trim()} onClick={verifyTypedDataLocalSignature}>Verify EIP-712 signature</button>
           {typedDataResult && <div className={typedDataResult.ok ? "feature-success" : "feature-error"}>{typedDataResult.text}{typedDataResult.recovered && <div><small>Recovered signer: <code>{typedDataResult.recovered}</code></small></div>}</div>}
         </div>
