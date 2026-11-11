@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, formatUnits, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
 import { verifyEip1271Signature, verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
-import { encodeOkxWalletCoreSelfExecution, isExpectedOkxWalletCoreDelegation } from "./okx-walletcore.js";
+import { encodeOkxWalletCoreSelfExecution, isExpectedOkxWalletCoreDelegation, OKX_WALLETCORE_IMPLEMENTATION } from "./okx-walletcore.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -943,6 +943,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       // never sent to the backend or to the external OKX wallet application.
       const signature = await unlocked.signMessage(smartWalletMessage);
       provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const delegationCode = await provider.getCode(smartWalletAddress.trim());
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("The account is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Signing is blocked.");
+      }
       const verified = await verifyEip1271Signature(
         provider,
         smartWalletAddress.trim(),
@@ -982,6 +987,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         throw new Error("The unlocked local vault address does not match the smart wallet. No transaction was signed.");
       }
       if (!isAddress(smartWalletTransferRecipient.trim())) throw new Error("Enter a valid recipient address.");
+      if (smartWalletTransferRecipient.trim().toLowerCase() === "0x0000000000000000000000000000000000000000") {
+        throw new Error("The zero address is not a valid transfer recipient.");
+      }
+      if (smartWalletTransferRecipient.trim().toLowerCase() === smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The smart wallet address cannot be used as its own transfer recipient.");
+      }
       if (!smartWalletTransferAmount.trim()) throw new Error("Enter an amount greater than zero.");
 
       const configs = {
@@ -996,8 +1007,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
 
       const walletAddress = smartWalletAddress.trim();
       const delegationCode = await provider.getCode(walletAddress);
-      if (!isExpectedOkxWalletCoreDelegation(delegationCode)) {
-        throw new Error("This address is not delegated to the expected OKX WalletCore implementation on " + config.label + ". Transaction signing is blocked.");
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("This address is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Transaction signing is blocked.");
       }
 
       let calls;
@@ -1157,6 +1169,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
       if (!smartWalletMessage) throw new Error("Enter the exact original message.");
       provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const delegationCode = await provider.getCode(smartWalletAddress.trim());
+      const walletCoreCode = await provider.getCode(OKX_WALLETCORE_IMPLEMENTATION);
+      if (!isExpectedOkxWalletCoreDelegation(delegationCode) || !walletCoreCode || walletCoreCode === "0x") {
+        throw new Error("The account is not delegated to the expected deployed OKX WalletCore implementation on " + config.label + ". Verification is blocked.");
+      }
       const result = await verifyEip1271Signature(
         provider,
         smartWalletAddress.trim(),
@@ -1440,7 +1457,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setSmartWalletSignature(""); setSmartWalletResult(null); setSmartWalletTxResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message inside World Wallet AI"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
@@ -1488,8 +1505,8 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     <div className="wallet-message-signing">
       <h3>Verify external OKX smart-wallet signature</h3>
       <p className="muted">Read-only verification for your existing 0xbb EIP-7702 account. World Wallet AI calls isValidSignature on the selected network and accepts only the EIP-1271 magic value. This check does not unlock or access the wallet's private key.</p>
-      <label>Wallet address<input value={smartWalletAddress} onChange={event => { setSmartWalletAddress(event.target.value); setSmartWalletResult(null); }} placeholder="0x smart-wallet address" autoComplete="off" /></label>
-      <label>Verification network<select value={smartWalletNetwork} onChange={event => { setSmartWalletNetwork(event.target.value); setSmartWalletResult(null); }}>
+      <label>Wallet address<input value={smartWalletAddress} onChange={event => { setSmartWalletAddress(event.target.value); setSmartWalletResult(null); setSmartWalletTxResult(null); }} placeholder="0x smart-wallet address" autoComplete="off" /></label>
+      <label>Verification network<select value={smartWalletNetwork} onChange={event => { setSmartWalletNetwork(event.target.value); setSmartWalletResult(null); setSmartWalletTxResult(null); }}>
         <option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option>
       </select></label>
       <label>Exact signed message<textarea rows="3" value={smartWalletMessage} onChange={event => { setSmartWalletMessage(event.target.value); setSmartWalletResult(null); }} placeholder="Paste the exact message that was signed" /></label>
