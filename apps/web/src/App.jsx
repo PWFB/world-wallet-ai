@@ -1898,6 +1898,20 @@ function App() {
       : balanceVerificationBusy ? "Checking verified Mainnet balances…"
         : balanceVerificationError || "Portfolio valuation unavailable until a chain balance and market quote can be verified";
 
+  const traceAddressRows = dashboardAddresses.length
+    ? dashboardAddresses
+    : Object.entries(balanceVerificationReport?.attached_addresses_detail || {}).flatMap(([network, rows]) =>
+      (rows || []).map(item => ({ ...item, network }))
+    );
+  const traceNetworkLabels = {
+    ethereum: "Ethereum Mainnet",
+    bnb: "BNB Chain Mainnet",
+    bitcoin: "Bitcoin Mainnet",
+    solana_mainnet: "Solana Mainnet",
+    sepolia: "Ethereum Sepolia (testnet)",
+    solana_devnet: "Solana Devnet (testnet)",
+  };
+
   const walletUnpricedReceivedAssets = Array.isArray(wallet.unpriced_received_assets) ? wallet.unpriced_received_assets : [];
   const walletPartialReceived = wallet.partial_total_received_usd;
   const walletCanShowPartialReceived = wallet.total_received_usd == null
@@ -2183,27 +2197,32 @@ function App() {
               {balanceVerificationError && <div className="market-price-error" role="status">{balanceVerificationError}</div>}
               {!balanceVerificationReport ? <div className="live-chart-empty">No verified balance report is available yet. {balanceVerificationBusy ? "Checking configured Mainnet readers…" : "Check the authenticated wallet session and network RPC configuration."}</div> : <>
                 <div className="coin-catalog-note">{balanceVerificationReport.notice}</div>
-                {Object.entries(balanceVerificationReport.attached_addresses_detail || balanceVerificationReport.addresses_detail || {}).flatMap(([network, addressRows]) =>
-                  (addressRows || []).map(addressRow => {
-                    const observations = (balanceVerificationReport.assets || []).flatMap(asset =>
-                      (asset.address_balances || [])
-                        .filter(item => String(item.address).toLowerCase() === String(addressRow.address).toLowerCase())
-                        .map(item => ({ asset, item }))
-                    );
-                    return <div className="tool-row" key={network + ":" + addressRow.address}>
-                      <div><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet"})[network] || network}</b><small>{addressRow.ownership_verified === true ? "Ownership verified · public address" : "Attached · ownership proof required"}</small></div>
-                      <code>{addressRow.address}</code>
-                      <button type="button" className="secondary" onClick={() => navigator.clipboard?.writeText(addressRow.address)}>Copy</button>
-                      <div className="address-balance-trace">
-                        {addressRow.ownership_verified !== true
-                          ? <span>Balance hidden until this address passes its wallet-signature ownership check.</span>
-                          : observations.length
-                            ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>)
-                            : <span>Address verified; no supported asset balance observation returned.</span>}
-                      </div>
-                    </div>;
-                  })
-                )}
+                {traceAddressRows.map(addressRow => {
+                  const network = normalizeNetworkId(addressRow.network);
+                  const observations = (balanceVerificationReport.assets || []).flatMap(asset =>
+                    (asset.address_balances || [])
+                      .filter(item => String(item.address).toLowerCase() === String(addressRow.address).toLowerCase())
+                      .map(item => ({ asset, item }))
+                  );
+                  const selectedTestnetRead = ["sepolia", "solana_devnet"].includes(network)
+                    && selectedNetworkBalance?.verified === true
+                    && selectedNetworkBalance?.network === network
+                    && String(selectedNetworkBalance?.address || "").toLowerCase() === String(addressRow.address).toLowerCase();
+                  return <div className="tool-row" key={network + ":" + addressRow.address}>
+                    <div><b>{traceNetworkLabels[network] || network}</b><small>{addressRow.ownership_verified === true ? "Ownership verified · public address" : "Attached · ownership proof required"}</small></div>
+                    <code>{addressRow.address}</code>
+                    <button type="button" className="secondary" onClick={() => navigator.clipboard?.writeText(addressRow.address)}>Copy</button>
+                    <div className="address-balance-trace">
+                      {addressRow.ownership_verified !== true
+                        ? <span>Balance hidden until this address passes its wallet-signature ownership check.</span>
+                        : observations.length
+                          ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>)
+                          : selectedTestnetRead
+                            ? <span><b>{number(selectedNetworkBalance.balance)} {selectedNetworkBalance.asset}</b> <small>Live read from the selected testnet RPC · {selectedNetworkBalance.syncedAt ? new Date(selectedNetworkBalance.syncedAt).toLocaleString() : "verified read"}</small></span>
+                            : <span>{["sepolia", "solana_devnet"].includes(network) ? "Testnet address verified; switch to this test network to request its balance." : "Address verified; no supported Mainnet asset balance observation returned."}</span>}
+                    </div>
+                  </div>;
+                })}
                 <div className="asset-list verified-asset-report-list">
                   {(balanceVerificationReport.assets || []).map((item,index) => <div className="asset-row" key={String(item.asset) + ":" + String(item.network) + ":" + String(item.contract_address || index)}>
                     <div className="asset-name"><b>{item.asset}</b><small>{item.network_label || item.network || "Network adapter not configured"} · {item.status}</small></div>
