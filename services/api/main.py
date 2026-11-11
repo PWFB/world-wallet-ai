@@ -1622,7 +1622,9 @@ def ton_account_snapshot(network: str, address: str) -> dict:
             raw_amount = item.get("balance")
             if raw_amount is None or not str(raw_amount).isdigit():
                 continue
-            decimals_value = metadata.get("decimals", jetton.get("decimals"))
+            decimals_value = metadata.get("decimals")
+            if decimals_value is None:
+                decimals_value = jetton.get("decimals")
             try:
                 decimals = int(decimals_value) if decimals_value is not None else None
             except (TypeError, ValueError):
@@ -1634,15 +1636,15 @@ def ton_account_snapshot(network: str, address: str) -> dict:
                 "master_address": jetton.get("address"),
                 "name": metadata.get("name") or jetton.get("name"),
                 "symbol": metadata.get("symbol") or jetton.get("symbol"),
-                "image": metadata.get("image") or jetton.get("image"),
+                "image": metadata.get("image") or jetton.get("image") or jetton.get("preview"),
                 "description": metadata.get("description") or jetton.get("description"),
                 "decimals": decimals,
                 "amount_raw": str(raw_amount),
                 "balance": _ton_decimal_amount(raw_amount, decimals),
                 "metadata_source": "TonAPI Jetton metadata (TEP-64 indexed)",
                 "verification": jetton.get("verification"),
-                "is_scam": bool(jetton.get("is_scam", False)),
-                "wallet_address": wallet_address.get("address") if isinstance(wallet_address, dict) else None,
+                "is_scam": bool(jetton.get("is_scam", False)) or str(jetton.get("verification") or "").lower() == "blacklist",
+                "wallet_address": wallet_address.get("address") if isinstance(wallet_address, dict) else (wallet_address if isinstance(wallet_address, str) else None),
             })
     except Exception as exc:
         # Native TON remains usable when the optional Jetton index is rate-limited
