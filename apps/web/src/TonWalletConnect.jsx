@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { TonConnectButton, useTonConnectUI, useTonWallet } from "@tonconnect/ui-react";
 import { getNeonAccessToken } from "./auth-client.js";
+import { isUsableNeonAccessToken } from "./neon-token.js";
 import { tonFriendlyAddress, tonNetworkFromChainId, tonToNano } from "./ton-address.js";
 
 async function authHeaders(accessToken, extra = {}) {
@@ -8,7 +9,7 @@ async function authHeaders(accessToken, extra = {}) {
     return { ...extra, Authorization: "Bearer " + accessToken };
   }
   const freshToken = await getNeonAccessToken({ forceRefresh: true });
-  const token = freshToken || accessToken || "";
+  const token = freshToken || (isUsableNeonAccessToken(accessToken) ? accessToken : "");
   return { ...extra, ...(token ? { Authorization: "Bearer " + token } : {}) };
 }
 
@@ -56,7 +57,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       }
     })();
     return () => { cancelled = true; };
-  }, [walletId, address, network, walletName, accessToken, apiBaseUrl]);
+  }, [walletId, address, network, walletName, accessToken, apiBaseUrl, onAddressSaved]);
 
   const sendTon = async () => {
     setSending(true);
