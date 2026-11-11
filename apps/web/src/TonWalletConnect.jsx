@@ -3,7 +3,7 @@ import { TonConnectButton, useTonConnectUI, useTonWallet } from "@tonconnect/ui-
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { tonFriendlyAddress, tonNetworkFromChainId, tonToNano } from "./ton-address.js";
-import { buildJettonTransferPayload } from "./ton-jetton.js";
+import { buildJettonTransferPayload, jettonAmountToUnits } from "./ton-jetton.js";
 
 async function authHeaders(accessToken, extra = {}) {
   if (String(accessToken || "").startsWith("wwpin_")) {
@@ -25,6 +25,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
   const [sendMessage, setSendMessage] = useState("");
   const [jettons, setJettons] = useState([]);
   const [jettonsAvailable, setJettonsAvailable] = useState(false);
+  const [nativeTonBalance, setNativeTonBalance] = useState(null);
   const [jettonsLoading, setJettonsLoading] = useState(false);
   const [jettonsMessage, setJettonsMessage] = useState("");
   const [selectedJettonAddress, setSelectedJettonAddress] = useState("");
@@ -58,6 +59,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       if (!response.ok) throw new Error(data.detail || "Could not refresh this TON account's Jetton balances.");
       if (jettonScope.current !== requestScope || jettonRequest.current !== requestId) return;
       const next = Array.isArray(data.jettons) ? data.jettons : [];
+      setNativeTonBalance(Number.isFinite(Number(data.balance)) ? Number(data.balance) : null);
       setJettons(next);
       setJettonsAvailable(data.jettons_available === true);
       setSelectedJettonAddress(current => next.some(item => item.master_address === current) ? current : (next[0]?.master_address || ""));
@@ -69,6 +71,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
         setJettons([]);
         setSelectedJettonAddress("");
         setJettonsAvailable(false);
+        setNativeTonBalance(null);
         setJettonsMessage(error?.message || "Jetton index is unavailable.");
       }
     } finally {
@@ -87,6 +90,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       setSelectedJettonAddress("");
       setJettonsAvailable(false);
       setJettonsLoading(false);
+      setNativeTonBalance(null);
       setJettonsMessage("");
     }
     if (lastAttached.current === key) {
@@ -159,6 +163,10 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       const destination = tonFriendlyAddress(jettonRecipient, isTestnet);
       const sourceJettonWallet = tonFriendlyAddress(selectedJetton.wallet_address, isTestnet);
       const responseDestination = tonFriendlyAddress(address, isTestnet);
+      const amountUnits = BigInt(jettonAmountToUnits(jettonAmount, selectedJetton.decimals));
+      const availableUnits = BigInt(String(selectedJetton.amount_raw || "0"));
+      if (amountUnits > availableUnits) throw new Error("The Jetton amount exceeds the indexed available balance.");
+      if (nativeTonBalance === null || nativeTonBalance < 0.05) throw new Error("The connected account does not have enough indexed TON to cover the 0.05 TON transfer attachment.");
       const payload = buildJettonTransferPayload({
         amount: jettonAmount,
         decimals: selectedJetton.decimals,
@@ -209,7 +217,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
         </div>
       )}
       {saving && <div className="feature-loading" role="status">Saving TON address…</div>}
-      {message && <div className="feature-success" role="status">{message}</div>}
+      {message && <div className={/failed|error|could not|unavailable|invalid/i.test(message) ? "feature-error" : "feature-success"} role="status">{message}</div>}
       {wallet && (
         <>
           <div className="ton-send-area">
@@ -218,7 +226,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
             <label>Recipient TON address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="EQ… / UQ… / raw TON address" autoComplete="off" /></label>
             <label>Amount (TON)<input value={amount} onChange={event => setAmount(event.target.value)} placeholder="0.1" inputMode="decimal" /></label>
             <button className="primary" type="button" onClick={sendTon} disabled={!supportedChain || sending || !recipient.trim() || !amount.trim()}>{sending ? "Waiting for wallet…" : "Review and send TON →"}</button>
-            {sendMessage && <div className={/failed|cancelled|invalid|connect/i.test(sendMessage) ? "feature-error" : "security-note"} role="status">{sendMessage}</div>}
+            {sendMessage && <div className={/failed|cancelled|invalid|connect|reject|error/i.test(sendMessage) ? "feature-error" : "security-note"} role="status">{sendMessage}</div>}
           </div>
           <div className="ton-send-area">
             <div className="panel-head">
