@@ -24,6 +24,7 @@ const fallbackActivity = [];
 const walletCoinCatalog = [
   { symbol: "BALMZ", name: "BALMZ Token", icon: "B", status: "Ethereum Mainnet" },
   { symbol: "BALMZ-BNB", name: "BALMZ Token (BNB Chain)", icon: "B", status: "BNB Chain Mainnet" },
+  { symbol: "BALMZ-SOL", name: "BALMZ Token (Solana Mainnet)", icon: "B", status: "Solana Mainnet" },
   { symbol: "BALMZ-SEP", name: "BALMZ Token (Sepolia)", icon: "B", status: "Sepolia testnet only" },
   { symbol: "BALMZ-SOL-DEVNET", name: "BALMZ Token (Solana Devnet)", icon: "B", status: "Solana Devnet • testnet only" },
   { symbol: "BTC", name: "Bitcoin", icon: "₿", status: "Bitcoin" },
