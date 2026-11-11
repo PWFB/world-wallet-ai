@@ -466,6 +466,118 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     }
   }
 
+  async function verifySelectedWalletAddresses() {
+    const entry = entries.find(item => item.walletId === selectedId);
+    const walletId = entry?.serverWalletId || "";
+    if (!entry || !walletId || !unlocked || !unlockedAddresses) {
+      setMessage("Select an attached wallet, unlock its local encrypted copy, then verify its network addresses.");
+      return;
+    }
+    const addressPairs = Object.entries(unlockedAddresses).filter(([networkName, address]) => {
+      if (typeof address !== "string" || !address.trim()) return false;
+      if (["ethereum", "bnb", "sepolia"].includes(networkName)) return /^0x[a-fA-F0-9]{40}$/.test(address.trim());
+      if (networkName === "bitcoin") return /^(bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})$/i.test(address.trim());
+      if (["solana_mainnet", "solana_devnet"].includes(networkName)) return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address.trim());
+      return false;
+    });
+    if (!addressPairs.length) {
+      setMessage("The unlocked wallet contains no supported public network addresses to verify.");
+      return;
+    }
+    if (!window.confirm("Verify ownership of every supported public address in this wallet? World Wallet AI will receive only the public addresses and one-time signatures. Recovery material stays in this browser; no transfer will occur.")) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      const sessionToken = String(accessToken || "").startsWith("wwpin_")
+        ? accessToken
+        : (await getNeonAccessToken()) || accessToken;
+      if (!sessionToken) throw new Error("No valid wallet PIN session. Sign in and unlock the wallet first.");
+      const recoveryPhrase = entry.encryptedMnemonic
+        ? await decryptMnemonic(entry.encryptedMnemonic, password)
+        : (unlocked.mnemonic?.phrase || "");
+      const walletNumber = String(entry.walletNumber || serverWalletNumberById[walletId] || "");
+      const attachmentFailures = [];
+      const attached = [];
+      for (const [networkName, publicAddress] of addressPairs) {
+        try {
+          const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+            body: JSON.stringify({ network: networkName, address: publicAddress, label: "verified " + (walletNumber || "wallet") }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.detail || "Address attachment failed.");
+          attached.push([networkName, publicAddress]);
+        } catch (error) {
+          attachmentFailures.push(networkName + ": " + (error?.message || "address save failed"));
+        }
+      }
+
+      const proofTargets = [
+        ["ethereum", "evm", "m/44'/60'/0'/0/0"],
+        ["bnb", "evm", "m/44'/60'/0'/0/0"],
+        ["sepolia", "evm", "m/44'/60'/1'/0/0"],
+        ["bitcoin", "bitcoin", "m/84'/0'/0'/0/0"],
+        ["solana_mainnet", "solana", 0],
+        ["solana_devnet", "solana", 1],
+      ];
+      const verifiedNetworks = [];
+      const verificationFailures = [];
+      for (const [networkName, proofType, derivation] of proofTargets) {
+        const publicAddress = attached.find(([name]) => name === networkName)?.[1];
+        if (!publicAddress) continue;
+        try {
+          if (!recoveryPhrase && !["ethereum", "bnb"].includes(networkName)) {
+            throw new Error("Encrypted recovery phrase is unavailable for deriving this network key.");
+          }
+          const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/challenge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+            body: JSON.stringify({ network: networkName, address: publicAddress }),
+          });
+          const challenge = await challengeResponse.json().catch(() => ({}));
+          if (!challengeResponse.ok) throw new Error(challenge.detail || "Ownership challenge request failed.");
+          let signature;
+          if (proofType === "evm") {
+            const proofWallet = recoveryPhrase
+              ? HDNodeWallet.fromPhrase(recoveryPhrase, "", derivation)
+              : unlocked;
+            if (proofWallet.address.toLowerCase() !== publicAddress.toLowerCase()) throw new Error("Derived EVM address does not match the attached address.");
+            signature = await proofWallet.signMessage(challenge.message);
+          } else if (proofType === "bitcoin") {
+            const proofWallet = HDNodeWallet.fromPhrase(recoveryPhrase, "", derivation);
+            signature = proofWallet.signingKey.sign(keccak256(toUtf8Bytes(challenge.message))).serialized;
+          } else {
+            signature = await signSolanaMessage(recoveryPhrase, derivation, challenge.message);
+          }
+          const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/verify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+            body: JSON.stringify({ challenge_id: challenge.challenge_id, signature }),
+          });
+          const verified = await verifyResponse.json().catch(() => ({}));
+          if (!verifyResponse.ok || verified.ownership_verified !== true) throw new Error(verified.detail || "Ownership proof was not accepted.");
+          verifiedNetworks.push(networkName);
+        } catch (error) {
+          verificationFailures.push(networkName + ": " + (error?.message || "verification failed"));
+        }
+      }
+      try { await onWalletCreated?.(); } catch {}
+      setMessage(
+        attachmentFailures.length || verificationFailures.length
+          ? "Wallet address review completed. Verified: " + (verifiedNetworks.join(", ") || "none") +
+            ". Address failures: " + (attachmentFailures.join("; ") || "none") +
+            ". Ownership proof pending: " + (verificationFailures.join("; ") || "none") +
+            ". Only verified addresses will be used for balances or transaction history."
+          : "All attached network addresses passed ownership verification: " + verifiedNetworks.join(", ") + ". No transfer was made."
+      );
+    } catch (error) {
+      setMessage(error?.message || "Network address verification failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function downloadEncryptedBackup() {
     const entry = entries.find(item => item.walletId === selectedId);
     if (!entry) { setMessage("Choose a saved wallet before exporting its encrypted backup."); return; }
