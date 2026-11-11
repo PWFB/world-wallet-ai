@@ -394,6 +394,61 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           attachmentFailures.push(addressNetwork + ": " + (error?.message || "save failed"));
         }
       }
+      const verificationFailures = [];
+      const verifiedNetworks = [];
+      if (!attachmentFailures.length) {
+        const recoveryPhrase = entry.encryptedMnemonic
+          ? await decryptMnemonic(entry.encryptedMnemonic, password)
+          : (unlocked.mnemonic?.phrase || "");
+        const proofTargets = [
+          ["ethereum", "evm", "m/44'/60'/0'/0/0"],
+          ["bnb", "evm", "m/44'/60'/0'/0/0"],
+          ["sepolia", "evm", "m/44'/60'/1'/0/0"],
+          ["bitcoin", "bitcoin", "m/84'/0'/0'/0/0"],
+          ["solana_mainnet", "solana", 0],
+          ["solana_devnet", "solana", 1],
+        ];
+        for (const [proofNetwork, proofType, derivation] of proofTargets) {
+          const proofAddress = unlockedAddresses[proofNetwork];
+          if (!proofAddress || !addressPairs.some(([name,address]) => name === proofNetwork && address === proofAddress)) continue;
+          try {
+            if (!recoveryPhrase && !["ethereum", "bnb"].includes(proofNetwork)) {
+              throw new Error("This local backup has no encrypted recovery phrase for deriving this network key.");
+            }
+            const challengeResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses/challenge", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+              body: JSON.stringify({ network: proofNetwork, address: proofAddress }),
+            });
+            const challenge = await challengeResponse.json().catch(() => ({}));
+            if (!challengeResponse.ok) throw new Error(challenge.detail || "Ownership challenge request failed.");
+            let proofSignature;
+            if (proofType === "evm") {
+              const proofWallet = recoveryPhrase
+                ? HDNodeWallet.fromPhrase(recoveryPhrase, "", derivation)
+                : unlocked;
+              if (proofWallet.address.toLowerCase() !== proofAddress.toLowerCase()) throw new Error("Derived EVM address did not match the saved address.");
+              proofSignature = await proofWallet.signMessage(challenge.message);
+            } else if (proofType === "bitcoin") {
+              const proofWallet = HDNodeWallet.fromPhrase(recoveryPhrase, "", derivation);
+              const digest = keccak256(toUtf8Bytes(challenge.message));
+              proofSignature = proofWallet.signingKey.sign(digest).serialized;
+            } else {
+              proofSignature = await signSolanaMessage(recoveryPhrase, derivation, challenge.message);
+            }
+            const verifyResponse = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(serverWalletId) + "/addresses/verify", {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: "Bearer " + sessionToken },
+              body: JSON.stringify({ challenge_id: challenge.challenge_id, signature: proofSignature }),
+            });
+            const verified = await verifyResponse.json().catch(() => ({}));
+            if (!verifyResponse.ok || verified.ownership_verified !== true) throw new Error(verified.detail || "Ownership proof was not accepted.");
+            verifiedNetworks.push(proofNetwork);
+          } catch (error) {
+            verificationFailures.push(proofNetwork + ": " + (error?.message || "verification failed"));
+          }
+        }
+      }
       const linkedEntry = { ...entry, walletId: serverWalletId, serverWalletId, walletNumber: serverWalletNumber };
       const currentEntries = entries.filter(item => item.walletId !== entry.walletId && item.walletId !== serverWalletId);
       persistVault([linkedEntry, ...currentEntries], [entry.walletId]);
@@ -401,7 +456,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       try { await onWalletCreated?.(); } catch {}
       setMessage(attachmentFailures.length
         ? "Wallet profile attached, but some public addresses did not sync: " + attachmentFailures.join("; ") + ". Recovery material remains local; retry the missing address sync from Wallets."
-        : "Wallet attached to your account. All public addresses were submitted; encrypted recovery material remains on this device.");
+        : verificationFailures.length
+          ? "Wallet attached with all public addresses saved. Ownership verified: " + (verifiedNetworks.join(", ") || "none") + ". Proof pending: " + verificationFailures.join("; ") + ". Encrypted recovery material remains on this device."
+          : "Wallet attached and ownership signatures verified for: " + verifiedNetworks.join(", ") + ". Encrypted recovery material remains on this device.");
     } catch (error) {
       setMessage("Wallet remains saved locally, but account attachment failed: " + (error?.message || "server unavailable"));
     } finally {
