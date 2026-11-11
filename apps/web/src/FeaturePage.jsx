@@ -1,8 +1,9 @@
-import { lazy, useEffect, useRef, useState } from "react";
+import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
 import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
+import TonWalletConnect from "./TonWalletConnect.jsx";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -66,6 +67,8 @@ function transactionExplorerUrl(transaction) {
   if (!hash) return "";
   const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
   const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
+  if (network === "ton_testnet") return `https://testnet.tonviewer.com/transaction/${encodeURIComponent(hash)}`;
+  if (network === "ton_mainnet" || asset === "TON") return `https://tonviewer.com/transaction/${encodeURIComponent(hash)}`;
   if (network === "solana_devnet" || asset === "BALMZ-SOL-DEVNET") return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}?cluster=devnet`;
   if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
   if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
@@ -95,6 +98,7 @@ function tokenExplorerUrl(transaction) {
 
 const RECEIVE_ASSET_OPTIONS = [
   { symbol: "SOL", name: "Solana" },
+  { symbol: "TON", name: "Toncoin" },
   { symbol: "BTC", name: "Bitcoin" },
   { symbol: "ETH", name: "Ethereum" },
   { symbol: "BNB", name: "BNB" },
@@ -111,6 +115,7 @@ const networksForAsset = symbol => ({
   ETH: [{ value: "ethereum", label: "Ethereum Mainnet" }],
   BNB: [{ value: "bnb", label: "BNB Chain" }],
   SOL: [{ value: "solana_mainnet", label: "Solana Mainnet" }],
+  TON: [{ value: "ton_mainnet", label: "TON Mainnet" }, { value: "ton_testnet", label: "TON Testnet (testnet)" }],
   USDT: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   USDC: [{ value: "ethereum", label: "Ethereum Mainnet" }, { value: "bnb", label: "BNB Chain" }],
   "USDT-BNB": [{ value: "bnb", label: "BNB Chain" }],
@@ -155,7 +160,7 @@ function getLocalVaultReceiveAddress(walletId = "", userId = "") {
       ? entry.addresses
       : { [entry.network || "ethereum"]: entry.address };
     return Object.entries(addressSet).filter(([network, address]) =>
-      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet"].includes(network) && typeof address === "string" && address.length
+      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet", "ton_mainnet", "ton_testnet"].includes(network) && typeof address === "string" && address.length
     ).map(([network, address]) => ({
       network,
       address,
@@ -193,15 +198,15 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
 
-  const loadAddresses = async id => {
+  const loadAddresses = useCallback(async id => {
     if (!id) return;
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: await walletAuthHeaders(accessToken) });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(id) + "/addresses", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
       setWalletAddresses(response.ok ? (data.addresses || []) : []);
       setAddressesLoadedForWallet(response.ok ? id : "");
     } catch { setWalletAddresses([]); setAddressesLoadedForWallet(""); }
-  };
+  }, [apiBaseUrl, accessToken]);
 
   const loadWallets = async () => {
     setBusy(true);
@@ -219,6 +224,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   useEffect(() => { loadWallets(); }, [accessToken]);
+  const onTonAddressSaved = useCallback(() => loadAddresses(walletId), [loadAddresses, walletId]);
 
   // Attach every saved external EVM address to its matching network on the active wallet.
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
@@ -440,7 +446,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
       if (requestGeneration !== balanceRequestGeneration.current) return;
-      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance || 0), asset: data.asset || item.network, syncedAt: data.synced_at, error: "" } }));
+      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance ?? 0), asset: data.asset || item.network, jettons: Array.isArray(data.jettons) ? data.jettons : [], jettons_available: data.jettons_available, jettons_warning: data.jettons_warning || "", metadata_standard: data.metadata_standard || "", ownership_verified: data.ownership_verified === true, syncedAt: data.synced_at, error: "" } }));
     } catch (error) {
       if (requestGeneration !== balanceRequestGeneration.current) return;
       setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: false, error: error.message || "Balance check failed." } }));
@@ -489,7 +495,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     if (!walletId || addressesLoadedForWallet !== walletId || !accessToken) return undefined;
     const generation = balanceRequestGeneration.current;
     for (const item of visibleAddresses) {
-      if (!item.local) void checkAddressBalance(item);
+      // TonAPI has much tighter anonymous rate limits; the active TON Connect
+      // account is refreshed in TonWalletConnect and other saved TON accounts
+      // stay manual to avoid flooding the indexer.
+      if (!item.local && !["ton_mainnet", "ton_testnet"].includes(item.network)) void checkAddressBalance(item);
     }
     return () => {
       if (balanceRequestGeneration.current === generation) balanceRequestGeneration.current += 1;
@@ -537,12 +546,13 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
     <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <TonWalletConnect walletId={walletId} accessToken={accessToken} apiBaseUrl={apiBaseUrl} onAddressSaved={onTonAddressSaved} />
     <div className="feature-grid">
       <article className="panel action-panel">
         <p className="feature-kicker">WALLET STRUCTURE</p>
         <h2>Independent self-custody wallets</h2>
         <p className="muted">Use Generate complete wallet above. Each wallet has its own recovery phrase, encrypted key material, 11-digit wallet ID, public addresses, and separate account history.</p>
-        <div className="security-note">Ethereum and BNB Chain use the same EVM mainnet address within one wallet. Bitcoin and Solana have their own mainnet addresses. Sepolia and Solana Devnet use separate test-network derivations.</div>
+        <div className="security-note">Ethereum and BNB Chain use the same EVM mainnet address within one wallet. Bitcoin and Solana have their own mainnet addresses. Sepolia and Solana Devnet use separate test-network derivations. TON addresses are added through TON Connect; Tonkeeper, Wallet in Telegram and other compatible wallets keep their own separate addresses.</div>
       </article>
       <article className="panel action-panel">
         <p className="feature-kicker">ACTIVE WALLET</p>
@@ -555,8 +565,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {visibleAddresses.length ? visibleAddresses.map(a => {
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
-            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
-            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)", ton_mainnet: "TON Mainnet", ton_testnet: "TON Testnet" })[a.network] || a.network.toUpperCase();
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}{["ton_mainnet", "ton_testnet"].includes(a.network) ? " • Public address (not ownership-verified)" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: String(a.network || "").startsWith("ton_") ? 9 : 8 })} {balance.asset}</small>}{balance?.jettons?.map((jetton, index) => <small key={jetton.master_address || index}>{jetton.is_scam ? "⚠ Potentially unsafe token · " : ""}{jetton.name || jetton.symbol || "Jetton"}{jetton.symbol ? " · " + jetton.symbol : ""}: {jetton.balance !== null ? jetton.balance : jetton.amount_raw + " raw units (decimals not supplied)"}{jetton.master_address ? " · " + jetton.master_address : ""}</small>)}{balance?.jettons_warning && <small className="feature-error">{balance.jettons_warning}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
@@ -566,12 +576,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <h2>Attach a blockchain address</h2>
       {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="ton_mainnet">TON Mainnet</option><option value="ton_testnet">TON Testnet</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : network === "ton_mainnet" || network === "ton_testnet" ? "TON EQ… / UQ… or raw 0:… address" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Ethereum Sepolia and Solana Devnet are test networks. Solana Mainnet and Devnet are separate network identities; the backend checks each RPC cluster before returning balances. Configure WORLD_WALLET_SOLANA_MAINNET_RPC_URL separately from WORLD_WALLET_SOLANA_DEVNET_RPC_URL.</div>
+      <div className="security-note">Ethereum Sepolia, Solana Devnet and TON Testnet are test networks. TON Mainnet and TON Testnet are separate network identities; the backend uses separate TonAPI hosts for native and Jetton data.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">The BALMZ-SOL-DEVNET mint is test-only and must not be used as the World Wallet AI presale asset. Register the real production BALMZ mint or contract only after its Mainnet deployment is verified; never substitute the Devnet mint.</div>
     </article>
@@ -2224,7 +2234,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <h3>Step 1 · Choose a destination address</h3>
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet",ton_mainnet:"TON Mainnet",ton_testnet:"TON Testnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" || item.network === "ton_testnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy deposit address"}</button></div>
             </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No matching deposit address</b><p>Add or connect a public address for this network first. No address will be invented for you.</p><button className="primary" onClick={() => setActive("Wallets")}>Manage wallet addresses →</button></div>}
@@ -2253,7 +2263,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           {renderIncomingHistoryPanel("Deposit history", "No verified deposits are recorded for this asset and network yet.")}
           <article className="panel wallet-review-card"><span className="feature-kicker">DEPOSIT CHECKLIST</span><div className="wallet-summary-row"><span>Asset</span><b>{asset}</b></div><div className="wallet-summary-row"><span>Addresses available</span><b>{compatibleAddresses.length}</b></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Before sending</span><b>Verify network</b></div><div className="wallet-summary-row"><span>After sending</span><b>Verify on explorer</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Never share your secret phrase</b><p>A deposit only needs the correct public receiving address. Never provide a seed phrase or private key to a sender.</p></div></article>
-          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia is for testing only. Do not send real mainnet funds to a Sepolia address.</p></div></article>
+          <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia, Solana Devnet and TON Testnet are for testing only. Do not send real mainnet funds to a testnet address.</p></div></article>
         </aside>
       </div>
     </section>;
@@ -2285,11 +2295,11 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           {addressMessage && <div role="status" className={/unable|failed|error/i.test(addressMessage) ? "feature-error" : "feature-success"}>{addressMessage}</div>}
           <div className="wallet-address-list">
             {compatibleAddresses.length ? compatibleAddresses.map(item => <div className="wallet-address-card" key={item.network + ":" + item.address}>
-              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" ? "TESTNET" : "MAINNET"}</span></div>
+              <div className="wallet-address-card-top"><div><span className="wallet-address-network-dot"/><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain",bitcoin:"Bitcoin",sepolia:"Ethereum Sepolia",solana_mainnet:"Solana Mainnet",solana_devnet:"Solana Devnet",ton_mainnet:"TON Mainnet",ton_testnet:"TON Testnet"})[item.network] || item.network}</b></div><span className="wallet-address-tag">{item.network === "sepolia" || item.network === "solana_devnet" || item.network === "ton_testnet" ? "TESTNET" : "MAINNET"}</span></div>
               <code>{item.address}</code>
               {item.local && <small className="muted">{item.generated ? "Generated for this self-custody wallet" : "Connected external public address"}{item.walletNumber ? " · Wallet ID " + item.walletNumber : ""}. No private key is sent to the server.</small>}
               <div className="wallet-address-card-bottom"><small>{item.label || "Connected wallet address"}</small><button className="secondary" onClick={async () => { try { await navigator.clipboard.writeText(item.address); setCopiedAddress(item.address); window.setTimeout(() => setCopiedAddress(""), 1800); } catch { setAddressMessage("Clipboard unavailable. Select the address and copy it manually."); } }}>{copiedAddress === item.address ? "✓ Copied" : "Copy address"}</button></div>
-            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{receiveOptions.length ? "Create a complete self-custody wallet in Wallets. Its receiving addresses will be generated automatically and saved to this wallet; external wallet connection is optional." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Create or select wallet →</button></div>}
+            </div>) : <div className="wallet-empty-address"><span>⌁</span><b>No compatible address connected</b><p>{asset === "TON" ? "Open Wallets and connect Tonkeeper, Wallet in Telegram or another compatible TON Connect wallet. Mainnet and Testnet addresses are stored separately." : receiveOptions.length ? "Create a complete self-custody wallet in Wallets. Its receiving addresses will be generated automatically and saved to this wallet; external wallet connection is optional." : "This asset does not yet have a supported receiving network configured in this interface."}</p><button className="primary" onClick={() => setActive("Wallets")}>Create or select wallet →</button></div>}
           </div>
         </article>
         <aside className="wallet-review-column">

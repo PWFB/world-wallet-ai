@@ -33,6 +33,7 @@ const walletCoinCatalog = [
   { symbol: "USDT", name: "Tether USD", icon: "$", status: "Ethereum Mainnet" },
   { symbol: "USDT-BNB", name: "Tether USD (BNB Chain)", icon: "$", status: "BNB Chain Mainnet" },
   { symbol: "BNB", name: "BNB", icon: "◆", status: "BNB Chain" },
+  { symbol: "TON", name: "Toncoin", icon: "T", status: "TON Mainnet · live chain balance" },
   { symbol: "USDC", name: "USD Coin", icon: "$", status: "Supported asset catalog" },
   { symbol: "SOL", name: "Solana", icon: "S", status: "Supported asset catalog" },
   { symbol: "XRP", name: "XRP", icon: "X", status: "Supported asset catalog" },
@@ -865,7 +866,7 @@ function App() {
         if (data.wallet) setWallet(data.wallet);
         if (Array.isArray(data.assets)) setAssets(data.assets.map(asset => ({
           ...asset,
-          icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+          icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : asset.symbol === "TON" ? "T" : "•",
         })));
         if (data.user) setUser(data.user);
         setApiStatus("online");
@@ -886,7 +887,7 @@ function App() {
               if (live.wallet) setWallet(live.wallet);
               if (Array.isArray(live.assets)) setAssets(live.assets.map(asset => ({
                 ...asset,
-                icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+                icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : asset.symbol === "TON" ? "T" : "•",
               })));
               if (Array.isArray(live.transactions)) setActivity(live.transactions.map(tx => ({
                 id: tx.id, type: tx.type, asset: tx.asset || tx.symbol || "",
@@ -914,7 +915,7 @@ function App() {
                   if (priced.wallet) setWallet(priced.wallet);
                   if (Array.isArray(priced.assets)) setAssets(priced.assets.map(asset => ({
                     ...asset,
-                    icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+                    icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : asset.symbol === "TON" ? "T" : "•",
                   })));
                   if (verifiedMainnetRead) setHasVerifiedMainnetBalance(true);
                 }
@@ -1136,7 +1137,7 @@ function App() {
     const walletId = wallet?.wallet_id || user?.wallet_id;
     const network = selectedNetwork;
     if (!["ethereum", "sepolia", "bnb"].includes(network)) {
-      setDashboardAddressMessage("This quick attach field supports Ethereum Mainnet, Ethereum Sepolia, and BNB Chain only. Use Wallets to manage Bitcoin or Solana Devnet addresses.");
+      setDashboardAddressMessage("This quick attach field supports EVM wallets only. Use Wallets to manage Bitcoin, Solana and TON addresses.");
       return;
     }
     if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
@@ -1298,12 +1299,13 @@ function App() {
         setDashboardAddresses(currentAddresses);
       }
       if (!walletId) throw new Error("No active wallet was returned by the server. Open Wallets and select your wallet, then refresh.");
+      const isTonNetwork = ["ton_mainnet", "ton_testnet"].includes(normalizedSelectedNetwork);
       const matches = currentAddresses.filter(item =>
         normalizeNetwork(item.network) === normalizedSelectedNetwork &&
-        item.ownership_verified === true
+        (isTonNetwork || item.ownership_verified === true)
       );
       const chosen = matches.find(item => item.address === selectedNetworkAddress) || matches[0];
-      if (!chosen) throw new Error("No ownership-verified address is attached for " + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)" })[selectedNetwork] || selectedNetwork) + ". Open Wallets, attach the correct public address and complete its signature verification.");
+      if (!chosen) throw new Error((isTonNetwork ? "No TON address is attached for " : "No ownership-verified address is attached for ") + (({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (Testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (Testnet)", ton_mainnet: "TON Mainnet", ton_testnet: "TON Testnet" })[selectedNetwork] || selectedNetwork) + (isTonNetwork ? ". Open Wallets and connect a TON wallet." : ". Open Wallets, attach the correct public address and complete its signature verification."));
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
       if (selectedNetworkAddress !== chosen.address) setSelectedNetworkAddress(chosen.address);
       const query = new URLSearchParams({ network: normalizedSelectedNetwork, address: chosen.address });
@@ -1313,8 +1315,8 @@ function App() {
       const balance = Number(data.balance);
       if (!Number.isFinite(balance) || balance < 0) throw new Error("The API returned an invalid balance.");
       if (requestId !== balanceRequestIdRef.current || normalizeNetworkId(selectedNetwork) !== requestedNetwork) return;
-      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, ownership_verified: true, verified: true, syncedAt: data.synced_at });
-      setSelectedNetworkBalanceMessage("Balance updated.");
+      setSelectedNetworkBalance({ network: normalizedSelectedNetwork, balance, asset: data.asset || normalizedSelectedNetwork, address: chosen.address, jettons: data.jettons || [], jettonsAvailable: data.jettons_available, ownership_verified: data.ownership_verified === true, verified: data.ownership_verified === true, syncedAt: data.synced_at });
+      setSelectedNetworkBalanceMessage(isTonNetwork ? "Public TON balance read from the chain. Address ownership is not verified." : "Balance updated.");
     } catch (error) {
       // Keep the last confirmed balance visible if a refresh fails.
       if (requestId === balanceRequestIdRef.current && normalizeNetworkId(selectedNetwork) === requestedNetwork) setSelectedNetworkBalanceMessage(error.message || "Selected network balance is unavailable.");
@@ -1341,7 +1343,7 @@ function App() {
       setWallet(data.wallet || fallbackWallet);
       setAssets((data.assets || fallbackAssets).map(asset => ({
         ...asset,
-        icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•",
+        icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : asset.symbol === "TON" ? "T" : "•",
       })));
       setActivity((data.transactions || []).map(tx => ({
         type: tx.type,
@@ -2061,7 +2063,7 @@ function App() {
           </button>
           <div className="top-actions">
             {(active !== "Dashboard" || selectedCoin) && <button type="button" className="global-back-button" onClick={() => { setSelectedCoin(null); setActive("Dashboard"); }} aria-label="Back to dashboard" title="Back to dashboard">← <span>Back</span></button>}
-            <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Select wallet environment" value={networkEnvironment(selectedNetwork)} onChange={event => changeNetworkEnvironment(event.target.value)}><option value="mainnet">Mainnet</option><option value="devnet">Devnet</option></select><select aria-label="Select blockchain network" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>{["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option></>}</select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
+            <button type="button" onClick={() => setActive("Browser")} className="top-browser-button">⌕ <span>Browser</span></button><div className="top-network-switch"><select aria-label="Select wallet environment" value={networkEnvironment(selectedNetwork)} onChange={event => changeNetworkEnvironment(event.target.value)}><option value="mainnet">Mainnet</option><option value="devnet">Devnet</option></select><select aria-label="Select blockchain network" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>{["sepolia", "solana_devnet", "ton_testnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option><option value="ton_testnet">TON Testnet</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option><option value="ton_mainnet">TON Mainnet</option></>}</select><button type="button" className="top-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: selectedNetworkBalance.asset === "TON" ? 9 : 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button></div><button>◐</button><button>◔</button><button className="logout-button" onClick={handleLogout}>↪ <span>Log out</span></button><button className="top-avatar" title="Open profile" onClick={() => setActive("Profile")}>{(user?.name || "BA").slice(0, 2).toUpperCase()}</button>
           </div>
         </header>
         <div className="mobile-network-switch-row" aria-label="Blockchain network selector">
@@ -2072,9 +2074,9 @@ function App() {
           </select>
           <label htmlFor="mobile-network-select">NETWORK</label>
           <select id="mobile-network-select" aria-label="Select blockchain network on mobile" value={selectedNetwork} onChange={event => changeSelectedNetwork(event.target.value)}>
-            {["sepolia", "solana_devnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option></>}
+            {["sepolia", "solana_devnet", "ton_testnet"].includes(normalizeNetworkId(selectedNetwork)) ? <><option value="solana_devnet">Solana Devnet</option><option value="sepolia">Ethereum Sepolia</option><option value="ton_testnet">TON Testnet</option></> : <><option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option><option value="solana_mainnet">Solana Mainnet</option><option value="bitcoin">Bitcoin Mainnet</option><option value="ton_mainnet">TON Mainnet</option></>}
           </select>
-          <button type="button" className="mobile-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button>
+          <button type="button" className="mobile-network-refresh" aria-label="Check selected network balance" title={selectedNetworkBalance ? Number(selectedNetworkBalance.balance).toLocaleString("en-US", { maximumFractionDigits: selectedNetworkBalance.asset === "TON" ? 9 : 8 }) + " " + selectedNetworkBalance.asset : selectedNetworkBalanceMessage || "Check selected network balance"} onClick={refreshSelectedNetworkBalance} disabled={selectedNetworkBalanceBusy}>{selectedNetworkBalanceBusy ? "…" : "↻"}</button>
         </div>
         {(!selectedNetworkBalanceBusy && !selectedNetworkBalance && selectedNetworkBalanceMessage && selectedNetworkBalanceMessage !== "Balance updated.") && <div className="network-balance-feedback network-balance-error" role="status" aria-live="polite">{selectedNetworkBalanceMessage}</div>}
 
@@ -2202,9 +2204,9 @@ function App() {
 
             <div className="balance-grid web3-balance-grid">
               <article className="hero-card">
-                <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "solana_mainnet" ? "SOLANA MAINNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM MAINNET BALANCE") : "PORTFOLIO VALUE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
+                <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "solana_mainnet" ? "SOLANA MAINNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : selectedNetwork === "ton_mainnet" ? "TON MAINNET BALANCE" : selectedNetwork === "ton_testnet" ? "TON TESTNET BALANCE" : "ETHEREUM MAINNET BALANCE") : "PORTFOLIO VALUE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalance ? number(selectedNetworkBalance.balance) : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
-                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
+                <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" || selectedNetwork === "ton_testnet" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
 
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
@@ -2405,7 +2407,7 @@ function App() {
               <p className="dashboard-security-note">Mainnet and testnet balances remain separate. World Wallet AI never needs your recovery phrase or private key.</p>
             </article>
           </section>) : active === "Browser" ? <BrowserPage onNavigateLogin={() => setShowLogin(true)} /> : <Suspense fallback={<div className="feature-loading" role="status">Loading wallet tools…</div>}>
-          <FeaturePage accountUserId={accountUserId} accountName={user?.name || ""} accountEmail={user?.email || ""} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); if (Array.isArray(data?.updates)) setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
+          <FeaturePage accountUserId={accountUserId} accountName={user?.name || ""} accountEmail={user?.email || ""} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) setSyncedBalanceAssets([]); setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : asset.symbol === "TON" ? "T" : "•" }))); if (Array.isArray(data?.updates)) setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]); }} onTransactionsUpdated={(transactions) => setActivity((transactions || []).map(tx => ({
             id: tx.id,
             type: tx.type,
             asset: tx.asset || tx.symbol || "",

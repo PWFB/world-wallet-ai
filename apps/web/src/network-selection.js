@@ -7,6 +7,8 @@ export const SUPPORTED_NETWORKS = Object.freeze([
   "bitcoin",
   "solana_mainnet",
   "solana_devnet",
+  "ton_mainnet",
+  "ton_testnet",
 ]);
 
 // Normalize only explicit network identifiers. Generic "mainnet" is ambiguous
@@ -20,6 +22,8 @@ export function normalizeNetworkId(value) {
   if (["eth", "ethereum_mainnet"].includes(network)) return "ethereum";
   if (["ethereum_sepolia"].includes(network)) return "sepolia";
   if (["bsc", "binance_smart_chain"].includes(network)) return "bnb";
+  if (["ton", "ton_mainnet"].includes(network)) return "ton_mainnet";
+  if (["ton_testnet", "testnet_ton"].includes(network)) return "ton_testnet";
   return network;
 }
 
@@ -39,7 +43,7 @@ export function cachedBalanceMatchesNetwork(cachedBalance, selectedNetwork) {
 // explicit chain identifier, but also recognize network-qualified BALMZ assets
 // so a missing or stale row network cannot accidentally mark test tokens as
 // production evidence.
-const TESTNET_NETWORKS = new Set(["sepolia", "solana_devnet"]);
+const TESTNET_NETWORKS = new Set(["sepolia", "solana_devnet", "ton_testnet"]);
 const TESTNET_ASSETS = new Set(["BALMZ-SEP", "BALMZ-SOL-DEVNET"]);
 
 export function isTestnetNetwork(networkValue, assetValue) {
@@ -49,7 +53,7 @@ export function isTestnetNetwork(networkValue, assetValue) {
 }
 
 export function networkEnvironment(value) {
-  return ["sepolia", "solana_devnet"].includes(normalizeNetworkId(value)) ? "devnet" : "mainnet";
+  return ["sepolia", "solana_devnet", "ton_testnet"].includes(normalizeNetworkId(value)) ? "devnet" : "mainnet";
 }
 
 export function defaultNetworkForEnvironment(environment) {

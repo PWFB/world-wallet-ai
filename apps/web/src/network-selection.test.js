@@ -111,3 +111,12 @@ test("maps Mainnet and Devnet environments to isolated default networks", () => 
   assert.equal(networkEnvironment("sepolia"), "devnet");
   assert.equal(networkEnvironment("solana_devnet"), "devnet");
 });
+
+test("TON Mainnet and TON Testnet are distinct supported networks", () => {
+  assert.equal(normalizeNetworkId("ton"), "ton_mainnet");
+  assert.equal(normalizeNetworkId("TON Mainnet"), "ton_mainnet");
+  assert.equal(normalizeNetworkId("ton-testnet"), "ton_testnet");
+  assert.equal(isTestnetNetwork("ton_mainnet"), false);
+  assert.equal(isTestnetNetwork("ton_testnet"), true);
+  assert.equal(networkEnvironment("ton_testnet"), "devnet");
+});

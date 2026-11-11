@@ -79,6 +79,10 @@ BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
 SOLANA_MAINNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_MAINNET_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
+# TON Mainnet and Testnet use isolated TonAPI hosts. Credentials stay server-side.
+TONAPI_MAINNET_BASE_URL = os.getenv("WORLD_WALLET_TONAPI_MAINNET_BASE_URL", "https://tonapi.io/v2").strip().rstrip("/")
+TONAPI_TESTNET_BASE_URL = os.getenv("WORLD_WALLET_TONAPI_TESTNET_BASE_URL", "https://testnet.tonapi.io/v2").strip().rstrip("/")
+TONAPI_API_KEY = (os.getenv("WORLD_WALLET_TONAPI_API_KEY") or os.getenv("TONAPI_API_KEY") or "").strip()
 SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
 BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
@@ -107,6 +111,10 @@ def normalize_wallet_network(value: str) -> str:
         "ethereum_sepolia": "sepolia",
         "bsc": "bnb",
         "binance_smart_chain": "bnb",
+        "ton": "ton_mainnet",
+        "ton_mainnet": "ton_mainnet",
+        "ton_testnet": "ton_testnet",
+        "testnet_ton": "ton_testnet",
     }
     return aliases.get(network, network)
 BTC_ADDRESS = os.getenv("WORLD_WALLET_BTC_ADDRESS", "").strip()
@@ -1520,6 +1528,138 @@ def valid_solana_address(address: str) -> bool:
     value = address.strip()
     raw = _base58_decode(value)
     return bool(raw and len(raw) == 32 and 32 <= len(value) <= 44)
+
+
+def _ton_crc16(data: bytes) -> int:
+    """CRC16-CCITT/XMODEM used by TON user-friendly addresses."""
+    crc = 0
+    for byte in data:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = (((crc << 1) ^ 0x1021) if crc & 0x8000 else (crc << 1)) & 0xFFFF
+    return crc
+
+
+def valid_ton_address(address: str) -> bool:
+    """Validate TON raw addresses and 36-byte base64/base64url friendly addresses."""
+    value = str(address or "").strip()
+    if re.fullmatch(r"(?:-1|0):[0-9a-fA-F]{64}", value):
+        return True
+    if len(value) != 48 or not re.fullmatch(r"[A-Za-z0-9+/_-]{48}", value):
+        return False
+    try:
+        encoded = value.replace("-", "+").replace("_", "/")
+        raw = base64.b64decode(encoded, validate=True)
+    except (ValueError, base64.binascii.Error):
+        return False
+    if len(raw) != 36:
+        return False
+    tag, workchain = raw[0], int.from_bytes(raw[1:2], "big", signed=True)
+    if tag not in {0x11, 0x51, 0x91, 0xD1} or workchain not in {-1, 0}:
+        return False
+    expected = _ton_crc16(raw[:34]).to_bytes(2, "big")
+    return raw[34:36] == expected
+
+
+def _ton_raw_address(address: str) -> str:
+    """Convert an already-validated friendly address to canonical workchain:hash form."""
+    value = str(address or "").strip()
+    if re.fullmatch(r"(?:-1|0):[0-9a-fA-F]{64}", value):
+        workchain, account_hash = value.split(":", 1)
+        return workchain + ":" + account_hash.lower()
+    encoded = value.replace("-", "+").replace("_", "/")
+    raw = base64.b64decode(encoded, validate=True)
+    workchain = int.from_bytes(raw[1:2], "big", signed=True)
+    return f"{workchain}:{raw[2:34].hex()}"
+
+
+def _tonapi_headers() -> dict:
+    return {"Authorization": f"Bearer {TONAPI_API_KEY}"} if TONAPI_API_KEY else {}
+
+
+def _tonapi_get(base_url: str, path: str) -> dict:
+    if not base_url.startswith("https://"):
+        raise ValueError("TON API endpoint must use HTTPS")
+    response = httpx.get(base_url + path, headers=_tonapi_headers(), timeout=15.0)
+    response.raise_for_status()
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise ValueError("TON API returned an invalid response")
+    return payload
+
+
+def _ton_decimal_amount(raw_amount, decimals):
+    """Format integer token units without float rounding or an assumed decimal scale."""
+    if decimals is None:
+        return None
+    amount = Decimal(str(raw_amount)) / (Decimal(10) ** decimals)
+    return format(amount, "f")
+
+
+def ton_account_snapshot(network: str, address: str) -> dict:
+    """Read Toncoin and Jetton data from the network-specific TonAPI indexer."""
+    base_url = TONAPI_TESTNET_BASE_URL if network == "ton_testnet" else TONAPI_MAINNET_BASE_URL
+    canonical_address = _ton_raw_address(address)
+    account_path = "/accounts/" + canonical_address.replace(":", "%3A")
+    account = _tonapi_get(base_url, account_path)
+    raw_balance = account.get("balance")
+    if raw_balance is None or not str(raw_balance).isdigit():
+        raise ValueError("TON API did not return an integer native balance")
+    native_balance = Decimal(str(raw_balance)) / Decimal(1_000_000_000)
+    jettons = []
+    jettons_available = True
+    jettons_warning = None
+    try:
+        jetton_data = _tonapi_get(base_url, account_path + "/jettons")
+        balances = jetton_data.get("balances", [])
+        if not isinstance(balances, list):
+            raise ValueError("TON API returned an invalid Jetton balance list")
+        for item in balances:
+            if not isinstance(item, dict):
+                continue
+            jetton = item.get("jetton") if isinstance(item.get("jetton"), dict) else {}
+            metadata = jetton.get("metadata") if isinstance(jetton.get("metadata"), dict) else {}
+            raw_amount = item.get("balance")
+            if raw_amount is None or not str(raw_amount).isdigit():
+                continue
+            decimals_value = metadata.get("decimals")
+            if decimals_value is None:
+                decimals_value = jetton.get("decimals")
+            try:
+                decimals = int(decimals_value) if decimals_value is not None else None
+            except (TypeError, ValueError):
+                decimals = None
+            if decimals is not None and not 0 <= decimals <= 30:
+                decimals = None
+            wallet_address = item.get("wallet_address")
+            jettons.append({
+                "master_address": jetton.get("address"),
+                "name": metadata.get("name") or jetton.get("name"),
+                "symbol": metadata.get("symbol") or jetton.get("symbol"),
+                "image": metadata.get("image") or jetton.get("image") or jetton.get("preview"),
+                "description": metadata.get("description") or jetton.get("description"),
+                "decimals": decimals,
+                "amount_raw": str(raw_amount),
+                "balance": _ton_decimal_amount(raw_amount, decimals),
+                "metadata_source": "TonAPI Jetton metadata (TEP-64 indexed)",
+                "verification": jetton.get("verification"),
+                "is_scam": bool(jetton.get("is_scam", False)) or str(jetton.get("verification") or "").lower() == "blacklist",
+                "wallet_address": wallet_address.get("address") if isinstance(wallet_address, dict) else (wallet_address if isinstance(wallet_address, str) else None),
+            })
+    except Exception as exc:
+        # Native TON remains usable when the optional Jetton index is rate-limited
+        # or unavailable; never represent an indexing failure as a zero balance.
+        jettons_available = False
+        jettons_warning = "Jetton index unavailable (" + type(exc).__name__ + ")"
+    return {
+        "balance": float(native_balance),
+        "jettons": jettons,
+        "jettons_available": jettons_available,
+        "jettons_warning": jettons_warning,
+        "source": "TonAPI",
+        "metadata_standard": "TEP-64 indexed metadata",
+        "network": network,
+    }
 
 
 def valid_bitcoin_base58(address: str) -> bool:
@@ -6105,7 +6245,8 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     if network in {"ethereum","bnb","sepolia"} and not valid_evm_address(address): raise HTTPException(status_code=400,detail="Invalid EVM address")
     if network=="bitcoin" and not valid_bitcoin_address(address): raise HTTPException(status_code=400,detail="Invalid Bitcoin address")
     if network in {"solana_mainnet","solana_devnet"} and not valid_solana_address(address): raise HTTPException(status_code=400,detail="Invalid Solana public address")
-    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_mainnet","solana_devnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
+    if network in {"ton_mainnet","ton_testnet"} and not valid_ton_address(address): raise HTTPException(status_code=400,detail="Invalid TON address")
+    if network not in {"ethereum","bnb","sepolia","bitcoin","solana_mainnet","solana_devnet","ton_mainnet","ton_testnet"}: raise HTTPException(status_code=400,detail="Unsupported wallet network")
     with db() as conn:
         owner=conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s",(wallet_id,user["id"])).fetchone()
         if not owner: raise HTTPException(status_code=404,detail="Wallet not found")
@@ -6255,7 +6396,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
     """Read the balance for one attached public address without mutating portfolio assets."""
     network = normalize_wallet_network(network)
     address = address.strip()
-    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet"}:
+    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet", "ton_mainnet", "ton_testnet"}:
         raise HTTPException(status_code=400, detail="Unsupported wallet network")
     if network in {"ethereum", "sepolia", "bnb"} and not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM address")
@@ -6263,6 +6404,34 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         raise HTTPException(status_code=400, detail="Invalid Bitcoin address")
     if network in {"solana_mainnet", "solana_devnet"} and not valid_solana_address(address):
         raise HTTPException(status_code=400, detail="Invalid Solana public address")
+    if network in {"ton_mainnet", "ton_testnet"} and not valid_ton_address(address):
+        raise HTTPException(status_code=400, detail="Invalid TON address")
+    if network in {"ton_mainnet", "ton_testnet"}:
+        # TON balances are public blockchain data. Attachment is wallet-scoped,
+        # but this does not claim cryptographic ownership without a TON proof flow.
+        with db() as conn:
+            owner = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (wallet_id, user["id"])).fetchone()
+            if not owner:
+                raise HTTPException(status_code=404, detail="Wallet not found")
+            attached = conn.execute(
+                "SELECT 1 FROM wallet_addresses WHERE wallet_id=%s AND network=%s AND address=%s",
+                (wallet_id, network, address),
+            ).fetchone()
+            if not attached:
+                raise HTTPException(status_code=404, detail="Attach this TON address to the selected wallet before checking its balance")
+        try:
+            snapshot = ton_account_snapshot(network, address)
+        except Exception as exc:
+            logger.warning("TON balance lookup failed for network=%s error_type=%s", network, type(exc).__name__)
+            raise HTTPException(status_code=503, detail=f"{network.replace('_', ' ').title()} provider unavailable") from exc
+        return {
+            "wallet_id": wallet_id, "network": network, "address": address,
+            "asset": "TON", "balance": snapshot["balance"], "unit": "TON",
+            "jettons": snapshot["jettons"], "jettons_available": snapshot["jettons_available"],
+            "jettons_warning": snapshot["jettons_warning"], "source": snapshot["source"],
+            "metadata_standard": snapshot["metadata_standard"], "read_only": True,
+            "ownership_verified": False, "synced_at": datetime.now(timezone.utc).isoformat(),
+        }
     with db() as conn:
         owner = conn.execute("SELECT id FROM wallets WHERE id=%s AND owner_id=%s", (wallet_id, user["id"])).fetchone()
         if not owner:

@@ -46,6 +46,8 @@ jobs:
         run: npm install
       - name: Run network selection regression tests
         run: npm run test:network-selection
+      - name: Run TON address, network, nanoTON and Jetton transfer regression tests
+        run: npm run test:ton
       - name: Run WalletConnect multi-chain account parsing tests
         run: npm run test:walletconnect-accounts
       - name: Run wallet security and multi-chain derivation tests
