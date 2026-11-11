@@ -219,6 +219,16 @@ class NeonAuthCredentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=1, max_length=128)
 
+
+class NeonAuthPasswordResetRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
+
+class NeonAuthPasswordResetCompleteRequest(BaseModel):
+    token: str = Field(min_length=8, max_length=4096)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class NeonAuthRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=5, max_length=254)
@@ -1399,29 +1409,12 @@ def _neon_auth_sign_in(path: str, body: dict):
         with httpx.Client(timeout=15, follow_redirects=False) as client:
             response = client.post(base + path, json=body, headers=headers)
             if not response.is_success:
-                # If the credentials are rejected because this email has no Neon Auth
-                # account yet, create the account using the password the user supplied.
-                # If the email already exists, sign-up will fail and we keep the normal
-                # generic authentication error; this never bypasses an existing password.
-                if path == "/sign-in/email" and response.status_code in {400, 401}:
-                    signup_body = {
-                        "name": "World Wallet User",
-                        "email": str(body.get("email", "")).strip().lower(),
-                        "password": str(body.get("password", "")),
-                    }
-                    signup = client.post(base + "/sign-up/email", json=signup_body, headers=headers)
-                    if signup.is_success:
-                        response = signup
-                    else:
-                        raise HTTPException(
-                            status_code=response.status_code if response.status_code < 500 else 502,
-                            detail=_neon_auth_error(response),
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=response.status_code if response.status_code < 500 else 502,
-                        detail=_neon_auth_error(response),
-                    )
+                # Sign-in must never turn a rejected password into account
+                # creation. Registration is an explicit, separately verified flow.
+                raise HTTPException(
+                    status_code=response.status_code if response.status_code < 500 else 502,
+                    detail=_neon_auth_error(response),
+                )
             payload = _neon_auth_json(response)
             token_response = client.get(base + "/token", headers={
                 "Accept": "application/json",
@@ -1672,6 +1665,7 @@ def wallet_owns_network_address(user, network, address):
     return any(
         str(item.get("network") or "").strip().lower() == normalized_network
         and str(item.get("address") or "").strip().lower() == normalized_address
+        and item.get("ownership_verified") is True
         for item in configured_addresses(user)
     )
 
@@ -1927,7 +1921,7 @@ def sync_evm_native_transactions(user, url: str, network: str, wallet_address=No
             return [], "latest block unavailable"
 
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_NATIVE_TX_LOOKBACK_BLOCKS", "100")), 500))
-        source = network + ":native"
+        source = network + ":native:" + sha(wallet_address.lower())[:16]
         native_asset = "ETH" if network == "ethereum" else ("BNB" if network == "bnb" else "ETH-SEP" if network == "sepolia" else network.upper())
         wallet_lower = wallet_address.lower()
         reorg_overlap = max(1, min(int(os.getenv("WORLD_WALLET_SYNC_REORG_OVERLAP", "6")), 20))
@@ -2075,7 +2069,7 @@ def sync_evm_token_transactions(user, url: str, network: str, contract: str, sym
         if latest is None:
             return [], "latest block unavailable"
         lookback = max(1, min(int(os.getenv("WORLD_WALLET_EVM_TX_LOOKBACK_BLOCKS", "5000")), 100000))
-        source = network + ":" + symbol.lower()
+        source = network + ":" + symbol.lower() + ":" + sha(wallet_address.lower())[:16]
 
         # Only the cursor query uses a DB connection; log/receipt RPCs run without one.
         with db() as cursor_conn:
@@ -2715,6 +2709,40 @@ def neon_password_login(request: NeonAuthCredentials):
         "password": request.password,
         "rememberMe": True,
     })
+
+
+@app.post("/api/v1/auth/neon/password/reset/request")
+def neon_password_reset_request(request: NeonAuthPasswordResetRequest):
+    """Send an email-verified password setup/reset link through Neon Auth."""
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    email = request.email.strip().lower()
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Enter a valid email address.")
+    redirect_to = _neon_auth_origin().rstrip("/") + "/?password_reset=1"
+    _neon_auth_post("/request-password-reset", {
+        "email": email,
+        "redirectTo": redirect_to,
+    })
+    # Keep the response generic so callers cannot enumerate account addresses.
+    return {
+        "ok": True,
+        "message": "If an account is registered for this email, a password setup link has been sent.",
+    }
+
+
+@app.post("/api/v1/auth/neon/password/reset")
+def neon_password_reset_complete(request: NeonAuthPasswordResetCompleteRequest):
+    """Complete the email-verified password reset issued by Neon Auth."""
+    if not NEON_AUTH_BASE_URL:
+        raise HTTPException(status_code=503, detail="Neon Auth is not configured on the server")
+    if len(request.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Use a password with at least 8 characters.")
+    _neon_auth_post("/reset-password", {
+        "token": request.token,
+        "newPassword": request.new_password,
+    })
+    return {"ok": True, "message": "Password updated. Sign in with your new password."}
 
 def _normalise_phone_number(value: str) -> str:
     phone = re.sub(r"[\s()-]", "", value or "")
@@ -3619,23 +3647,30 @@ def wallet_balance_verification_snapshot(user: dict):
         try:
             config["identity_check"](config["rpc"])
             total = Decimal("0")
+            address_balances = []
             for address in addresses:
                 if network == "solana_mainnet":
                     raw = rpc_call(config["rpc"], "getBalance", [address, {"commitment": "finalized"}])
                     lamports = raw.get("value") if isinstance(raw, dict) else None
                     if not isinstance(lamports, int) or lamports < 0:
                         raise ValueError("Solana Mainnet returned an invalid native balance")
-                    total += Decimal(lamports) / (Decimal(10) ** 9)
+                    address_balance = Decimal(lamports) / (Decimal(10) ** 9)
                 elif network in {"ethereum", "bnb"}:
                     raw_balance = rpc_call(config["rpc"], "eth_getBalance", [address, "latest"])
                     if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", raw_balance):
                         raise ValueError("EVM RPC returned an invalid native balance")
-                    total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** 18)
+                    address_balance = Decimal(int(raw_balance, 16)) / (Decimal(10) ** 18)
                 else:
                     balance = config["native_reader"](config["rpc"], address)
                     if balance is None or not math.isfinite(float(balance)) or float(balance) < 0:
                         raise ValueError("Mainnet provider returned an invalid native balance")
-                    total += Decimal(str(balance))
+                    address_balance = Decimal(str(balance))
+                total += address_balance
+                address_balances.append({
+                    "address": address,
+                    "chain_balance": float(address_balance),
+                    "verified": True,
+                })
             symbol = config["native_symbol"]
             row = ledger.get(symbol)
             reserved = row["reserved"] if row else Decimal("0")
@@ -3651,6 +3686,7 @@ def wallet_balance_verification_snapshot(user: dict):
                 "available_balance": float(chain_available),
                 "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                 "matches_ledger": matches, "addresses_checked": len(addresses),
+                "address_balances": address_balances,
                 "source": "Finalized Mainnet RPC" if network == "solana_mainnet" else "Mainnet RPC",
                 "observed_at": observed_at,
                 "note": "Available balance is the sum of confirmed balances across verified attached addresses less the wallet's pending reservations.",
@@ -3706,12 +3742,19 @@ def wallet_balance_verification_snapshot(user: dict):
                 raise ValueError("Configured token address has no contract bytecode on this network")
             decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
             total = Decimal("0")
+            address_balances = []
             for address in addresses:
                 balance_data = "0x70a08231" + address[2:].lower().rjust(64, "0")
                 raw_balance = rpc_call(rpc, "eth_call", [{"to": contract, "data": balance_data}, "latest"])
                 if not isinstance(raw_balance, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", raw_balance):
                     raise ValueError("Token contract returned an invalid balanceOf response")
-                total += Decimal(int(raw_balance, 16)) / (Decimal(10) ** decimals)
+                address_balance = Decimal(int(raw_balance, 16)) / (Decimal(10) ** decimals)
+                total += address_balance
+                address_balances.append({
+                    "address": address,
+                    "chain_balance": float(address_balance),
+                    "verified": True,
+                })
             row = ledger.get(asset_symbol)
             reserved = row["reserved"] if row else Decimal("0")
             ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
@@ -3727,6 +3770,7 @@ def wallet_balance_verification_snapshot(user: dict):
                 "available_balance": float(chain_available),
                 "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                 "matches_ledger": matches, "addresses_checked": len(addresses),
+                "address_balances": address_balances,
                 "source": "Chain-verified ERC-20 contract and eth_call",
                 "observed_at": observed_at,
                 "note": "Token balance was read from the configured contract on the matching Mainnet chain.",
@@ -3778,12 +3822,19 @@ def wallet_balance_verification_snapshot(user: dict):
                 if not mint_check.get("production_mint_verified"):
                     raise ValueError("Production BALMZ Mainnet mint did not pass verification")
                 total = Decimal("0")
+                address_balances = []
                 for address in addresses_by_network["solana_mainnet"]:
-                    total += _read_verified_solana_spl_balance(
+                    address_balance = _read_verified_solana_spl_balance(
                         address, mint, rpc_url=SOLANA_MAINNET_RPC_URL,
                         expected_genesis_hash=SOLANA_MAINNET_GENESIS_HASH,
                         cluster_name="Solana Mainnet", decimals=BALMZ_SOLANA_DEVNET_DECIMALS,
                     )
+                    total += address_balance
+                    address_balances.append({
+                        "address": address,
+                        "chain_balance": float(address_balance),
+                        "verified": True,
+                    })
                 ledger_available = max(row["actual"] - reserved, Decimal("0")) if row else None
                 chain_available = max(total - reserved, Decimal("0"))
                 matches = abs(total - row["actual"]) <= Decimal("0.000000001") if row else None
@@ -3797,6 +3848,7 @@ def wallet_balance_verification_snapshot(user: dict):
                     "available_balance": float(chain_available),
                     "ledger_available_balance": float(ledger_available) if ledger_available is not None else None,
                     "matches_ledger": matches, "addresses_checked": len(addresses_by_network["solana_mainnet"]),
+                    "address_balances": address_balances,
                     "source": "Finalized Solana Mainnet mint and token accounts",
                     "observed_at": observed_at,
                     "note": "Read from the independently verified production SPL mint; Devnet assets are excluded.",
@@ -3873,6 +3925,13 @@ def wallet_balance_verification_snapshot(user: dict):
         "observed_at": observed_at,
         "addresses": {
             network: {"verified_address_count": len(addresses_by_network[network])}
+            for network in networks
+        },
+        "addresses_detail": {
+            network: [
+                {"address": address, "ownership_verified": True}
+                for address in addresses_by_network[network]
+            ]
             for network in networks
         },
         "assets": results,
