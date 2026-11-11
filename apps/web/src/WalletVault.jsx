@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes, verifyMessage } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
+import { verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -42,6 +43,11 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [revealedPrivateKey, setRevealedPrivateKey] = useState("");
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
+  const [typedDataDomainJson, setTypedDataDomainJson] = useState("");
+  const [typedDataTypesJson, setTypedDataTypesJson] = useState("");
+  const [typedDataValueJson, setTypedDataValueJson] = useState("");
+  const [typedDataSignature, setTypedDataSignature] = useState("");
+  const [typedDataResult, setTypedDataResult] = useState(null);
   const [verifyAddressInput, setVerifyAddressInput] = useState("");
   const [verifyMessageInput, setVerifyMessageInput] = useState("");
   const [verifySignatureInput, setVerifySignatureInput] = useState("");
@@ -812,16 +818,55 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   }
 
   async function signLocalMessage() {
-    if (!unlocked) return setMessage("Unlock a local wallet first.");
+    if (!unlocked) return setMessage("Unlock a World Wallet AI local vault wallet first.");
     if (!signMessage.trim()) return setMessage("Enter a message to sign.");
     setBusy(true);
     setMessage("");
     try {
       const signed = await unlocked.signMessage(signMessage);
+      const verified = verifyEvmMessageSignature(signMessage, signed, unlocked.address);
       setSignature(signed);
-      setMessage("Message signed locally. This is an off-chain signature, not a blockchain transaction.");
+      setVerifyAddressInput(unlocked.address);
+      setVerifyMessageInput(signMessage);
+      setVerifySignatureInput(signed);
+      setVerifyResult({
+        ok: verified.valid,
+        text: verified.valid ? "Verified inside World Wallet AI: recovered signer matches the unlocked local wallet." : "The signature did not match the unlocked local wallet.",
+        recovered: verified.recoveredAddress,
+      });
+      setMessage("Message signed and cryptographically verified inside World Wallet AI. This is an off-chain signature, not a blockchain transaction.");
     } catch (error) {
-      setMessage(error.message || "Signing failed.");
+      setMessage(error?.message || "Signing or local signature verification failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function readTypedDataInputs() {
+    let domain; let types; let value;
+    try { domain = JSON.parse(typedDataDomainJson); } catch { throw new Error("Typed-data domain must be valid JSON."); }
+    try { types = JSON.parse(typedDataTypesJson); } catch { throw new Error("Typed-data types must be valid JSON."); }
+    try { value = JSON.parse(typedDataValueJson); } catch { throw new Error("Typed-data message must be valid JSON."); }
+    return { domain, types, value };
+  }
+
+  async function signLocalTypedData() {
+    if (!unlocked) return setTypedDataResult({ ok: false, text: "Unlock a World Wallet AI local vault wallet first." });
+    setBusy(true);
+    setTypedDataResult(null);
+    try {
+      const { domain, types, value } = readTypedDataInputs();
+      const signed = await unlocked.signTypedData(domain, types, value);
+      const verified = verifyEvmTypedDataSignature(domain, types, value, signed, unlocked.address);
+      setTypedDataSignature(signed);
+      setTypedDataResult({
+        ok: verified.valid,
+        text: verified.valid ? "EIP-712 signature verified inside World Wallet AI. Recovered signer matches the unlocked local wallet." : "EIP-712 signer did not match the unlocked local wallet.",
+        recovered: verified.recoveredAddress,
+      });
+      setMessage("Typed data signed and cryptographically verified inside World Wallet AI. No transaction was sent.");
+    } catch (error) {
+      setTypedDataResult({ ok: false, text: error?.message || "Typed-data signing failed." });
     } finally {
       setBusy(false);
     }
@@ -829,33 +874,38 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
 
   function verifySignedMessage() {
     setVerifyResult(null);
-    const addressToCheck = verifyAddressInput.trim();
-    const messageToCheck = verifyMessageInput;
-    const signatureToCheck = verifySignatureInput.trim();
-    if (!isAddress(addressToCheck)) {
-      setVerifyResult({ ok: false, text: "Enter a valid EVM wallet address." });
-      return;
-    }
-    if (!messageToCheck) {
-      setVerifyResult({ ok: false, text: "Enter the exact original message that was signed." });
-      return;
-    }
-    if (!/^0x[0-9a-fA-F]{130}$/.test(signatureToCheck)) {
-      setVerifyResult({ ok: false, text: "Enter a 65-byte EVM message signature (0x followed by 130 hexadecimal characters)." });
-      return;
-    }
     try {
-      const recovered = verifyMessage(messageToCheck, signatureToCheck);
-      const matches = recovered.toLowerCase() === addressToCheck.toLowerCase();
+      const result = verifyEvmMessageSignature(
+        verifyMessageInput,
+        verifySignatureInput.trim(),
+        verifyAddressInput.trim(),
+      );
       setVerifyResult({
-        ok: matches,
-        text: matches
-          ? "Signature valid: the recovered signer matches the supplied address."
-          : "Signature does not match this address. Check the exact message, signature, and network wallet address.",
-        recovered,
+        ok: result.valid,
+        text: result.valid
+          ? "Signature valid: the recovered EOA signer matches the supplied address."
+          : "Signature is cryptographically valid but does not match the expected address.",
+        recovered: result.recoveredAddress,
       });
-    } catch {
-      setVerifyResult({ ok: false, text: "Signature could not be decoded as a standard EVM personal-message signature." });
+    } catch (error) {
+      setVerifyResult({ ok: false, text: error?.message || "Signature verification failed." });
+    }
+  }
+
+  function verifyTypedDataLocalSignature() {
+    setTypedDataResult(null);
+    try {
+      const { domain, types, value } = readTypedDataInputs();
+      const result = verifyEvmTypedDataSignature(domain, types, value, typedDataSignature.trim(), verifyAddressInput.trim() || unlocked?.address || "");
+      setTypedDataResult({
+        ok: result.valid,
+        text: result.valid
+          ? "EIP-712 signature valid: recovered EOA signer matches the expected address."
+          : "EIP-712 signature is valid but does not match the expected address.",
+        recovered: result.recoveredAddress,
+      });
+    } catch (error) {
+      setTypedDataResult({ ok: false, text: error?.message || "EIP-712 verification failed." });
     }
   }
 
@@ -1124,13 +1174,25 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
         <div className="wallet-message-signing">
           <h3>Verify a signed message</h3>
-          <p className="muted">Recover the signer from an EVM personal-message signature. This verifies a message signature only; it does not authorize or verify a blockchain transaction.</p>
-          <label>Expected wallet address<input value={verifyAddressInput} onChange={event => { setVerifyAddressInput(event.target.value); setVerifyResult(null); }} placeholder="0x…" autoComplete="off" /></label>
+          <p className="muted">World Wallet AI recovers the EOA signer locally and compares it with the expected address. A valid message signature is not a transaction confirmation.</p>
+          <label>Expected wallet address<input value={verifyAddressInput} onChange={event => { setVerifyAddressInput(event.target.value); setVerifyResult(null); setTypedDataResult(null); }} placeholder="0x…" autoComplete="off" /></label>
           <label>Exact signed message<textarea rows="3" value={verifyMessageInput} onChange={event => { setVerifyMessageInput(event.target.value); setVerifyResult(null); }} placeholder="Paste the exact original message" /></label>
           <label>Signature<input value={verifySignatureInput} onChange={event => { setVerifySignatureInput(event.target.value); setVerifyResult(null); }} placeholder="0x…" autoComplete="off" /></label>
           <button className="secondary" disabled={busy} onClick={verifySignedMessage}>Verify message signature</button>
           {verifyResult && <div className={verifyResult.ok ? "feature-success" : "feature-error"}>{verifyResult.text}{verifyResult.recovered && <div><small>Recovered signer: <code>{verifyResult.recovered}</code></small></div>}</div>}
         </div>
+        <div className="wallet-message-signing">
+          <h3>Sign and verify EIP-712 typed data</h3>
+          <p className="muted">Structured-data signatures are created only by the unlocked encrypted local vault wallet. The domain should include the intended chain ID and verifying contract where applicable.</p>
+          <label>EIP-712 domain JSON<textarea rows="3" value={typedDataDomainJson} onChange={event => { setTypedDataDomainJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"name":"My dApp","version":"1","chainId":1}' /></label>
+          <label>EIP-712 types JSON<textarea rows="4" value={typedDataTypesJson} onChange={event => { setTypedDataTypesJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"Permit":[{"name":"owner","type":"address"},{"name":"spender","type":"address"},{"name":"value","type":"uint256"}]}' /></label>
+          <label>EIP-712 message JSON<textarea rows="4" value={typedDataValueJson} onChange={event => { setTypedDataValueJson(event.target.value); setTypedDataSignature(""); setTypedDataResult(null); }} placeholder='{"owner":"0x…","spender":"0x…","value":"1000"}' /></label>
+          <button className="secondary" disabled={busy || !typedDataDomainJson.trim() || !typedDataTypesJson.trim() || !typedDataValueJson.trim()} onClick={signLocalTypedData}>Sign typed data inside World Wallet AI</button>
+          {typedDataSignature && <label>Typed-data signature<textarea readOnly rows="3" value={typedDataSignature} /></label>}
+          <button className="secondary" disabled={busy || !typedDataSignature.trim()} onClick={verifyTypedDataLocalSignature}>Verify EIP-712 signature</button>
+          {typedDataResult && <div className={typedDataResult.ok ? "feature-success" : "feature-error"}>{typedDataResult.text}{typedDataResult.recovered && <div><small>Recovered signer: <code>{typedDataResult.recovered}</code></small></div>}</div>}
+        </div>
+        <p className="security-note">This local signing panel cannot sign for an external OKX-held address such as 0xbb unless that address's authorized signing key is available through a supported wallet session. Never import or reveal a seed phrase or private key to bypass that boundary. EIP-1271 contract-wallet checks require a separate on-chain verifier; this tool currently verifies EOA signatures only.</p>
         {selected?.network === "sepolia" && <div className="wallet-message-signing">
           <h3>Send Sepolia test ETH</h3>
           <label>Recipient address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
