@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, formatEther, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
+import { Contract, HDNodeWallet, JsonRpcProvider, Wallet, TypedDataEncoder, formatEther, hashMessage, isAddress, keccak256, parseEther, parseUnits, toUtf8Bytes } from "ethers";
 import { createWalletBackupPayload, isWalletBackupFile, parseWalletBackupContent } from "./google-drive-wallet-backup.js";
 import { getNeonAccessToken } from "./auth-client.js";
 import { createWalletNumber, decryptMnemonic, deriveWalletAddresses, encryptMnemonic, signSolanaMessage } from "./wallet-addresses.js";
-import { verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
+import { verifyEip1271Signature, verifyEvmMessageSignature, verifyEvmTypedDataSignature } from "./wallet-signatures.js";
 
 const VAULT_KEY = "world_wallet_encrypted_vault_v1";
 const SEPOLIA_RPC = (import.meta.env.VITE_WORLD_WALLET_SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com").trim();
@@ -48,6 +48,9 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [typedDataValueJson, setTypedDataValueJson] = useState("");
   const [typedDataSignature, setTypedDataSignature] = useState("");
   const [typedDataResult, setTypedDataResult] = useState(null);
+  const [smartWalletNetwork, setSmartWalletNetwork] = useState("ethereum");
+  const [smartWalletBusy, setSmartWalletBusy] = useState(false);
+  const [smartWalletResult, setSmartWalletResult] = useState(null);
   const [verifyAddressInput, setVerifyAddressInput] = useState("");
   const [verifyMessageInput, setVerifyMessageInput] = useState("");
   const [verifySignatureInput, setVerifySignatureInput] = useState("");
@@ -909,6 +912,81 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     }
   }
 
+  async function verifyExternalSmartWalletMessage() {
+    setSmartWalletBusy(true);
+    setSmartWalletResult(null);
+    let provider;
+    try {
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+      if (!verifyMessageInput) throw new Error("Enter the exact original message.");
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const result = await verifyEip1271Signature(
+        provider,
+        verifyAddressInput.trim(),
+        hashMessage(verifyMessageInput),
+        verifySignatureInput.trim(),
+        config.chainId,
+      );
+      setSmartWalletResult({
+        ok: result.valid,
+        text: result.valid
+          ? "Verified by the smart wallet on " + config.label + ": ERC-1271 returned the valid magic value."
+          : "The smart wallet rejected this signature on " + config.label + ".",
+        walletAddress: result.walletAddress,
+        chainId: result.chainId,
+        magicValue: result.magicValue,
+      });
+    } catch (error) {
+      setSmartWalletResult({ ok: false, text: error?.message || "Smart-wallet verification failed." });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletBusy(false);
+    }
+  }
+
+  async function verifyExternalSmartWalletTypedData() {
+    setSmartWalletBusy(true);
+    setSmartWalletResult(null);
+    let provider;
+    try {
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+      if (!typedDataSignature.trim()) throw new Error("Paste the exact EIP-712 signature.");
+      const { domain, types, value } = readTypedDataInputs();
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const result = await verifyEip1271Signature(
+        provider,
+        verifyAddressInput.trim(),
+        TypedDataEncoder.hash(domain, types, value),
+        typedDataSignature.trim(),
+        config.chainId,
+      );
+      setSmartWalletResult({
+        ok: result.valid,
+        text: result.valid
+          ? "Verified by the smart wallet on " + config.label + ": ERC-1271 returned the valid magic value."
+          : "The smart wallet rejected this EIP-712 signature on " + config.label + ".",
+        walletAddress: result.walletAddress,
+        chainId: result.chainId,
+        magicValue: result.magicValue,
+      });
+    } catch (error) {
+      setSmartWalletResult({ ok: false, text: error?.message || "Smart-wallet EIP-712 verification failed." });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletBusy(false);
+    }
+  }
+
   async function sendSepoliaEth() {
     if (!unlocked || selected?.network !== "sepolia") {
       setMessage("Unlock a wallet connected to Ethereum Sepolia first.");
@@ -1168,7 +1246,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setSmartWalletResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message inside World Wallet AI"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
@@ -1193,6 +1271,17 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           {typedDataResult && <div className={typedDataResult.ok ? "feature-success" : "feature-error"}>{typedDataResult.text}{typedDataResult.recovered && <div><small>Recovered signer: <code>{typedDataResult.recovered}</code></small></div>}</div>}
         </div>
         <p className="security-note">This local signing panel cannot sign for an external OKX-held address such as 0xbb unless that address's authorized signing key is available through a supported wallet session. Never import or reveal a seed phrase or private key to bypass that boundary. EIP-1271 contract-wallet checks require a separate on-chain verifier; this tool currently verifies EOA signatures only.</p>
+        <div className="wallet-message-signing">
+          <h3>Verify external OKX smart-wallet signature</h3>
+          <p className="muted">Read-only verification for an external smart wallet such as your 0xbb EIP-7702 account. World Wallet AI calls isValidSignature on the selected Mainnet and accepts only the EIP-1271 magic value. It never requests or stores your OKX private key.</p>
+          <label>Verification network<select value={smartWalletNetwork} onChange={event => { setSmartWalletNetwork(event.target.value); setSmartWalletResult(null); }}>
+            <option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option>
+          </select></label>
+          <button className="secondary" disabled={smartWalletBusy || !verifyAddressInput.trim() || !verifyMessageInput || !verifySignatureInput.trim()} onClick={verifyExternalSmartWalletMessage}>{smartWalletBusy ? "Checking smart wallet…" : "Verify message with smart wallet"}</button>
+          <button className="secondary" disabled={smartWalletBusy || !verifyAddressInput.trim() || !typedDataSignature.trim() || !typedDataDomainJson.trim() || !typedDataTypesJson.trim() || !typedDataValueJson.trim()} onClick={verifyExternalSmartWalletTypedData}>Verify typed data with smart wallet</button>
+          {smartWalletResult && <div className={smartWalletResult.ok ? "feature-success" : "feature-error"}>{smartWalletResult.text}{smartWalletResult.walletAddress && <div><small>Wallet: <code>{smartWalletResult.walletAddress}</code> · Chain ID {smartWalletResult.chainId} · Return: <code>{smartWalletResult.magicValue}</code></small></div>}</div>}
+          <p className="security-note">This verifies a signature already supplied to World Wallet AI. It does not create a signature for the external OKX account. That account's private key cannot be used by this local vault signer. EIP-7702 accounts must execute their own implementation-specific verification behavior; a failed or unsupported read-only call is not a proof that the signature is valid.</p>
+        </div>
         {selected?.network === "sepolia" && <div className="wallet-message-signing">
           <h3>Send Sepolia test ETH</h3>
           <label>Recipient address<input value={recipient} onChange={event => setRecipient(event.target.value)} placeholder="0x…" /></label>
