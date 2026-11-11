@@ -7,6 +7,12 @@ import {
   verifyEvmMessageSignature,
   verifyEvmTypedDataSignature,
 } from "./wallet-signatures.js";
+import {
+  OKX_EIP7702_CODE_PREFIX,
+  OKX_WALLETCORE_IMPLEMENTATION,
+  encodeOkxWalletCoreSelfExecution,
+  isExpectedOkxWalletCoreDelegation,
+} from "./okx-walletcore.js";
 
 test("personal-message signature verifies against its recovered EOA", async () => {
   const wallet = Wallet.createRandom();
@@ -110,4 +116,46 @@ test("ERC-1271 refuses missing code and call failures", async () => {
     verifyEip1271Signature(makeMockProvider({ failCall: true }), WALLET, DIGEST, SIGNATURE, 1),
     /did not accept the ERC-1271/,
   );
+});
+
+import assert from "node:assert/strict";
+import test from "node:test";
+import { Interface } from "ethers";
+import {
+  OKX_EIP7702_CODE_PREFIX,
+  OKX_WALLETCORE_IMPLEMENTATION,
+  encodeOkxWalletCoreSelfExecution,
+  isExpectedOkxWalletCoreDelegation,
+} from "./okx-walletcore.js";
+
+test("recognizes only the exact configured OKX WalletCore EIP-7702 delegation", () => {
+  const code = OKX_EIP7702_CODE_PREFIX + OKX_WALLETCORE_IMPLEMENTATION.slice(2);
+  assert.equal(isExpectedOkxWalletCoreDelegation(code), true);
+  assert.equal(isExpectedOkxWalletCoreDelegation("0x"), false);
+  assert.equal(isExpectedOkxWalletCoreDelegation("0xef0100" + "11".repeat(20)), false);
+  assert.equal(isExpectedOkxWalletCoreDelegation(code.slice(0, -2)), false);
+});
+
+test("encodes WalletCore executeFromSelf with native and ERC-20 calls", () => {
+  const calls = [
+    { target: "0x1111111111111111111111111111111111111111", value: 123n, data: "0x" },
+    { target: "0x2222222222222222222222222222222222222222", value: 0n, data: "0xa9059cbb" + "0".repeat(128) },
+  ];
+  const encoded = encodeOkxWalletCoreSelfExecution(calls);
+  const iface = new Interface(["function executeFromSelf((address target,uint256 value,bytes data)[] calls)"]);
+  const decoded = iface.decodeFunctionData("executeFromSelf", encoded)[0];
+  assert.equal(decoded.length, 2);
+  assert.equal(decoded[0].target, calls[0].target);
+  assert.equal(decoded[0].value, 123n);
+  assert.equal(decoded[0].data, "0x");
+  assert.equal(decoded[1].target, calls[1].target);
+  assert.equal(decoded[1].value, 0n);
+  assert.equal(decoded[1].data, calls[1].data);
+});
+
+test("rejects empty, invalid, or negative WalletCore execution calls", () => {
+  assert.throws(() => encodeOkxWalletCoreSelfExecution([]), /At least one/);
+  assert.throws(() => encodeOkxWalletCoreSelfExecution([{ target: "bad", value: 0, data: "0x" }]), /invalid target/);
+  assert.throws(() => encodeOkxWalletCoreSelfExecution([{ target: "0x1111111111111111111111111111111111111111", value: -1, data: "0x" }]), /negative/);
+  assert.throws(() => encodeOkxWalletCoreSelfExecution([{ target: "0x1111111111111111111111111111111111111111", value: 0, data: "zz" }]), /hexadecimal/);
 });
