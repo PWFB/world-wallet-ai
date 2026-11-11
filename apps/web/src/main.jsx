@@ -1,5 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
+import { TonConnectUIProvider } from '@tonconnect/ui-react'
 import App from './App.jsx'
 import './index.css'
 
@@ -64,8 +65,13 @@ class AppRecoveryBoundary extends React.Component {
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <AppRecoveryBoundary>
-      <App />
-    </AppRecoveryBoundary>
+    <TonConnectUIProvider
+      manifestUrl="https://world-wallet-ai-frontend.onrender.com/tonconnect-manifest.json"
+      analytics={{ mode: 'off' }}
+    >
+      <AppRecoveryBoundary>
+        <App />
+      </AppRecoveryBoundary>
+    </TonConnectUIProvider>
   </React.StrictMode>,
 )
