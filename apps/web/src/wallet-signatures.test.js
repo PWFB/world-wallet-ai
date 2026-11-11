@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Wallet } from "ethers";
+import { Interface, Wallet } from "ethers";
 import {
+  ERC1271_MAGIC_VALUE,
+  verifyEip1271Signature,
   verifyEvmMessageSignature,
   verifyEvmTypedDataSignature,
 } from "./wallet-signatures.js";
@@ -50,29 +52,31 @@ test("verification rejects malformed signature and address", () => {
   assert.throws(() => verifyEvmMessageSignature("message", "0x1234", "0x1111111111111111111111111111111111111111"), /65-byte EVM signature/);
 });
 
-import assert from "node:assert/strict";
-import test from "node:test";
-import { Interface } from "ethers";
-import { ERC1271_MAGIC_VALUE, verifyEip1271Signature } from "./wallet-signatures.js";
-
-const ABI = new Interface(["function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)"]);
+const ERC1271_ABI = new Interface([
+  "function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)",
+]);
 const WALLET = "0xbbdb482ae0895e496676ec84501d2945a404ff2c";
 const DIGEST = "0x" + "11".repeat(32);
 const SIGNATURE = "0x" + "22".repeat(65);
 
-function provider({ chainId = 1n, code = "0xef0100" + "80".repeat(20), magic = ERC1271_MAGIC_VALUE, failCall = false } = {}) {
+function makeMockProvider({
+  chainId = 1n,
+  code = "0xef0100" + "80".repeat(20),
+  magic = ERC1271_MAGIC_VALUE,
+  failCall = false,
+} = {}) {
   return {
     async getNetwork() { return { chainId }; },
     async getCode() { return code; },
     async call() {
       if (failCall) throw new Error("call failed");
-      return ABI.encodeFunctionResult("isValidSignature", [magic]);
+      return ERC1271_ABI.encodeFunctionResult("isValidSignature", [magic]);
     },
   };
 }
 
 test("ERC-1271 accepts the standard magic value from the selected smart wallet", async () => {
-  const result = await verifyEip1271Signature(provider(), WALLET, DIGEST, SIGNATURE, 1);
+  const result = await verifyEip1271Signature(makeMockProvider(), WALLET, DIGEST, SIGNATURE, 1);
   assert.equal(result.valid, true);
   assert.equal(result.standard, "EIP-1271");
   assert.equal(result.walletAddress, "0xBbDb482aE0895e496676eC84501d2945a404FF2C");
@@ -80,18 +84,30 @@ test("ERC-1271 accepts the standard magic value from the selected smart wallet",
 });
 
 test("ERC-1271 rejects a non-magic return value", async () => {
-  const result = await verifyEip1271Signature(provider({ magic: "0xffffffff" }), WALLET, DIGEST, SIGNATURE, 1);
+  const result = await verifyEip1271Signature(
+    makeMockProvider({ magic: "0xffffffff" }),
+    WALLET,
+    DIGEST,
+    SIGNATURE,
+    1,
+  );
   assert.equal(result.valid, false);
 });
 
 test("ERC-1271 refuses the wrong RPC chain", async () => {
   await assert.rejects(
-    verifyEip1271Signature(provider({ chainId: 56n }), WALLET, DIGEST, SIGNATURE, 1),
+    verifyEip1271Signature(makeMockProvider({ chainId: 56n }), WALLET, DIGEST, SIGNATURE, 1),
     /chain ID does not match/,
   );
 });
 
 test("ERC-1271 refuses missing code and call failures", async () => {
-  await assert.rejects(verifyEip1271Signature(provider({ code: "0x" }), WALLET, DIGEST, SIGNATURE, 1), /No contract or EIP-7702 delegation code/);
-  await assert.rejects(verifyEip1271Signature(provider({ failCall: true }), WALLET, DIGEST, SIGNATURE, 1), /did not accept the ERC-1271/);
+  await assert.rejects(
+    verifyEip1271Signature(makeMockProvider({ code: "0x" }), WALLET, DIGEST, SIGNATURE, 1),
+    /No contract or EIP-7702 delegation code/,
+  );
+  await assert.rejects(
+    verifyEip1271Signature(makeMockProvider({ failCall: true }), WALLET, DIGEST, SIGNATURE, 1),
+    /did not accept the ERC-1271/,
+  );
 });
