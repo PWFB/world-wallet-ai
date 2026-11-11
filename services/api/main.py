@@ -86,7 +86,10 @@ BALMZ_SOLANA_DEVNET_DECIMALS = 9
 BALMZ_SOLANA_MAINNET_MINT = os.getenv("WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT", "").strip()
 BALMZ_PRESALE_RECEIVING_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS", "").strip()
 BALMZ_PRESALE_PRICE_USD = Decimal("7.00")
-BALMZ_TARGET_SUPPLY = 1_000_000_000
+BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
+BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
+# Backward-compatible name: this verifier target is the full Solana Mainnet allocation.
+BALMZ_TARGET_SUPPLY = BALMZ_SOLANA_MAINNET_ALLOCATION
 SOLANA_SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
 
 
@@ -4978,7 +4981,7 @@ def _verify_balmz_solana_mainnet_mint(mint_address: str | None) -> dict:
             result["supply_matches_target"] = raw_amount == str(BALMZ_TARGET_SUPPLY * (10 ** BALMZ_SOLANA_DEVNET_DECIMALS))
 
         if not result["supply_matches_target"]:
-            result["warnings"].append("Observed Mainnet token supply does not match the 1,000,000,000-token target.")
+            result["warnings"].append("Observed Mainnet token supply does not match the approved 10,000,000,000-token Solana allocation.")
         if not result["mint_authority_revoked"]:
             result["warnings"].append("The production mint authority is still enabled; fixed supply is not enforced.")
         if not result["freeze_authority_revoked"]:
@@ -5074,7 +5077,10 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "stage": "planning",
         "presale_price_usd": float(BALMZ_PRESALE_PRICE_USD),
         "presale_price_unit": "USD per token",
-        "target_supply": BALMZ_TARGET_SUPPLY,
+        "target_supply": BALMZ_SOLANA_MAINNET_ALLOCATION,
+        "solana_mainnet_allocation": BALMZ_SOLANA_MAINNET_ALLOCATION,
+        "initial_presale_tranche": BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE,
+        "initial_presale_tranche_within_allocation": True,
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
