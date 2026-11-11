@@ -50,7 +50,27 @@ The backend separately uses Gmail SMTP over TLS for Super Admin PIN-recovery app
 - `WORLD_WALLET_ADMIN_EMAIL` — the administrator Gmail mailbox.
 - `WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD` — a Google App Password for that mailbox (not the user's normal Google password).
 
-That Gmail SMTP channel is restricted to Super Admin PIN recovery; it does not replace Neon Auth's account verification or password-reset mail provider. Do not log, commit, or expose the App Password. A Gmail-branded sender for customer verification and reset emails requires a custom SMTP provider to be configured for Neon Auth; the connected Neon controls currently expose no SMTP-provider update action. Do not claim Gmail delivery for customer auth mail until a real test email confirms it.
+That backend SMTP channel remains restricted to Super Admin PIN recovery. It is separate from customer auth email delivery.
+
+### Configure Gmail for customer verification and password-reset mail
+
+Neon Auth supports a custom standard SMTP provider. The repository includes `tools/configure_neon_auth_gmail_smtp.py` for Termux/Android. It prompts for the Neon API key and a Gmail App Password using hidden input, then sends the SMTP configuration directly to the Neon Management API. The script does not write credentials into Git, a .env file, or its output.
+
+Run it from a checked-out repository:
+
+```sh
+python tools/configure_neon_auth_gmail_smtp.py
+```
+
+Use a Google App Password created for the sender Gmail account with 2-Step Verification enabled; never use the account's normal password. The intended SMTP settings are `smtp.gmail.com:465` (SSL), sender username and sender address equal to the Gmail mailbox, sender name **World Wallet AI**. The script targets the production Neon Auth project/branch already connected to World Wallet AI.
+
+After the script reports success, send a test to a mailbox you control:
+
+```sh
+neon neon-auth config email-provider test --project-id hidden-recipe-66704507 --branch br-shy-butterfly-b4858jqu --recipient-email YOUR_TEST_MAILBOX
+```
+
+Do not enable a real customer rollout until that test arrives and you verify sign-up email OTP, unverified sign-in verification, and password-reset delivery. Neon Auth's saved SMTP secret is write-only and is not returned by read-only configuration queries.
 
 Google OAuth secrets belong only in Neon Auth provider configuration. Never store a Google account password in World Wallet AI or ask users for it; the user signs in through Google's OAuth consent flow.
 
