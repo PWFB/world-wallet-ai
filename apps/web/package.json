@@ -15,7 +15,9 @@
     "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js src/verified-balances.test.js",
     "test:navigation": "node --test src/navigation.test.js",
     "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js",
-    "test:wallet-signatures": "node --test src/wallet-signatures.test.js"
+    "test:wallet-signatures": "node --test src/wallet-signatures.test.js",
+    "test:ton-address": "node --test src/ton-address.test.js",
+    "test:ton": "npm run test:ton-address && npm run test:network-selection"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -24,7 +26,8 @@
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
     "@walletconnect/ethereum-provider": "^2.23.3",
-    "@capacitor/core": "^8.6.0"
+    "@capacitor/core": "^8.6.0",
+    "@tonconnect/ui-react": "^5.0.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
