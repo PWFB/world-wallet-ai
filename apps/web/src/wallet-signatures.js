@@ -1,4 +1,4 @@
-import { getAddress, isAddress, verifyMessage, verifyTypedData } from "ethers";
+import { Interface, getAddress, isAddress, isHexString, verifyMessage, verifyTypedData } from "ethers";
 
 function validateEvmSignature(signature) {
   return typeof signature === "string" && /^0x[0-9a-fA-F]{130}$/.test(signature.trim());
@@ -58,7 +58,6 @@ export function verifyEvmTypedDataSignature(domain, types, value, signature, exp
   };
 }
 
-import { Interface, getAddress, isAddress, isHexString } from "ethers";
 
 const ERC1271_INTERFACE = new Interface([
   "function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)",
