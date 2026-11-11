@@ -112,7 +112,6 @@ export async function verifyEip1271Signature(provider, walletAddress, digest, si
   };
 }
 
-import { Interface, isAddress, isHexString } from "ethers";
 
 export const OKX_WALLETCORE_IMPLEMENTATION = "0x80296FF8D1ED46f8e3C7992664D13B833504c2Bb";
 export const OKX_EIP7702_CODE_PREFIX = "0xef0100";
