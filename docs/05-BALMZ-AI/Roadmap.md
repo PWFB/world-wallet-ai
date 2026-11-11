@@ -8,6 +8,7 @@
 - Wallet-scoped free mining clock and pending-reward receipts.
 - Local encrypted-vault personal-message signing and EOA signature verification.
 - Local encrypted-vault EIP-712 typed-data signing and EOA recovery verification.
+- Read-only EIP-1271 smart-wallet signature verification that checks chain ID, account code/delegation presence, and the required magic return value.
 - Production Neon Auth Google provider registration.
 - Email/password and email OTP routes, email verification, and one-time password-reset flow.
 - Admin Gmail SMTP delivery for Super Admin PIN-recovery approvals.
@@ -24,7 +25,7 @@
 
 ## Release blockers and next engineering work
 
-1. **External smart-wallet signing:** Add explicit EIP-1271/EIP-7702-aware verification and test against the existing OKX 0xbb account without exporting keys. The local vault signer must never impersonate an external wallet.
+1. **External smart-wallet signing compatibility:** Test EIP-1271 verification against the existing OKX 0xbb account using a harmless signature the user supplies. Confirm the deployed implementation's signature envelope and hashing rules; do not assume a generic EOA signature is accepted. In-app signing as 0xbb still needs its authorized owner/validator signing route; a local vault signer must never impersonate the external wallet.
 2. **Transaction signing:** Add a typed, chain-aware transaction review/simulation, nonce and expiry controls, allowance/recipient checks, and clear explicit confirmation. No automatic signing or broadcast.
 3. **Mining liability cap:** Add a global reward-pool allocation/cap with concurrency-safe accounting and a funded distribution/claim design before enabling claim or withdrawal controls.
 4. **Presale settlement:** Build finalized Solana payment verification, recipient and amount checks, idempotency/replay protection, order allocation, failure/underpayment handling, refund reconciliation, and tests. Keep payment acceptance disabled until this is complete.
