@@ -6,6 +6,7 @@
 - Launch target: **1 BALMZ-SOL = 1 SOL**, a target that requires a separately disclosed market/liquidity mechanism and is not guaranteed by token metadata.
 - The existing BALMZ mint `HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF` is **Solana Devnet only**. It is for testing and must not be used to accept real presale payments.
 - Presale payment acceptance remains disabled until the production mint, receiver ownership, supply policy, finalized-payment verification, replay protection, token allocation, and launch/liquidity controls are reviewed.
+- Approved supply policy: **31,000,000,000 BALMZ global maximum**; **10,000,000,000 BALMZ Solana Mainnet allocation**; **1,000,000,000 BALMZ initial presale tranche included within that Solana allocation**; the remaining **9,000,000,000 BALMZ** remains allocated to Solana but outside the initial tranche. Do not add the 1-billion tranche on top of the 10-billion allocation.
 
 ## Reuse an existing Mainnet address
 
@@ -77,4 +78,4 @@ Set them only after checking the address and production mint. Do not put these v
 
 ## Release gate
 
-Before opening the presale, add and independently test settlement that verifies a finalized Mainnet payment, expected receiver, expected amount and supported asset, unique transaction signature/idempotency key, order allocation, and failure/refund handling. Confirm the deployed mint supply/decimals and revoke mint authority if the 1 billion supply is meant to be fixed. Keep Devnet activity separate from Mainnet history and Proof of Reserves.
+Before opening the presale, add and independently test settlement that verifies a finalized Mainnet payment, expected receiver, expected amount and supported asset, unique transaction signature/idempotency key, order allocation, and failure/refund handling. Confirm the deployed mint supply/decimals and verify that the Solana Mainnet mint's total supply is exactly 10 billion BALMZ (9 decimals), then revoke mint authority if the allocation is fixed; the initial 1 billion presale tranche is an allocation within that 10 billion, not a separate mint or extra supply. Keep Devnet activity separate from Mainnet history and Proof of Reserves.
