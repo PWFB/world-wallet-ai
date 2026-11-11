@@ -9,6 +9,7 @@
 - Local encrypted-vault personal-message signing and EOA signature verification.
 - Local encrypted-vault EIP-712 typed-data signing and EOA recovery verification.
 - Read-only EIP-1271 smart-wallet signature verification that checks chain ID, account code/delegation presence, and the required magic return value.
+- In-app WalletCore native ETH/BNB and standard ERC-20 transfers from the existing EIP-7702 account when the encrypted local vault is unlocked with the exact same owner key; exact delegation code, preflight simulation/gas checks, explicit confirmation, local signing, and receipt/Transfer-event validation are required.
 - Production Neon Auth Google provider registration.
 - Email/password and email OTP routes, email verification, and one-time password-reset flow.
 - Admin Gmail SMTP delivery for Super Admin PIN-recovery approvals.
@@ -25,7 +26,7 @@
 
 ## Release blockers and next engineering work
 
-1. **External smart-wallet signing compatibility:** Test EIP-1271 verification against the existing OKX 0xbb account using a harmless signature the user supplies. Confirm the deployed implementation's signature envelope and hashing rules; do not assume a generic EOA signature is accepted. In-app signing as 0xbb still needs its authorized owner/validator signing route; a local vault signer must never impersonate the external wallet.
+1. **Live WalletCore validation:** Test the in-app read-only EIP-1271 verifier and a harmless transaction simulation against the user's live 0xbb account, once its owner key has been imported locally into the encrypted World Wallet AI vault. Confirm the exact deployed delegation designator, validator configuration, nonce and gas behavior. Never transmit the key to the backend or assume a different local key can sign for 0xbb.
 2. **Transaction signing:** Add a typed, chain-aware transaction review/simulation, nonce and expiry controls, allowance/recipient checks, and clear explicit confirmation. No automatic signing or broadcast.
 3. **Mining liability cap:** Add a global reward-pool allocation/cap with concurrency-safe accounting and a funded distribution/claim design before enabling claim or withdrawal controls.
 4. **Presale settlement:** Build finalized Solana payment verification, recipient and amount checks, idempotency/replay protection, order allocation, failure/underpayment handling, refund reconciliation, and tests. Keep payment acceptance disabled until this is complete.
