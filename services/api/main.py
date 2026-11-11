@@ -1587,7 +1587,7 @@ def _ton_decimal_amount(raw_amount, decimals):
 def ton_account_snapshot(network: str, address: str) -> dict:
     """Read Toncoin and Jetton data from the network-specific TonAPI indexer."""
     base_url = TONAPI_TESTNET_BASE_URL if network == "ton_testnet" else TONAPI_MAINNET_BASE_URL
-    account_path = "/accounts/" + address.replace(":", "%3A")
+    account_path = "/accounts/" + address.replace(":", "%3A").replace("+", "%2B").replace("/", "%2F")
     account = _tonapi_get(base_url, account_path)
     raw_balance = account.get("balance")
     if raw_balance is None or not str(raw_balance).isdigit():
@@ -6379,7 +6379,7 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
     """Read the balance for one attached public address without mutating portfolio assets."""
     network = normalize_wallet_network(network)
     address = address.strip()
-    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet"}:
+    if network not in {"ethereum", "sepolia", "bnb", "bitcoin", "solana_mainnet", "solana_devnet", "ton_mainnet", "ton_testnet"}:
         raise HTTPException(status_code=400, detail="Unsupported wallet network")
     if network in {"ethereum", "sepolia", "bnb"} and not valid_evm_address(address):
         raise HTTPException(status_code=400, detail="Invalid EVM address")
