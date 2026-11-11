@@ -3935,8 +3935,26 @@ def wallet_balance_verification_snapshot(user: dict):
         },
         "addresses_detail": {
             network: [
-                {"address": address, "ownership_verified": True}
+                {"address": address, "ownership_verified": True, "status": "verified"}
                 for address in addresses_by_network[network]
+            ]
+            for network in networks
+        },
+        "attached_addresses_detail": {
+            network: [
+                {
+                    "address": str(row[1]),
+                    "ownership_verified": bool(row[2]),
+                    "status": "verified" if bool(row[2]) else "ownership_proof_required",
+                }
+                for row in address_rows
+                if str(row[0] or "").strip().lower() == network
+                and str(row[1] or "").strip()
+                and (
+                    valid_evm_address(str(row[1]).strip()) if network in {"ethereum", "bnb"}
+                    else valid_bitcoin_address(str(row[1]).strip()) if network == "bitcoin"
+                    else valid_solana_address(str(row[1]).strip())
+                )
             ]
             for network in networks
         },
