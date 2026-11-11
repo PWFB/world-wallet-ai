@@ -2183,7 +2183,7 @@ function App() {
               {balanceVerificationError && <div className="market-price-error" role="status">{balanceVerificationError}</div>}
               {!balanceVerificationReport ? <div className="live-chart-empty">No verified balance report is available yet. {balanceVerificationBusy ? "Checking configured Mainnet readers…" : "Check the authenticated wallet session and network RPC configuration."}</div> : <>
                 <div className="coin-catalog-note">{balanceVerificationReport.notice}</div>
-                {Object.entries(balanceVerificationReport.addresses_detail || {}).flatMap(([network, addressRows]) =>
+                {Object.entries(balanceVerificationReport.attached_addresses_detail || balanceVerificationReport.addresses_detail || {}).flatMap(([network, addressRows]) =>
                   (addressRows || []).map(addressRow => {
                     const observations = (balanceVerificationReport.assets || []).flatMap(asset =>
                       (asset.address_balances || [])
@@ -2191,11 +2191,15 @@ function App() {
                         .map(item => ({ asset, item }))
                     );
                     return <div className="tool-row" key={network + ":" + addressRow.address}>
-                      <div><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet"})[network] || network}</b><small>Ownership verified · public address</small></div>
+                      <div><b>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet"})[network] || network}</b><small>{addressRow.ownership_verified === true ? "Ownership verified · public address" : "Attached · ownership proof required"}</small></div>
                       <code>{addressRow.address}</code>
                       <button type="button" className="secondary" onClick={() => navigator.clipboard?.writeText(addressRow.address)}>Copy</button>
                       <div className="address-balance-trace">
-                        {observations.length ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>) : <span>Address verified; no supported asset balance observation returned.</span>}
+                        {addressRow.ownership_verified !== true
+                          ? <span>Balance hidden until this address passes its wallet-signature ownership check.</span>
+                          : observations.length
+                            ? observations.map(({asset,item}) => <span key={asset.asset + (asset.contract_address || "")}><b>{asset.asset}</b> {number(item.chain_balance)} <small>{asset.contract_address ? "contract verified" : "native"}</small></span>)
+                            : <span>Address verified; no supported asset balance observation returned.</span>}
                       </div>
                     </div>;
                   })
