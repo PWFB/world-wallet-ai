@@ -1,8 +1,9 @@
-import { lazy, useEffect, useRef, useState } from "react";
+import { lazy, useCallback, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
 import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
+import TonWalletConnect from "./TonWalletConnect.jsx";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -155,7 +156,7 @@ function getLocalVaultReceiveAddress(walletId = "", userId = "") {
       ? entry.addresses
       : { [entry.network || "ethereum"]: entry.address };
     return Object.entries(addressSet).filter(([network, address]) =>
-      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet"].includes(network) && typeof address === "string" && address.length
+      ["ethereum", "bnb", "bitcoin", "solana_mainnet", "sepolia", "solana_devnet", "ton_mainnet", "ton_testnet"].includes(network) && typeof address === "string" && address.length
     ).map(([network, address]) => ({
       network,
       address,
@@ -193,15 +194,15 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
 
-  const loadAddresses = async id => {
+  const loadAddresses = useCallback(async id => {
     if (!id) return;
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: await walletAuthHeaders(accessToken) });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(id) + "/addresses", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
       setWalletAddresses(response.ok ? (data.addresses || []) : []);
       setAddressesLoadedForWallet(response.ok ? id : "");
     } catch { setWalletAddresses([]); setAddressesLoadedForWallet(""); }
-  };
+  }, [apiBaseUrl, accessToken]);
 
   const loadWallets = async () => {
     setBusy(true);
@@ -219,6 +220,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   useEffect(() => { loadWallets(); }, [accessToken]);
+  const onTonAddressSaved = useCallback(() => loadAddresses(walletId), [loadAddresses, walletId]);
 
   // Attach every saved external EVM address to its matching network on the active wallet.
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
@@ -537,6 +539,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
     <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <TonWalletConnect walletId={walletId} accessToken={accessToken} apiBaseUrl={apiBaseUrl} onAddressSaved={onTonAddressSaved} />
     <div className="feature-grid">
       <article className="panel action-panel">
         <p className="feature-kicker">WALLET STRUCTURE</p>
@@ -555,8 +558,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           {visibleAddresses.length ? visibleAddresses.map(a => {
             const key = a.network + ":" + a.address;
             const balance = addressBalances[key];
-            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)" })[a.network] || a.network.toUpperCase();
-            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
+            const networkLabel = ({ ethereum: "Ethereum Mainnet", sepolia: "Ethereum Sepolia (testnet)", bnb: "BNB Chain", bitcoin: "Bitcoin", solana_mainnet: "Solana Mainnet", solana_devnet: "Solana Devnet (testnet)", ton_mainnet: "TON Mainnet", ton_testnet: "TON Testnet" })[a.network] || a.network.toUpperCase();
+            return <div className="tool-row" key={key}><div><b>{networkLabel}</b><small>{a.label}{a.local ? " • Local vault" : ""}{["ethereum", "sepolia", "bnb"].includes(a.network) ? (a.ownership_verified ? " • Ownership verified" : " • Not ownership-verified") : ""}{["ton_mainnet", "ton_testnet"].includes(a.network) ? " • Public address (not ownership-verified)" : ""}</small>{balance?.balance !== undefined && <small>{Number(balance.balance).toLocaleString("en-US", { maximumFractionDigits: 8 })} {balance.asset}</small>}{balance?.jettons?.map((jetton, index) => <small key={jetton.master_address || index}>{jetton.name || jetton.symbol || "Jetton"}{jetton.symbol ? " · " + jetton.symbol : ""}: {jetton.balance !== null ? jetton.balance : jetton.amount_raw + " raw units (decimals not supplied)"}</small>)}{balance?.jettons_warning && <small className="feature-error">{balance.jettons_warning}</small>}{balance?.error && <small className="feature-error">{balance.error}</small>}</div><code>{a.address}</code><div className="address-row-actions"><button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>{!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}</div></div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
         </div>
       </article>
@@ -566,12 +569,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <h2>Attach a blockchain address</h2>
       {showAddressForm && <div className="feature-success">Enter a public address below. You can also select a locally generated wallet from the list above; its address is shown automatically.</div>}
       <div className="feature-grid">
-        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option></select></label>
-        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : "0x…"}/></label>
+        <label>Network<select value={network} onChange={e => setNetwork(e.target.value)}><option value="ethereum">Ethereum Mainnet</option><option value="sepolia">Ethereum Sepolia (testnet)</option><option value="solana_mainnet">Solana Mainnet</option><option value="solana_devnet">Solana Devnet (testnet)</option><option value="bnb">BNB Chain</option><option value="bitcoin">Bitcoin</option><option value="ton_mainnet">TON Mainnet</option><option value="ton_testnet">TON Testnet</option></select></label>
+        <label>Public address<input value={address} onChange={e => setAddress(e.target.value)} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : network === "solana_devnet" || network === "solana_mainnet" ? "Solana Base58 public address" : network === "ton_mainnet" || network === "ton_testnet" ? "TON EQ… / UQ… or raw 0:… address" : "0x…"}/></label>
       </div>
       <label>Label<input value={label} onChange={e => setLabel(e.target.value)} placeholder="primary"/></label>
       <button className="primary feature-submit" disabled={busy || !walletId || !address.trim()} onClick={addAddress}>{busy ? "Connecting…" : "Connect address →"}</button>
-      <div className="security-note">Ethereum Sepolia and Solana Devnet are test networks. Solana Mainnet and Devnet are separate network identities; the backend checks each RPC cluster before returning balances. Configure WORLD_WALLET_SOLANA_MAINNET_RPC_URL separately from WORLD_WALLET_SOLANA_DEVNET_RPC_URL.</div>
+      <div className="security-note">Ethereum Sepolia, Solana Devnet and TON Testnet are test networks. TON Mainnet and TON Testnet are separate network identities; the backend uses separate TonAPI hosts for native and Jetton data.</div>
       <div className="security-note">One Ethereum address can hold ETH plus many ERC-20 tokens. The token contract identifies the token; a separate wallet address is not required for each ERC-20 token.</div>
       <div className="security-note">The BALMZ-SOL-DEVNET mint is test-only and must not be used as the World Wallet AI presale asset. Register the real production BALMZ mint or contract only after its Mainnet deployment is verified; never substitute the Devnet mint.</div>
     </article>
