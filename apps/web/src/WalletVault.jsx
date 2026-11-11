@@ -915,6 +915,54 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     }
   }
 
+  async function signAndVerifyExternalSmartWalletMessage() {
+    setSmartWalletBusy(true);
+    setSmartWalletResult(null);
+    let provider;
+    try {
+      if (!unlocked) throw new Error("Unlock the matching World Wallet AI local vault wallet first.");
+      if (unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase()) {
+        throw new Error("The unlocked local vault address does not match the external smart-wallet address. No signature was created.");
+      }
+      if (!smartWalletMessage.trim()) throw new Error("Enter the exact message you want to sign.");
+      const configs = {
+        ethereum: { chainId: 1, rpc: "https://ethereum-rpc.publicnode.com", label: "Ethereum Mainnet" },
+        bnb: { chainId: 56, rpc: "https://bsc-dataseed.binance.org/", label: "BNB Chain Mainnet" },
+      };
+      const config = configs[smartWalletNetwork];
+      if (!config) throw new Error("Select Ethereum Mainnet or BNB Chain Mainnet.");
+
+      // The private key remains in the unlocked encrypted local vault. It is
+      // never sent to the backend or to the external OKX wallet application.
+      const signature = await unlocked.signMessage(smartWalletMessage);
+      provider = new JsonRpcProvider(config.rpc, config.chainId, { staticNetwork: true });
+      const verified = await verifyEip1271Signature(
+        provider,
+        smartWalletAddress.trim(),
+        hashMessage(smartWalletMessage),
+        signature,
+        config.chainId,
+      );
+      if (!verified.valid) {
+        throw new Error("The smart wallet did not accept the locally created signature. No transaction was sent.");
+      }
+      setSmartWalletSignature(signature);
+      setSmartWalletResult({
+        ok: true,
+        text: "Signed inside World Wallet AI and verified by the smart wallet on " + config.label + ". EIP-1271 returned the valid magic value.",
+        walletAddress: verified.walletAddress,
+        chainId: verified.chainId,
+        magicValue: verified.magicValue,
+      });
+      setMessage("The matching local vault key signed the message inside World Wallet AI. The smart wallet accepted the signature. No transaction was sent.");
+    } catch (error) {
+      setSmartWalletResult({ ok: false, text: error?.message || "In-app smart-wallet signing failed." });
+    } finally {
+      try { await provider?.destroy?.(); } catch {}
+      setSmartWalletBusy(false);
+    }
+  }
+
   async function verifyExternalSmartWalletMessage() {
     setSmartWalletBusy(true);
     setSmartWalletResult(null);
@@ -1264,10 +1312,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <option value="ethereum">Ethereum Mainnet</option><option value="bnb">BNB Chain Mainnet</option>
       </select></label>
       <label>Exact signed message<textarea rows="3" value={smartWalletMessage} onChange={event => { setSmartWalletMessage(event.target.value); setSmartWalletResult(null); }} placeholder="Paste the exact message that was signed" /></label>
+      <div className="security-note">{unlocked
+        ? unlocked.address.toLowerCase() === smartWalletAddress.trim().toLowerCase()
+          ? "The unlocked World Wallet AI vault address matches this smart wallet. Local in-app signing is available."
+          : "The unlocked vault address does not match this smart wallet. Signing is disabled."
+        : "Unlock a local vault wallet whose public address exactly matches this smart wallet. Import/recovery material stays on this device; never paste it into chat or send it to the backend."}</div>
+      <button className="primary feature-submit" disabled={smartWalletBusy || !unlocked || unlocked.address.toLowerCase() !== smartWalletAddress.trim().toLowerCase() || !smartWalletMessage.trim()} onClick={signAndVerifyExternalSmartWalletMessage}>{smartWalletBusy ? "Signing and verifying…" : "Sign and verify with World Wallet AI"}</button>
       <label>Existing signature<input value={smartWalletSignature} onChange={event => { setSmartWalletSignature(event.target.value); setSmartWalletResult(null); }} placeholder="Paste signature from the authorized wallet session" autoComplete="off" /></label>
       <button className="secondary" disabled={smartWalletBusy || !smartWalletAddress.trim() || !smartWalletMessage || !smartWalletSignature.trim()} onClick={verifyExternalSmartWalletMessage}>{smartWalletBusy ? "Checking smart wallet…" : "Verify signature inside World Wallet AI"}</button>
       {smartWalletResult && <div className={smartWalletResult.ok ? "feature-success" : "feature-error"}>{smartWalletResult.text}{smartWalletResult.walletAddress && <div><small>Wallet: <code>{smartWalletResult.walletAddress}</code> · Chain ID {smartWalletResult.chainId} · Return: <code>{smartWalletResult.magicValue}</code></small></div>}</div>}
-      <p className="security-note">This verifies a signature already supplied to World Wallet AI. It does not create a signature for 0xbb. A locally unlocked wallet cannot sign as 0xbb; that requires the 0xbb account's authorized owner/validator signing path. If the deployed implementation rejects or does not support ERC-1271, verification fails closed.</p>
+      <p className="security-note">This verifies a signature already supplied to World Wallet AI. It creates a signature only when the unlocked encrypted local vault contains the exact owner key for this address. This requires the user to import or recover that key locally; a different wallet key cannot sign as 0xbb. If the deployed implementation rejects or does not support ERC-1271, verification fails closed.</p>
     </div>
       {selected && <button className="secondary" onClick={() => forgetLocalEntry(selected.walletId)}>Remove encrypted copy from this browser</button>}
       <div className="security-note">Local signing supports message signatures and direct Sepolia test ETH transfers. Mainnet, BNB Chain, and ERC-20 transaction signing continue to use the existing external-wallet flow and configured contract support.</div>
