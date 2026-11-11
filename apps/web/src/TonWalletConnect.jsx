@@ -33,6 +33,8 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
   const [jettonSending, setJettonSending] = useState(false);
   const [jettonSendMessage, setJettonSendMessage] = useState("");
   const lastAttached = useRef("");
+  const jettonScope = useRef("");
+  const jettonRequest = useRef(0);
 
   const network = tonNetworkFromChainId(wallet?.account?.chain);
   const address = wallet?.account?.address || "";
@@ -41,6 +43,9 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
 
   const refreshJettons = useCallback(async () => {
     if (!walletId || !address || !network) return;
+    const requestScope = [walletId, network, address].join(":");
+    const requestId = ++jettonRequest.current;
+    if (jettonScope.current !== requestScope) return;
     setJettonsLoading(true);
     setJettonsMessage("");
     try {
@@ -51,6 +56,7 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Could not refresh this TON account's Jetton balances.");
+      if (jettonScope.current !== requestScope || jettonRequest.current !== requestId) return;
       const next = Array.isArray(data.jettons) ? data.jettons : [];
       setJettons(next);
       setJettonsAvailable(data.jettons_available === true);
@@ -58,25 +64,29 @@ export default function TonWalletConnect({ walletId, accessToken, apiBaseUrl, on
       if (data.jettons_warning) setJettonsMessage(data.jettons_warning);
       else if (!next.length) setJettonsMessage("No Jetton balances were returned for this address.");
     } catch (error) {
-      // Never carry one wallet's Jetton list into another account's send form.
-      setJettons([]);
-      setSelectedJettonAddress("");
-      setJettonsAvailable(false);
-      setJettonsMessage(error?.message || "Jetton index is unavailable.");
+      if (jettonScope.current === requestScope && jettonRequest.current === requestId) {
+        // Never carry one wallet's Jetton list into another account's send form.
+        setJettons([]);
+        setSelectedJettonAddress("");
+        setJettonsAvailable(false);
+        setJettonsMessage(error?.message || "Jetton index is unavailable.");
+      }
     } finally {
-      setJettonsLoading(false);
+      if (jettonScope.current === requestScope && jettonRequest.current === requestId) setJettonsLoading(false);
     }
   }, [walletId, address, network, apiBaseUrl, accessToken]);
 
   useEffect(() => {
     if (!wallet || !walletId || !address || !network) return undefined;
     const key = [walletId, network, address].join(":");
+    jettonScope.current = key;
     if (lastAttached.current !== key) {
       // Clear balances immediately when the selected wallet, account or TON
       // network changes so stale Jettons cannot be used to build a transfer.
       setJettons([]);
       setSelectedJettonAddress("");
       setJettonsAvailable(false);
+      setJettonsLoading(false);
       setJettonsMessage("");
     }
     if (lastAttached.current === key) {
