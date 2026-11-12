@@ -72,6 +72,8 @@ EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 # Alchemy credentials remain backend-only. Explicit RPC URL takes precedence; otherwise build
 # the Ethereum Mainnet endpoint from ALCHEMY_API_KEY without ever returning it to the client.
 ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "").strip()
+# Admin-only one-time restore of the owner-supplied OKX Ethereum Mainnet public address.
+WORLD_WALLET_ADMIN_EVM_ADDRESS = os.getenv("WORLD_WALLET_ADMIN_EVM_ADDRESS", "0xBbDb482aE0895e496676eC84501d2945a404FF2C").strip()
 ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
 ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
@@ -6125,6 +6127,94 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
         )
         conn.commit()
     return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip(),"ownership_verified":bool(saved and saved[0])}}
+
+
+@app.post("/api/v1/wallets/{wallet_id}/addresses/admin-default")
+def attach_admin_default_evm_address(wallet_id: str, user: dict = Depends(current_user)):
+    """Restore the configured admin's public OKX EVM address to one owned wallet.
+
+    This only attaches the address as unverified. It never grants spend eligibility
+    or skips the separate wallet-signature ownership challenge.
+    """
+    admin_email = WORLD_WALLET_ADMIN_EMAIL.strip().lower()
+    user_email = str(user.get("email") or "").strip().lower()
+    if not admin_email or user_email != admin_email:
+        raise HTTPException(status_code=403, detail="Admin wallet restore is not available for this account")
+
+    address = WORLD_WALLET_ADMIN_EVM_ADDRESS.strip()
+    if not valid_evm_address(address):
+        raise HTTPException(status_code=503, detail="The configured admin Ethereum Mainnet address is invalid")
+
+    network = "ethereum"
+    label = "OKX Ethereum Mainnet"
+    with db() as conn:
+        owner = conn.execute(
+            "SELECT id FROM wallets WHERE id=%s AND owner_id=%s",
+            (wallet_id, user["id"]),
+        ).fetchone()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Wallet not found")
+
+        existing = conn.execute(
+            """SELECT wallet_id,ownership_verified FROM wallet_addresses
+               WHERE network=%s AND lower(address)=lower(%s)
+                 AND wallet_id IN (SELECT id FROM wallets WHERE owner_id=%s)
+               ORDER BY created_at LIMIT 1 FOR UPDATE""",
+            (network, address, user["id"]),
+        ).fetchone()
+        if existing and str(existing[0]) != str(wallet_id):
+            return {
+                "status": "already_attached_elsewhere",
+                "wallet_id": existing[0],
+                "address": {
+                    "network": network,
+                    "address": address,
+                    "label": label,
+                    "ownership_verified": bool(existing[1]),
+                },
+            }
+
+        if existing:
+            conn.execute(
+                """UPDATE wallet_addresses SET label=%s
+                   WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)""",
+                (label, wallet_id, network, address),
+            )
+            ownership_verified = bool(existing[1])
+            status = "already_attached"
+        else:
+            conn.execute(
+                """INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified)
+                   VALUES(%s,%s,%s,%s,FALSE) ON CONFLICT DO NOTHING""",
+                (wallet_id, network, address, label),
+            )
+            saved = conn.execute(
+                """SELECT ownership_verified FROM wallet_addresses
+                   WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)""",
+                (wallet_id, network, address),
+            ).fetchone()
+            if not saved:
+                raise HTTPException(status_code=409, detail="The admin address could not be attached")
+            ownership_verified = bool(saved[0])
+            status = "attached"
+            record_wallet_audit_event(
+                conn, owner_id=user["id"], wallet_id=wallet_id,
+                actor_email=user_email, action="wallet_address_attached",
+                resource="wallet_address", resource_id=address, network=network,
+                details={"label": label, "ownership_verified": ownership_verified, "source": "admin_default_restore"},
+            )
+        conn.commit()
+
+    return {
+        "status": status,
+        "wallet_id": wallet_id,
+        "address": {
+            "network": network,
+            "address": address,
+            "label": label,
+            "ownership_verified": ownership_verified,
+        },
+    }
 
 
 @app.post("/api/v1/wallets/{wallet_id}/addresses/challenge")
