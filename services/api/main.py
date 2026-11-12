@@ -6180,13 +6180,13 @@ def verify_eip1271_wallet_signature(network: str, address: str, message: str, si
 
         message_bytes = message.encode("utf-8")
         message_digest = keccak.new(digest_bits=256)
-        message_digest.update(b"\\x19Ethereum Signed Message:\\n" + str(len(message_bytes)).encode("ascii") + message_bytes)
+        message_digest.update(b"\x19Ethereum Signed Message:\n" + str(len(message_bytes)).encode("ascii") + message_bytes)
         digest_hex = message_digest.digest().hex()
 
         selector_hash = keccak.new(digest_bits=256)
         selector_hash.update(b"isValidSignature(bytes32,bytes)")
         selector = selector_hash.digest()[:4].hex()
-        padded_signature = signature_bytes + (b"\\x00" * ((32 - len(signature_bytes) % 32) % 32))
+        padded_signature = signature_bytes + (b"\x00" * ((32 - len(signature_bytes) % 32) % 32))
         calldata = (
             "0x" + selector + digest_hex
             + (64).to_bytes(32, "big").hex()
