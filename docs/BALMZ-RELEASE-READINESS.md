@@ -14,7 +14,7 @@ This is the release-control record for BALMZ. It distinguishes checked-in source
 | 2. Supply and mint policy | The source defines a 31,000,000,000 BALMZ global allocation target. EVM supply is fixed per allowed chain. The Solana 10B allocation still needs an implemented and verified Mainnet mint with 9 decimals and final authority settings. | **POLICY DEFINED; IMPLEMENTATION PARTIAL** |
 | 3. Explorer verification | No Ethereum, BNB Chain, or Solana Mainnet contract/mint address plus verified explorer evidence is recorded in the checked-in release registry. | **PENDING** |
 | 4. Logo and metadata | Name, symbol, and intended decimals are specified in source/docs. An approved production logo, immutable image URL, canonical token metadata URI, and published metadata record are not evidenced. | **PARTIAL** |
-| 5. Website and documentation | This documentation set describes the token, supply, contracts, reserve, governance limitations, staking status, roadmap, and release gates. A dedicated public BALMZ website and its ownership/canonical URL are not evidenced here. | **DOCS IN PROGRESS** |
+| 5. Website and documentation | Token documentation and release notes are now written in this branch. A dedicated public BALMZ website, canonical domain, and ownership/contact evidence are not yet recorded. | **DOCUMENTATION WRITTEN; WEBSITE PENDING** |
 | 6. Liquidity and trading | No verified pool address, pool reserves, LP ownership/lock evidence, or market is recorded. A target quote is not a guaranteed price. | **PENDING — NO LIQUIDITY CLAIM** |
 | 7. Security | Solidity tests and a contract-check workflow exist. No independent third-party audit report or completed Mainnet security sign-off is recorded. | **PARTIAL — AUDIT REQUIRED** |
 
