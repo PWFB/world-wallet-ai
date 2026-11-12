@@ -87,6 +87,83 @@ class WalletAddressOwnershipTests(unittest.TestCase):
         self.assertTrue(any("FOR UPDATE" in sql.upper() for sql in connection.statements))
         self.assertIsNotNone(connection.challenge[4])
 
+    def test_erc1271_smart_wallet_signature_verifies_with_read_only_mainnet_call(self):
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+
+        owner = "0x1111111111111111111111111111111111111111"
+        signer = Account.create()
+        message = "World Wallet AI ownership challenge\\nWallet: wallet_test"
+        challenge = (
+            "ethereum",
+            owner,
+            message,
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+            None,
+        )
+        connection = FakeConnection(challenge)
+        signature = Account.sign_message(
+            encode_defunct(text=message), private_key=signer.key
+        ).signature.hex()
+        request = main.WalletAddressVerifyRequest(
+            challenge_id="wac_test_smart_wallet_1234",
+            signature=signature,
+        )
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "ETH_RPC_URL", "https://ethereum.example"),
+            patch.object(main, "require_ethereum_mainnet_rpc") as chain_check,
+            patch.object(main, "rpc_call", return_value="0x1626ba7e" + "0" * 56) as rpc,
+        ):
+            result = main.verify_wallet_address(
+                "wallet_test", request, {"id": "user_test"}
+            )
+
+        self.assertEqual(result["status"], "verified")
+        self.assertTrue(result["ownership_verified"])
+        chain_check.assert_called_once_with("https://ethereum.example")
+        rpc.assert_called_once()
+        self.assertEqual(rpc.call_args.args[1], "eth_call")
+        self.assertTrue(rpc.call_args.args[2][0]["data"].startswith("0x"))
+        self.assertIsNotNone(connection.challenge[4])
+
+    def test_erc1271_invalid_magic_value_does_not_verify_smart_wallet(self):
+        from eth_account import Account
+        from eth_account.messages import encode_defunct
+        from fastapi import HTTPException
+
+        owner = "0x1111111111111111111111111111111111111111"
+        signer = Account.create()
+        message = "World Wallet AI ownership challenge"
+        challenge = (
+            "ethereum",
+            owner,
+            message,
+            datetime.now(timezone.utc) + timedelta(minutes=5),
+            None,
+        )
+        connection = FakeConnection(challenge)
+        signature = Account.sign_message(
+            encode_defunct(text=message), private_key=signer.key
+        ).signature.hex()
+        request = main.WalletAddressVerifyRequest(
+            challenge_id="wac_test_smart_wallet_5678",
+            signature=signature,
+        )
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "ETH_RPC_URL", "https://ethereum.example"),
+            patch.object(main, "require_ethereum_mainnet_rpc"),
+            patch.object(main, "rpc_call", return_value="0xffffffff" + "0" * 56),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                main.verify_wallet_address(
+                    "wallet_test", request, {"id": "user_test"}
+                )
+
+        self.assertEqual(caught.exception.status_code, 400)
+        self.assertIsNone(connection.challenge[4])
+
     def test_used_challenge_cannot_be_replayed(self):
         from eth_account import Account
         from eth_account.messages import encode_defunct
