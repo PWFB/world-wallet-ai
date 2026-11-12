@@ -72,6 +72,8 @@ EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
 # Alchemy credentials remain backend-only. Explicit RPC URL takes precedence; otherwise build
 # the Ethereum Mainnet endpoint from ALCHEMY_API_KEY without ever returning it to the client.
 ALCHEMY_API_KEY = os.getenv("ALCHEMY_API_KEY", "").strip()
+# Admin-only one-time restore of the owner-supplied OKX Ethereum Mainnet public address.
+WORLD_WALLET_ADMIN_EVM_ADDRESS = os.getenv("WORLD_WALLET_ADMIN_EVM_ADDRESS", "0xBbDb482aE0895e496676eC84501d2945a404FF2C").strip()
 ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
 ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
@@ -367,7 +369,9 @@ class WalletAddressChallengeRequest(BaseModel):
 
 class WalletAddressVerifyRequest(BaseModel):
     challenge_id: str = Field(min_length=12, max_length=100)
-    signature: str = Field(min_length=20, max_length=300)
+    # EIP-1271 smart-account signatures may be longer than an EOA signature.
+    # Keep a firm request bound while supporting common multisig encodings.
+    signature: str = Field(min_length=20, max_length=8192)
 
 
 class WalletActivateRequest(BaseModel):
@@ -6125,6 +6129,84 @@ def add_wallet_address(wallet_id: str,request: WalletAddressRequest,user: dict =
     return {"status":"connected","wallet_id":wallet_id,"address":{"network":network,"address":address,"label":request.label.strip(),"ownership_verified":bool(saved and saved[0])}}
 
 
+@app.post("/api/v1/wallets/{wallet_id}/addresses/admin-default")
+def attach_admin_default_evm_address(wallet_id: str, user: dict = Depends(current_user)):
+    """Restore the configured admin's public OKX EVM address to one owned wallet.
+
+    This only attaches the address as unverified. It never grants spend eligibility
+    or skips the separate wallet-signature ownership challenge.
+    """
+    admin_email = WORLD_WALLET_ADMIN_EMAIL.strip().lower()
+    user_email = str(user.get("email") or "").strip().lower()
+    if not admin_email or user_email != admin_email:
+        raise HTTPException(status_code=403, detail="Admin wallet restore is not available for this account")
+
+    address = WORLD_WALLET_ADMIN_EVM_ADDRESS.strip()
+    if not valid_evm_address(address.lower()):
+        raise HTTPException(status_code=503, detail="The configured admin Ethereum Mainnet address is invalid")
+
+    network = "ethereum"
+    label = "OKX Ethereum Mainnet"
+    with db() as conn:
+        owner = conn.execute(
+            "SELECT id FROM wallets WHERE id=%s AND owner_id=%s",
+            (wallet_id, user["id"]),
+        ).fetchone()
+        if not owner:
+            raise HTTPException(status_code=404, detail="Wallet not found")
+
+        # Attach to the selected wallet only. The same public address may be
+        # intentionally linked to another wallet workspace without blocking this one.
+        existing = conn.execute(
+            """SELECT ownership_verified FROM wallet_addresses
+               WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)
+               FOR UPDATE""",
+            (wallet_id, network, address),
+        ).fetchone()
+
+        if existing:
+            conn.execute(
+                """UPDATE wallet_addresses SET label=%s
+                   WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)""",
+                (label, wallet_id, network, address),
+            )
+            ownership_verified = bool(existing[0])
+            status = "already_attached"
+        else:
+            conn.execute(
+                """INSERT INTO wallet_addresses(wallet_id,network,address,label,ownership_verified)
+                   VALUES(%s,%s,%s,%s,FALSE) ON CONFLICT DO NOTHING""",
+                (wallet_id, network, address, label),
+            )
+            saved = conn.execute(
+                """SELECT ownership_verified FROM wallet_addresses
+                   WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)""",
+                (wallet_id, network, address),
+            ).fetchone()
+            if not saved:
+                raise HTTPException(status_code=409, detail="The admin address could not be attached")
+            ownership_verified = bool(saved[0])
+            status = "attached"
+            record_wallet_audit_event(
+                conn, owner_id=user["id"], wallet_id=wallet_id,
+                actor_email=user_email, action="wallet_address_attached",
+                resource="wallet_address", resource_id=address, network=network,
+                details={"label": label, "ownership_verified": ownership_verified, "source": "admin_default_restore"},
+            )
+        conn.commit()
+
+    return {
+        "status": status,
+        "wallet_id": wallet_id,
+        "address": {
+            "network": network,
+            "address": address,
+            "label": label,
+            "ownership_verified": ownership_verified,
+        },
+    }
+
+
 @app.post("/api/v1/wallets/{wallet_id}/addresses/challenge")
 def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallengeRequest,user: dict = Depends(current_user)):
     network=normalize_wallet_network(request.network); address=request.address.strip()
@@ -6154,6 +6236,53 @@ def create_wallet_address_challenge(wallet_id: str,request: WalletAddressChallen
     return {"challenge_id":challenge_id,"message":message,"expires_in_seconds":600}
 
 
+def verify_eip1271_wallet_signature(network: str, address: str, message: str, signature: str) -> bool:
+    """Verify an EVM smart-wallet personal-message signature using read-only ERC-1271.
+
+    EOA recovery remains the first choice. This fallback supports smart accounts
+    and EIP-7702 delegated accounts that expose the standard isValidSignature method.
+    """
+    rpc_config = {
+        "ethereum": (ETH_RPC_URL, require_ethereum_mainnet_rpc),
+        "bnb": (BSC_RPC_URL, require_bnb_rpc),
+        "sepolia": (SEPOLIA_RPC_URL, require_sepolia_rpc),
+    }
+    rpc_url, verify_chain = rpc_config.get(network, ("", None))
+    if not rpc_url or verify_chain is None:
+        return False
+    try:
+        raw_signature = signature[2:] if signature.lower().startswith("0x") else signature
+        if not raw_signature or len(raw_signature) % 2 or not re.fullmatch(r"[0-9a-fA-F]+", raw_signature):
+            return False
+        signature_bytes = bytes.fromhex(raw_signature)
+        if not signature_bytes or len(signature_bytes) > 4096:
+            return False
+
+        message_bytes = message.encode("utf-8")
+        message_digest = keccak.new(digest_bits=256)
+        message_digest.update(b"\x19Ethereum Signed Message:\n" + str(len(message_bytes)).encode("ascii") + message_bytes)
+        digest_hex = message_digest.digest().hex()
+
+        selector_hash = keccak.new(digest_bits=256)
+        selector_hash.update(b"isValidSignature(bytes32,bytes)")
+        selector = selector_hash.digest()[:4].hex()
+        padded_signature = signature_bytes + (b"\x00" * ((32 - len(signature_bytes) % 32) % 32))
+        calldata = (
+            "0x" + selector + digest_hex
+            + (64).to_bytes(32, "big").hex()
+            + len(signature_bytes).to_bytes(32, "big").hex()
+            + padded_signature.hex()
+        )
+
+        # Verify RPC chain identity before calling the account on that network.
+        verify_chain(rpc_url)
+        result = rpc_call(rpc_url, "eth_call", [{"to": address, "data": calldata}, "latest"])
+        return isinstance(result, str) and result.lower().startswith("0x1626ba7e")
+    except Exception as exc:
+        logger.info("ERC-1271 ownership check did not validate: network=%s error_type=%s", network, type(exc).__name__)
+        return False
+
+
 @app.post("/api/v1/wallets/{wallet_id}/addresses/verify")
 def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,user: dict = Depends(current_user)):
     with db() as conn:
@@ -6163,14 +6292,18 @@ def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,use
         if challenge[3] <= datetime.now(timezone.utc): raise HTTPException(status_code=410,detail="Verification challenge expired")
         network,address,message=challenge[0],challenge[1],challenge[2]
         if network in {"ethereum","bnb","sepolia"}:
+            from eth_account import Account
+            from eth_account.messages import encode_defunct
             try:
-                from eth_account import Account
-                from eth_account.messages import encode_defunct
                 recovered=Account.recover_message(encode_defunct(text=message),signature=request.signature)
-            except Exception as exc:
-                raise HTTPException(status_code=400,detail="Invalid EVM personal-message signature") from exc
-            if recovered.lower()!=address.lower():
-                raise HTTPException(status_code=400,detail="Signature does not match attached address")
+            except Exception:
+                recovered=None
+            if recovered and recovered.lower()==address.lower():
+                verification_method="eoa_personal_message_signature"
+            elif verify_eip1271_wallet_signature(network,address,message,request.signature):
+                verification_method="erc1271_onchain_personal_message_signature"
+            else:
+                raise HTTPException(status_code=400,detail="Signature does not verify for this EVM address as an EOA or ERC-1271 smart wallet")
             comparison="lower(address)=lower(%s)"
         elif network in {"solana_mainnet","solana_devnet"}:
             try:
@@ -6244,7 +6377,7 @@ def verify_wallet_address(wallet_id: str,request: WalletAddressVerifyRequest,use
         record_wallet_audit_event(
             conn, owner_id=user["id"], wallet_id=wallet_id, actor_email=user.get("email") or ("user:" + str(user["id"])),
             action="address_ownership_verified", resource="wallet_address", resource_id=address,
-            network=network, details={"method": "network_native_message_signature"},
+            network=network, details={"method": locals().get("verification_method", "network_native_message_signature")},
         )
         conn.commit()
     return {"status":"verified","wallet_id":wallet_id,"network":network,"address":address,"ownership_verified":True}
