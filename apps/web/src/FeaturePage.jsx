@@ -181,6 +181,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [walletAddresses, setWalletAddresses] = useState([]);
   const [addressesLoadedForWallet, setAddressesLoadedForWallet] = useState("");
   const externalAttachRef = useRef(new Set());
+  const adminDefaultAttachRef = useRef(new Set());
   const [network, setNetwork] = useState("ethereum");
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("primary");
@@ -220,6 +221,42 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   };
 
   useEffect(() => { loadWallets(); }, [accessToken]);
+
+  // Restore the owner-supplied OKX Mainnet address only for the configured backend admin.
+  // The server enforces the admin identity and stores this address as unverified; this
+  // does not make it balance-eligible until the user completes the wallet signature.
+  useEffect(() => {
+    if (!walletId || addressesLoadedForWallet !== walletId || !accessToken) return undefined;
+    const attemptKey = String(accountUserId || "account") + ":" + String(walletId);
+    if (adminDefaultAttachRef.current.has(attemptKey)) return undefined;
+    adminDefaultAttachRef.current.add(attemptKey);
+    let cancelled = false;
+    (async () => {
+      const response = await fetch(
+        apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(walletId) + "/addresses/admin-default",
+        { method: "POST", headers: await walletAuthHeaders(accessToken) }
+      );
+      const data = await response.json().catch(() => ({}));
+      // Non-admin accounts intentionally receive no details about this admin-only restore.
+      if (response.status === 403) return;
+      if (!response.ok) throw new Error(data.detail || "The configured OKX Mainnet address could not be restored.");
+      if (cancelled) return;
+      if (data.status === "already_attached_elsewhere") {
+        setMessage("The OKX Ethereum Mainnet address is already attached to another wallet in this account. It was not duplicated.");
+        return;
+      }
+      if (data.status === "attached" || data.status === "already_attached") {
+        await loadAddresses(walletId);
+        if (!cancelled && data.address?.ownership_verified !== true) {
+          setMessage("OKX Ethereum Mainnet address attached to the active wallet. Verify ownership to enable verified Mainnet balances. No transaction was sent.");
+        }
+      }
+    })().catch(error => {
+      adminDefaultAttachRef.current.delete(attemptKey);
+      if (!cancelled) setMessage(error?.message || "Unable to restore the configured OKX Mainnet address.");
+    });
+    return () => { cancelled = true; };
+  }, [walletId, addressesLoadedForWallet, accessToken, apiBaseUrl, accountUserId]);
 
   // Attach every saved external EVM address to its matching network on the active wallet.
   // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
