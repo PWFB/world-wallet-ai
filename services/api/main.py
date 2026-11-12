@@ -6142,7 +6142,7 @@ def attach_admin_default_evm_address(wallet_id: str, user: dict = Depends(curren
         raise HTTPException(status_code=403, detail="Admin wallet restore is not available for this account")
 
     address = WORLD_WALLET_ADMIN_EVM_ADDRESS.strip()
-    if not valid_evm_address(address):
+    if not valid_evm_address(address.lower()):
         raise HTTPException(status_code=503, detail="The configured admin Ethereum Mainnet address is invalid")
 
     network = "ethereum"
