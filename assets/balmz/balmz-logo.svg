@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">BALMZ token logo draft</title>
+  <desc id="desc">A dark circular token mark with an orange BALMZ letterform.</desc>
+  <defs>
+    <linearGradient id="coin" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#292929"/>
+      <stop offset="1" stop-color="#101010"/>
+    </linearGradient>
+    <linearGradient id="orange" x1="0" y1="0" x2="0.9" y2="1">
+      <stop offset="0" stop-color="#ffad4d"/>
+      <stop offset="0.52" stop-color="#ff7a18"/>
+      <stop offset="1" stop-color="#df4f00"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dy="8"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <circle cx="256" cy="256" r="226" fill="#090909"/>
+  <circle cx="256" cy="256" r="207" fill="url(#coin)" stroke="url(#orange)" stroke-width="12"/>
+  <circle cx="256" cy="256" r="183" fill="none" stroke="#ff7a18" stroke-opacity=".22" stroke-width="2"/>
+  <path d="M126 153a164 164 0 0 1 260-24" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="7" stroke-linecap="round"/>
+  <path d="M384 359a164 164 0 0 1-256 24" fill="none" stroke="#ff7a18" stroke-opacity=".42" stroke-width="7" stroke-linecap="round"/>
+  <g filter="url(#shadow)">
+    <path d="M180 126h130c62 0 98 32 98 83 0 34-18 57-48 69 39 10 61 37 61 76 0 60-45 96-116 96H180V126zm79 65v60h46c18 0 28-11 28-30 0-19-10-30-30-30h-44zm0 121v72h48c24 0 36-12 36-35 0-24-13-37-37-37h-47z" fill="url(#orange)"/>
+  </g>
+  <path d="M115 256h39M358 256h39" stroke="#ff7a18" stroke-width="8" stroke-linecap="round" opacity=".8"/>
+</svg>
