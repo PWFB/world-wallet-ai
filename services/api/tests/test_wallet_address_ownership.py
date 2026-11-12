@@ -34,8 +34,6 @@ class FakeConnection:
                 return Result(rowcount=0)
             self.challenge[4] = datetime.now(timezone.utc)
             return Result(rowcount=1)
-        if normalized.startswith("select ownership_verified from wallet_addresses"):
-            return Result((False,))
         if normalized.startswith("insert into wallet_audit_events"):
             return Result()
         raise AssertionError("Unexpected SQL: " + normalized)
@@ -49,13 +47,15 @@ class AdminAddressConnection:
         self.existing = existing
         self.inserted = False
         self.statements = []
+        self.params = []
 
     def execute(self, sql, params=None):
         normalized = " ".join(sql.split()).lower()
         self.statements.append(normalized)
+        self.params.append(params)
         if normalized.startswith("select id from wallets where id=%s and owner_id=%s"):
             return Result(("wallet_test",))
-        if normalized.startswith("select wallet_id,ownership_verified from wallet_addresses"):
+        if normalized.startswith("select ownership_verified from wallet_addresses"):
             return Result(self.existing)
         if normalized.startswith("insert into wallet_addresses"):
             self.inserted = True
@@ -237,6 +237,31 @@ class WalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(result["address"]["address"], address)
         self.assertFalse(result["address"]["ownership_verified"])
         self.assertTrue(connection.inserted)
+        lookup = next(
+            (params for sql, params in zip(connection.statements, connection.params)
+             if sql.startswith("select ownership_verified from wallet_addresses")),
+            None,
+        )
+        self.assertEqual(
+            lookup,
+            ("wallet_test", "ethereum", address),
+            "Restore lookup must target the selected wallet, not a different wallet in the account",
+        )
+
+    def test_admin_default_okx_address_preserves_existing_ownership_on_selected_wallet(self):
+        address = "0xBbDb482aE0895e496676eC84501d2945a404FF2C"
+        connection = AdminAddressConnection(existing=(True,))
+        user = {"id": "user_test", "email": "admin@example.com"}
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "admin@example.com"),
+            patch.object(main, "WORLD_WALLET_ADMIN_EVM_ADDRESS", address),
+        ):
+            result = main.attach_admin_default_evm_address("wallet_test", user)
+
+        self.assertEqual(result["status"], "already_attached")
+        self.assertTrue(result["address"]["ownership_verified"])
+        self.assertFalse(connection.inserted)
 
     def test_admin_default_okx_address_is_not_available_to_non_admin(self):
         from fastapi import HTTPException
