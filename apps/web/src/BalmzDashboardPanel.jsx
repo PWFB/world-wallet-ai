@@ -29,7 +29,7 @@ export default function BalmzDashboardPanel({ tokenRegistry = [], verifiedBalanc
           <h2 id="balmz-dashboard-title" style={{ margin: "3px 0" }}>BALMZ</h2>
           <p style={{ margin: 0, color: "var(--muted,#8192a9)", fontSize: 12 }}>Multi-chain token · Ethereum · BNB Chain · Solana</p>
         </div>
-        <span className="badge badge-warning" style={{ padding: "6px 10px", borderRadius: 20 }}>PRE-LAUNCH</span>
+        <span role="status" style={{ padding: "6px 10px", borderRadius: 20, border: "1px solid var(--border,#334155)", color: "var(--muted,#8192a9)", fontSize: 11, fontWeight: 700, letterSpacing: ".06em" }}>PRE-LAUNCH</span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 16 }}>
         <div className="stat-card">
