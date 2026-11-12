@@ -56,12 +56,12 @@ class AdminAddressConnection:
         if normalized.startswith("select id from wallets where id=%s and owner_id=%s"):
             return Result(("wallet_test",))
         if normalized.startswith("select ownership_verified from wallet_addresses"):
-            return Result(self.existing)
+            if self.existing is not None:
+                return Result(self.existing)
+            return Result((False,) if self.inserted else None)
         if normalized.startswith("insert into wallet_addresses"):
             self.inserted = True
             return Result()
-        if normalized.startswith("select ownership_verified from wallet_addresses"):
-            return Result((False,))
         if normalized.startswith("insert into wallet_audit_events"):
             return Result()
         raise AssertionError("Unexpected SQL: " + normalized)
