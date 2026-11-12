@@ -6155,24 +6155,14 @@ def attach_admin_default_evm_address(wallet_id: str, user: dict = Depends(curren
         if not owner:
             raise HTTPException(status_code=404, detail="Wallet not found")
 
+        # Attach to the selected wallet only. The same public address may be
+        # intentionally linked to another wallet workspace without blocking this one.
         existing = conn.execute(
-            """SELECT wallet_id,ownership_verified FROM wallet_addresses
-               WHERE network=%s AND lower(address)=lower(%s)
-                 AND wallet_id IN (SELECT id FROM wallets WHERE owner_id=%s)
-               ORDER BY created_at LIMIT 1 FOR UPDATE""",
-            (network, address, user["id"]),
+            """SELECT ownership_verified FROM wallet_addresses
+               WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)
+               FOR UPDATE""",
+            (wallet_id, network, address),
         ).fetchone()
-        if existing and str(existing[0]) != str(wallet_id):
-            return {
-                "status": "already_attached_elsewhere",
-                "wallet_id": existing[0],
-                "address": {
-                    "network": network,
-                    "address": address,
-                    "label": label,
-                    "ownership_verified": bool(existing[1]),
-                },
-            }
 
         if existing:
             conn.execute(
@@ -6180,7 +6170,7 @@ def attach_admin_default_evm_address(wallet_id: str, user: dict = Depends(curren
                    WHERE wallet_id=%s AND network=%s AND lower(address)=lower(%s)""",
                 (label, wallet_id, network, address),
             )
-            ownership_verified = bool(existing[1])
+            ownership_verified = bool(existing[0])
             status = "already_attached"
         else:
             conn.execute(
