@@ -34,6 +34,11 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   const [message, setMessage] = useState("");
   const [nowMs, setNowMs] = useState(Date.now());
   const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [referrals, setReferrals] = useState([]);
+  const [referralTotal, setReferralTotal] = useState(0);
+  const [referralOffset, setReferralOffset] = useState(0);
+  const [referralBusy, setReferralBusy] = useState(false);
+  const [referralError, setReferralError] = useState("");
 
   const request = useCallback(async (path, method = "GET") => {
     const fresh = await getNeonAccessToken({ forceRefresh: true });
@@ -52,9 +57,21 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
   const refresh = useCallback(async () => {
     setBusy(true);
     setError("");
-    try { setData(await request("/api/v1/mining/balmz")); }
-    catch (err) { setError(err?.message || "Could not load mining status."); }
-    finally { setBusy(false); }
+    try {
+      const status = await request("/api/v1/mining/balmz");
+      setData(status);
+      try {
+        const history = await request("/api/v1/mining/balmz/referrals?limit=25&offset=0");
+        setReferrals(history.referrals || []);
+        setReferralTotal(Number(history.total || 0));
+        setReferralOffset((history.referrals || []).length);
+        setReferralError("");
+      } catch (historyErr) {
+        setReferralError(historyErr?.message || "Could not load referral history.");
+      }
+    } catch (err) {
+      setError(err?.message || "Could not load mining status.");
+    } finally { setBusy(false); }
   }, [request]);
 
   useEffect(() => { refresh(); }, [refresh]);
@@ -62,6 +79,23 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, []);
+
+  async function loadMoreReferrals() {
+    if (referralBusy || referrals.length >= referralTotal) return;
+    setReferralBusy(true);
+    setReferralError("");
+    try {
+      const history = await request("/api/v1/mining/balmz/referrals?limit=25&offset=" + referralOffset);
+      const next = history.referrals || [];
+      setReferrals(current => [...current, ...next]);
+      setReferralOffset(current => current + next.length);
+      setReferralTotal(Number(history.total || 0));
+    } catch (err) {
+      setReferralError(err?.message || "Could not load referral history.");
+    } finally {
+      setReferralBusy(false);
+    }
+  }
 
   async function act(action) {
     setBusy(true); setError(""); setMessage("");
@@ -108,7 +142,24 @@ export default function FreeBalmzMining({ accessToken, apiBaseUrl }) {
         <div className="panel action-panel mining-status-card"><small>MINING REFERRAL CODE</small><strong>{data?.mining_referral_code || "Loading…"}</strong><span>Share this code for mining referrals.</span></div>
         <div className="panel action-panel mining-status-card"><small>WORLD WALLET AI CODE</small><strong>{data?.world_wallet_code || "Loading…"}</strong><span>Separate World Wallet AI account identifier.</span></div>
       </div>
-      <p className="security-note">These codes are different and permanently assigned to this wallet. Referral tracking or referral rewards are not activated by displaying a code.</p>
+      <p className="security-note">These codes are different and permanently assigned to this wallet. Referral attribution records the inviting wallet; no referral reward or payout is enabled.</p>
+      <div className="tool-row"><span>Accounts referred</span><strong>{data?.mining_referral_count ?? 0}</strong></div>
+    </article>
+
+    <article className="panel action-panel">
+      <div className="panel-head"><div><h2>Mining referral history</h2><span>Read-only records of wallets registered with your MINE code.</span></div><span className="mining-interest-badge">{referralTotal} referrals</span></div>
+      {referralError && <div className="feature-error" role="alert">{referralError}</div>}
+      {!referrals.length ? <p className="muted">No referred wallets have registered yet.</p> :
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 520 }}>
+          <thead><tr><th>Registration timestamp</th><th>Referred wallet ID</th><th>Referral code</th></tr></thead>
+          <tbody>{referrals.map(referral => <tr key={referral.referred_wallet_id}>
+            <td>{new Date(referral.referred_at).toLocaleString()}</td>
+            <td style={{ overflowWrap: "anywhere" }}>{referral.referred_wallet_id}</td>
+            <td>{referral.referral_code}</td>
+          </tr>)}</tbody>
+        </table></div>}
+      {referrals.length < referralTotal && <button className="secondary" type="button" disabled={referralBusy} onClick={loadMoreReferrals}>{referralBusy ? "Loading…" : "Load more referrals"}</button>}
+      <p className="security-note">History is scoped to your wallet. It shows wallet IDs and referral timestamps only—not names, emails, phone numbers, credentials, or private keys. Records cannot be edited or deleted here. Referral history does not create rewards or payouts.</p>
     </article>
 
     <article className="panel action-panel mining-hero">
