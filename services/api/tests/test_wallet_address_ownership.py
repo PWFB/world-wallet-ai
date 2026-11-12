@@ -29,6 +29,8 @@ class FakeConnection:
             return Result(tuple(self.challenge))
         if normalized.startswith("update wallet_addresses set ownership_verified=true"):
             return Result(rowcount=1)
+        if normalized.startswith("select ownership_verified from wallet_addresses"):
+            return Result((False,))
         if normalized.startswith("update wallet_address_challenges set used_at=now()"):
             if self.challenge[4] is not None:
                 return Result(rowcount=0)
@@ -59,6 +61,8 @@ class AdminAddressConnection:
             if self.existing is not None:
                 return Result(self.existing)
             return Result((False,) if self.inserted else None)
+        if normalized.startswith("update wallet_addresses set label=%s"):
+            return Result(rowcount=1)
         if normalized.startswith("insert into wallet_addresses"):
             self.inserted = True
             return Result()
