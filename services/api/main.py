@@ -6274,8 +6274,6 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
         ).fetchone()
         if not attached:
             raise HTTPException(status_code=404, detail="Attach this public address to the selected wallet before checking its balance")
-        if not bool(attached[0]):
-            raise HTTPException(status_code=403, detail="Prove ownership of this public address before requesting its balance")
     try:
         if network == "ethereum":
             rpc_url, asset = ETH_RPC_URL, "ETH"
@@ -6313,8 +6311,12 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
     except Exception as exc:
         logger.warning("Wallet balance lookup failed for network=%s error_type=%s", network, type(exc).__name__)
         raise HTTPException(status_code=503, detail=f"{network.replace('_', ' ').title()} balance service unavailable") from exc
+    ownership_verified = bool(attached[0])
     return {"wallet_id": wallet_id, "network": network, "address": address, "asset": asset,
             "balance": balance, "unit": asset, "read_only": True,
+            "ownership_verified": ownership_verified,
+            "spend_eligible": ownership_verified,
+            "balance_scope": "verified_wallet" if ownership_verified else "public_address_preview",
             "synced_at": datetime.now(timezone.utc).isoformat()}
 
 
