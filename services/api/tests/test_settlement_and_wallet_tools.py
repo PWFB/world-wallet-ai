@@ -461,6 +461,50 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertEqual(result["state"], "confirmed")
         self.assertEqual(result["confirmations"], 3)
 
+    def test_ethereum_usdt_reconciliation_uses_canonical_contract_and_live_decimals(self):
+        wallet = "0x" + "1" * 40
+        contract = main.ETHEREUM_USDT_MAINNET_CONTRACT
+        conn = Mock()
+        user = {"wallet_id": "wallet_test"}
+
+        with (
+            patch.object(main, "ETH_RPC_URL", "https://ethereum.example"),
+            patch.object(main, "USDT_ETH_CONTRACT", ""),
+            patch.object(main, "require_ethereum_mainnet_rpc", return_value=1) as chain_check,
+            patch.object(main, "verified_erc20_decimals", return_value=6) as decimals_check,
+            patch.object(main, "erc20_balance", return_value=1.25) as balance_check,
+        ):
+            main.reconcile_settled_asset(conn, user, "USDT", "ethereum", wallet)
+
+        chain_check.assert_called_once_with("https://ethereum.example")
+        decimals_check.assert_called_once_with(
+            "https://ethereum.example", contract, "ethereum", chain_checked=True
+        )
+        balance_check.assert_called_once_with("https://ethereum.example", contract, wallet, 6)
+        conn.execute.assert_called_once_with(
+            "UPDATE assets SET balance=%s WHERE wallet_id=%s AND symbol=%s",
+            (1.25, "wallet_test", "USDT"),
+        )
+
+    def test_ethereum_usdt_reconciliation_does_not_write_balance_on_wrong_chain(self):
+        wallet = "0x" + "1" * 40
+        conn = Mock()
+        user = {"wallet_id": "wallet_test"}
+
+        with (
+            patch.object(main, "ETH_RPC_URL", "https://ethereum.example"),
+            patch.object(main, "USDT_ETH_CONTRACT", ""),
+            patch.object(main, "require_ethereum_mainnet_rpc", side_effect=ValueError("wrong chain")) as chain_check,
+            patch.object(main, "verified_erc20_decimals") as decimals_check,
+            patch.object(main, "erc20_balance") as balance_check,
+        ):
+            main.reconcile_settled_asset(conn, user, "USDT", "ethereum", wallet)
+
+        chain_check.assert_called_once_with("https://ethereum.example")
+        decimals_check.assert_not_called()
+        balance_check.assert_not_called()
+        conn.execute.assert_not_called()
+
     def test_bnb_usdt_reconciliation_updates_the_network_qualified_asset(self):
         wallet = "0x" + "1" * 40
         contract = "0x" + "3" * 40
