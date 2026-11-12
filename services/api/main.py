@@ -8051,16 +8051,29 @@ def reconcile_settled_asset(conn, user, symbol, network, source_address=None):
             elif symbol == "BALMZ-SEP":
                 contract = BALMZ_SEPOLIA_CONTRACT if network == "sepolia" else ""
                 rpc = SEPOLIA_RPC_URL if network == "sepolia" else ""
-                if rpc: require_sepolia_rpc(rpc)
             elif network == "ethereum":
-                contract, rpc = USDT_ETH_CONTRACT, ETH_RPC_URL
+                # Ethereum USDT has a canonical fallback so reconciliation still
+                # works when the optional override is not set in the deployment.
+                contract = USDT_ETH_CONTRACT or ETHEREUM_USDT_MAINNET_CONTRACT
+                rpc = ETH_RPC_URL
             elif network == "bnb":
-                contract, rpc = USDT_BSC_CONTRACT, BSC_RPC_URL
-                if rpc: require_bnb_rpc(rpc)
+                # Match wallet sync's known Binance-Peg BSC-USD fallback.
+                contract = USDT_BSC_CONTRACT or BSC_USDT_MAINNET_CONTRACT
+                rpc = BSC_RPC_URL
             else:
                 contract, rpc = "", ""
             if contract and rpc:
-                token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True) if network == "bnb" else 18
+                # Every ERC-20 reconciliation must verify the selected chain and
+                # read token precision from that contract; never assume 18 digits.
+                if network == "ethereum":
+                    require_ethereum_mainnet_rpc(rpc)
+                elif network == "bnb":
+                    require_bnb_rpc(rpc)
+                elif network == "sepolia":
+                    require_sepolia_rpc(rpc)
+                else:
+                    raise ValueError("Unsupported network for ERC-20 reconciliation")
+                token_decimals = verified_erc20_decimals(rpc, contract, network, chain_checked=True)
                 value = erc20_balance(rpc, contract, address, token_decimals)
     except Exception:
         value = None

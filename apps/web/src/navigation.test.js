@@ -20,6 +20,23 @@ test("the main wallet actions are reachable from the sidebar", () => {
   }
 });
 
+test("every sidebar destination has an explicit screen handler from first to last", () => {
+  const pages = Object.values(WALLET_NAVIGATION).flat();
+  const applicationSource = appSource + "\n" + featureSource;
+  const missing = pages.filter(page => {
+    const markers = [
+      'active === "' + page + '"',
+      'active==="' + page + '"',
+      "active === '" + page + "'",
+      "active==='" + page + "'",
+    ];
+    return !markers.some(marker => applicationSource.includes(marker));
+  });
+  assert.deepEqual(missing, [], "Sidebar pages without a direct render route");
+  assert.equal(pages.at(-1), "Help & Docs", "The audit must include the final sidebar destination");
+});
+
+
 test("the sidebar ends its support group with Help and Docs", () => {
   const groups = Object.keys(WALLET_NAVIGATION);
   assert.equal(groups.at(-1), "HELP & DOCS");
