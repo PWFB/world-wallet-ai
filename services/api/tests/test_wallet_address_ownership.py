@@ -93,7 +93,7 @@ class WalletAddressOwnershipTests(unittest.TestCase):
 
         owner = "0x1111111111111111111111111111111111111111"
         signer = Account.create()
-        message = "World Wallet AI ownership challenge\\nWallet: wallet_test"
+        message = "World Wallet AI ownership challenge\nWallet: wallet_test"
         challenge = (
             "ethereum",
             owner,
