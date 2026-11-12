@@ -9,6 +9,7 @@ import { defaultNetworkForEnvironment, networkEnvironment, normalizeNetworkId, r
 import { indexVerifiedBalances } from "./verified-balances.js";
 import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
+import BalmzDashboardPanel from "./BalmzDashboardPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
 
 function WorldGlobeLogo({ compact = false }) {
@@ -2210,11 +2211,7 @@ function App() {
               </article>
               <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
               <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ") ? number(verifiedBalancesByAsset.get("BALMZ").available_balance) : "Unavailable"} <small>BALMZ</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ")?.status || "No verified Mainnet contract/address balance"}</b><div className="stat-source">Ethereum Mainnet only · based on the ownership-verified ERC-20 contract balance.</div></article>
-              <article className="stat-card"><span>BALMZ · BNB Chain Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-BNB") ? number(verifiedBalancesByAsset.get("BALMZ-BNB").available_balance) : "Unavailable"} <small>BALMZ-BNB</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-BNB")?.status || "No verified BNB Mainnet contract/address balance"}</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-SOL") ? number(verifiedBalancesByAsset.get("BALMZ-SOL").available_balance) : "Unavailable"} <small>BALMZ-SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-SOL")?.status || "Mainnet mint or address not verified"}</b></article>
-              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>Unavailable <small>BALMZ-SEP</small></strong><b className="neutral">Testnet balance is not included in this Mainnet verification report.</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>Unavailable <small>BALMZ-SOL-DEVNET</small></strong><b className="neutral">Testnet balance is separate and requires its own verified testnet read.</b></article>
+              <BalmzDashboardPanel tokenRegistry={tokenRegistry} verifiedBalancesByAsset={verifiedBalancesByAsset} />
               <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{verifiedBalancesByAsset.has("SOL") ? number(verifiedBalancesByAsset.get("SOL").available_balance) : "Unavailable"} <small>SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("SOL")?.status || "No verified Solana Mainnet address balance"}</b></article>
             </div>
 
