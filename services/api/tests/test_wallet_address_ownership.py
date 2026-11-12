@@ -44,6 +44,32 @@ class FakeConnection:
         pass
 
 
+class AdminAddressConnection:
+    def __init__(self, existing=None):
+        self.existing = existing
+        self.inserted = False
+        self.statements = []
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split()).lower()
+        self.statements.append(normalized)
+        if normalized.startswith("select id from wallets where id=%s and owner_id=%s"):
+            return Result(("wallet_test",))
+        if normalized.startswith("select wallet_id,ownership_verified from wallet_addresses"):
+            return Result(self.existing)
+        if normalized.startswith("insert into wallet_addresses"):
+            self.inserted = True
+            return Result()
+        if normalized.startswith("select ownership_verified from wallet_addresses"):
+            return Result((False,))
+        if normalized.startswith("insert into wallet_audit_events"):
+            return Result()
+        raise AssertionError("Unexpected SQL: " + normalized)
+
+    def commit(self):
+        pass
+
+
 class FakeDatabaseContext:
     def __init__(self, connection):
         self.connection = connection
@@ -192,6 +218,41 @@ class WalletAddressOwnershipTests(unittest.TestCase):
                     "wallet_test", request, {"id": "user_test"}
                 )
         self.assertEqual(caught.exception.status_code, 409)
+
+    def test_admin_default_okx_address_attaches_as_unverified_to_active_wallet(self):
+        from fastapi import HTTPException
+
+        address = "0xBbDb482aE0895e496676eC84501d2945a404FF2C"
+        connection = AdminAddressConnection()
+        user = {"id": "user_test", "email": "admin@example.com"}
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "admin@example.com"),
+            patch.object(main, "WORLD_WALLET_ADMIN_EVM_ADDRESS", address),
+        ):
+            result = main.attach_admin_default_evm_address("wallet_test", user)
+
+        self.assertEqual(result["status"], "attached")
+        self.assertEqual(result["address"]["network"], "ethereum")
+        self.assertEqual(result["address"]["address"], address)
+        self.assertFalse(result["address"]["ownership_verified"])
+        self.assertTrue(connection.inserted)
+
+    def test_admin_default_okx_address_is_not_available_to_non_admin(self):
+        from fastapi import HTTPException
+
+        user = {"id": "user_test", "email": "member@example.com"}
+        with (
+            patch.object(main, "WORLD_WALLET_ADMIN_EMAIL", "admin@example.com"),
+            patch.object(main, "db") as database,
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                main.attach_admin_default_evm_address(
+                    "wallet_test", user
+                )
+
+        self.assertEqual(caught.exception.status_code, 403)
+        database.assert_not_called()
 
     def test_unverified_evm_source_cannot_create_withdrawal(self):
         from decimal import Decimal
