@@ -63,9 +63,6 @@ COINGECKO_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_COI
 WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
 NEON_AUTH_BASE_URL = os.getenv("NEON_AUTH_BASE_URL", "").strip()
 NEON_AUTH_EXPECTED_AUDIENCE = os.getenv("NEON_AUTH_EXPECTED_AUDIENCE", "").strip()
-TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID", "").strip()
-TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "").strip()
-TWILIO_VERIFY_SERVICE_SID = os.getenv("TWILIO_VERIFY_SERVICE_SID", "").strip()
 NEON_AUTH_JWKS_URL = os.getenv("NEON_AUTH_JWKS_URL", "").strip()
 NEON_JWKS_CLIENT = PyJWKClient(NEON_AUTH_JWKS_URL) if NEON_AUTH_JWKS_URL else None
 EVM_WALLET_ADDRESS = os.getenv("WORLD_WALLET_EVM_ADDRESS", "").strip()
@@ -2757,32 +2754,6 @@ def _normalise_phone_number(value: str) -> str:
     if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
         raise HTTPException(status_code=400, detail="Enter a valid phone number in international format, for example +2348012345678.")
     return phone
-
-
-def _twilio_verify_request(phone_number: str, code: str | None = None):
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID):
-        raise HTTPException(status_code=503, detail="Phone verification is not configured. The SMS provider credentials and Verify Service must be configured by the operator.")
-    url = f"https://verify.twilio.com/v2/Services/{TWILIO_VERIFY_SERVICE_SID}/" + ("VerificationCheck" if code is not None else "Verifications")
-    form = {"To": phone_number, "Channel": "sms"}
-    if code is not None:
-        form["Code"] = code.strip()
-    try:
-        response = httpx.post(url, data=form, auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN), timeout=15.0)
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail="Phone verification provider could not be reached. Please try again.") from exc
-    try:
-        payload = response.json()
-    except ValueError:
-        payload = {}
-    if not response.is_success:
-        # Never return provider credentials or raw provider responses to clients.
-        detail = "Unable to send phone verification code." if code is None else "Phone verification failed."
-        raise HTTPException(status_code=502 if response.status_code >= 500 else 400, detail=detail)
-    if code is None:
-        if payload.get("status") not in {"pending", "approved"}:
-            raise HTTPException(status_code=502, detail="Phone verification provider did not accept the SMS request.")
-        return payload
-    return payload.get("status") == "approved"
 
 
 @app.post("/api/v1/auth/neon/register")
