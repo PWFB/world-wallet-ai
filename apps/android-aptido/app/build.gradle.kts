@@ -10,7 +10,7 @@ val signingKeyPassword = System.getenv("APTIDO_KEY_PASSWORD")
 
 android {
     namespace = "com.balmz.aptido"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.balmz.aptido"
