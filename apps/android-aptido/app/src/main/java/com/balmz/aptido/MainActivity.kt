@@ -377,24 +377,7 @@ private fun AptidoApp() {
                     }
                 }
             },
-            onSendPhoneOtp = { phone ->
-                scope.launch {
-                    busy = true
-                    notice = ""
-                    try {
-                        val result = api.post(
-                            "/api/v1/auth/phone/send-otp",
-                            JSONObject().put("phone_number", phone.trim())
-                        )
-                        notice = result.optString("message", "A verification code was requested. Check your SMS.")
-                    } catch (error: Exception) {
-                        notice = error.message ?: "Could not request the SMS code."
-                    } finally {
-                        busy = false
-                    }
-                }
-            },
-            onRegister = { name, email, phone, otp, password ->
+            onRegister = { name, email, password ->
                 scope.launch {
                     busy = true
                     notice = ""
@@ -404,8 +387,6 @@ private fun AptidoApp() {
                             JSONObject()
                                 .put("name", name.trim())
                                 .put("email", email.trim())
-                                .put("phone_number", phone.trim())
-                                .put("phone_otp", otp.trim())
                                 .put("password", password)
                         )
                         acceptIdentity(result)
@@ -530,15 +511,12 @@ private fun AuthScreen(
     busy: Boolean,
     notice: String,
     onLogin: (String, String) -> Unit,
-    onSendPhoneOtp: (String) -> Unit,
-    onRegister: (String, String, String, String, String) -> Unit,
+    onRegister: (String, String, String) -> Unit,
     onReset: (String) -> Unit
 ) {
     var createAccount by remember { mutableStateOf(false) }
     var name by remember { mutableStateOf("") }
     var email by remember { mutableStateOf("") }
-    var phone by remember { mutableStateOf("") }
-    var otp by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
 
     Column(
@@ -555,21 +533,13 @@ private fun AuthScreen(
         ) {
             Text(if (createAccount) "Create your account" else "Welcome back", color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Text(
-                if (createAccount) "Create an individual account. Phone verification is required by the connected service."
+                if (createAccount) "Create an individual account with your email address and password."
                 else "Sign in with your existing World Wallet AI account.",
                 color = Muted, fontSize = 13.sp
             )
             if (createAccount) {
                 AptidoField(name, { name = it }, "Full name")
                 AptidoField(email, { email = it }, "Email address", keyboard = KeyboardType.Email)
-                AptidoField(phone, { phone = it }, "Phone number with country code", keyboard = KeyboardType.Phone)
-                Button(
-                    onClick = { onSendPhoneOtp(phone) },
-                    enabled = !busy && phone.isNotBlank(),
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
-                ) { Text("Send SMS verification code") }
-                AptidoField(otp, { otp = it.filter { char -> char.isDigit() }.take(10) }, "SMS verification code", keyboard = KeyboardType.Number)
             } else {
                 AptidoField(email, { email = it }, "Email address", keyboard = KeyboardType.Email)
             }
@@ -586,11 +556,11 @@ private fun AuthScreen(
             }
             Button(
                 onClick = {
-                    if (createAccount) onRegister(name, email, phone, otp, password)
+                    if (createAccount) onRegister(name, email, password)
                     else onLogin(email, password)
                 },
                 enabled = !busy && email.isNotBlank() && password.isNotBlank() &&
-                    (!createAccount || (name.isNotBlank() && phone.isNotBlank() && otp.isNotBlank())),
+                    (!createAccount || name.isNotBlank()),
                 modifier = Modifier.fillMaxWidth().height(50.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
             ) {
