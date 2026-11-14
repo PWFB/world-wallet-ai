@@ -384,6 +384,27 @@ private fun AptidoApp() {
                 verificationEmail = ""
                 notice = ""
             },
+            onResendVerification = { email ->
+                scope.launch {
+                    busy = true
+                    notice = ""
+                    try {
+                        val result = api.post(
+                            "/api/v1/auth/neon/resend-verification",
+                            JSONObject().put("email", email.trim())
+                        )
+                        notice = result.optString("message", "A new verification code has been sent.")
+                    } catch (error: Exception) {
+                        notice = error.message ?: "Could not resend the verification code."
+                    } finally {
+                        busy = false
+                    }
+                }
+            },
+            onStartVerification = { email ->
+                verificationEmail = email.trim()
+                notice = "Enter the code already sent to your email, or request a new code."
+            },
             onLogin = { email, password ->
                 scope.launch {
                     busy = true
@@ -542,6 +563,8 @@ private fun AuthScreen(
     verificationEmail: String,
     onVerify: (String, String) -> Unit,
     onCancelVerification: () -> Unit,
+    onResendVerification: (String) -> Unit,
+    onStartVerification: (String) -> Unit,
     onLogin: (String, String) -> Unit,
     onRegister: (String, String, String) -> Unit,
     onReset: (String) -> Unit
@@ -576,6 +599,9 @@ private fun AuthScreen(
             ) {
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Ink, strokeWidth = 2.dp)
                 else Text("Verify email", fontWeight = FontWeight.Bold)
+            }
+            TextButton(onClick = { onResendVerification(verificationEmail) }, enabled = !busy, modifier = Modifier.align(Alignment.CenterHorizontally)) {
+                Text("Resend verification code", color = Orange)
             }
             TextButton(onClick = onCancelVerification, modifier = Modifier.align(Alignment.CenterHorizontally)) {
                 Text("Back to sign in", color = Paper)
@@ -631,6 +657,11 @@ private fun AuthScreen(
             ) {
                 if (busy) CircularProgressIndicator(modifier = Modifier.size(18.dp), color = Ink, strokeWidth = 2.dp)
                 else Text(if (createAccount) "Create account" else "Sign in", fontWeight = FontWeight.Bold)
+            }
+            if (createAccount) {
+                TextButton(onClick = { onStartVerification(email) }, enabled = !busy && email.isNotBlank(), modifier = Modifier.fillMaxWidth()) {
+                    Text("Already signed up? Verify your email", color = Orange)
+                }
             }
             TextButton(onClick = { createAccount = !createAccount }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (createAccount) "Already have an account? Sign in" else "New to BALMZ AI APT? Create account", color = Paper)
