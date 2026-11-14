@@ -242,6 +242,9 @@ class NeonAuthOtpRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     otp: str = Field(min_length=4, max_length=12)
 
+class NeonAuthEmailRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
 class SecurityPinRequest(BaseModel):
     pin: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
@@ -2824,6 +2827,16 @@ def neon_otp_login(request: NeonAuthOtpRequest):
         "email": request.email.strip().lower(),
         "otp": request.otp.strip(),
     })
+
+
+@app.post("/api/v1/auth/neon/resend-verification")
+def neon_resend_registration_verification(request: NeonAuthEmailRequest):
+    email = request.email.strip().lower()
+    _neon_auth_post("/email-otp/send-verification-otp", {
+        "email": email,
+        "type": "email-verification",
+    })
+    return {"ok": True, "message": "A new verification code has been sent to your email address."}
 
 
 @app.post("/api/v1/auth/google")
