@@ -11,9 +11,6 @@ on:
       - feat/balmz-aptido-android-apk
     tags:
       - "apt-v*"
-    paths:
-      - "apps/android-aptido/**"
-      - ".github/workflows/balmz-ai-apt-android.yml"
   workflow_dispatch:
 
 permissions:
