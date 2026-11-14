@@ -1,6 +1,8 @@
 package com.balmz.aptido
 
 import android.os.Bundle
+import android.content.Intent
+import android.net.Uri
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -92,6 +95,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AptidoStage { AUTH, PIN, APP }
 private data class ChatLine(val fromUser: Boolean, val text: String)
+private data class DownloadApp(val name: String, val category: String, val description: String, val url: String)
 private data class AssetLine(
     val symbol: String,
     val network: String,
@@ -743,7 +747,7 @@ private fun AppHome(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Home", "AI Chat", "Account").forEach { item ->
+            listOf("Home", "AI Chat", "Downloads", "Account").forEach { item ->
                 val selected = tab == item
                 Box(
                     modifier = Modifier.weight(1f).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
@@ -777,7 +781,121 @@ private fun AppHome(
                     }
                 }
             )
+            "Downloads" -> DownloadsPanel()
             else -> AccountPanel(wallet = wallet, onLogout = onLogout)
+        }
+    }
+}
+
+@Composable
+private fun DownloadsPanel() {
+    val context = LocalContext.current
+    val apps = remember {
+        listOf(
+            DownloadApp("Google Chrome", "Browser", "Fast and secure web browsing.", "https://play.google.com/store/apps/details?id=com.android.chrome"),
+            DownloadApp("Google Play Store", "Store", "Browse and install Android apps from Google.", "https://play.google.com/store"),
+            DownloadApp("WhatsApp", "Messaging", "Private messaging and voice/video calls.", "https://www.whatsapp.com/android"),
+            DownloadApp("Telegram", "Messaging", "Cloud-based messaging and channels.", "https://telegram.org/android"),
+            DownloadApp("YouTube", "Video", "Watch videos, music and creator content.", "https://play.google.com/store/apps/details?id=com.google.android.youtube"),
+            DownloadApp("Google Maps", "Utilities", "Navigation, places and directions.", "https://play.google.com/store/apps/details?id=com.google.android.apps.maps"),
+            DownloadApp("Gmail", "Productivity", "Email from Google.", "https://play.google.com/store/apps/details?id=com.google.android.gm"),
+            DownloadApp("Facebook", "Social", "Connect with friends and communities.", "https://www.facebook.com/mobile/"),
+            DownloadApp("Instagram", "Social", "Photos, reels and messages.", "https://www.instagram.com/"),
+            DownloadApp("TikTok", "Video", "Short-form videos and creator content.", "https://www.tiktok.com/download"),
+            DownloadApp("Google Drive", "Productivity", "Store and share files in the cloud.", "https://play.google.com/store/apps/details?id=com.google.android.apps.docs"),
+            DownloadApp("Google Photos", "Productivity", "Back up and organize photos.", "https://play.google.com/store/apps/details?id=com.google.android.apps.photos"),
+            DownloadApp("Google Meet", "Communication", "Video meetings and calls.", "https://play.google.com/store/apps/details?id=com.google.android.apps.meetings"),
+            DownloadApp("Google Translate", "Utilities", "Translate text, speech and images.", "https://play.google.com/store/apps/details?id=com.google.android.apps.translate"),
+            DownloadApp("Spotify", "Music", "Stream music and podcasts.", "https://www.spotify.com/download/android/"),
+            DownloadApp("Microsoft Word", "Productivity", "Create and edit documents.", "https://play.google.com/store/apps/details?id=com.microsoft.office.word"),
+            DownloadApp("Microsoft Excel", "Productivity", "Create and edit spreadsheets.", "https://play.google.com/store/apps/details?id=com.microsoft.office.excel"),
+            DownloadApp("Microsoft Edge", "Browser", "Browse with Microsoft Edge.", "https://www.microsoft.com/edge/mobile"),
+            DownloadApp("Firefox", "Browser", "Open-source web browser from Mozilla.", "https://www.mozilla.org/firefox/browsers/mobile/android/"),
+            DownloadApp("Binance", "Finance", "Official Binance app download page.", "https://www.binance.com/en/download"),
+            DownloadApp("Trust Wallet", "Finance", "Official self-custody wallet download page.", "https://trustwallet.com/download"),
+            DownloadApp("MetaMask", "Finance", "Official MetaMask wallet download page.", "https://metamask.io/download/")
+        )
+    }
+    val categories = listOf("All", "Browser", "Store", "Messaging", "Video", "Social", "Productivity", "Utilities", "Communication", "Music", "Finance")
+    var selectedCategory by remember { mutableStateOf("All") }
+    var query by remember { mutableStateOf("") }
+    val filtered = apps.filter {
+        (selectedCategory == "All" || it.category == selectedCategory) &&
+            (query.isBlank() || it.name.contains(query, true) || it.description.contains(query, true))
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp)) {
+        Text("App downloads", color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        Text("Find trusted Android apps and open their official download pages.", color = Muted, fontSize = 12.sp)
+        Spacer(Modifier.height(12.dp))
+        OutlinedTextField(
+            value = query,
+            onValueChange = { query = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("Search apps…", color = Muted) },
+            colors = fieldColors()
+        )
+        Spacer(Modifier.height(8.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            categories.forEach { category ->
+                val selected = selectedCategory == category
+                Box(
+                    modifier = Modifier.background(if (selected) Orange else Panel, RoundedCornerShape(18.dp))
+                        .clickable { selectedCategory = category }.padding(horizontal = 13.dp, vertical = 9.dp)
+                ) {
+                    Text(category, color = if (selected) Ink else Paper, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Text("${filtered.size} apps", color = Muted, fontSize = 11.sp)
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            items(filtered) { app ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp)).padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier.size(42.dp).background(PanelLight, RoundedCornerShape(13.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(app.name.take(1), color = Orange, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(app.name, color = Paper, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(app.category, color = Orange, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                        Text(app.description, color = Muted, fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            runCatching {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(app.url)))
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+                    ) {
+                        Text("Open", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            if (filtered.isEmpty()) {
+                item { InfoCard("No apps match your search. Try another name or category.") }
+            }
+            item {
+                Text(
+                    "Downloads open the app publisher's official page or Google Play. BALMZ AI APT does not host or modify APK files.",
+                    color = Muted, fontSize = 10.sp, modifier = Modifier.padding(vertical = 8.dp)
+                )
+            }
         }
     }
 }
