@@ -36,8 +36,7 @@ The debug build uses application ID `com.balmz.aptido.debug` so it can be instal
 | Purpose | Endpoint |
 |---|---|
 | Password sign-in | `POST /api/v1/auth/neon/password` |
-| Phone OTP request | `POST /api/v1/auth/phone/send-otp` |
-| Registration | `POST /api/v1/auth/neon/register` |
+| Email/password registration | `POST /api/v1/auth/neon/register` |
 | Password-reset request | `POST /api/v1/auth/neon/password/reset/request` |
 | PIN status | `GET /api/v1/security/pin/status` |
 | PIN enrollment | `POST /api/v1/security/pin/enroll` |
