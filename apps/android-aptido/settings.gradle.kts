@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BALMZ Aptido"
+rootProject.name = "BALMZ AI APT"
 include(":app")
