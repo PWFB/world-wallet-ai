@@ -242,6 +242,9 @@ class NeonAuthOtpRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     otp: str = Field(min_length=4, max_length=12)
 
+class NeonAuthEmailRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
 class SecurityPinRequest(BaseModel):
     pin: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
@@ -2762,25 +2765,50 @@ def neon_register(request: NeonAuthRegistration):
     email = request.email.strip().lower()
     if not name:
         raise HTTPException(status_code=400, detail="Enter your name")
-    # Neon Auth handles the email/password identity and its configured email verification.
-    signed_in = _neon_auth_sign_in("/sign-up/email", {
+    # Sign-up intentionally does not request a session: production Neon Auth
+    # requires email verification before it will issue one.
+    payload = _neon_auth_post("/sign-up/email", {
         "name": name,
         "email": email,
         "password": request.password,
     })
-    user = signed_in.get("user")
-    if isinstance(user, dict):
-        with db() as conn:
-            conn.execute(
-                "UPDATE users SET name=%s WHERE lower(email)=lower(%s)",
-                (name, email),
-            )
-            conn.commit()
-        refreshed = get_user(email)
-        if refreshed:
-            signed_in["user"] = refreshed
-    else:
-        raise HTTPException(status_code=502, detail="The authentication provider did not return a user identity.")
+    auth_user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    if not auth_user:
+        raise HTTPException(status_code=502, detail="Neon Auth did not return a user identity.")
+    if auth_user.get("emailVerified") is True:
+        signed_in = _neon_auth_sign_in("/sign-in/email", {
+            "email": email,
+            "password": request.password,
+        })
+        user = signed_in.get("user")
+        if isinstance(user, dict):
+            with db() as conn:
+                conn.execute(
+                    "UPDATE users SET name=%s WHERE lower(email)=lower(%s)",
+                    (name, email),
+                )
+                conn.commit()
+            refreshed = get_user(email)
+            if refreshed:
+                signed_in["user"] = refreshed
+        return signed_in
+    return {
+        "verification_required": True,
+        "email": email,
+        "message": "A verification code has been sent to your email address.",
+    }
+
+
+@app.post("/api/v1/auth/neon/verify-email")
+def neon_verify_registration_email(request: NeonAuthOtpRequest):
+    email = request.email.strip().lower()
+    otp = request.otp.strip()
+    # Verification and session retrieval share one HTTP client so Better Auth's
+    # session cookie from the successful verification response reaches /token.
+    signed_in = _neon_auth_sign_in("/email-otp/verify-email", {
+        "email": email,
+        "otp": otp,
+    })
     return signed_in
 
 
@@ -2799,6 +2827,16 @@ def neon_otp_login(request: NeonAuthOtpRequest):
         "email": request.email.strip().lower(),
         "otp": request.otp.strip(),
     })
+
+
+@app.post("/api/v1/auth/neon/resend-verification")
+def neon_resend_registration_verification(request: NeonAuthEmailRequest):
+    email = request.email.strip().lower()
+    _neon_auth_post("/email-otp/send-verification-otp", {
+        "email": email,
+        "type": "email-verification",
+    })
+    return {"ok": True, "message": "A new verification code has been sent to your email address."}
 
 
 @app.post("/api/v1/auth/google")

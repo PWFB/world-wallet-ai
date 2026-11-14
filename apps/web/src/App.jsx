@@ -468,6 +468,7 @@ function App() {
   const [showPassword, setShowPassword] = useState(false);
   const [otpCode, setOtpCode] = useState("");
   const [otpRequested, setOtpRequested] = useState(false);
+  const [registrationVerificationPending, setRegistrationVerificationPending] = useState(false);
   const [passwordResetToken, setPasswordResetToken] = useState(() => new URLSearchParams(window.location.search).get("token") || "");
   const [resetPassword, setResetPassword] = useState("");
   const [resetPasswordConfirm, setResetPasswordConfirm] = useState("");
@@ -1447,13 +1448,67 @@ function App() {
       if (data.access_token) {
         await beginSecurityPinGate(data.access_token, data.user || null);
         setRegisterMode(false);
+      } else if (data.verification_required) {
+        setRegistrationVerificationPending(true);
+        setOtpCode("");
+        setAuthMessage(data.message || "Enter the verification code sent to your email.");
       } else {
         setRegisterMode(false);
         setPasswordMode(true);
-        setAuthMessage(data.message || "Registration submitted. Follow the email verification instructions, then sign in.");
+        setAuthMessage(data.message || "Registration submitted. Check your email to continue.");
       }
     } catch (error) {
       setLoginError(error.message || "Unable to create your account.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function verifyRegistrationEmail() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your email address.");
+      if (!/^\d{4,12}$/.test(otpCode.trim())) throw new Error("Enter the verification code from your email.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/verify-email", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, otp: otpCode.trim() }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Email verification failed.");
+      if (!data.access_token) throw new Error("Neon Auth did not return a secure wallet session after verification.");
+      await beginSecurityPinGate(data.access_token, data.user || null);
+      setRegistrationVerificationPending(false);
+      setRegisterMode(false);
+      setOtpCode("");
+      setAuthMessage("");
+    } catch (error) {
+      setLoginError(error.message || "Unable to verify your email.");
+    } finally {
+      setAuthBusy(false);
+    }
+  }
+
+  async function resendRegistrationVerification() {
+    setLoginError("");
+    setAuthBusy(true);
+    try {
+      const email = loginEmail.trim().toLowerCase();
+      if (!email) throw new Error("Enter your email address.");
+      const response = await fetch(API_BASE_URL + "/api/v1/auth/neon/resend-verification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Unable to resend the verification code.");
+      setAuthMessage(data.message || "A new verification code has been sent.");
+    } catch (error) {
+      setLoginError(error.message || "Unable to resend the verification code.");
     } finally {
       setAuthBusy(false);
     }
@@ -1961,7 +2016,7 @@ function App() {
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
       <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use the secure link sent to your registered Gmail account to set or reset your password.":"Sign in to your World Wallet AI account."}</p></div></div>
       {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("");setAuthMessage("")}}>Password</button><button type="button" className={!passwordMode&&authMethod==="email"?"active":""} onClick={() => {setPasswordMode(false);setAuthMethod("email");setOtpRequested(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Email OTP</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button><button type="button" className={authMethod==="twitter"?"active google-tab":""} onClick={() => {setAuthMethod("twitter");setPasswordMode(false);setLoginError("")}}>𝕏&nbsp; X</button><button type="button" className={authMethod==="telegram"?"active google-tab":""} onClick={() => {setAuthMethod("telegram");setPasswordMode(false);setLoginError("")}}>✈ Telegram</button></div>}
-      {registerMode?<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Registration failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><div className="ww-register-social"><span>Or create your account with</span><button type="button" onClick={()=>handleSocialSignIn("twitter")} disabled={authBusy}>𝕏&nbsp; Continue with X</button><button type="button" onClick={()=>handleSocialSignIn("telegram")} disabled={authBusy}>✈ Continue with Telegram</button><button type="button" onClick={()=>handleSocialSignIn("google")} disabled={authBusy}>G&nbsp; Continue with Google</button></div><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>:!recoveryMode&&["google","github","twitter","telegram"].includes(authMethod)?<div className="ww-auth-form"><button className={"ww-auth-submit ww-google-button ww-social-"+authMethod} type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":({github:"Continue with GitHub",twitter:"Continue with X",telegram:"Continue with Telegram",google:"Continue with Google"}[authMethod])}</button><p className="ww-auth-note"><span>✓</span> {({github:"GitHub sign-in requires GitHub to be enabled in Neon Auth.",twitter:"X sign-in requires the Twitter/X OAuth provider and credentials to be enabled in Neon Auth.",telegram:"Telegram sign-in requires a configured Telegram authentication provider and verified bot/domain integration.",google:"Google authentication is handled by Neon Auth."}[authMethod])}</p></div>:
+      {registerMode?(registrationVerificationPending?<div className="ww-auth-form"><label><span>Email verification code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" maxLength="12" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,12))} placeholder="Enter the code sent to your email" autoComplete="one-time-code" required/></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Verification failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="button" onClick={verifyRegistrationEmail} disabled={authBusy||otpCode.trim().length<4}>{authBusy?"Verifying…":"Verify email & continue"} <b>→</b></button><button className="ww-text-link" type="button" onClick={resendRegistrationVerification} disabled={authBusy}>Resend verification code</button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Back to registration</button></div>:<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Registration failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(true);setOtpCode("");setAuthMessage("Enter the verification code already sent to your email, or resend a new one.");setLoginError("")}} disabled={!loginEmail.trim()}>Already signed up? Verify email</button><div className="ww-register-social"><span>Or create your account with</span><button type="button" onClick={()=>handleSocialSignIn("twitter")} disabled={authBusy}>𝕏&nbsp; Continue with X</button><button type="button" onClick={()=>handleSocialSignIn("telegram")} disabled={authBusy}>✈ Continue with Telegram</button><button type="button" onClick={()=>handleSocialSignIn("google")} disabled={authBusy}>G&nbsp; Continue with Google</button></div><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>):!recoveryMode&&["google","github","twitter","telegram"].includes(authMethod)?<div className="ww-auth-form"><button className={"ww-auth-submit ww-google-button ww-social-"+authMethod} type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":({github:"Continue with GitHub",twitter:"Continue with X",telegram:"Continue with Telegram",google:"Continue with Google"}[authMethod])}</button><p className="ww-auth-note"><span>✓</span> {({github:"GitHub sign-in requires GitHub to be enabled in Neon Auth.",twitter:"X sign-in requires the Twitter/X OAuth provider and credentials to be enabled in Neon Auth.",telegram:"Telegram sign-in requires a configured Telegram authentication provider and verified bot/domain integration.",google:"Google authentication is handled by Neon Auth."}[authMethod])}</p></div>:
       <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
       {recoveryMode?(passwordResetToken?<><label><span>New password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={resetPassword} onChange={e=>setResetPassword(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" minLength={8} required/></div></label><label><span>Confirm new password</span><div className="ww-field"><i>⌑</i><input type="password" value={resetPasswordConfirm} onChange={e=>setResetPasswordConfirm(e.target.value)} placeholder="Confirm new password" autoComplete="new-password" minLength={8} required/></div></label><button className="ww-auth-submit" type="button" onClick={completePasswordReset} disabled={authBusy}>{authBusy?"Updating password…":"Set password & enter wallet"} <b>→</b></button></>:<><p className="ww-auth-note">We will send a one-time password setup link to the Gmail address registered to this account. You must open that email to choose a new password.</p><button className="ww-auth-submit" type="button" onClick={requestPasswordReset} disabled={authBusy}>{authBusy?"Sending setup link…":"Send password setup / reset link"} <b>→</b></button></>):
       passwordMode?<><label><span>Password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/><button type="button" className="ww-password-toggle" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? "◉" : "◌"}</button></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
