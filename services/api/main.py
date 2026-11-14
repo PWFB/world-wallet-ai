@@ -238,13 +238,7 @@ class NeonAuthPasswordResetCompleteRequest(BaseModel):
 class NeonAuthRegistration(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=5, max_length=254)
-    phone_number: str = Field(min_length=8, max_length=16)
-    phone_otp: str = Field(min_length=4, max_length=10)
     password: str = Field(min_length=8, max_length=128)
-
-
-class PhoneOtpRequest(BaseModel):
-    phone_number: str = Field(min_length=8, max_length=16)
 
 
 class NeonAuthOtpRequest(BaseModel):
@@ -2791,44 +2785,13 @@ def _twilio_verify_request(phone_number: str, code: str | None = None):
     return payload.get("status") == "approved"
 
 
-@app.post("/api/v1/auth/phone/send-otp")
-def send_registration_phone_otp(request: PhoneOtpRequest):
-    phone = _normalise_phone_number(request.phone_number)
-    # Provider configuration is required; no pretend/simulated SMS codes are issued.
-    if not (TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN and TWILIO_VERIFY_SERVICE_SID):
-        raise HTTPException(status_code=503, detail="Phone verification is not configured. The SMS provider credentials and Verify Service must be configured by the operator.")
-    # Add a local per-number throttle as well as the provider's own Verify limits.
-    with db() as conn:
-        counts = conn.execute(
-            "SELECT COUNT(*) FILTER (WHERE requested_at > NOW() - INTERVAL '1 minute'), "
-            "COUNT(*) FILTER (WHERE requested_at > NOW() - INTERVAL '1 hour') "
-            "FROM phone_otp_requests WHERE phone_number=%s",
-            (phone,),
-        ).fetchone()
-        if counts and (counts[0] >= 1 or counts[1] >= 5):
-            raise HTTPException(status_code=429, detail="Too many verification requests. Wait before requesting another code.")
-        conn.execute("INSERT INTO phone_otp_requests(phone_number) VALUES(%s)", (phone,))
-        conn.commit()
-    _twilio_verify_request(phone)
-    return {"ok": True, "message": "If the phone number can receive verification SMS, a code has been requested."}
-
-
 @app.post("/api/v1/auth/neon/register")
 def neon_register(request: NeonAuthRegistration):
     name = request.name.strip()
     email = request.email.strip().lower()
-    phone = _normalise_phone_number(request.phone_number)
     if not name:
         raise HTTPException(status_code=400, detail="Enter your name")
-    if not request.phone_otp.strip():
-        raise HTTPException(status_code=400, detail="Enter the SMS verification code.")
-    # Check conflicts before creating the external Neon Auth identity.
-    with db() as conn:
-        if conn.execute("SELECT 1 FROM users WHERE phone_number=%s", (phone,)).fetchone():
-            raise HTTPException(status_code=409, detail="That phone number is already linked to an account.")
-    if not _twilio_verify_request(phone, request.phone_otp):
-        raise HTTPException(status_code=400, detail="The phone verification code is invalid or expired.")
-    # Create the Neon Auth identity only after the SMS code has been verified.
+    # Neon Auth handles the email/password identity and its configured email verification.
     signed_in = _neon_auth_sign_in("/sign-up/email", {
         "name": name,
         "email": email,
@@ -2836,15 +2799,12 @@ def neon_register(request: NeonAuthRegistration):
     })
     user = signed_in.get("user")
     if isinstance(user, dict):
-        try:
-            with db() as conn:
-                conn.execute(
-                    "UPDATE users SET name=%s, phone_number=%s, phone_verified_at=NOW() WHERE lower(email)=lower(%s)",
-                    (name, phone, email),
-                )
-                conn.commit()
-        except psycopg.errors.UniqueViolation as exc:
-            raise HTTPException(status_code=409, detail="That phone number is already linked to an account.") from exc
+        with db() as conn:
+            conn.execute(
+                "UPDATE users SET name=%s WHERE lower(email)=lower(%s)",
+                (name, email),
+            )
+            conn.commit()
         refreshed = get_user(email)
         if refreshed:
             signed_in["user"] = refreshed
