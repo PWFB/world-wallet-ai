@@ -1,5 +1,7 @@
 # BALMZ AI APT for Android
 
+<https://github.com/PWFB/world-wallet-ai/releases/latest> — public APK download page (available after the first signed release is published).
+
 Native Android application for public distribution. The app talks to the existing World Wallet AI backend; it does not ship provider credentials or a private administrator token.
 
 ## App identity and device target
