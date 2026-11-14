@@ -114,7 +114,9 @@ private class AptidoApi {
             connection.requestMethod = method
             connection.connectTimeout = 12_000
             connection.readTimeout = 45_000
+            connection.useCaches = false
             connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Cache-Control", "no-store")
             if (!bearer.isNullOrBlank()) {
                 connection.setRequestProperty("Authorization", "Bearer $bearer")
             }
