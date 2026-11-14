@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -804,7 +805,7 @@ private fun DownloadsPanel() {
             DownloadApp("TikTok", "Video", "Short-form videos and creator content.", "https://www.tiktok.com/download"),
             DownloadApp("Google Drive", "Productivity", "Store and share files in the cloud.", "https://play.google.com/store/apps/details?id=com.google.android.apps.docs"),
             DownloadApp("Google Photos", "Productivity", "Back up and organize photos.", "https://play.google.com/store/apps/details?id=com.google.android.apps.photos"),
-            DownloadApp("Google Meet", "Communication", "Video meetings and calls.", "https://play.google.com/store/apps/details?id=com.google.android.apps.meetings"),
+            DownloadApp("Google Meet", "Communication", "Video meetings and calls.", "https://play.google.com/store/apps/details?id=com.google.android.apps.tachyon"),
             DownloadApp("Google Translate", "Utilities", "Translate text, speech and images.", "https://play.google.com/store/apps/details?id=com.google.android.apps.translate"),
             DownloadApp("Spotify", "Music", "Stream music and podcasts.", "https://www.spotify.com/download/android/"),
             DownloadApp("Microsoft Word", "Productivity", "Create and edit documents.", "https://play.google.com/store/apps/details?id=com.microsoft.office.word"),
