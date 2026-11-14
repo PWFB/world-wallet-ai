@@ -8,7 +8,8 @@ Native Android application for public distribution. The app talks to the existin
 
 - Display name: **BALMZ AI APT**
 - Android application ID: `com.balmz.aptido`
-- Compile / target SDK: 36
+- Compile SDK: 37 (Android 17 platform 37.0)
+- Target SDK: 36
 - Minimum SDK: 26
 - ABI: `arm64-v8a`
 - UI: Kotlin + Jetpack Compose
@@ -62,7 +63,7 @@ A green APK build does not prove these external providers are configured or that
 
 ## Build locally
 
-Install JDK 17, Android SDK Platform 36 and Gradle 9.6.0, then run:
+Install JDK 17, Android SDK Platform 37.0, Android SDK Build-Tools 37.0.0 and Gradle 9.6.0, then run:
 
 ```sh
 gradle -p apps/android-aptido :app:assembleDebug
