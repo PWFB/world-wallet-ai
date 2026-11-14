@@ -5,7 +5,7 @@
         android:allowBackup="false"
         android:fullBackupContent="false"
         android:icon="@drawable/ic_aptido"
-        android:label="BALMZ Aptido"
+        android:label="BALMZ AI APT"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
