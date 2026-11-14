@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -225,6 +227,14 @@ private fun AptidoApp() {
     var balanceMessage by remember { mutableStateOf("Live balance checks have not been requested yet.") }
     var balanceBusy by remember { mutableStateOf(false) }
     var chat by remember { mutableStateOf(listOf<ChatLine>()) }
+    var activeEmail by remember { mutableStateOf("") }
+
+    fun persistConversation() {
+        if (activeEmail.isBlank()) return
+        val rows = JSONArray()
+        chat.forEach { rows.put(JSONObject().put("from_user", it.fromUser).put("text", it.text)) }
+        store.put("chat_" + activeEmail.lowercase(), rows.toString())
+    }
 
     suspend fun checkPinStatus(identityToken: String) {
         val status = api.get("/api/v1/security/pin/status", identityToken)
@@ -235,6 +245,21 @@ private fun AptidoApp() {
     suspend fun refreshWallet(sessionToken: String) {
         val result = api.get("/api/v1/wallet", sessionToken)
         wallet = result
+        activeEmail = result.optJSONObject("user")?.optString("email").orEmpty().lowercase()
+        if (activeEmail.isNotBlank()) {
+            val savedChat = store.get("chat_" + activeEmail)
+            if (savedChat.isNotBlank()) {
+                try {
+                    val rows = JSONArray(savedChat)
+                    chat = (0 until rows.length()).mapNotNull { index ->
+                        val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                        ChatLine(row.optBoolean("from_user"), row.optString("text"))
+                    }
+                } catch (_: Exception) {
+                    chat = emptyList()
+                }
+            }
+        }
         pinToken = sessionToken
         store.put("pin", sessionToken)
         stage = AptidoStage.APP
@@ -448,6 +473,7 @@ private fun AptidoApp() {
                 scope.launch {
                     if (question.isBlank() || busy) return@launch
                     chat = chat + ChatLine(true, question.trim())
+                    persistConversation()
                     busy = true
                     try {
                         val response = api.post(
@@ -460,11 +486,14 @@ private fun AptidoApp() {
                         val answer = response.optString("answer")
                         if (answer.isBlank()) {
                             chat = chat + ChatLine(false, "The AI service returned an empty response. Please try again.")
+                            persistConversation()
                         } else {
                             chat = chat + ChatLine(false, answer)
+                            persistConversation()
                         }
                     } catch (error: Exception) {
                         chat = chat + ChatLine(false, "I couldn't complete that request: " + (error.message ?: "AI service unavailable"))
+                        persistConversation()
                     } finally {
                         busy = false
                     }
@@ -485,6 +514,7 @@ private fun AptidoApp() {
                     wallet = JSONObject()
                     verifiedAssets = emptyList()
                     chat = emptyList()
+                    activeEmail = ""
                     notice = ""
                     stage = AptidoStage.AUTH
                 }
@@ -510,7 +540,7 @@ private fun AuthScreen(
     var password by remember { mutableStateOf("") }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(Ink).imePadding().padding(horizontal = 22.dp, vertical = 26.dp),
+        modifier = Modifier.fillMaxSize().background(Ink).imePadding().verticalScroll(rememberScrollState()).padding(horizontal = 22.dp, vertical = 26.dp),
         verticalArrangement = Arrangement.Center
     ) {
         Text("BALMZ", color = Orange, fontSize = 15.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
