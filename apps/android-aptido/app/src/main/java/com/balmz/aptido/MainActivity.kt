@@ -1842,10 +1842,13 @@ private fun BankConnectPanel(
                     fontSize = 11.sp
                 )
                 InfoCard(
-                    "Transfers are not active yet. BALMZ must first connect an approved US ACH payment provider, verify the business and customer accounts, and receive approval for both ACH collection and payout. No money will be sent from this screen until those checks pass."
+                    "Transfers are not active yet. The provider route under review is a verified USD transfer balance: add funds from your US bank to a provider-assigned USD account, wait for the provider to confirm the deposit, then send a payout to a verified US bank beneficiary."
                 )
                 InfoCard(
-                    "Do not enter bank passwords, bank OTPs, or full account details into BALMZ chat or ordinary app fields. Bank linking and verification must use the payment provider's secure hosted flow."
+                    "For a BALMZ program onboarded outside the United States, US payouts may be processed as International ACH (IAT), often next business day. This route passes through the provider's USD wallet; it is not an instant direct debit from your bank. The provider must approve BALMZ and the exact customer/payment flow first."
+                )
+                InfoCard(
+                    "Do not enter bank passwords, bank OTPs, or full account details into BALMZ chat or ordinary app fields. Bank linking, beneficiary verification and any future hosted onboarding must use the payment provider's secure flow."
                 )
             }
         }
