@@ -1794,7 +1794,7 @@ private fun BankConnectPanel(
                     Text(listOf(account.type, account.subtype).filter { it.isNotBlank() }.joinToString(" · "), color = Muted, fontSize = 10.sp)
                     Text("Available: " + account.available + " " + account.currency, color = Paper, fontSize = 12.sp)
                     Text("Current: " + account.current + " " + account.currency, color = Paper, fontSize = 12.sp)
-                    Text("Read-only · Live provider response", color = Green, fontSize = 10.sp)
+                    Text("Read-only · Provider-reported balance (may be cached)", color = Green, fontSize = 10.sp)
                     TextButton(onClick = { onDisconnect(account.connectionId) }, enabled = !busy) {
                         Text("Disconnect bank", color = Red)
                     }
@@ -1820,7 +1820,7 @@ private fun BankConnectPanel(
                 }
             }
         }
-        Text("Balances and transactions are provided by the bank-data provider and may be delayed. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
+        Text("Bank balances may be cached until the provider refreshes the institution. Transaction history may take time to become available after first linking. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
     }
 }
 
