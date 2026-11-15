@@ -307,6 +307,11 @@ private fun AptidoApp(
     var bankTransactions by remember { mutableStateOf<List<BankTransactionLine>>(emptyList()) }
     var bankConnectMessage by remember { mutableStateOf("Connect a supported US bank to view accounts and live balances.") }
     var bankConnectBusy by remember { mutableStateOf(false) }
+    var bankOwnerEmail by remember { mutableStateOf("") }
+    var bankOtpEmail by remember { mutableStateOf("") }
+    var bankEmailVerified by remember { mutableStateOf(false) }
+    var bankEmailBusy by remember { mutableStateOf(false) }
+    var bankEmailMessage by remember { mutableStateOf("Add the account holder Gmail and the Gmail that should receive a BALMZ verification code.") }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
@@ -819,6 +824,7 @@ private fun AptidoApp(
 
     suspend fun refreshBankAccounts() {
         bankConnectBusy = true
+        refreshBankEmailSettings()
         try {
             val response = api.get("/api/v1/bankconnect/accounts", pinToken)
             val rows = response.optJSONArray("accounts") ?: JSONArray()
@@ -1165,12 +1171,54 @@ private fun AptidoApp(
             bankAccounts = bankAccounts,
             bankTransactions = bankTransactions,
             bankConnectMessage = bankConnectMessage,
+            bankOwnerEmail = bankOwnerEmail,
+            bankOtpEmail = bankOtpEmail,
+            bankEmailVerified = bankEmailVerified,
+            bankEmailBusy = bankEmailBusy,
+            bankEmailMessage = bankEmailMessage,
             bankConnectBusy = bankConnectBusy,
             bankLinkToken = bankLinkToken,
+            onRequestBankEmailCode = { ownerEmail, otpEmail ->
+                scope.launch {
+                    bankEmailBusy = true
+                    bankEmailMessage = ""
+                    try {
+                        val result = api.post(
+                            "/api/v1/bankconnect/email/request-code",
+                            JSONObject().put("owner_email", ownerEmail.trim()).put("otp_email", otpEmail.trim()),
+                            pinToken
+                        )
+                        bankOwnerEmail = ownerEmail.trim()
+                        bankOtpEmail = otpEmail.trim()
+                        bankEmailVerified = false
+                        bankEmailMessage = result.optString("message", "BALMZ verification code sent.")
+                    } catch (error: Exception) {
+                        bankEmailMessage = error.message ?: "Could not send the BALMZ verification code."
+                    } finally { bankEmailBusy = false }
+                }
+            },
+            onVerifyBankEmailCode = { code ->
+                scope.launch {
+                    bankEmailBusy = true
+                    try {
+                        val result = api.post(
+                            "/api/v1/bankconnect/email/verify-code",
+                            JSONObject().put("code", code.trim()),
+                            pinToken
+                        )
+                        bankEmailVerified = result.optBoolean("verified", false)
+                        bankEmailMessage = result.optString("message", "BALMZ email verified.")
+                    } catch (error: Exception) {
+                        bankEmailVerified = false
+                        bankEmailMessage = error.message ?: "The BALMZ email code could not be verified."
+                    } finally { bankEmailBusy = false }
+                }
+            },
             onConnectBank = {
                 scope.launch {
                     bankConnectBusy = true
                     try {
+                        if (!bankEmailVerified) throw IllegalStateException("Verify the BALMZ code-delivery Gmail first.")
                         val response = api.post("/api/v1/bankconnect/link-token", JSONObject().put("android_package_name", BuildConfig.APPLICATION_ID), pinToken)
                         bankLinkToken = response.optString("link_token")
                         if (bankLinkToken.isBlank()) throw IllegalStateException("The bank provider did not return a Link token.")
@@ -1427,9 +1475,16 @@ private fun AppHome(
     bankAccounts: List<BankAccountLine>,
     bankTransactions: List<BankTransactionLine>,
     bankConnectMessage: String,
+    bankOwnerEmail: String,
+    bankOtpEmail: String,
+    bankEmailVerified: Boolean,
+    bankEmailBusy: Boolean,
+    bankEmailMessage: String,
     bankConnectBusy: Boolean,
     bankLinkToken: String,
     onConnectBank: () -> Unit,
+    onRequestBankEmailCode: (String, String) -> Unit,
+    onVerifyBankEmailCode: (String) -> Unit,
     onRefreshBankAccounts: () -> Unit,
     onDisconnectBank: (String) -> Unit,
     onOpenBankLink: (PlaidSession) -> Unit,
@@ -1508,9 +1563,16 @@ private fun AppHome(
                 accounts = bankAccounts,
                 transactions = bankTransactions,
                 message = bankConnectMessage,
+                ownerEmail = bankOwnerEmail,
+                otpEmail = bankOtpEmail,
+                emailVerified = bankEmailVerified,
+                emailBusy = bankEmailBusy,
+                emailMessage = bankEmailMessage,
                 busy = bankConnectBusy,
                 linkToken = bankLinkToken,
                 onConnect = onConnectBank,
+                onRequestEmailCode = onRequestBankEmailCode,
+                onVerifyEmailCode = onVerifyBankEmailCode,
                 onRefresh = onRefreshBankAccounts,
                 onDisconnect = onDisconnectBank,
                 onOpen = onOpenBankLink
@@ -1576,9 +1638,16 @@ private fun BankConnectPanel(
     accounts: List<BankAccountLine>,
     transactions: List<BankTransactionLine>,
     message: String,
+    ownerEmail: String,
+    otpEmail: String,
+    emailVerified: Boolean,
+    emailBusy: Boolean,
+    emailMessage: String,
     busy: Boolean,
     linkToken: String,
     onConnect: () -> Unit,
+    onRequestEmailCode: (String, String) -> Unit,
+    onVerifyEmailCode: (String) -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: (String) -> Unit,
     onOpen: (PlaidSession) -> Unit
@@ -1586,6 +1655,10 @@ private fun BankConnectPanel(
     val context = LocalContext.current
     var session by remember { mutableStateOf<PlaidSession?>(null) }
     var sessionReady by remember { mutableStateOf(false) }
+    var ownerEmailInput by remember(ownerEmail) { mutableStateOf(ownerEmail) }
+    var otpEmailInput by remember(otpEmail) { mutableStateOf(otpEmail) }
+    var emailCodeInput by remember { mutableStateOf("") }
+    var emailCodeSent by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { onRefresh() }
     LaunchedEffect(linkToken) {
         session = null
@@ -1607,13 +1680,66 @@ private fun BankConnectPanel(
         Text("BankConnect", color = Paper, fontSize = 23.sp, fontWeight = FontWeight.Bold)
         Text("Secure, read-only access to supported US bank accounts through official bank authentication.", color = Muted, fontSize = 12.sp)
         InfoCard("Your bank signs you in through Plaid Link. BALMZ APT never asks for or stores your bank password or bank-issued one-time code. You choose which accounts to share.")
+        Text("BankConnect email details", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("Account holder Gmail (reference only; the bank separately verifies account ownership)", color = Muted, fontSize = 10.sp)
+        OutlinedTextField(
+            value = ownerEmailInput,
+            onValueChange = { ownerEmailInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Owner Gmail") },
+            placeholder = { Text("account.owner@gmail.com") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            enabled = !emailBusy
+        )
+        Text("New Gmail to receive BALMZ one-time codes", color = Muted, fontSize = 10.sp)
+        OutlinedTextField(
+            value = otpEmailInput,
+            onValueChange = { otpEmailInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Code-delivery Gmail") },
+            placeholder = { Text("new.address@gmail.com") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            enabled = !emailBusy
+        )
+        Button(
+            onClick = {
+                emailCodeInput = ""
+                onRequestEmailCode(ownerEmailInput.trim(), otpEmailInput.trim())
+                emailCodeSent = true
+            },
+            enabled = !emailBusy && ownerEmailInput.contains("@") && otpEmailInput.contains("@"),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+        ) { Text(if (emailCodeSent) "Resend BALMZ code" else "Send one-time code to new Gmail") }
+        if (emailCodeSent || emailVerified) {
+            OutlinedTextField(
+                value = emailCodeInput,
+                onValueChange = { emailCodeInput = it.filter(Char::isDigit).take(6) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Six-digit BALMZ code") },
+                placeholder = { Text("000000") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                enabled = !emailBusy && !emailVerified
+            )
+            Button(
+                onClick = { onVerifyEmailCode(emailCodeInput) },
+                enabled = !emailBusy && !emailVerified && emailCodeInput.length == 6,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+            ) { Text(if (emailBusy) "Verifying…" else "Verify code-delivery Gmail") }
+        }
+        InfoCard(emailMessage)
+        InfoCard("Important: this is a BALMZ APT email-verification code only. It does not capture, forward, or replace a bank-issued OTP. Any bank MFA code stays with the bank's registered contact method inside official bank authentication.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
                 onClick = onConnect,
-                enabled = !busy && linkToken.isBlank(),
+                enabled = !busy && emailVerified && linkToken.isBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink),
                 modifier = Modifier.weight(1f)
-            ) { Text(if (busy) "Please wait…" else "Connect a US bank", fontWeight = FontWeight.Bold) }
+            ) { Text(if (busy) "Please wait…" else if (emailVerified) "Connect a US bank" else "Verify Gmail to continue", fontWeight = FontWeight.Bold) }
             Button(
                 onClick = onRefresh,
                 enabled = !busy,
