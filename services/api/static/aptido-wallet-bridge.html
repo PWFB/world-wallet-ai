@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex,nofollow">
+  <title>BALMZ AI APT · Binance Wallet Link</title>
+  <style>
+    :root{color-scheme:dark;font-family:system-ui,-apple-system,Segoe UI,sans-serif;background:#07111f;color:#f4f7fb}
+    body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;box-sizing:border-box}
+    main{width:min(100%,520px);background:#101d2d;border:1px solid #25364b;border-radius:22px;padding:24px;box-sizing:border-box}
+    h1{font-size:22px;margin:0 0 8px}p{color:#9aa9bc;line-height:1.55;font-size:14px}
+    button{width:100%;border:0;border-radius:14px;padding:15px;background:#ff7a18;color:#07111f;font-weight:800;font-size:15px;margin-top:12px}
+    button:disabled{opacity:.55}code{overflow-wrap:anywhere;color:#ffb06e}
+    .warning{border:1px solid #8b5b24;border-radius:12px;padding:12px;color:#ffca8a;font-size:12px}
+    #status{margin-top:16px;padding:12px;background:#17263a;border-radius:12px;color:#d5dfeb;font-size:13px;overflow-wrap:anywhere}
+    .small{font-size:11px}
+  </style>
+</head>
+<body>
+<main>
+  <h1>BALMZ AI APT</h1>
+  <p>Secure external account linking · Binance Web3 Wallet</p>
+  <div class="warning">This page only reads your public EVM address or requests a personal-message signature to prove ownership. It does not request a transaction, token approval, recovery phrase or private key.</div>
+  <p id="instruction">Checking for the Binance Web3 Wallet provider…</p>
+  <button id="action" type="button" disabled>Checking wallet…</button>
+  <div id="status" role="status" aria-live="polite">Waiting for the Binance dApp browser provider.</div>
+  <p class="small">Use this page inside the Binance Web3 Wallet dApp browser. Do not paste your recovery phrase or private key here.</p>
+</main>
+<script>
+(function () {
+  "use strict";
+  const params = new URLSearchParams(window.location.search);
+  const mode = params.get("mode") || "";
+  const nonce = params.get("nonce") || "";
+  const callbackBase = "balmzaptido://wallet-connect/callback";
+  const action = document.getElementById("action");
+  const instruction = document.getElementById("instruction");
+  const status = document.getElementById("status");
+  let provider = null;
+
+  function setStatus(message) { status.textContent = message; }
+  function isNonce(value) { return /^[0-9a-f]{64}$/i.test(value); }
+  function finish(values) {
+    const target = new URL(callbackBase);
+    Object.entries(values).forEach(([key, value]) => target.searchParams.set(key, String(value)));
+    setStatus("Returning the public account result to BALMZ AI APT…");
+    window.location.href = target.toString();
+  }
+
+  if (!isNonce(nonce) || !["connect", "verify"].includes(mode)) {
+    instruction.textContent = "This connection link is incomplete or expired. Return to BALMZ AI APT and create a new link.";
+    setStatus("Invalid or missing one-time request code.");
+    return;
+  }
+
+  let attempts = 0;
+  const detect = window.setInterval(function () {
+    attempts += 1;
+    provider = window.binancew3w && window.binancew3w.ethereum ? window.binancew3w.ethereum : null;
+    if (provider) {
+      window.clearInterval(detect);
+      action.disabled = false;
+      action.textContent = mode === "connect" ? "Connect Binance EVM account" : "Sign ownership proof";
+      instruction.textContent = "Binance Web3 Wallet provider detected. Continue only if you initiated this request in BALMZ AI APT.";
+      setStatus("Provider detected. No wallet permission has been requested yet.");
+    } else if (attempts >= 30) {
+      window.clearInterval(detect);
+      instruction.textContent = "Open this same HTTPS link in Binance Web3 Wallet → DApp Browser.";
+      action.textContent = "Wallet provider not detected";
+      setStatus("No Binance provider was found. This page must run in Binance's dApp browser, not ordinary Chrome.");
+    }
+  }, 400);
+
+  action.addEventListener("click", async function () {
+    if (!provider || action.disabled) return;
+    action.disabled = true;
+    try {
+      if (mode === "connect") {
+        const accounts = await provider.request({ method: "eth_requestAccounts" });
+        const chainId = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+        const address = Array.isArray(accounts) ? String(accounts[0] || "") : "";
+        if (!/^0x[0-9a-f]{40}$/i.test(address)) throw new Error("The wallet did not return a valid EVM address.");
+        if (!["0x1", "0x38"].includes(chainId)) throw new Error("Switch Binance Web3 Wallet to Ethereum Mainnet or BNB Chain Mainnet, then try again.");
+        finish({ mode: "connected", provider: "binance", namespace: "eip155", chain_id: chainId, address: address, nonce: nonce });
+        return;
+      }
+
+      const address = params.get("address") || "";
+      const chainId = (params.get("chain_id") || "").toLowerCase();
+      const challengeId = params.get("challenge_id") || "";
+      const message = params.get("message") || "";
+      if (!/^0x[0-9a-f]{40}$/i.test(address) || !["0x1", "0x38"].includes(chainId) || !/^wac_[A-Za-z0-9_-]{16,100}$/.test(challengeId) || !message) {
+        throw new Error("The ownership challenge is invalid. Return to BALMZ AI APT and refresh it.");
+      }
+      const accounts = await provider.request({ method: "eth_accounts" });
+      const active = Array.isArray(accounts) ? accounts.map(String) : [];
+      if (!active.some(item => item.toLowerCase() === address.toLowerCase())) {
+        throw new Error("The active Binance account changed. Reconnect the same address in BALMZ AI APT.");
+      }
+      const currentChain = String(await provider.request({ method: "eth_chainId" })).toLowerCase();
+      if (currentChain !== chainId) throw new Error("The active chain changed. Reopen the correct network's proof link.");
+      const messageHex = "0x" + Array.from(new TextEncoder().encode(message)).map(byte => byte.toString(16).padStart(2, "0")).join("");
+      const signature = String(await provider.request({ method: "personal_sign", params: [messageHex, address] }));
+      if (!/^0x[0-9a-f]{130}$/i.test(signature)) throw new Error("The wallet returned an unexpected signature format.");
+      finish({ mode: "verified", provider: "binance", namespace: "eip155", chain_id: chainId, address: address, challenge_id: challengeId, signature: signature, nonce: nonce });
+    } catch (error) {
+      setStatus(error && error.message ? error.message : "The wallet request was rejected or failed.");
+      action.disabled = false;
+    }
+  });
+})();
+</script>
+</body>
+</html>
