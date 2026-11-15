@@ -56,7 +56,7 @@ internal object TrustWalletCoreWallet {
         require(solanaMainnet.isNotBlank()) { "Solana mainnet address derivation failed." }
 
         // Account index 1 is distinct from the EVM mainnet account index 0.
-        val sepoliaKey = requireNotNull(wallet.getDerivedKey(CoinType.ETHEREUM, 1, 0, 0)) {
+        val sepoliaKey = requireNotNull(wallet.getKey(CoinType.ETHEREUM, "m/44'/60'/1'/0/0")) {
             "Ethereum Sepolia key derivation failed."
         }
         val sepoliaAddress = CoinType.ETHEREUM.deriveAddress(sepoliaKey)
@@ -65,7 +65,7 @@ internal object TrustWalletCoreWallet {
         }
 
         // Account index 1 gives Solana Devnet its own key/address set.
-        val solanaDevnetKey = requireNotNull(wallet.getDerivedKey(CoinType.SOLANA, 1, 0, 0)) {
+        val solanaDevnetKey = requireNotNull(wallet.getKey(CoinType.SOLANA, "m/44'/501'/1'/0'")) {
             "Solana Devnet key derivation failed."
         }
         val solanaDevnetAddress = CoinType.SOLANA.deriveAddress(solanaDevnetKey)
