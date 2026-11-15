@@ -2861,43 +2861,6 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests} disabled={requestBusy}>{requestBusy?"Loading…":"↻ Refresh"}</button></div>{requestError&&<div role="status" className="feature-error">{requestError}</div>}{requestItems.length?requestItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">{requestBusy ? "Loading your saved requests…" : requestError ? "Requests could not be loaded. Retry to check again." : "No requests have been created yet."}</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
   }
 
-  if (active === "Wallet Connect") {
-    const chainNames = { 1: "Ethereum Mainnet", 11155111: "Sepolia Testnet", 56: "BNB Smart Chain" };
-    return <section className="content feature-content">
-      <div className="security-note">Google sign-in connects your Google account to World Wallet AI, but Google Wallet is not itself a standard EVM Web3 wallet provider for signing Ethereum or BNB Chain transactions. For blockchain signing, use a WalletConnect-compatible crypto wallet. Never enter Google account credentials or wallet recovery phrases here.</div>
-      <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <article className="panel tool-panel">
-        <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "Choose an external wallet"}</b></div>
-        <div className="security-note"><b>Need Solana Devnet?</b> This external-wallet picker currently supports EVM chains only. Solana Devnet addresses are attached separately as public addresses; no WalletConnect EVM session is needed.</div>
-        <button className="primary feature-submit" onClick={() => setActive("Wallets")}>Attach a Solana Devnet address →</button>
-        <p className="muted">Connect an existing wallet. World Wallet AI receives the public address and asks the wallet itself to approve signatures and transactions; it never receives the private key.</p>
-        {wcAccount ? <>
-          <div className="tool-row"><div><b>Wallet address</b><small>{wcProviderKind === "walletconnect" ? "Connected through WalletConnect" : wcProviderKind === "coinbase" ? "Connected through Coinbase Wallet" : "Connected through MetaMask"}</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy address</button></div>
-          <a className="secondary" href={wcChainId === 11155111 ? "https://sepolia.etherscan.io/address/" + wcAccount : wcChainId === 56 ? "https://bscscan.com/address/" + wcAccount : wcChainId === 1 ? "https://etherscan.io/address/" + wcAccount : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
-          <div className="tool-row"><div><b>Network</b><small>Detected from connected wallet</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown network")}</strong></div>
-          <div className="security-note">Use Explorer to inspect the public address. This connection screen does not display or request a private key or contract address.</div>
-          <div className="wallet-connection-actions">
-            <button className="primary" disabled={wcBusy} onClick={changeWalletConnect}>{wcBusy ? "Opening wallet picker…" : "⇄ Change wallet (WalletConnect)"}</button>
-            <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>Disconnect from World Wallet AI</button>
-          </div>
-        </> : <div className="wallet-connection-actions">
-          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("metamask")}>{wcBusy ? "Connecting…" : "Connect MetaMask"}</button>
-          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("coinbase")}>{wcBusy ? "Connecting…" : "Connect Coinbase Wallet"}</button>
-          <button className="secondary" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet picker…" : "Connect with WalletConnect"}</button>
-        </div>}
-        {wcError && <div className="feature-error" role="alert">{wcError}</div>}
-        <div className="security-note">MetaMask and Coinbase direct connections require their provider or in-app browser to be available. WalletConnect offers a QR/mobile linking path for compatible wallets. If a provider is not installed or supported, the screen reports that instead of pretending the wallet connected.</div>
-        <div className="security-note">Google sign-in is separate from crypto-wallet connection. Never enter a Google password, wallet private key, or recovery phrase into this site.</div>
-      </article>
-      <article className="panel tool-panel">
-        <h2>Configured production addresses</h2>
-        <p className="muted">These are backend-configured addresses, separate from the external wallet session above.</p>
-        <button className="secondary" onClick={async()=>{setSyncBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/wallet/connect",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();setAddresses(d.addresses||[]);setAddressMessage(d.message||"");}catch{setAddressMessage("Unable to load connection status.");}finally{setSyncBusy(false)}}}>{syncBusy?"Checking…":"Check production addresses"}</button>
-        {addresses.length?addresses.map(a=><div className="tool-row" key={a.network+a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(a.address)}>Copy</button></div>):<div className="live-chart-empty">{addressMessage||"No configured production address loaded."}</div>}
-      </article>
-    </section>;
-  }
-
   if (active === "Profile") {
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Profile</h1><p className="muted">Your authenticated World Wallet AI account and active wallet identity.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallets →</button></div>
       <article className="panel action-panel"><div className="panel-head"><div><h2>Account details</h2><span>Read-only identity sourced from the signed-in session</span></div></div>
