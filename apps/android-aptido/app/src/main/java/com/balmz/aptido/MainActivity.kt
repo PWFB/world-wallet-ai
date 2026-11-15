@@ -810,6 +810,7 @@ private fun AptidoApp(
                     bankConnectMessage = result.error?.displayMessage?.ifBlank { null }
                         ?: result.error?.errorMessage
                         ?: "Bank linking was cancelled. No account was connected."
+                    bankLinkToken = ""
                     onClearBankLinkResult()
                 }
             }
