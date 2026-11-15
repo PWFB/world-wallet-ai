@@ -7,6 +7,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +61,14 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.plaid.link.OpenPlaidLink
+import com.plaid.link.Plaid
+import com.plaid.link.PlaidSession
+import com.plaid.link.configuration.linkTokenConfiguration
+import com.plaid.link.OnLoadCallback
+import com.plaid.link.result.LinkResult
+import com.plaid.link.result.LinkSuccess
+import com.plaid.link.result.LinkExit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,6 +94,9 @@ private val Red = Color(0xFFFF8585)
 
 class MainActivity : ComponentActivity() {
     private val walletCallback = mutableStateOf<Uri?>(null)
+    private var bankLinkResult by mutableStateOf<LinkResult?>(null)
+    private val bankLinkLauncher: ActivityResultLauncher<PlaidSession> =
+        registerForActivityResult(OpenPlaidLink()) { result -> bankLinkResult = result }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +104,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
-                    AptidoApp(walletCallback)
+                    AptidoApp(
+                        walletCallback = walletCallback,
+                        bankLinkResult = bankLinkResult,
+                        onClearBankLinkResult = { bankLinkResult = null },
+                        onOpenBankLink = { session -> bankLinkLauncher.launch(session) }
+                    )
                 }
             }
         }
@@ -107,6 +124,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AptidoStage { AUTH, PIN, APP }
 private data class ChatLine(val fromUser: Boolean, val text: String)
+private data class BankAccountLine(val connectionId: String, val institution: String, val name: String, val mask: String, val type: String, val subtype: String, val currency: String, val available: String, val current: String)
 private data class DownloadApp(val name: String, val category: String, val description: String, val url: String)
 private data class AssetLine(
     val symbol: String,
@@ -139,6 +157,9 @@ private class AptidoApi {
 
     suspend fun post(path: String, body: JSONObject, bearer: String? = null): JSONObject =
         withContext(Dispatchers.IO) { request(path, "POST", body, bearer) }
+
+    suspend fun delete(path: String, bearer: String): JSONObject =
+        withContext(Dispatchers.IO) { request(path, "DELETE", null, bearer) }
 
     private fun request(path: String, method: String, body: JSONObject?, bearer: String?): JSONObject {
         val connection = URL(baseUrl + path).openConnection() as HttpURLConnection
@@ -245,7 +266,12 @@ private class SecureSessionStore(context: android.content.Context) {
 }
 
 @Composable
-private fun AptidoApp(walletCallback: MutableState<Uri?>) {
+private fun AptidoApp(
+    walletCallback: MutableState<Uri?>,
+    bankLinkResult: LinkResult?,
+    onClearBankLinkResult: () -> Unit,
+    onOpenBankLink: (PlaidSession) -> Unit
+) {
     val context = LocalContext.current
     val api = remember { AptidoApi() }
     val store = remember { SecureSessionStore(context) }
@@ -275,6 +301,10 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
     var externalWalletProofs by remember { mutableStateOf<List<PendingExternalWalletProof>>(emptyList()) }
     var externalWalletNotice by remember { mutableStateOf("") }
     var externalWalletBridgeUrl by remember { mutableStateOf("") }
+    var bankLinkToken by remember { mutableStateOf("") }
+    var bankAccounts by remember { mutableStateOf<List<BankAccountLine>>(emptyList()) }
+    var bankConnectMessage by remember { mutableStateOf("Connect a supported US bank to view accounts and live balances.") }
+    var bankConnectBusy by remember { mutableStateOf(false) }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
@@ -720,6 +750,83 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
         refreshVerifiedBalances()
     }
 
+
+    LaunchedEffect(bankLinkResult, pinToken, stage) {
+        val result = bankLinkResult
+        if (result != null && stage == AptidoStage.APP && pinToken.isNotBlank()) {
+            when (result) {
+                is LinkSuccess -> {
+                    val publicToken = result.publicToken
+                    if (publicToken.isNotBlank()) {
+                        bankConnectBusy = true
+                        try {
+                            val saved = api.post("/api/v1/bankconnect/exchange", JSONObject().put("public_token", publicToken), pinToken)
+                            bankConnectMessage = saved.optString("message", "Bank connected securely.")
+                            bankLinkToken = ""
+                            val response = api.get("/api/v1/bankconnect/accounts", pinToken)
+                            val rows = response.optJSONArray("accounts") ?: JSONArray()
+                            bankAccounts = (0 until rows.length()).mapNotNull { index ->
+                                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                                BankAccountLine(
+                                    item.optString("connection_id"),
+                                    item.optString("institution_name", "Connected bank"),
+                                    item.optString("name", "Bank account"),
+                                    item.optString("mask"),
+                                    item.optString("type"),
+                                    item.optString("subtype"),
+                                    item.optString("currency", "USD"),
+                                    if (item.isNull("available_balance")) "Unavailable" else item.optString("available_balance"),
+                                    if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
+                                )
+                            }
+                        } catch (error: Exception) {
+                            bankConnectMessage = error.message ?: "The bank connection could not be saved."
+                        } finally {
+                            bankConnectBusy = false
+                            onClearBankLinkResult()
+                        }
+                    } else {
+                        bankConnectMessage = "The bank provider did not return a public token."
+                        onClearBankLinkResult()
+                    }
+                }
+                is LinkExit -> {
+                    bankConnectMessage = result.error?.displayMessage?.ifBlank { null }
+                        ?: result.error?.errorMessage
+                        ?: "Bank linking was cancelled. No account was connected."
+                    onClearBankLinkResult()
+                }
+            }
+        }
+    }
+
+    suspend fun refreshBankAccounts() {
+        bankConnectBusy = true
+        try {
+            val response = api.get("/api/v1/bankconnect/accounts", pinToken)
+            val rows = response.optJSONArray("accounts") ?: JSONArray()
+            bankAccounts = (0 until rows.length()).mapNotNull { index ->
+                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                BankAccountLine(
+                    item.optString("connection_id"),
+                    item.optString("institution_name", "Connected bank"),
+                    item.optString("name", "Bank account"),
+                    item.optString("mask"),
+                    item.optString("type"),
+                    item.optString("subtype"),
+                    item.optString("currency", "USD"),
+                    if (item.isNull("available_balance")) "Unavailable" else item.optString("available_balance"),
+                    if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
+                )
+            }
+            bankConnectMessage = if (bankAccounts.isEmpty()) "No bank accounts are connected to this wallet yet." else "Bank accounts refreshed from the provider."
+        } catch (error: Exception) {
+            bankConnectMessage = error.message ?: "Bank accounts could not be refreshed."
+        } finally {
+            bankConnectBusy = false
+        }
+    }
+
     LaunchedEffect(walletCallback.value, pinToken, stage) {
         val returnedUri = walletCallback.value
         if (returnedUri != null && pinToken.isNotBlank() && stage == AptidoStage.APP) {
@@ -1024,6 +1131,37 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
             onRefreshBalances = {
                 scope.launch { refreshVerifiedBalances() }
             },
+            bankAccounts = bankAccounts,
+            bankConnectMessage = bankConnectMessage,
+            bankConnectBusy = bankConnectBusy,
+            bankLinkToken = bankLinkToken,
+            onConnectBank = {
+                scope.launch {
+                    bankConnectBusy = true
+                    try {
+                        val response = api.post("/api/v1/bankconnect/link-token", JSONObject(), pinToken)
+                        bankLinkToken = response.optString("link_token")
+                        if (bankLinkToken.isBlank()) throw IllegalStateException("The bank provider did not return a Link token.")
+                        bankConnectMessage = "Secure bank authentication is ready. Continue in the official provider window."
+                    } catch (error: Exception) {
+                        bankConnectMessage = error.message ?: "Could not start bank linking."
+                    } finally { bankConnectBusy = false }
+                }
+            },
+            onRefreshBankAccounts = { scope.launch { refreshBankAccounts() } },
+            onDisconnectBank = { connectionId ->
+                scope.launch {
+                    bankConnectBusy = true
+                    try {
+                        api.delete("/api/v1/bankconnect/connections/" + connectionId, pinToken)
+                        refreshBankAccounts()
+                        bankConnectMessage = "Bank connection removed and provider access revoked."
+                    } catch (error: Exception) {
+                        bankConnectMessage = error.message ?: "Could not disconnect bank."
+                    } finally { bankConnectBusy = false }
+                }
+            },
+            onOpenBankLink = onOpenBankLink,
             onAsk = { question, includeWallet ->
                 scope.launch {
                     if (question.isBlank() || busy) return@launch
@@ -1254,6 +1392,14 @@ private fun AppHome(
     onRefreshWalletDirectory: () -> Unit,
     onCreateWalletProfile: (String) -> Unit,
     onSwitchWalletProfile: (String) -> Unit,
+    bankAccounts: List<BankAccountLine>,
+    bankConnectMessage: String,
+    bankConnectBusy: Boolean,
+    bankLinkToken: String,
+    onConnectBank: () -> Unit,
+    onRefreshBankAccounts: () -> Unit,
+    onDisconnectBank: (String) -> Unit,
+    onOpenBankLink: (PlaidSession) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
     externalWalletAccounts: List<ExternalWalletAccount>,
     externalWalletProofs: List<PendingExternalWalletProof>,
@@ -1287,10 +1433,10 @@ private fun AppHome(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Home", "Wallets", "AI Chat", "Downloads", "Account").forEach { item ->
+            listOf("Home", "Wallets", "BankConnect", "AI Chat", "Downloads", "Account").forEach { item ->
                 val selected = tab == item
                 Box(
-                    modifier = Modifier.width(82.dp).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
+                    modifier = Modifier.width(if (item == "BankConnect") 108.dp else 82.dp).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
                         .clickable { tab = item }.padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1324,6 +1470,16 @@ private fun AppHome(
                 onStartBinanceOwnershipProof = onStartBinanceOwnershipProof,
                 onShowRecoveryPhrase = onShowWalletRecoveryPhrase,
                 onRestoreWallet = onRestoreWallet
+            )
+            "BankConnect" -> BankConnectPanel(
+                accounts = bankAccounts,
+                message = bankConnectMessage,
+                busy = bankConnectBusy,
+                linkToken = bankLinkToken,
+                onConnect = onConnectBank,
+                onRefresh = onRefreshBankAccounts,
+                onDisconnect = onDisconnectBank,
+                onOpen = onOpenBankLink
             )
             "AI Chat" -> ChatPanel(
                 messages = chat,
@@ -1377,6 +1533,90 @@ private fun AppHome(
                 }
             )
         }
+    }
+}
+
+
+@Composable
+private fun BankConnectPanel(
+    accounts: List<BankAccountLine>,
+    message: String,
+    busy: Boolean,
+    linkToken: String,
+    onConnect: () -> Unit,
+    onRefresh: () -> Unit,
+    onDisconnect: (String) -> Unit,
+    onOpen: (PlaidSession) -> Unit
+) {
+    val context = LocalContext.current
+    var session by remember { mutableStateOf<PlaidSession?>(null) }
+    var sessionReady by remember { mutableStateOf(false) }
+    LaunchedEffect(linkToken) {
+        session = null
+        sessionReady = false
+        if (linkToken.isNotBlank()) {
+            session = Plaid.createPlaidLinkSession(
+                context,
+                linkTokenConfiguration {
+                    token = linkToken
+                    onLoad = OnLoadCallback { sessionReady = true }
+                }
+            )
+        }
+    }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("BankConnect", color = Paper, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+        Text("Secure, read-only access to supported US bank accounts through official bank authentication.", color = Muted, fontSize = 12.sp)
+        InfoCard("Your bank signs you in through Plaid Link. BALMZ APT never asks for or stores your bank password or bank-issued one-time code. You choose which accounts to share.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onConnect,
+                enabled = !busy && linkToken.isBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink),
+                modifier = Modifier.weight(1f)
+            ) { Text(if (busy) "Please wait…" else "Connect a US bank", fontWeight = FontWeight.Bold) }
+            Button(
+                onClick = onRefresh,
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text("Refresh") }
+        }
+        if (linkToken.isNotBlank()) {
+            Text("Secure bank session prepared. Continue to the provider's official authentication flow.", color = Green, fontSize = 11.sp)
+            Button(
+                onClick = { session?.let(onOpen) },
+                enabled = sessionReady && session != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text(if (sessionReady) "Open secure bank connection" else "Preparing secure connection…") }
+        }
+        if (busy) CircularProgressIndicator(color = Orange)
+        InfoCard(message)
+        Text("Connected accounts", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (accounts.isEmpty()) {
+            InfoCard("No linked bank accounts are available. Connect a bank to begin.")
+        } else {
+            accounts.forEach { account ->
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(14.dp)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(account.institution, color = Orange, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(account.name + if (account.mask.isNotBlank()) " •••• " + account.mask else "", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(listOf(account.type, account.subtype).filter { it.isNotBlank() }.joinToString(" · "), color = Muted, fontSize = 10.sp)
+                    Text("Available: " + account.available + " " + account.currency, color = Paper, fontSize = 12.sp)
+                    Text("Current: " + account.current + " " + account.currency, color = Paper, fontSize = 12.sp)
+                    Text("Read-only · Live provider response", color = Green, fontSize = 10.sp)
+                    TextButton(onClick = { onDisconnect(account.connectionId) }, enabled = !busy) {
+                        Text("Disconnect bank", color = Red)
+                    }
+                }
+            }
+        }
+        Text("Balances are provided by the bank-data provider and may be delayed. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
     }
 }
 
