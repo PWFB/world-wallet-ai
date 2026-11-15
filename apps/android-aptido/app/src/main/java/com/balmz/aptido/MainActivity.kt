@@ -31,6 +31,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
@@ -102,6 +103,22 @@ private data class AssetLine(
     val network: String,
     val amount: String,
     val verified: Boolean
+)
+
+private data class WalletSummaryLine(
+    val id: String,
+    val name: String,
+    val walletNumber: String,
+    val active: Boolean,
+    val hasLocalWallet: Boolean,
+    val backupConfirmed: Boolean
+)
+
+private data class WalletAddressLine(
+    val network: String,
+    val address: String,
+    val label: String,
+    val ownershipVerified: Boolean
 )
 
 private class AptidoApi {
@@ -211,8 +228,9 @@ private class SecureSessionStore(context: android.content.Context) {
         }
     }
 
-    fun clear() {
-        prefs.edit().clear().apply()
+    fun clearSession() {
+        // Sign-out removes session credentials but preserves encrypted local wallets and chat history.
+        prefs.edit().remove("auth").remove("pin").apply()
     }
 }
 
@@ -230,12 +248,19 @@ private fun AptidoApp() {
     var busy by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf("") }
     var wallet by remember { mutableStateOf(JSONObject()) }
+    var walletDirectory by remember { mutableStateOf<List<WalletSummaryLine>>(emptyList()) }
+    var walletAddresses by remember { mutableStateOf<List<WalletAddressLine>>(emptyList()) }
+    var walletDirectoryMessage by remember { mutableStateOf("Wallet list has not been loaded yet.") }
+    var walletDirectoryBusy by remember { mutableStateOf(false) }
     var verifiedAssets by remember { mutableStateOf<List<AssetLine>>(emptyList()) }
     var balanceMessage by remember { mutableStateOf("Live balance checks have not been requested yet.") }
     var balanceBusy by remember { mutableStateOf(false) }
     var chat by remember { mutableStateOf(listOf<ChatLine>()) }
     var activeEmail by remember { mutableStateOf("") }
     var verificationEmail by remember { mutableStateOf("") }
+    var pendingRecoveryPhrase by remember { mutableStateOf("") }
+    var pendingRecoveryWalletId by remember { mutableStateOf("") }
+    var pendingRecoveryAddresses by remember { mutableStateOf<List<SelfCustodyAddress>>(emptyList()) }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
@@ -248,6 +273,57 @@ private fun AptidoApp() {
         val status = api.get("/api/v1/security/pin/status", identityToken)
         pinConfigured = status.optBoolean("pin_configured", false)
         stage = AptidoStage.PIN
+    }
+
+    suspend fun refreshWalletDirectory(sessionToken: String) {
+        if (sessionToken.isBlank()) return
+        walletDirectoryBusy = true
+        try {
+            val result = api.get("/api/v1/wallets", sessionToken)
+            val rows = result.optJSONArray("wallets") ?: JSONArray()
+            walletDirectory = (0 until rows.length()).mapNotNull { index ->
+                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                val id = item.optString("id")
+                if (id.isBlank()) return@mapNotNull null
+                WalletSummaryLine(
+                    id = id,
+                    name = item.optString("name", "Wallet"),
+                    walletNumber = item.optString("wallet_number", "Not assigned"),
+                    active = item.optBoolean("active", false),
+                    hasLocalWallet = store.get("selfcustody_wallet_" + id).isNotBlank(),
+                    backupConfirmed = store.get("selfcustody_backup_" + id) == "yes"
+                )
+            }
+            val activeId = result.optString("active_wallet_id")
+                .ifBlank { wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty() }
+            if (activeId.isBlank()) {
+                walletAddresses = emptyList()
+                walletDirectoryMessage = "No active wallet profile is available."
+            } else {
+                val addressResult = api.get("/api/v1/wallets/" + activeId + "/addresses", sessionToken)
+                val addressRows = addressResult.optJSONArray("addresses") ?: JSONArray()
+                walletAddresses = (0 until addressRows.length()).mapNotNull { index ->
+                    val item = addressRows.optJSONObject(index) ?: return@mapNotNull null
+                    val address = item.optString("address")
+                    if (address.isBlank()) return@mapNotNull null
+                    WalletAddressLine(
+                        network = item.optString("network"),
+                        address = address,
+                        label = item.optString("label", "primary"),
+                        ownershipVerified = item.optBoolean("ownership_verified", false)
+                    )
+                }
+                walletDirectoryMessage = if (walletAddresses.isEmpty()) {
+                    "Wallet profile loaded. No public network addresses are attached yet."
+                } else {
+                    walletAddresses.size.toString() + " attached network address(es) loaded. Ownership status is shown per address."
+                }
+            }
+        } catch (error: Exception) {
+            walletDirectoryMessage = error.message ?: "Wallet information could not be loaded."
+        } finally {
+            walletDirectoryBusy = false
+        }
     }
 
     suspend fun refreshWallet(sessionToken: String) {
@@ -272,6 +348,75 @@ private fun AptidoApp() {
         store.put("pin", sessionToken)
         stage = AptidoStage.APP
         balanceMessage = "Recorded wallet data is loaded. Live verification is separate."
+        refreshWalletDirectory(sessionToken)
+    }
+
+    suspend fun createSelfCustodyWalletProfile(name: String, recoveryPhrase: String? = null) {
+        require(name.isNotBlank()) { "Enter a name for this wallet." }
+        walletDirectoryMessage = if (recoveryPhrase.isNullOrBlank()) {
+            "Generating a new self-custody wallet securely on this device…"
+        } else {
+            "Validating and restoring the recovery phrase on this device…"
+        }
+        val generated = withContext(Dispatchers.Default) {
+            if (recoveryPhrase.isNullOrBlank()) {
+                TrustWalletCoreWallet.create()
+            } else {
+                TrustWalletCoreWallet.restore(recoveryPhrase)
+            }
+        }
+        val response = api.post(
+            "/api/v1/wallets",
+            JSONObject().put("name", name.trim()),
+            pinToken
+        )
+        val createdWallet = response.optJSONObject("wallet") ?: JSONObject()
+        val walletId = createdWallet.optString("id")
+        require(walletId.isNotBlank()) { "The backend created no wallet ID. The recovery phrase remains local to this device." }
+
+        val addressRows = JSONArray()
+        generated.addresses.forEach { entry ->
+            addressRows.put(JSONObject().put("network", entry.network).put("address", entry.address))
+        }
+        val material = JSONObject()
+            .put("mnemonic", generated.mnemonic)
+            .put("addresses", addressRows)
+            .put("created_at", System.currentTimeMillis())
+        // SecureSessionStore encrypts the recovery material using an Android Keystore AES-GCM key.
+        // Only public addresses are ever sent to the World Wallet AI backend.
+        store.put("selfcustody_wallet_" + walletId, material.toString())
+        store.put("selfcustody_backup_" + walletId, "no")
+
+        pendingRecoveryWalletId = walletId
+        pendingRecoveryPhrase = generated.mnemonic
+        pendingRecoveryAddresses = generated.addresses
+        refreshWallet(pinToken)
+        walletDirectoryMessage =
+            "A self-custody wallet was generated on this device. Back up its recovery phrase before its public addresses are attached."
+    }
+
+    fun showWalletRecoveryPhrase(walletId: String) {
+        try {
+            val raw = store.get("selfcustody_wallet_" + walletId)
+            require(raw.isNotBlank()) { "This device has no encrypted recovery material for that wallet." }
+            val material = JSONObject(raw)
+            val rows = material.optJSONArray("addresses") ?: JSONArray()
+            val restoredAddresses = (0 until rows.length()).mapNotNull { index ->
+                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                val network = item.optString("network")
+                val address = item.optString("address")
+                if (network.isBlank() || address.isBlank()) return@mapNotNull null
+                SelfCustodyAddress(network, address)
+            }
+            require(restoredAddresses.size == 6) { "The saved wallet record is incomplete. Do not use it to receive funds." }
+            val phrase = material.optString("mnemonic")
+            require(phrase.isNotBlank()) { "The encrypted recovery phrase is missing." }
+            pendingRecoveryWalletId = walletId
+            pendingRecoveryPhrase = phrase
+            pendingRecoveryAddresses = restoredAddresses
+        } catch (error: Exception) {
+            walletDirectoryMessage = error.message ?: "The recovery phrase could not be opened."
+        }
     }
 
     suspend fun refreshVerifiedBalances() {
@@ -355,7 +500,7 @@ private fun AptidoApp() {
             } catch (error: Exception) {
                 authToken = ""
                 pinToken = ""
-                store.clear()
+                store.clearSession()
                 notice = error.message ?: "Your saved session could not be restored. Please sign in again."
                 stage = AptidoStage.AUTH
             }
@@ -489,7 +634,7 @@ private fun AptidoApp() {
                 }
             },
             onBack = {
-                store.clear()
+                store.clearSession()
                 authToken = ""
                 pinToken = ""
                 stage = AptidoStage.AUTH
@@ -499,6 +644,120 @@ private fun AptidoApp() {
 
         AptidoStage.APP -> AppHome(
             wallet = wallet,
+            pendingRecoveryPhrase = pendingRecoveryPhrase,
+            onConfirmWalletBackup = {
+                scope.launch {
+                    val walletId = pendingRecoveryWalletId
+                    if (walletId.isBlank()) {
+                        walletDirectoryMessage = "No wallet is waiting for backup confirmation."
+                        return@launch
+                    }
+                    try {
+                        require(pendingRecoveryPhrase.isNotBlank()) { "The recovery phrase is not available." }
+                        store.put("selfcustody_backup_" + walletId, "yes")
+                        pendingRecoveryAddresses.forEach { entry ->
+                            api.post(
+                                "/api/v1/wallets/" + walletId + "/addresses",
+                                JSONObject()
+                                    .put("network", entry.network)
+                                    .put("address", entry.address)
+                                    .put("label", "primary"),
+                                pinToken
+                            )
+                        }
+                        walletDirectoryMessage =
+                            "Recovery backup acknowledged. Public addresses are attached; ownership still requires network signature verification."
+                        pendingRecoveryPhrase = ""
+                        pendingRecoveryWalletId = ""
+                        pendingRecoveryAddresses = emptyList()
+                        refreshWalletDirectory(pinToken)
+                    } catch (error: Exception) {
+                        walletDirectoryMessage =
+                            "Backup acknowledgement is saved locally. Address attachment needs a retry: " +
+                                (error.message ?: "network error")
+                        refreshWalletDirectory(pinToken)
+                    }
+                }
+            },
+            onDismissWalletBackup = {
+                pendingRecoveryPhrase = ""
+                pendingRecoveryWalletId = ""
+                pendingRecoveryAddresses = emptyList()
+            },
+            onShowWalletRecoveryPhrase = { walletId -> showWalletRecoveryPhrase(walletId) },
+            onRestoreWallet = { name, phrase ->
+                scope.launch {
+                    walletDirectoryBusy = true
+                    try {
+                        createSelfCustodyWalletProfile(name, phrase)
+                    } catch (error: Exception) {
+                        walletDirectoryMessage = error.message ?: "Wallet restoration failed."
+                    } finally {
+                        walletDirectoryBusy = false
+                    }
+                }
+            },
+            walletDirectory = walletDirectory,
+            walletAddresses = walletAddresses,
+            walletDirectoryMessage = walletDirectoryMessage,
+            walletDirectoryBusy = walletDirectoryBusy,
+            onRefreshWalletDirectory = {
+                scope.launch { refreshWalletDirectory(pinToken) }
+            },
+            onCreateWalletProfile = { name ->
+                scope.launch {
+                    walletDirectoryBusy = true
+                    try {
+                        createSelfCustodyWalletProfile(name)
+                    } catch (error: Exception) {
+                        walletDirectoryMessage = error.message ?: "Self-custody wallet creation failed."
+                    } finally {
+                        walletDirectoryBusy = false
+                    }
+                }
+            },
+            onSwitchWalletProfile = { walletId ->
+                scope.launch {
+                    try {
+                        api.post(
+                            "/api/v1/wallets/active",
+                            JSONObject().put("wallet_id", walletId),
+                            pinToken
+                        )
+                        refreshWallet(pinToken)
+                        refreshWalletDirectory(pinToken)
+                        refreshVerifiedBalances()
+                    } catch (error: Exception) {
+                        walletDirectoryMessage = error.message ?: "Wallet profile could not be switched."
+                    }
+                }
+            },
+            onAttachPublicAddress = { networks, address ->
+                scope.launch {
+                    val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
+                    if (activeId.isBlank()) {
+                        walletDirectoryMessage = "There is no active wallet profile to attach this address to."
+                    } else {
+                        try {
+                            networks.distinct().forEach { network ->
+                                api.post(
+                                    "/api/v1/wallets/" + activeId + "/addresses",
+                                    JSONObject()
+                                        .put("network", network)
+                                        .put("address", address.trim())
+                                        .put("label", "primary"),
+                                    pinToken
+                                )
+                            }
+                            refreshWalletDirectory(pinToken)
+                            walletDirectoryMessage = "Public address attached. Ownership remains unverified until a valid network signature is completed."
+                        } catch (error: Exception) {
+                            refreshWalletDirectory(pinToken)
+                            walletDirectoryMessage = error.message ?: "Address attachment failed."
+                        }
+                    }
+                }
+            },
             verifiedAssets = verifiedAssets,
             balanceMessage = balanceMessage,
             balanceBusy = balanceBusy,
@@ -546,7 +805,7 @@ private fun AptidoApp() {
                     } catch (_: Exception) {
                         // Local credentials are still cleared even when offline.
                     }
-                    store.clear()
+                    store.clearSession()
                     authToken = ""
                     pinToken = ""
                     wallet = JSONObject()
@@ -723,6 +982,19 @@ private fun PinScreen(
 @Composable
 private fun AppHome(
     wallet: JSONObject,
+    pendingRecoveryPhrase: String,
+    onConfirmWalletBackup: () -> Unit,
+    onDismissWalletBackup: () -> Unit,
+    onShowWalletRecoveryPhrase: (String) -> Unit,
+    onRestoreWallet: (String, String) -> Unit,
+    walletDirectory: List<WalletSummaryLine>,
+    walletAddresses: List<WalletAddressLine>,
+    walletDirectoryMessage: String,
+    walletDirectoryBusy: Boolean,
+    onRefreshWalletDirectory: () -> Unit,
+    onCreateWalletProfile: (String) -> Unit,
+    onSwitchWalletProfile: (String) -> Unit,
+    onAttachPublicAddress: (List<String>, String) -> Unit,
     verifiedAssets: List<AssetLine>,
     balanceMessage: String,
     balanceBusy: Boolean,
@@ -745,17 +1017,17 @@ private fun AppHome(
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Home", "AI Chat", "Downloads", "Account").forEach { item ->
+            listOf("Home", "Wallets", "AI Chat", "Downloads", "Account").forEach { item ->
                 val selected = tab == item
                 Box(
-                    modifier = Modifier.weight(1f).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
+                    modifier = Modifier.width(82.dp).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
                         .clickable { tab = item }.padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(item, color = if (selected) Ink else Paper, fontWeight = FontWeight.SemiBold, fontSize = 12.sp)
+                    Text(item, color = if (selected) Ink else Paper, fontWeight = FontWeight.SemiBold, fontSize = 11.sp)
                 }
             }
         }
@@ -766,6 +1038,18 @@ private fun AppHome(
                 balanceMessage = balanceMessage,
                 balanceBusy = balanceBusy,
                 onRefreshBalances = onRefreshBalances
+            )
+            "Wallets" -> WalletsPanel(
+                wallets = walletDirectory,
+                addresses = walletAddresses,
+                message = walletDirectoryMessage,
+                busy = walletDirectoryBusy,
+                onRefresh = onRefreshWalletDirectory,
+                onCreateWalletProfile = onCreateWalletProfile,
+                onSwitchWalletProfile = onSwitchWalletProfile,
+                onAttachPublicAddress = onAttachPublicAddress,
+                onShowRecoveryPhrase = onShowWalletRecoveryPhrase,
+                onRestoreWallet = onRestoreWallet
             )
             "AI Chat" -> ChatPanel(
                 messages = chat,
@@ -785,6 +1069,311 @@ private fun AppHome(
             "Downloads" -> DownloadsPanel()
             else -> AccountPanel(wallet = wallet, onLogout = onLogout)
         }
+        if (pendingRecoveryPhrase.isNotBlank()) {
+            AlertDialog(
+                onDismissRequest = onDismissWalletBackup,
+                containerColor = Panel,
+                title = { Text("Back up your recovery phrase", color = Paper, fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(
+                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "Write these recovery words down offline and keep them private. Anyone with this phrase can control the wallet. Never send it to anyone or paste it into a website.",
+                            color = Muted,
+                            fontSize = 12.sp
+                        )
+                        Text(pendingRecoveryPhrase, color = Paper, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            "The phrase is encrypted in Android Keystore storage on this device. It is not sent to the backend. Public addresses are attached only after you confirm your backup.",
+                            color = Muted,
+                            fontSize = 11.sp
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = onConfirmWalletBackup,
+                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+                    ) { Text("I have backed it up") }
+                },
+                dismissButton = {
+                    TextButton(onClick = onDismissWalletBackup) { Text("Later", color = Paper) }
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun WalletsPanel(
+    wallets: List<WalletSummaryLine>,
+    addresses: List<WalletAddressLine>,
+    message: String,
+    busy: Boolean,
+    onRefresh: () -> Unit,
+    onCreateWalletProfile: (String) -> Unit,
+    onSwitchWalletProfile: (String) -> Unit,
+    onAttachPublicAddress: (List<String>, String) -> Unit,
+    onShowRecoveryPhrase: (String) -> Unit,
+    onRestoreWallet: (String, String) -> Unit
+) {
+    val context = LocalContext.current
+    var walletName by remember { mutableStateOf("My Wallet") }
+    var networkMode by remember { mutableStateOf("Mainnet") }
+    var selectedNetwork by remember { mutableStateOf("evm_mainnets") }
+    var addressInput by remember { mutableStateOf("") }
+    var recoveryInput by remember { mutableStateOf("") }
+
+    val networkChoices = if (networkMode == "Mainnet") {
+        listOf(
+            "Ethereum + BNB Mainnet" to "evm_mainnets",
+            "Solana Mainnet" to "solana_mainnet",
+            "Bitcoin Mainnet" to "bitcoin"
+        )
+    } else {
+        listOf(
+            "Ethereum Sepolia" to "sepolia",
+            "Solana Devnet" to "solana_devnet"
+        )
+    }
+    LaunchedEffect(networkMode) {
+        selectedNetwork = networkChoices.first().second
+    }
+
+    val networkRows = if (networkMode == "Mainnet") {
+        listOf(
+            "Ethereum Mainnet" to "ethereum",
+            "BNB Chain Mainnet" to "bnb",
+            "Solana Mainnet" to "solana_mainnet",
+            "Bitcoin Mainnet" to "bitcoin"
+        )
+    } else {
+        listOf(
+            "Ethereum Sepolia" to "sepolia",
+            "Solana Devnet" to "solana_devnet"
+        )
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Wallets", color = Paper, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+                Text("Wallet profiles, network addresses and connection status", color = Muted, fontSize = 11.sp)
+            }
+            Button(
+                onClick = onRefresh,
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text("Refresh", fontSize = 11.sp) }
+        }
+
+        Text("Your wallet profiles", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (wallets.isEmpty()) {
+            InfoCard("No wallet profiles were returned by the account API.")
+        } else {
+            wallets.forEach { item ->
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(Panel, RoundedCornerShape(14.dp))
+                        .padding(13.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(item.name, color = Paper, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text("Wallet ID: " + item.walletNumber, color = Muted, fontSize = 11.sp)
+                        if (item.active) {
+                            Text("ACTIVE WALLET", color = Green, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (item.hasLocalWallet) {
+                            Text(
+                                if (item.backupConfirmed) "SELF-CUSTODY · BACKUP ACKNOWLEDGED" else "SELF-CUSTODY · BACKUP NOT CONFIRMED",
+                                color = if (item.backupConfirmed) Green else Orange,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            TextButton(onClick = { onShowRecoveryPhrase(item.id) }) {
+                                Text("View recovery phrase", color = Orange, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                    if (!item.active) {
+                        Button(
+                            onClick = { onSwitchWalletProfile(item.id) },
+                            enabled = !busy,
+                            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+                        ) { Text("Switch", fontSize = 11.sp) }
+                    }
+                }
+            }
+        }
+
+        Text("Network addresses", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Mainnet and testnet addresses are kept separate. One EVM account can use the same public address on Ethereum and BNB Chain; Solana and Bitcoin have separate address formats.",
+            color = Muted,
+            fontSize = 11.sp
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            listOf("Mainnet", "Testnet").forEach { mode ->
+                val selected = networkMode == mode
+                Box(
+                    modifier = Modifier.background(if (selected) Orange else Panel, RoundedCornerShape(18.dp))
+                        .clickable { networkMode = mode }
+                        .padding(horizontal = 16.dp, vertical = 9.dp)
+                ) {
+                    Text(mode, color = if (selected) Ink else Paper, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+
+        networkRows.forEach { (label, network) ->
+            val matches = addresses.filter { it.network == network }
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .background(Panel, RoundedCornerShape(14.dp))
+                    .padding(13.dp),
+                verticalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Text(label, color = Paper, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                if (matches.isEmpty()) {
+                    Text("No address attached", color = Muted, fontSize = 11.sp)
+                } else {
+                    matches.forEach { entry ->
+                        Text(entry.address, color = Paper, fontSize = 11.sp)
+                        Text(
+                            if (entry.ownershipVerified) "Ownership verified" else "Attached · ownership proof required",
+                            color = if (entry.ownershipVerified) Green else Orange,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                        as? android.content.ClipboardManager
+                                    clipboard?.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("Wallet address", entry.address)
+                                    )
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+                            ) { Text("Copy address", fontSize = 10.sp) }
+                            Text(entry.label, color = Muted, fontSize = 10.sp, modifier = Modifier.padding(top = 12.dp))
+                        }
+                    }
+                }
+            }
+        }
+
+        Text("Attach an existing public address", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "This links a public address to the active wallet profile. It does not import private keys, sign transactions or prove ownership. Unverified addresses remain read-only.",
+            color = Muted,
+            fontSize = 11.sp
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            networkChoices.forEach { (label, key) ->
+                val selected = selectedNetwork == key
+                Box(
+                    modifier = Modifier.background(if (selected) Orange else Panel, RoundedCornerShape(16.dp))
+                        .clickable { selectedNetwork = key }
+                        .padding(horizontal = 11.dp, vertical = 9.dp)
+                ) {
+                    Text(label, color = if (selected) Ink else Paper, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        OutlinedTextField(
+            value = addressInput,
+            onValueChange = { addressInput = it.trim() },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = false,
+            label = { Text("Public wallet address") },
+            placeholder = { Text("Paste an address from your external wallet", color = Muted) },
+            colors = fieldColors()
+        )
+        Button(
+            onClick = {
+                val networks = when (selectedNetwork) {
+                    "evm_mainnets" -> listOf("ethereum", "bnb")
+                    else -> listOf(selectedNetwork)
+                }
+                onAttachPublicAddress(networks, addressInput.trim())
+                addressInput = ""
+            },
+            enabled = !busy && addressInput.trim().length >= 20,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+        ) { Text(if (busy) "Working…" else "Attach address", fontWeight = FontWeight.Bold) }
+
+        Text("Create a self-custody wallet", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Trust Wallet Core creates the recovery phrase and network keys on this device. The phrase is encrypted locally and never uploaded. Back it up before the public addresses are attached.",
+            color = Muted,
+            fontSize = 11.sp
+        )
+        OutlinedTextField(
+            value = walletName,
+            onValueChange = { walletName = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Wallet profile name") },
+            colors = fieldColors()
+        )
+        Button(
+            onClick = { onCreateWalletProfile(walletName.trim()) },
+            enabled = !busy && walletName.isNotBlank(),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+        ) { Text("Generate self-custody wallet") }
+
+        Divider(color = PanelLight)
+        Text("Restore from a recovery phrase", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Enter an existing 12- or 24-word BIP-39 phrase to restore addresses on this device. The phrase is validated and processed locally; it is never sent to the backend.",
+            color = Muted,
+            fontSize = 11.sp
+        )
+        OutlinedTextField(
+            value = recoveryInput,
+            onValueChange = { recoveryInput = it.lowercase().replace(Regex("\\s+"), " ").take(600) },
+            modifier = Modifier.fillMaxWidth(),
+            minLines = 3,
+            maxLines = 4,
+            label = { Text("Recovery phrase") },
+            placeholder = { Text("Enter your words separated by spaces", color = Muted) },
+            colors = fieldColors()
+        )
+        Button(
+            onClick = {
+                val phrase = recoveryInput.trim()
+                if (phrase.isNotBlank()) {
+                    onRestoreWallet("Restored Wallet", phrase)
+                    recoveryInput = ""
+                }
+            },
+            enabled = !busy && recoveryInput.trim().split(Regex("\\s+")).size in listOf(12, 24),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+        ) { Text("Restore self-custody wallet") }
+
+        if (busy) {
+            CircularProgressIndicator(color = Orange, modifier = Modifier.size(22.dp))
+        }
+        InfoCard(message)
     }
 }
 
