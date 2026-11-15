@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
 const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
+const returnCenterSource = readFileSync(new URL("./MainnetReturnCenter.jsx", import.meta.url), "utf8");
+const aptSource = readFileSync(new URL("../../../apps/android-aptido/app/src/main/java/com/balmz/aptido/MainActivity.kt", import.meta.url), "utf8");
 import { NAVIGATION_ICONS, ROOT_SHORTCUTS, WALLET_NAVIGATION } from "./navigation.js";
 
 test("sidebar navigation starts with the wallet dashboard", () => {
@@ -123,4 +125,18 @@ test("BALMZ Token Mining is discoverable and has a genuine early-access registra
   assert.match(featureSource, /BALMZ Token Mining early access/);
   assert.match(featureSource, /No background mining runs on your phone or computer/);
   assert.match(featureSource, /No claimable BALMZ rewards are being represented/);
+});
+
+test("WalletConnect is removed from the sidebar and runtime connection screens", () => {
+  const pages = Object.values(WALLET_NAVIGATION).flat();
+  assert.ok(!pages.includes("Wallet Connect"));
+  assert.doesNotMatch(featureSource, /@walletconnect\\/ethereum-provider|WalletConnect|walletconnect|connectWalletConnect/i);
+  assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
+});
+
+test("US bank transfers are tucked into a collapsed BankConnect area, not the main navigation", () => {
+  assert.ok(!Object.values(WALLET_NAVIGATION).flat().includes("US Bank Transfers"));
+  assert.match(aptSource, /var showUsBankTransfers by remember/);
+  assert.match(aptSource, /Open US bank transfers/);
+  assert.match(aptSource, /Transfers are not active yet/);
 });
