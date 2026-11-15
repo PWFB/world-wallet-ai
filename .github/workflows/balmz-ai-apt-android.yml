@@ -54,7 +54,7 @@ jobs:
             echo "::error::TRUST_WALLET_PACKAGES_TOKEN was rejected by GitHub API (HTTP $user_status). Refresh the classic PAT and save it as the repository secret."
             exit 1
           fi
-          token_login=$(python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])' USER_JSON="$RUNNER_TEMP/github-user.json")
+          token_login=$(USER_JSON="$RUNNER_TEMP/github-user.json" python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])')
           echo "GITHUB_USER=$token_login" >> "$GITHUB_ENV"
           echo "GitHub package token authenticated as: $token_login"
           scopes=$(curl -sSI -H "Authorization: Bearer $TRUST_WALLET_PACKAGES_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/user | awk -F': ' 'tolower($1)== "x-oauth-scopes" {gsub("\\r","",$2); print $2}')
@@ -68,7 +68,6 @@ jobs:
 
       - name: Build debug APK and instrumentation test APK
         env:
-          GITHUB_USER: ${{ github.actor }}
           TRUST_WALLET_PACKAGES_TOKEN: ${{ secrets.TRUST_WALLET_PACKAGES_TOKEN }}
         run: gradle -p apps/android-aptido :app:assembleDebug :app:assembleAndroidTest --no-daemon --stacktrace
 
