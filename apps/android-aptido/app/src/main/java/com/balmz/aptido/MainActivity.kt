@@ -591,6 +591,7 @@ private fun AptidoApp() {
                             "Wallet profile created. Add public network addresses next."
                         )
                         refreshWallet(pinToken)
+                        refreshWalletDirectory(pinToken)
                         refreshVerifiedBalances()
                     } catch (error: Exception) {
                         walletDirectoryMessage = error.message ?: "Wallet profile could not be created."
@@ -606,6 +607,7 @@ private fun AptidoApp() {
                             pinToken
                         )
                         refreshWallet(pinToken)
+                        refreshWalletDirectory(pinToken)
                         refreshVerifiedBalances()
                     } catch (error: Exception) {
                         walletDirectoryMessage = error.message ?: "Wallet profile could not be switched."
