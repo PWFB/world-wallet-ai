@@ -807,7 +807,7 @@ private fun AptidoApp(
                     }
                 }
                 is LinkExit -> {
-                    bankConnectMessage = result.error?.displayMessage?.ifBlank { null }
+                    bankConnectMessage = result.error?.displayMessage?.takeIf { it.isNotBlank() }
                         ?: result.error?.errorMessage
                         ?: "Bank linking was cancelled. No account was connected."
                     bankLinkToken = ""
