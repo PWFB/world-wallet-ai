@@ -1171,7 +1171,7 @@ private fun AptidoApp(
                 scope.launch {
                     bankConnectBusy = true
                     try {
-                        val response = api.post("/api/v1/bankconnect/link-token", JSONObject(), pinToken)
+                        val response = api.post("/api/v1/bankconnect/link-token", JSONObject().put("android_package_name", BuildConfig.APPLICATION_ID), pinToken)
                         bankLinkToken = response.optString("link_token")
                         if (bankLinkToken.isBlank()) throw IllegalStateException("The bank provider did not return a Link token.")
                         bankConnectMessage = "Secure bank authentication is ready. Continue in the official provider window."
