@@ -2765,8 +2765,10 @@ def neon_register(request: NeonAuthRegistration):
     email = request.email.strip().lower()
     if not name:
         raise HTTPException(status_code=400, detail="Enter your name")
-    # Sign-up intentionally does not request a session: production Neon Auth
-    # requires email verification before it will issue one.
+    # Do not infer that verification is required solely from emailVerified:
+    # Neon can return false while email verification is disabled. Try to create
+    # the normal password session first; only show the OTP screen when Neon
+    # rejects sign-in as an unverified account.
     payload = _neon_auth_post("/sign-up/email", {
         "name": name,
         "email": email,
@@ -2775,28 +2777,40 @@ def neon_register(request: NeonAuthRegistration):
     auth_user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
     if not auth_user:
         raise HTTPException(status_code=502, detail="Neon Auth did not return a user identity.")
-    if auth_user.get("emailVerified") is True:
+
+    try:
         signed_in = _neon_auth_sign_in("/sign-in/email", {
             "email": email,
             "password": request.password,
         })
-        user = signed_in.get("user")
-        if isinstance(user, dict):
-            with db() as conn:
-                conn.execute(
-                    "UPDATE users SET name=%s WHERE lower(email)=lower(%s)",
-                    (name, email),
-                )
-                conn.commit()
-            refreshed = get_user(email)
-            if refreshed:
-                signed_in["user"] = refreshed
-        return signed_in
-    return {
-        "verification_required": True,
-        "email": email,
-        "message": "A verification code has been sent to your email address.",
-    }
+    except HTTPException as exc:
+        # The credentials are the same ones just accepted by sign-up. A 400,
+        # 401, or 403 here therefore indicates that Neon may be enforcing
+        # verification. Explicitly request the OTP before showing that screen.
+        if exc.status_code not in {400, 401, 403}:
+            raise
+        _neon_auth_post("/email-otp/send-verification-otp", {
+            "email": email,
+            "type": "email-verification",
+        })
+        return {
+            "verification_required": True,
+            "email": email,
+            "message": "A verification code has been sent to your email address.",
+        }
+
+    user = signed_in.get("user")
+    if isinstance(user, dict):
+        with db() as conn:
+            conn.execute(
+                "UPDATE users SET name=%s WHERE lower(email)=lower(%s)",
+                (name, email),
+            )
+            conn.commit()
+        refreshed = get_user(email)
+        if refreshed:
+            signed_in["user"] = refreshed
+    return signed_in
 
 
 @app.post("/api/v1/auth/neon/verify-email")
