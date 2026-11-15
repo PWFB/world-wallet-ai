@@ -1181,6 +1181,7 @@ private fun AptidoApp(
             onRequestBankEmailCode = { ownerEmail, otpEmail ->
                 scope.launch {
                     bankEmailBusy = true
+                    bankEmailVerified = false
                     bankEmailMessage = ""
                     try {
                         val result = api.post(
@@ -1659,6 +1660,9 @@ private fun BankConnectPanel(
     var otpEmailInput by remember(otpEmail) { mutableStateOf(otpEmail) }
     var emailCodeInput by remember { mutableStateOf("") }
     var emailCodeSent by remember { mutableStateOf(false) }
+    val emailFieldsMatchVerified = emailVerified &&
+        ownerEmailInput.trim().equals(ownerEmail, ignoreCase = true) &&
+        otpEmailInput.trim().equals(otpEmail, ignoreCase = true)
     LaunchedEffect(Unit) { onRefresh() }
     LaunchedEffect(linkToken) {
         session = null
@@ -1731,15 +1735,15 @@ private fun BankConnectPanel(
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
             ) { Text(if (emailBusy) "Verifying…" else "Verify code-delivery Gmail") }
         }
-        InfoCard(emailMessage)
+        InfoCard(if (emailFieldsMatchVerified) emailMessage else "Email fields changed. Send and verify a new BALMZ code for these addresses before continuing.")
         InfoCard("Important: this is a BALMZ APT email-verification code only. It does not capture, forward, or replace a bank-issued OTP. Any bank MFA code stays with the bank's registered contact method inside official bank authentication.")
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
                 onClick = onConnect,
-                enabled = !busy && emailVerified && linkToken.isBlank(),
+                enabled = !busy && emailFieldsMatchVerified && linkToken.isBlank(),
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink),
                 modifier = Modifier.weight(1f)
-            ) { Text(if (busy) "Please wait…" else if (emailVerified) "Connect a US bank" else "Verify Gmail to continue", fontWeight = FontWeight.Bold) }
+            ) { Text(if (busy) "Please wait…" else if (emailFieldsMatchVerified) "Connect a US bank" else "Verify Gmail to continue", fontWeight = FontWeight.Bold) }
             Button(
                 onClick = onRefresh,
                 enabled = !busy,
