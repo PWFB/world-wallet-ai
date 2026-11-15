@@ -2409,13 +2409,7 @@ function App() {
               </article>
             </div>
 
-            <article className="panel action-panel dashboard-connected-wallet">
-              <div className="panel-head">
-                <div><p className="feature-kicker">EXTERNAL WALLET</p><h2>{externalWalletConnection?.address ? "Connected wallet" : "Connect a wallet"}</h2><span>{externalWalletConnection?.address ? "Your selected WalletConnect account" : "Connect or switch to another wallet from your dashboard."}</span></div>
-                <button className="primary" onClick={() => setActive("Wallet Connect")}>{externalWalletConnection?.address ? "⇄ Change wallet" : "Connect wallet →"}</button>
-              </div>
-              {externalWalletConnection?.address ? <div className="tool-row"><div><b>Public address</b><small>Chain ID: {externalWalletConnection.chainId ?? "Unknown"}</small></div><code>{externalWalletConnection.address}</code><button className="secondary" onClick={() => navigator.clipboard?.writeText(externalWalletConnection.address)}>Copy</button></div> : <div className="live-chart-empty">No external wallet selected yet. Use Connect wallet to choose one.</div>}
-            </article>
+            
 
 
 
@@ -2423,7 +2417,7 @@ function App() {
               <div><p className="feature-kicker">SELF-CUSTODY CONTROLS</p><h2>Wallet tools &amp; support</h2><span>Manage connected signing apps, verify addresses and get help without leaving your wallet workspace.</span></div>
               <div className="dashboard-security-actions">
                 <button className="secondary" onClick={() => setActive("Wallet Safety")}>Wallet safety</button>
-                <button className="secondary" onClick={() => setActive("Wallet Connect")}>Connected apps</button>
+                <button className="secondary" onClick={() => setActive("Wallets")}>My wallets</button>
                 <button className="secondary" onClick={() => setActive("Help & Docs")}>Help &amp; Docs</button>
               </div>
               <p className="dashboard-security-note">Mainnet and testnet balances remain separate. World Wallet AI never needs your recovery phrase or private key.</p>
