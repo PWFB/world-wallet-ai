@@ -7,6 +7,7 @@ import base64
 import hashlib
 import logging
 import os
+from datetime import date, timedelta
 from typing import Callable
 
 import httpx
@@ -178,15 +179,20 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         institution_id = ""
         institution_name = "Connected bank"
         # The provider Item lookup is authoritative; never trust institution names from the device.
-        item_result = await _plaid_post("/item/get", {"access_token": access_token})
-        institution_id = str((item_result.get("item") or {}).get("institution_id") or "")
-        if institution_id:
-            institution = await _plaid_post("/institutions/get_by_id", {
-                "institution_id": institution_id,
-                "country_codes": PLAID_COUNTRIES,
-                "options": {"include_optional_metadata": True},
-            })
-            institution_name = str((institution.get("institution") or {}).get("name") or institution_name)[:160]
+        try:
+            item_result = await _plaid_post("/item/get", {"access_token": access_token})
+            institution_id = str((item_result.get("item") or {}).get("institution_id") or "")
+            if institution_id:
+                institution = await _plaid_post("/institutions/get_by_id", {
+                    "institution_id": institution_id,
+                    "country_codes": PLAID_COUNTRIES,
+                    "options": {"include_optional_metadata": True},
+                })
+                institution_name = str((institution.get("institution") or {}).get("name") or institution_name)[:160]
+        except HTTPException:
+            # Token exchange already succeeded. Preserve the encrypted connection even if
+            # optional institution-name enrichment is temporarily unavailable.
+            logger.warning("BankConnect institution metadata lookup failed; retaining linked Item")
         with db_factory() as conn:
             _ensure_table(conn)
             conn.execute("""
@@ -235,6 +241,53 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
                     "limit": balances.get("limit"),
                 })
         return {"accounts": output, "count": len(output), "read_only": True}
+
+    @router.get("/transactions")
+    async def list_bank_transactions(user=Depends(current_user_dependency)):
+        with db_factory() as conn:
+            _ensure_table(conn)
+            rows = conn.execute("""
+                SELECT item_id,institution_name,access_token_nonce,access_token_tag,encrypted_access_token
+                FROM bankconnect_items WHERE owner_id=%s AND wallet_id=%s ORDER BY created_at DESC
+            """, (str(user["id"]), str(user.get("wallet_id") or ""))).fetchall()
+        today = date.today()
+        start_date = (today - timedelta(days=30)).isoformat()
+        end_date = today.isoformat()
+        output = []
+        for row in rows:
+            access_token = _decrypt(row[2], row[3], row[4])
+            result = await _plaid_post("/transactions/get", {
+                "access_token": access_token,
+                "start_date": start_date,
+                "end_date": end_date,
+                "options": {"count": 100, "offset": 0},
+            })
+            account_map = {
+                str(account.get("account_id") or ""): account
+                for account in result.get("accounts", [])
+                if isinstance(account, dict)
+            }
+            for transaction in result.get("transactions", []):
+                if not isinstance(transaction, dict):
+                    continue
+                account = account_map.get(str(transaction.get("account_id") or ""), {})
+                output.append({
+                    "institution_name": str(row[1]),
+                    "transaction_id": str(transaction.get("transaction_id") or ""),
+                    "account_name": str(account.get("name") or "Bank account")[:120],
+                    "account_mask": str(account.get("mask") or ""),
+                    "date": str(transaction.get("date") or ""),
+                    "name": str(transaction.get("name") or "Transaction")[:180],
+                    "merchant_name": str(transaction.get("merchant_name") or "")[:160],
+                    "amount": transaction.get("amount"),
+                    "currency": str(transaction.get("iso_currency_code") or "USD"),
+                    "pending": bool(transaction.get("pending")),
+                    "category": transaction.get("personal_finance_category", {}).get("primary")
+                        if isinstance(transaction.get("personal_finance_category"), dict)
+                        else None,
+                })
+        output.sort(key=lambda item: item["date"], reverse=True)
+        return {"transactions": output[:200], "count": min(len(output), 200), "period_days": 30, "read_only": True}
 
     @router.delete("/connections/{connection_id}")
     async def disconnect_bank(connection_id: int, user=Depends(current_user_dependency)):
