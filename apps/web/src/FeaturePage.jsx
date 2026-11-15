@@ -783,9 +783,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [swapAmount, setSwapAmount] = useState("");
   const [swapNotice, setSwapNotice] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
-  const [okxProvider, setWcProvider] = useState(null);
-  const [okxAccount, setWcAccount] = useState("");
-  const [okxChainId, setWcChainId] = useState(null);
+  const [okxProvider, setOkxProvider] = useState(null);
+  const [okxAccount, setOkxAccount] = useState("");
+  const [okxChainId, setOkxChainId] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [historyTransactions, setHistoryTransactions] = useState([]);
@@ -1540,9 +1540,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     wallet={wallet}
     setActive={setActive}
     onEvmProviderConnected={(provider, connection) => {
-      setWcProvider(provider);
-      setWcAccount(connection.address);
-      setWcChainId(connection.chainId);
+      setOkxProvider(provider);
+      setOkxAccount(connection.address);
+      setOkxChainId(connection.chainId);
       persistExternalConnection({
         ...connection,
         provider: "okx",
