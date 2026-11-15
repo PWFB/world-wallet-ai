@@ -374,6 +374,65 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
         }
     }
 
+    suspend fun checkPinStatus(identityToken: String) {
+        val status = api.get("/api/v1/security/pin/status", identityToken)
+        pinConfigured = status.optBoolean("pin_configured", false)
+        stage = AptidoStage.PIN
+    }
+
+    suspend fun refreshWalletDirectory(sessionToken: String) {
+        if (sessionToken.isBlank()) return
+        walletDirectoryBusy = true
+        try {
+            val result = api.get("/api/v1/wallets", sessionToken)
+            val rows = result.optJSONArray("wallets") ?: JSONArray()
+            walletDirectory = (0 until rows.length()).mapNotNull { index ->
+                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                val id = item.optString("id")
+                if (id.isBlank()) return@mapNotNull null
+                WalletSummaryLine(
+                    id = id,
+                    name = item.optString("name", "Wallet"),
+                    walletNumber = item.optString("wallet_number", "Not assigned"),
+                    active = item.optBoolean("active", false),
+                    hasLocalWallet = store.get("selfcustody_wallet_" + id).isNotBlank(),
+                    backupConfirmed = store.get("selfcustody_backup_" + id) == "yes"
+                )
+            }
+            val activeId = result.optString("active_wallet_id")
+                .ifBlank { wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty() }
+            externalWalletAccounts = loadExternalWalletAccounts(activeId)
+            externalWalletProofs = loadExternalWalletProofs(activeId)
+            if (activeId.isBlank()) {
+                walletAddresses = emptyList()
+                walletDirectoryMessage = "No active wallet profile is available."
+            } else {
+                val addressResult = api.get("/api/v1/wallets/" + activeId + "/addresses", sessionToken)
+                val addressRows = addressResult.optJSONArray("addresses") ?: JSONArray()
+                walletAddresses = (0 until addressRows.length()).mapNotNull { index ->
+                    val item = addressRows.optJSONObject(index) ?: return@mapNotNull null
+                    val address = item.optString("address")
+                    if (address.isBlank()) return@mapNotNull null
+                    WalletAddressLine(
+                        network = item.optString("network"),
+                        address = address,
+                        label = item.optString("label", "primary"),
+                        ownershipVerified = item.optBoolean("ownership_verified", false)
+                    )
+                }
+                walletDirectoryMessage = if (walletAddresses.isEmpty()) {
+                    "Wallet profile loaded. No public network addresses are attached yet."
+                } else {
+                    walletAddresses.size.toString() + " attached network address(es) loaded. Ownership status is shown per address."
+                }
+            }
+        } catch (error: Exception) {
+            walletDirectoryMessage = error.message ?: "Wallet information could not be loaded."
+        } finally {
+            walletDirectoryBusy = false
+        }
+    }
+
     suspend fun handleExternalWalletCallback(uri: Uri) {
         val callback = BinanceWalletBridge.parseCallback(uri)
         when (callback.mode) {
@@ -477,65 +536,6 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                 refreshWalletDirectory(pinToken)
             }
             else -> throw IllegalStateException("Unsupported Binance callback.")
-        }
-    }
-
-    suspend fun checkPinStatus(identityToken: String) {
-        val status = api.get("/api/v1/security/pin/status", identityToken)
-        pinConfigured = status.optBoolean("pin_configured", false)
-        stage = AptidoStage.PIN
-    }
-
-    suspend fun refreshWalletDirectory(sessionToken: String) {
-        if (sessionToken.isBlank()) return
-        walletDirectoryBusy = true
-        try {
-            val result = api.get("/api/v1/wallets", sessionToken)
-            val rows = result.optJSONArray("wallets") ?: JSONArray()
-            walletDirectory = (0 until rows.length()).mapNotNull { index ->
-                val item = rows.optJSONObject(index) ?: return@mapNotNull null
-                val id = item.optString("id")
-                if (id.isBlank()) return@mapNotNull null
-                WalletSummaryLine(
-                    id = id,
-                    name = item.optString("name", "Wallet"),
-                    walletNumber = item.optString("wallet_number", "Not assigned"),
-                    active = item.optBoolean("active", false),
-                    hasLocalWallet = store.get("selfcustody_wallet_" + id).isNotBlank(),
-                    backupConfirmed = store.get("selfcustody_backup_" + id) == "yes"
-                )
-            }
-            val activeId = result.optString("active_wallet_id")
-                .ifBlank { wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty() }
-            externalWalletAccounts = loadExternalWalletAccounts(activeId)
-            externalWalletProofs = loadExternalWalletProofs(activeId)
-            if (activeId.isBlank()) {
-                walletAddresses = emptyList()
-                walletDirectoryMessage = "No active wallet profile is available."
-            } else {
-                val addressResult = api.get("/api/v1/wallets/" + activeId + "/addresses", sessionToken)
-                val addressRows = addressResult.optJSONArray("addresses") ?: JSONArray()
-                walletAddresses = (0 until addressRows.length()).mapNotNull { index ->
-                    val item = addressRows.optJSONObject(index) ?: return@mapNotNull null
-                    val address = item.optString("address")
-                    if (address.isBlank()) return@mapNotNull null
-                    WalletAddressLine(
-                        network = item.optString("network"),
-                        address = address,
-                        label = item.optString("label", "primary"),
-                        ownershipVerified = item.optBoolean("ownership_verified", false)
-                    )
-                }
-                walletDirectoryMessage = if (walletAddresses.isEmpty()) {
-                    "Wallet profile loaded. No public network addresses are attached yet."
-                } else {
-                    walletAddresses.size.toString() + " attached network address(es) loaded. Ownership status is shown per address."
-                }
-            }
-        } catch (error: Exception) {
-            walletDirectoryMessage = error.message ?: "Wallet information could not be loaded."
-        } finally {
-            walletDirectoryBusy = false
         }
     }
 
