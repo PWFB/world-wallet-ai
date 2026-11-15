@@ -7,6 +7,11 @@ import base64
 import hashlib
 import logging
 import os
+import re
+import secrets
+import smtplib
+import hmac
+from email.message import EmailMessage
 from datetime import date, timedelta
 from typing import Callable
 
@@ -33,8 +38,118 @@ class LinkTokenRequest(BaseModel):
     android_package_name: str = Field(default=PLAID_PACKAGE_NAME, max_length=128)
 
 
+class BankEmailRequest(BaseModel):
+    owner_email: str = Field(min_length=5, max_length=254)
+    otp_email: str = Field(min_length=5, max_length=254)
+
+
+class BankEmailCodeRequest(BaseModel):
+    code: str = Field(pattern=r"^[0-9]{6}$")
+
+
 def build_bankconnect_router(db_factory: Callable, current_user_dependency: Callable):
     router = APIRouter(prefix="/api/v1/bankconnect", tags=["BankConnect"])
+
+
+    def _ensure_email_tables(conn):
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bankconnect_email_profiles (
+                owner_id TEXT NOT NULL,
+                wallet_id TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                otp_email TEXT NOT NULL,
+                verified_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                PRIMARY KEY(owner_id, wallet_id)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS bankconnect_email_challenges (
+                id BIGSERIAL PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                wallet_id TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                otp_email TEXT NOT NULL,
+                code_hash TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                expires_at TIMESTAMPTZ NOT NULL,
+                used_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_bankconnect_email_challenge_lookup
+            ON bankconnect_email_challenges(owner_id,wallet_id,created_at DESC)
+        """)
+
+    def _email_sender_config():
+        host = os.getenv("BANKCONNECT_SMTP_HOST", "smtp.gmail.com").strip()
+        try:
+            port = int(os.getenv("BANKCONNECT_SMTP_PORT", "465").strip())
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail="BANKCONNECT_SMTP_PORT must be a valid port number.") from exc
+        username = os.getenv("BANKCONNECT_SMTP_USERNAME", "").strip()
+        password = os.getenv("BANKCONNECT_SMTP_APP_PASSWORD", "").replace(" ", "").strip()
+        from_email = os.getenv("BANKCONNECT_SMTP_FROM_EMAIL", username).strip()
+        from_name = os.getenv("BANKCONNECT_SMTP_FROM_NAME", "BALMZ AI APT").strip()
+        if not (host and 1 <= port <= 65535 and username and password and from_email):
+            raise HTTPException(
+                status_code=503,
+                detail="BALMZ code email is not configured. Set BANKCONNECT_SMTP_USERNAME, BANKCONNECT_SMTP_APP_PASSWORD and BANKCONNECT_SMTP_FROM_EMAIL on the backend.",
+            )
+        return host, port, username, password, from_email, from_name
+
+    def _send_bankconnect_code(recipient: str, code: str):
+        host, port, username, password, from_email, from_name = _email_sender_config()
+        message = EmailMessage()
+        message["Subject"] = "Your BALMZ AI APT BankConnect verification code"
+        message["From"] = f"{from_name} <{from_email}>"
+        message["To"] = recipient
+        message.set_content(
+            "Your BALMZ AI APT BankConnect verification code is: "
+            + code
+            + "\\n\\nThis BALMZ security code expires in 10 minutes and can be used once. "
+              "It verifies the BALMZ email destination only. It is NOT a bank-issued OTP and cannot replace a code sent by your bank. "
+              "Never share this code with anyone. If you did not request it, you can ignore this email."
+        )
+        try:
+            if port == 465:
+                with smtplib.SMTP_SSL(host, port, timeout=20) as smtp:
+                    smtp.login(username, password)
+                    smtp.send_message(message, from_addr=from_email, to_addrs=[recipient])
+            else:
+                with smtplib.SMTP(host, port, timeout=20) as smtp:
+                    smtp.ehlo()
+                    smtp.starttls()
+                    smtp.ehlo()
+                    smtp.login(username, password)
+                    smtp.send_message(message, from_addr=from_email, to_addrs=[recipient])
+        except Exception as exc:
+            logger.warning("BankConnect verification email delivery failed: error_type=%s", type(exc).__name__)
+            raise HTTPException(status_code=502, detail="BALMZ could not deliver the verification email. Check the dedicated BankConnect email sender configuration.") from exc
+
+    def _normalize_email(value: str, label: str):
+        normalized = str(value or "").strip().lower()
+        if len(normalized) > 254 or not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", normalized):
+            raise HTTPException(status_code=400, detail=f"Enter a valid {label} email address.")
+        return normalized
+
+    def _require_verified_email(user):
+        wallet_id = str(user.get("wallet_id") or "").strip()
+        if not wallet_id:
+            raise HTTPException(status_code=409, detail="Create or select a BALMZ wallet before BankConnect.")
+        with db_factory() as conn:
+            _ensure_email_tables(conn)
+            row = conn.execute("""
+                SELECT verified_at FROM bankconnect_email_profiles
+                WHERE owner_id=%s AND wallet_id=%s
+            """, (str(user["id"]), wallet_id)).fetchone()
+        if not row or not row[0]:
+            raise HTTPException(
+                status_code=409,
+                detail="Add the account holder Gmail and the BALMZ code-delivery Gmail, then verify the BALMZ code before connecting a bank.",
+            )
 
     def _config():
         if not (PLAID_CLIENT_ID and PLAID_SECRET):
@@ -135,6 +250,114 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         except ValueError as exc:
             raise HTTPException(status_code=502, detail="The bank provider returned an unreadable response.") from exc
 
+
+    @router.get("/email/settings")
+    def get_bankconnect_email_settings(user=Depends(current_user_dependency)):
+        wallet_id = str(user.get("wallet_id") or "").strip()
+        if not wallet_id:
+            raise HTTPException(status_code=409, detail="Create or select a BALMZ wallet before configuring BankConnect email.")
+        with db_factory() as conn:
+            _ensure_email_tables(conn)
+            row = conn.execute("""
+                SELECT owner_email,otp_email,verified_at
+                FROM bankconnect_email_profiles WHERE owner_id=%s AND wallet_id=%s
+            """, (str(user["id"]), wallet_id)).fetchone()
+        return {
+            "owner_email": str(row[0]) if row else "",
+            "otp_email": str(row[1]) if row else "",
+            "verified": bool(row and row[2]),
+            "code_delivery": "BALMZ email verification only; bank OTP remains bank-controlled",
+        }
+
+    @router.post("/email/request-code")
+    def request_bankconnect_email_code(request: BankEmailRequest, user=Depends(current_user_dependency)):
+        wallet_id = str(user.get("wallet_id") or "").strip()
+        if not wallet_id:
+            raise HTTPException(status_code=409, detail="Create or select a BALMZ wallet before configuring BankConnect email.")
+        owner_email = _normalize_email(request.owner_email, "account holder")
+        otp_email = _normalize_email(request.otp_email, "BALMZ code-delivery")
+        # Validate sender configuration before creating a challenge.
+        _email_sender_config()
+        code = f"{secrets.randbelow(900000) + 100000:06d}"
+        challenge_secret = _encryption_key()
+        code_hash = hmac.new(
+            challenge_secret,
+            f"{user['id']}:{wallet_id}:{otp_email}:{code}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        with db_factory() as conn:
+            _ensure_email_tables(conn)
+            recent = conn.execute("""
+                SELECT COUNT(*) FROM bankconnect_email_challenges
+                WHERE owner_id=%s AND wallet_id=%s AND created_at > NOW()-INTERVAL '15 minutes'
+            """, (str(user["id"]), wallet_id)).fetchone()
+            if int(recent[0] or 0) >= 5:
+                raise HTTPException(status_code=429, detail="Too many BankConnect email-code requests. Try again in 15 minutes.")
+            conn.execute("""
+                INSERT INTO bankconnect_email_profiles(owner_id,wallet_id,owner_email,otp_email,verified_at,updated_at)
+                VALUES(%s,%s,%s,%s,NULL,NOW())
+                ON CONFLICT(owner_id,wallet_id) DO UPDATE SET
+                    owner_email=EXCLUDED.owner_email,
+                    otp_email=EXCLUDED.otp_email,
+                    verified_at=NULL,
+                    updated_at=NOW()
+            """, (str(user["id"]), wallet_id, owner_email, otp_email))
+            conn.execute("""
+                UPDATE bankconnect_email_challenges
+                SET used_at=NOW()
+                WHERE owner_id=%s AND wallet_id=%s AND used_at IS NULL
+            """, (str(user["id"]), wallet_id))
+            conn.execute("""
+                INSERT INTO bankconnect_email_challenges
+                    (owner_id,wallet_id,owner_email,otp_email,code_hash,expires_at)
+                VALUES(%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')
+            """, (str(user["id"]), wallet_id, owner_email, otp_email, code_hash))
+            conn.commit()
+        _send_bankconnect_code(otp_email, code)
+        return {
+            "sent": True,
+            "otp_email": otp_email,
+            "expires_in_seconds": 600,
+            "message": "A BALMZ verification code was sent to the code-delivery email. This is not a bank-issued OTP.",
+        }
+
+    @router.post("/email/verify-code")
+    def verify_bankconnect_email_code(request: BankEmailCodeRequest, user=Depends(current_user_dependency)):
+        wallet_id = str(user.get("wallet_id") or "").strip()
+        if not wallet_id:
+            raise HTTPException(status_code=409, detail="Create or select a BALMZ wallet before verifying BankConnect email.")
+        with db_factory() as conn:
+            _ensure_email_tables(conn)
+            row = conn.execute("""
+                SELECT id,otp_email,code_hash,attempts
+                FROM bankconnect_email_challenges
+                WHERE owner_id=%s AND wallet_id=%s AND used_at IS NULL AND expires_at>NOW()
+                ORDER BY created_at DESC LIMIT 1 FOR UPDATE
+            """, (str(user["id"]), wallet_id)).fetchone()
+            if not row:
+                raise HTTPException(status_code=400, detail="No active BankConnect code was found. Request a new code.")
+            challenge_id, otp_email, expected_hash, attempts = row
+            if int(attempts or 0) >= 5:
+                conn.execute("UPDATE bankconnect_email_challenges SET used_at=NOW() WHERE id=%s", (challenge_id,))
+                conn.commit()
+                raise HTTPException(status_code=429, detail="Too many incorrect attempts. Request a new BankConnect code.")
+            candidate = hmac.new(
+                _encryption_key(),
+                f"{user['id']}:{wallet_id}:{otp_email}:{request.code}".encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            if not hmac.compare_digest(str(expected_hash), candidate):
+                conn.execute("UPDATE bankconnect_email_challenges SET attempts=attempts+1 WHERE id=%s", (challenge_id,))
+                conn.commit()
+                raise HTTPException(status_code=400, detail="The BALMZ verification code is incorrect.")
+            conn.execute("UPDATE bankconnect_email_challenges SET used_at=NOW() WHERE id=%s", (challenge_id,))
+            conn.execute("""
+                UPDATE bankconnect_email_profiles SET verified_at=NOW(),updated_at=NOW()
+                WHERE owner_id=%s AND wallet_id=%s AND otp_email=%s
+            """, (str(user["id"]), wallet_id, otp_email))
+            conn.commit()
+        return {"verified": True, "message": "BALMZ code-delivery email verified. You can now continue to official bank authentication."}
+
     @router.get("/status")
     def bankconnect_status(user=Depends(current_user_dependency)):
         return {
@@ -148,6 +371,7 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
 
     @router.post("/link-token")
     async def create_link_token(request: LinkTokenRequest, user=Depends(current_user_dependency)):
+        _require_verified_email(user)
         config = _config()
         _encryption_key()
         if request.android_package_name not in {PLAID_PACKAGE_NAME, PLAID_PACKAGE_NAME + ".debug"}:
