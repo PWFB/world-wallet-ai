@@ -92,18 +92,29 @@ Backend-only Render environment variables:
 - `PLAID_CLIENT_ID` — Plaid client ID.
 - `PLAID_SECRET` — Plaid secret for the selected environment.
 - `PLAID_ENV` — `sandbox`, `development`, or `production`; defaults to `sandbox`.
-- `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing server-side encryption key used to encrypt Plaid access tokens at rest.
+- `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing server-side encryption key used to encrypt Plaid access tokens at rest and protect the BALMZ OTP hash.
+- `BANKCONNECT_SMTP_HOST` — SMTP server; defaults to `smtp.gmail.com`.
+- `BANKCONNECT_SMTP_PORT` — SMTP port; defaults to `465` (SSL). Port `587` uses STARTTLS.
+- `BANKCONNECT_SMTP_USERNAME` — dedicated sender Gmail address.
+- `BANKCONNECT_SMTP_APP_PASSWORD` — dedicated Google App Password for that sender (not the normal Gmail password).
+- `BANKCONNECT_SMTP_FROM_EMAIL` — verified sender address; defaults to the SMTP username.
+- `BANKCONNECT_SMTP_FROM_NAME` — optional sender label; defaults to `BALMZ AI APT`.
 
-Do not add Plaid credentials to Android build configuration, frontend variables, Git, or chat. BankConnect creates Link tokens on the backend, exchanges one-time public tokens on the backend, encrypts long-lived access tokens with AES-GCM, scopes records to the authenticated user's active wallet, and exposes only sanitized account and transaction data. Disconnect calls Plaid `/item/remove` before deleting the stored connection.
+Do not reuse `WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD`: that existing credential remains restricted to Super Admin recovery. Do not add Plaid or SMTP credentials to Android build configuration, frontend variables, Git, or chat. BankConnect creates Link tokens on the backend, exchanges one-time public tokens on the backend, encrypts long-lived access tokens with AES-GCM, scopes records to the authenticated user's active wallet, and exposes only sanitized account and transaction data. Disconnect calls Plaid `/item/remove` before deleting the stored connection.
 
 Endpoints (all require the authenticated wallet-PIN session):
 
 - `GET /api/v1/bankconnect/status`
+- `GET /api/v1/bankconnect/email/settings`
+- `POST /api/v1/bankconnect/email/request-code` — sends a BALMZ-generated 6-digit code to the user-selected code-delivery email; 10-minute expiry, one use, maximum 5 attempts and 5 sends per 15 minutes.
+- `POST /api/v1/bankconnect/email/verify-code`
 - `POST /api/v1/bankconnect/link-token`
 - `POST /api/v1/bankconnect/exchange`
 - `GET /api/v1/bankconnect/accounts`
 - `GET /api/v1/bankconnect/transactions` (last 30 days)
 - `DELETE /api/v1/bankconnect/connections/{connection_id}`
+
+BankConnect asks for two user-entered addresses per active wallet: (1) account holder Gmail, stored as a reference only; (2) a separate or same Gmail chosen to receive BALMZ's own email-verification code. The code confirms the BALMZ notification destination only. It is not a bank-issued OTP, cannot be forwarded to a new bank email, and does not prove account ownership. The bank and Plaid Link independently authenticate the account holder and decide where bank MFA is delivered. Changing either email clears the previous email verification and requires a fresh BALMZ code. This extra email check must be configured with the dedicated `BANKCONNECT_SMTP_*` variables above.
 
 The Android package `com.balmz.aptido` must be registered in Plaid Dashboard under Build → API → Allowed Android package names. Register `com.balmz.aptido.debug` separately only if testing the debug build with real Plaid Link sessions.
 
