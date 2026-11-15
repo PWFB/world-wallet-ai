@@ -91,7 +91,7 @@ Backend-only Render environment variables:
 
 - `PLAID_CLIENT_ID` — Plaid client ID.
 - `PLAID_SECRET` — Plaid secret for the selected environment.
-- `PLAID_ENV` — `sandbox`, `development`, or `production`; defaults to `sandbox`.
+- `PLAID_ENV` — `sandbox` or `production`; defaults to `sandbox`. Plaid's former Development environment is decommissioned.
 - `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing server-side encryption key used to encrypt Plaid access tokens at rest and protect the BALMZ OTP hash.
 - `BANKCONNECT_SMTP_HOST` — SMTP server; defaults to `smtp.gmail.com`.
 - `BANKCONNECT_SMTP_PORT` — SMTP port; defaults to `465` (SSL). Port `587` uses STARTTLS.
