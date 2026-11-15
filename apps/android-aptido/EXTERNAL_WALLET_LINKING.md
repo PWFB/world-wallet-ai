@@ -34,7 +34,7 @@ Official references:
 
 OKX publishes `@okxconnect/connect-kit` (npm lists version 1.6.7 as MIT-licensed). Its current package documentation describes mobile-browser / Telegram connection, EIP-6963 and Wallet Standard provider injection, and account providers for Ethereum/EVM, Bitcoin and Solana (with additional ecosystems listed).
 
-The kit's published dependency list includes OKX's own provider packages. A complete lockfile/SBOM license scan is still required before adding it; package-level MIT metadata alone is not a transitive-license clearance.
+A complete lockfile/SBOM license scan is still required before adding it; package-level MIT metadata alone is not a transitive-license clearance. Do not assume that a package-level license tells us the terms of every transitive dependency or its required network services.
 
 This is an OKX-specific adapter, not a general Binance/OKX multi-wallet connector.
 
@@ -57,7 +57,7 @@ Because the current challenge endpoint requires the address to be attached first
 
 ## Persistence and chain isolation
 
-External accounts must be keyed independently by:
+The Android-side external-account registry must key records independently by:
 
 - active wallet profile ID;
 - provider ID (for example, `binance` or `okx`);
@@ -65,7 +65,9 @@ External accounts must be keyed independently by:
 - exact chain/network ID;
 - public address.
 
-A chain change updates the selected chain for that provider session; it must not erase another chain's saved address or force the app's global network selector back to Ethereum. Preserve multiple provider/account rows for one wallet profile. Never merge external accounts with the app's locally generated self-custody addresses.
+The current backend address API stores network, address, label and ownership status; it does not accept a structured provider ID or session ID. It can hold multiple distinct addresses for the same wallet/network, while the same network/address pair is treated as one address record. Therefore Android must retain provider associations locally; do not treat the backend label as a durable provider/session key. If two providers expose the same public address, keep both provider associations in the local registry while the backend can keep one ownership record for that network/address pair.
+
+A chain change updates the selected chain for that provider session; it must not erase another chain's saved address or force the app's global network selector back to Ethereum. Preserve multiple provider/account records for one wallet profile. Never merge external accounts with the app's locally generated self-custody addresses.
 
 Persist public account metadata only. Do not persist provider session secrets in ordinary preferences or send any recovery phrase/private key to the bridge or backend.
 
@@ -91,7 +93,7 @@ Persist public account metadata only. Do not persist provider session secrets in
 ## Acceptance tests before enabling the feature
 
 - Connect Binance EVM on Ethereum and BNB Chain; save both chain records without changing or overwriting the other.
-- Connect OKX EVM and verify its session/account metadata persists after returning to BALMZ AI and restarting the app.
+- Connect OKX EVM and verify its provider/account association persists after returning to BALMZ AI and restarting the app; do not assume a live provider session survives process death unless the SDK confirms it.
 - Verify `accountsChanged`, `chainChanged`, provider disconnect and app process death do not silently attach the wrong address.
 - Test Solana and Bitcoin separately, only for networks/address formats supported by both provider and backend verifier.
 - Confirm the backend marks an account verified only after a valid signature challenge; reject expired, reused, wrong-chain and wrong-address challenges.
