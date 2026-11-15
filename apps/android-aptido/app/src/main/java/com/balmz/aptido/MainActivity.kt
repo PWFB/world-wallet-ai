@@ -1735,7 +1735,7 @@ private fun BankConnectPanel(
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
         ) { Text(if (emailCodeSent) "Resend BALMZ code" else "Send one-time code to new Gmail") }
-        if (emailCodeSent || emailVerified) {
+        if (!emailVerified) {
             OutlinedTextField(
                 value = emailCodeInput,
                 onValueChange = { emailCodeInput = it.filter(Char::isDigit).take(6) },
@@ -1744,11 +1744,11 @@ private fun BankConnectPanel(
                 label = { Text("Six-digit BALMZ code") },
                 placeholder = { Text("000000") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                enabled = !emailBusy && !emailVerified
+                enabled = !emailBusy
             )
             Button(
                 onClick = { onVerifyEmailCode(emailCodeInput) },
-                enabled = !emailBusy && !emailVerified && emailCodeInput.length == 6,
+                enabled = !emailBusy && emailCodeInput.length == 6,
                 modifier = Modifier.fillMaxWidth(),
                 colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
             ) { Text(if (emailBusy) "Verifying…" else "Verify code-delivery Gmail") }
