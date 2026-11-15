@@ -783,9 +783,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [swapAmount, setSwapAmount] = useState("");
   const [swapNotice, setSwapNotice] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
-  const [wcProvider, setWcProvider] = useState(null);
-  const [wcAccount, setWcAccount] = useState("");
-  const [wcChainId, setWcChainId] = useState(null);
+  const [okxProvider, setWcProvider] = useState(null);
+  const [okxAccount, setWcAccount] = useState("");
+  const [okxChainId, setWcChainId] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [historyTransactions, setHistoryTransactions] = useState([]);
@@ -1347,7 +1347,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
     const expectedSigner = String(sourceAddress || "").toLowerCase();
     const providerCandidates = [
-      wcProvider,
+      okxProvider,
       ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
       window.ethereum,
       window.okxwallet,
@@ -1476,7 +1476,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !(wcProvider || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
+      if (isLiveEvm && !(okxProvider || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
       const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
       if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
@@ -2113,7 +2113,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} accountUserId={accountUserId} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={okxProvider} externalAccount={okxAccount} externalChainId={okxChainId} accountUserId={accountUserId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
