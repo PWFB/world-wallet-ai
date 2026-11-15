@@ -826,7 +826,7 @@ private fun AptidoApp(
     suspend fun refreshBankEmailSettings() {
         try {
             val response = api.get("/api/v1/bankconnect/email/settings", pinToken)
-            bankOwnerEmail = response.optString("owner_email")
+            bankOwnerEmail = response.optString("owner_email").ifBlank { activeEmail }
             bankOtpEmail = response.optString("otp_email")
             bankEmailVerified = response.optBoolean("verified", false)
             bankEmailMessage = if (bankEmailVerified) {
@@ -1703,15 +1703,16 @@ private fun BankConnectPanel(
         Text("Secure, read-only access to supported US bank accounts through official bank authentication.", color = Muted, fontSize = 12.sp)
         InfoCard("Your bank signs you in through Plaid Link. BALMZ APT never asks for or stores your bank password or bank-issued one-time code. You choose which accounts to share.")
         Text("BankConnect email details", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Account holder Gmail (reference only; the bank separately verifies account ownership)", color = Muted, fontSize = 10.sp)
+        Text("Owner Gmail is taken from the verified BALMZ APT sign-in account. The second Gmail receives BALMZ's own one-time code.", color = Muted, fontSize = 10.sp)
         OutlinedTextField(
             value = ownerEmailInput,
             onValueChange = { ownerEmailInput = it },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
-            label = { Text("Owner Gmail") },
+            label = { Text("Owner Gmail · verified APT account") },
             placeholder = { Text("account.owner@gmail.com") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            readOnly = true,
             enabled = !emailBusy
         )
         Text("New Gmail to receive BALMZ one-time codes", color = Muted, fontSize = 10.sp)
