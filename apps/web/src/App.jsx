@@ -300,7 +300,6 @@ function App() {
   const [tokenRegistry, setTokenRegistry] = useState([]);
   const [localWalletEntries, setLocalWalletEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
   const [localContracts, setLocalContracts] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
-  const [externalWalletConnection, setExternalWalletConnection] = useState(() => { try { return JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null"); } catch { return null; } });
   const walletCoinCatalogWithRegistry = useMemo(() => {
     const catalog = walletCoinCatalog.map(coin => {
       const records = tokenRegistry.filter(t => t.symbol === coin.symbol);
@@ -604,26 +603,14 @@ function App() {
       try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalWalletEntries(Array.isArray(v) ? v : []); } catch { setLocalWalletEntries([]); }
       try { const v = JSON.parse(localStorage.getItem("world_wallet_deployed_contracts_v1") || "[]"); setLocalContracts(Array.isArray(v) ? v : []); } catch { setLocalContracts([]); }
     };
-    const refreshExternalConnection = event => {
-      if (event && Object.prototype.hasOwnProperty.call(event, "detail")) {
-        setExternalWalletConnection(event.detail || null);
-        return;
-      }
-      try { setExternalWalletConnection(JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null")); } catch { setExternalWalletConnection(null); }
-    };
     window.addEventListener("world-wallet-local-vault-updated", refreshLocalWalletData);
     window.addEventListener("world-wallet-contracts-updated", refreshLocalWalletData);
-    window.addEventListener("world-wallet-external-connection-updated", refreshExternalConnection);
     window.addEventListener("storage", refreshLocalWalletData);
-    window.addEventListener("storage", refreshExternalConnection);
     refreshLocalWalletData();
-    refreshExternalConnection();
     return () => {
       window.removeEventListener("world-wallet-local-vault-updated", refreshLocalWalletData);
       window.removeEventListener("world-wallet-contracts-updated", refreshLocalWalletData);
-      window.removeEventListener("world-wallet-external-connection-updated", refreshExternalConnection);
       window.removeEventListener("storage", refreshLocalWalletData);
-      window.removeEventListener("storage", refreshExternalConnection);
     };
   }, []);
 
@@ -1172,17 +1159,6 @@ function App() {
     try { localStorage.setItem("world_wallet_selected_network_v1", selectedNetwork); } catch {}
   }, [selectedNetwork]);
   
-  // Never prefill an unrelated/old address. Use the currently connected external
-  // wallet's public EVM address and chain, without ever requesting a private key.
-  useEffect(() => {
-    const address = String(externalWalletConnection?.address || "").trim();
-    if (!/^0x[a-fA-F0-9]{40}$/.test(address)) return;
-    setDashboardAddress(address);
-    // A restored EVM connection is address metadata, not permission to change
-    // the user's saved network. In particular, it must not replace Solana
-    // Devnet with Ethereum Mainnet after a reload or pull-to-refresh.
-  }, [externalWalletConnection]);
-
   function changeSelectedNetwork(nextNetwork) {
     const normalized = normalizeNetworkId(nextNetwork);
     if (normalized === normalizeNetworkId(selectedNetwork)) return;
