@@ -1,6 +1,6 @@
 # External wallet linking: provider-adapter decision
 
-**Status:** Architecture decision for PR #254; implementation not yet started  
+**Status:** Binance EVM proof-of-concept implemented in draft PR #255; live deployment and physical-device tests pending  
 **Date:** 2026-11-15  
 **Scope:** BALMZ AI APT Android external-wallet account linking
 
@@ -8,7 +8,7 @@
 
 Do not add Reown AppKit or another package that transitively introduces WalletConnect SDKs under the WalletConnect Community License.
 
-Use a provider-adapter bridge instead. The Android app remains the owner of account selection and persistence. A small HTTPS bridge page is opened in the selected wallet's supported mobile browser / dApp browser. The bridge obtains a public account and, only when requested, asks that wallet to sign a short-lived ownership challenge. Android receives the public account and signature, then uses the existing authenticated World Wallet AI address attach and challenge/verify APIs.
+Use a provider-adapter bridge instead. The Android app remains the owner of account selection and persistence. A small HTTPS bridge page is opened in the selected wallet's supported mobile browser / dApp browser. The first Binance EVM proof-of-concept now implements this flow for Ethereum Mainnet and BNB Chain Mainnet only: it obtains a public account and, only when requested, asks Binance Web3 Wallet to sign a short-lived ownership challenge. Android receives the public account and signature, then uses the existing authenticated World Wallet AI address attach and challenge/verify APIs. The implementation remains in draft PR #255 and is not active on the live backend until deployed.
 
 This is a provider-specific connection flow, not a claim that all wallets implement one common protocol.
 
@@ -80,7 +80,8 @@ Persist public account metadata only. Do not persist provider session secrets in
 - Bind each result to a one-time correlation value and the backend challenge. Ignore stale, mismatched or replayed callbacks.
 - The current backend Bitcoin ownership verifier only supports native SegWit v0 (Bech32 witness-version 0) message-proof addresses; test this limitation before claiming general Bitcoin address support.
 - Keep ownership verification distinct from wallet connection status. A verified address is proof of control at verification time, not a perpetual live session.
-- No `eth_sendTransaction`, token approvals, swaps or asset transfers are part of this linking phase.
+- The current Binance bridge only uses `eth_requestAccounts`, `eth_chainId`, `eth_accounts` and `personal_sign`; no `eth_sendTransaction`, token approvals, swaps or asset transfers are part of this linking phase.
+- Connection and proof callbacks are tied to a random 256-bit nonce stored using Android Keystore-backed encrypted storage and expire after ten minutes.
 - Do not expose the authenticated API token, wallet PIN, mnemonic or private keys to the bridge page.
 
 ## Out of scope for this PR phase
@@ -92,9 +93,9 @@ Persist public account metadata only. Do not persist provider session secrets in
 
 ## Acceptance tests before enabling the feature
 
-- Connect Binance EVM on Ethereum and BNB Chain; save both chain records without changing or overwriting the other.
+- Connect Binance EVM on Ethereum and BNB Chain; save both chain records without changing or overwriting the other. This is the current PoC acceptance test and remains pending a deployed bridge and physical-device run.
 - Connect OKX EVM and verify its provider/account association persists after returning to BALMZ AI and restarting the app; do not assume a live provider session survives process death unless the SDK confirms it.
-- Verify `accountsChanged`, `chainChanged`, provider disconnect and app process death do not silently attach the wrong address.
+- Verify `accountsChanged`, `chainChanged`, provider disconnect and app process death do not silently attach the wrong address; current PoC reads the active chain/account at connection and signature time and has not implemented a persistent live provider session.
 - Test Solana and Bitcoin separately, only for networks/address formats supported by both provider and backend verifier.
 - Confirm the backend marks an account verified only after a valid signature challenge; reject expired, reused, wrong-chain and wrong-address challenges.
 - Confirm the bridge cannot read the app's auth token/PIN or local recovery material.
