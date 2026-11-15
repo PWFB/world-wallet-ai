@@ -109,7 +109,7 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         message.set_content(
             "Your BALMZ AI APT BankConnect verification code is: "
             + code
-            + "\\n\\nThis BALMZ security code expires in 10 minutes and can be used once. "
+            + "\n\nThis BALMZ security code expires in 10 minutes and can be used once. "
               "It verifies the BALMZ email destination only. It is NOT a bank-issued OTP and cannot replace a code sent by your bank. "
               "Never share this code with anyone. If you did not request it, you can ignore this email."
         )
@@ -131,7 +131,7 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
 
     def _normalize_email(value: str, label: str):
         normalized = str(value or "").strip().lower()
-        if len(normalized) > 254 or not re.fullmatch(r"[^@\\s]+@[^@\\s]+\\.[^@\\s]+", normalized):
+        if len(normalized) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", normalized):
             raise HTTPException(status_code=400, detail=f"Enter a valid {label} email address.")
         return normalized
 
@@ -313,7 +313,17 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
                 VALUES(%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')
             """, (str(user["id"]), wallet_id, owner_email, otp_email, code_hash))
             conn.commit()
-        _send_bankconnect_code(otp_email, code)
+        try:
+            _send_bankconnect_code(otp_email, code)
+        except HTTPException:
+            with db_factory() as conn:
+                _ensure_email_tables(conn)
+                conn.execute("""
+                    UPDATE bankconnect_email_challenges SET used_at=NOW()
+                    WHERE owner_id=%s AND wallet_id=%s AND used_at IS NULL
+                """, (str(user["id"]), wallet_id))
+                conn.commit()
+            raise
         return {
             "sent": True,
             "otp_email": otp_email,
