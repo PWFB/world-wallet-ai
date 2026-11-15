@@ -3,7 +3,6 @@ import {
   availableAssetBalance,
   getMainnetAssetNetwork,
   isSupportedEvmReturnAsset,
-  normalizeOkxBitcoinAccount,
   normalizeOkxEvmAccount,
   normalizeOkxSolanaAccount,
 } from "./okx-return.js";
@@ -11,7 +10,6 @@ import {
 const NETWORKS = [
   { key: "ethereum", label: "Ethereum Mainnet", chainId: 1 },
   { key: "bnb", label: "BNB Chain Mainnet", chainId: 56 },
-  { key: "bitcoin", label: "Bitcoin Mainnet" },
   { key: "solana_mainnet", label: "Solana Mainnet" },
 ];
 
@@ -137,32 +135,6 @@ export default function MainnetReturnCenter({
     }
   }
 
-  async function connectBitcoin() {
-    setBusy("bitcoin");
-    setError("");
-    setMessage("");
-    try {
-      const provider = window.okxwallet?.bitcoin;
-      if (!provider) throw new Error("OKX Bitcoin provider was not detected. Open this page in the OKX Wallet DApp browser or supported extension.");
-      let result;
-      if (typeof provider.getAccounts === "function") {
-        try { result = await provider.getAccounts(); } catch {}
-      }
-      if (!normalizeOkxBitcoinAccount(result)) {
-        if (typeof provider.requestAccounts === "function") result = await provider.requestAccounts();
-        else if (typeof provider.connect === "function") result = await provider.connect();
-      }
-      const address = normalizeOkxBitcoinAccount(result);
-      if (!address) throw new Error("OKX did not return a valid Bitcoin Mainnet receiving address.");
-      persistDestinations(current => ({ ...current, bitcoin: address }));
-      setMessage("Bitcoin Mainnet receiving address read from OKX Wallet.");
-    } catch (cause) {
-      setError(cause?.message || "Could not read the OKX Bitcoin address.");
-    } finally {
-      setBusy("");
-    }
-  }
-
   async function connectSolana() {
     setBusy("solana_mainnet");
     setError("");
@@ -252,7 +224,7 @@ export default function MainnetReturnCenter({
             disabled={Boolean(busy)}
             onClick={item.key === "ethereum" || item.key === "bnb"
               ? () => connectEvm(item.key)
-              : item.key === "bitcoin" ? connectBitcoin : connectSolana}
+              : connectSolana}
           >
             {busy === item.key ? "Connecting…" : destinations[item.key] ? "Refresh address" : "Connect OKX"}
           </button>
