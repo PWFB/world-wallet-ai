@@ -1506,7 +1506,7 @@ private fun AppHome(
     onVerifyBankEmailCode: (String) -> Unit,
     onRefreshBankAccounts: () -> Unit,
     onDisconnectBank: (String) -> Unit,
-    onOpenBankLink: (PlaidSession) -> Unit,
+    onOpenBankLink: (PlaidLinkSession) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
     externalWalletAccounts: List<ExternalWalletAccount>,
     externalWalletProofs: List<PendingExternalWalletProof>,
