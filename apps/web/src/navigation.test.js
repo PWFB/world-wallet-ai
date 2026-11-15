@@ -136,11 +136,32 @@ test("WalletConnect is removed from the sidebar, dashboard, and web runtime", ()
   assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
 });
 
-test("US bank transfers are tucked into a collapsed BankConnect area, not the main navigation", () => {
+test("private Bank & Crypto services are tucked behind a collapsed APT section", () => {
   assert.ok(!Object.values(WALLET_NAVIGATION).flat().includes("US Bank Transfers"));
-  assert.match(aptSource, /var showUsBankTransfers by remember/);
-  assert.match(aptSource, /Open US bank transfers/);
-  assert.match(aptSource, /Transfers are not active yet/);
+  assert.match(aptSource, /listOf\("Home", "Wallets", "More", "AI Chat"/);
+  assert.match(aptSource, /var showPrivateServices by remember/);
+  assert.match(aptSource, /Open private services/);
+  assert.match(aptSource, /onRefreshPrivateServicesStatus/);
+  assert.match(aptSource, /onBuyCrypto/);
+  assert.match(aptSource, /usBankTransferStatus/);
+  assert.doesNotMatch(aptSource, /Plaid|PlaidLink|OpenPlaidLink/);
+});
+
+test("crypto purchases require Coinbase readiness and ownership-verified mainnet destinations", () => {
+  assert.match(aptSource, /enabled = !busy && coinbaseOnrampEnabled/);
+  assert.match(aptSource, /ownershipVerified && address.network in setOf\("bitcoin", "ethereum", "solana_mainnet"\)/);
+  assert.match(aptSource, /\/api\/v1\/bankconnect\/crypto\/buy-session/);
+  assert.match(aptSource, /\/api\/v1\/bankconnect\/crypto\/status/);
+});
+
+test("web and APT dashboard cards have working navigation or action handlers", () => {
+  assert.match(appSource, /function dashboardCardAction\(onActivate\)/);
+  assert.ok((appSource.match(/dashboard-action-card/g) || []).length >= 10);
+  assert.match(appSource, /setSelectedCoin\(symbol\)/);
+  assert.match(appSource, /setFocusedTransaction\(a\)/);
+  assert.match(appSource, /setActive\("Proof of Reserves"\)/);
+  assert.match(aptSource, /onNavigate = \{ destination -> tab = destination \}/);
+  assert.match(aptSource, /Modifier\.clickable\(onClick = onClick\)/);
 });
 
 test("Bitcoin external wallet connection is removed without removing built-in Bitcoin wallet support", () => {
