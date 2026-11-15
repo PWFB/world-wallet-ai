@@ -57,18 +57,27 @@ jobs:
           token_login=$(USER_JSON="$RUNNER_TEMP/github-user.json" python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])')
           echo "GITHUB_USER=$token_login" >> "$GITHUB_ENV"
           echo "GitHub package token authenticated as: $token_login"
-          scopes=$(awk -F': *' 'tolower($1)== "x-oauth-scopes" {gsub("\\r","",$2); print $2}' "$RUNNER_TEMP/github-user.headers")
+          scopes=$(sed -n 's/^[Xx]-[Oo]auth-[Ss]copes:[[:space:]]*//p' "$RUNNER_TEMP/github-user.headers" | tr -d '\\r')
           if [ -z "$scopes" ]; then
-            echo "GitHub did not return X-OAuth-Scopes. Confirm this is a classic PAT, not a fine-grained token; GitHub Packages requires classic PAT authentication."
-          else
-            echo "Classic PAT scopes reported by GitHub: $scopes"
-          fi
-          package_status=$(curl -sS -o /dev/null -w "%{http_code}" -u "$token_login:$TRUST_WALLET_PACKAGES_TOKEN" "https://maven.pkg.github.com/trustwallet/wallet-core/com/trustwallet/wallet-core/4.9.3/wallet-core-4.9.3.pom")
-          echo "Trust Wallet Core 4.9.3 Maven metadata HTTP status: $package_status"
-          if [ "$package_status" != "200" ]; then
-            echo "::error::The PAT authenticated to GitHub but cannot download Trust Wallet Core 4.9.3 (HTTP $package_status). Check read:packages and whether the Trust Wallet package grants your GitHub account read access. If the package is private, repository read access may also be required."
+            echo "::error::GitHub did not return X-OAuth-Scopes. Verify that TRUST_WALLET_PACKAGES_TOKEN is a classic PAT with read:packages."
             exit 1
           fi
+          echo "Classic PAT scopes reported by GitHub: $scopes"
+          normalized_scopes=$(printf '%s' "$scopes" | tr -d '[:space:]')
+          case ",$normalized_scopes," in
+            *,read:packages,*) ;;
+            *)
+              echo "::error::TRUST_WALLET_PACKAGES_TOKEN is missing the required read:packages scope."
+              exit 1
+              ;;
+          esac
+          package_status=$(curl -L -sS -u "$token_login:$TRUST_WALLET_PACKAGES_TOKEN" -o "$RUNNER_TEMP/wallet-core-4.9.3.pom" -w "%{http_code}" "https://maven.pkg.github.com/trustwallet/wallet-core/com/trustwallet/wallet-core/4.9.3/wallet-core-4.9.3.pom")
+          echo "Trust Wallet Core 4.9.3 Maven metadata final HTTP status: $package_status"
+          if [ "$package_status" != "200" ] || [ ! -s "$RUNNER_TEMP/wallet-core-4.9.3.pom" ] || ! grep -q '<artifactId>wallet-core</artifactId>' "$RUNNER_TEMP/wallet-core-4.9.3.pom" || ! grep -q '<version>4.9.3</version>' "$RUNNER_TEMP/wallet-core-4.9.3.pom"; then
+            echo "::error::Could not retrieve the expected Trust Wallet Core 4.9.3 Maven POM. Check read:packages and package/repository read access."
+            exit 1
+          fi
+          echo "Trust Wallet Core 4.9.3 POM downloaded and validated."
 
       - name: Build debug APK and instrumentation test APK
         env:
