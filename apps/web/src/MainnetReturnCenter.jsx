@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 import {
   availableAssetBalance,
   getMainnetAssetNetwork,
@@ -32,8 +31,6 @@ export default function MainnetReturnCenter({
   accessToken = "",
   apiBaseUrl = "",
   wallet = null,
-  externalProvider = null,
-  onConnectWalletConnect,
   onEvmProviderConnected,
   onPrepareTransfer,
   setActive,
@@ -109,31 +106,16 @@ export default function MainnetReturnCenter({
     setError("");
     setMessage("");
     try {
-      let provider = window.okxwallet && typeof window.okxwallet.request === "function"
+      const provider = window.okxwallet && typeof window.okxwallet.request === "function"
         ? window.okxwallet
         : null;
-      let isWalletConnectOkx = false;
-      if (!provider && externalProvider && typeof externalProvider.request === "function") {
-        const peerName = String(externalProvider?.session?.peer?.metadata?.name || "");
-        if (/okx/i.test(peerName)) {
-          provider = externalProvider;
-          isWalletConnectOkx = true;
-        }
-      }
       if (!provider) {
-        throw new Error("OKX provider was not detected. Open this page in the OKX Wallet DApp browser/extension, or connect OKX from WalletConnect first.");
+        throw new Error("OKX Wallet was not detected. Open BALMZ AI inside the OKX Wallet DApp browser or supported extension.");
       }
 
       const accounts = await provider.request({ method: "eth_requestAccounts" });
       const chainId = await provider.request({ method: "eth_chainId" });
-      let connections = [];
-      if (isWalletConnectOkx) {
-        connections = getWalletConnectSessionConnections(provider.session, chainId, accounts)
-          .map(item => ({ ...item, network: item.chainId === 1 ? "ethereum" : item.chainId === 56 ? "bnb" : "" }))
-          .filter(item => item.network === "ethereum" || item.network === "bnb");
-      }
-      const selected = connections.find(item => item.network === network)
-        || normalizeOkxEvmAccount(accounts, chainId);
+      const selected = normalizeOkxEvmAccount(accounts, chainId);
 
       if (!selected) {
         const actual = Number.parseInt(String(chainId), String(chainId).startsWith("0x") ? 16 : 10);
@@ -145,15 +127,10 @@ export default function MainnetReturnCenter({
         throw new Error("OKX is currently connected to " + MAINNET_LABELS[selected.network] + ". Switch to " + MAINNET_LABELS[network] + " in OKX and reconnect.");
       }
 
-      const discovered = connections.length ? connections : [selected];
-      persistDestinations(current => ({
-        ...current,
-        ...Object.fromEntries(discovered.map(item => [item.network, item.address])),
-      }));
-      discovered.forEach(connection => onEvmProviderConnected?.(provider, connection));
-      setMessage(discovered.length > 1
-        ? "Ethereum and BNB Mainnet receiving addresses read from the OKX Wallet session."
-        : MAINNET_LABELS[network] + " receiving address read from OKX Wallet.");
+      const discovered = [selected];
+      persistDestinations(current => ({ ...current, [selected.network]: selected.address }));
+      onEvmProviderConnected?.(provider, selected);
+      setMessage(MAINNET_LABELS[network] + " receiving address read directly from OKX Wallet.");
     } catch (cause) {
       setError(cause?.message || "Could not read the OKX EVM address.");
     } finally {
@@ -266,14 +243,6 @@ export default function MainnetReturnCenter({
         <div><h2>Connect network-specific OKX addresses</h2><span>Every receiving address is read separately; Ethereum, BNB, Bitcoin and Solana addresses are never assumed to match.</span></div>
       </div>
       <div className="security-note">Connecting only reads public account addresses. It does not transfer tokens, request a recovery phrase, or grant World Wallet AI custody of your private keys.</div>
-      {!window.okxwallet && onConnectWalletConnect && <div style={{ marginTop: 14 }}>
-        <button type="button" className="secondary" disabled={Boolean(busy)} onClick={async () => {
-          setError("");
-          setMessage("Opening WalletConnect. Select OKX Wallet, approve the session, then read the network addresses.");
-          try { await onConnectWalletConnect(); }
-          catch (cause) { setError(cause?.message || "WalletConnect could not open."); }
-        }}>Connect OKX via WalletConnect</button>
-      </div>}
       <div className="feature-grid">
         {NETWORKS.map(item => <div className="panel action-panel" key={item.key} style={{ padding: 14 }}>
           <small>{item.label}</small>
