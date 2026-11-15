@@ -157,8 +157,8 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
                 status_code=503,
                 detail="BankConnect is not configured. The administrator must set PLAID_CLIENT_ID and PLAID_SECRET on the backend.",
             )
-        if PLAID_ENV not in {"sandbox", "development", "production"}:
-            raise HTTPException(status_code=503, detail="PLAID_ENV must be sandbox, development, or production.")
+        if PLAID_ENV not in {"sandbox", "production"}:
+            raise HTTPException(status_code=503, detail="PLAID_ENV must be sandbox or production.")
         return {
             "client_id": PLAID_CLIENT_ID,
             "secret": PLAID_SECRET,
@@ -381,7 +381,7 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         return {
             "provider": "Plaid",
             "configured": bool(PLAID_CLIENT_ID and PLAID_SECRET and os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()),
-            "environment": PLAID_ENV if PLAID_ENV in {"sandbox", "development", "production"} else "unconfigured",
+            "environment": PLAID_ENV if PLAID_ENV in {"sandbox", "production"} else "unconfigured",
             "country_codes": PLAID_COUNTRIES,
             "products": PLAID_PRODUCTS,
             "read_only": True,
