@@ -1,7 +1,7 @@
-"""Official Plaid BankConnect integration for BALMZ AI APT.
+"""Legacy Plaid account-history endpoints and secure private-services flows for BALMZ AI APT.
 
-Plaid credentials and access tokens stay server-side. The Android client receives
-only short-lived Link tokens and sanitized account metadata.
+The APT's current private services use Coinbase Onramp for crypto purchase sessions.
+US bank payouts remain disabled until an approved payout provider is onboarded.
 """
 import base64
 import hashlib
@@ -717,10 +717,11 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             response_data = response.json()
         except ValueError as exc:
             raise HTTPException(status_code=502, detail="Coinbase returned an invalid purchase-session response.") from exc
-        session_token = str(response_data.get("token") or "").strip()
+        session_payload = response_data.get("data") if isinstance(response_data.get("data"), dict) else response_data
+        session_token = str(session_payload.get("token") or "").strip()
         if len(session_token) < 20:
             raise HTTPException(status_code=502, detail="Coinbase did not return a usable one-time purchase session.")
-        checkout_base = "https://pay-sandbox.coinbase.com/buy/select-asset" if environment == "sandbox" else "https://pay.coinbase.com/buy/select-asset"
+        checkout_base = "https://pay-sandbox.coinbase.com/" if environment == "sandbox" else "https://pay.coinbase.com/buy/select-asset"
         checkout_url = checkout_base + "?" + urlencode({"sessionToken": session_token, "defaultAsset": default_asset})
         return {
             "provider": "Coinbase Onramp",
@@ -728,7 +729,6 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             "asset": asset,
             "network": network,
             "destination_address": address,
-            "session_expires_in_seconds": 300,
             "single_use": True,
             "message": "Continue in Coinbase's secure checkout. Payment methods and availability are determined by Coinbase for the user's verified region and account.",
         }
