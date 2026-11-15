@@ -118,3 +118,14 @@ For local builds, set `GITHUB_USER` and `TRUST_WALLET_PACKAGES_TOKEN` in the she
 The recovery phrase is encrypted at rest on this Android installation. Keep the offline backup: uninstalling the app, clearing app data, losing the device, or losing its Keystore key can make the local encrypted copy unavailable.
 
 Newly attached addresses remain unverified until the backend's cryptographic signature challenge flow is completed. This change does not claim that external WalletConnect sessions or transaction signing/broadcast are complete. Do not use this as a production send/receive wallet until signature ownership verification, transaction preview, signing, broadcast, reconnect behavior and real-device recovery tests have passed.
+
+
+## BankConnect — US bank account access
+
+The APT includes a BankConnect tab powered by the official Plaid Link Android SDK. Users choose a participating US bank and authenticate through the bank/provider's official flow, including any required bank-issued one-time passcode or multi-factor challenge. BALMZ APT does not create a universal bank code and never receives or stores bank passwords or bank OTPs.
+
+After consent, the feature can display connected account names, masked account numbers, provider-returned balances, and recent transactions (30 days). It is read-only and supports disconnect/revocation. No transfers or withdrawals are enabled.
+
+Before connecting a bank, BALMZ APT displays the read-only owner Gmail from the user's verified sign-in identity and asks for a Gmail address for BALMZ APT's own one-time verification code. The backend requires the owner Gmail to match the signed-in account. The BALMZ code goes to the code-delivery Gmail and only verifies that notification destination. It does not change the bank's registered MFA contact or intercept a bank-issued OTP.
+
+The backend must be configured with `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, and the dedicated `BANKCONNECT_SMTP_HOST`, `BANKCONNECT_SMTP_PORT`, `BANKCONNECT_SMTP_USERNAME`, `BANKCONNECT_SMTP_APP_PASSWORD`, and `BANKCONNECT_SMTP_FROM_EMAIL` settings. Keep provider and SMTP credentials on Render only. Do not reuse the Super Admin recovery Gmail credential. Register `com.balmz.aptido` in Plaid Dashboard. Production access and institution coverage are controlled by Plaid approval and bank availability; sandbox mode is for test institutions only.

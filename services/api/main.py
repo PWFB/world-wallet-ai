@@ -8816,3 +8816,12 @@ async def gemini_connection_test(user=Depends(current_user)):
         "response_preview": text[:160],
         "tested_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+# Official read-only bank-account access for BALMZ AI APT.
+try:
+    from services.api.bankconnect import build_bankconnect_router
+except ModuleNotFoundError:
+    from bankconnect import build_bankconnect_router
+
+app.include_router(build_bankconnect_router(db, current_user))

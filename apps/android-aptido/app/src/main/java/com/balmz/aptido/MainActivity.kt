@@ -7,6 +7,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
 import androidx.activity.ComponentActivity
+import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,6 +61,15 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.plaid.link.OpenPlaidLink
+import com.plaid.link.Plaid
+import com.plaid.link.PlaidSession
+import com.plaid.link.PlaidLinkSession
+import com.plaid.link.configuration.linkTokenConfiguration
+import com.plaid.link.OnLoadCallback
+import com.plaid.link.result.LinkResult
+import com.plaid.link.result.LinkSuccess
+import com.plaid.link.result.LinkExit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,6 +95,9 @@ private val Red = Color(0xFFFF8585)
 
 class MainActivity : ComponentActivity() {
     private val walletCallback = mutableStateOf<Uri?>(null)
+    private var bankLinkResult by mutableStateOf<LinkResult?>(null)
+    private val bankLinkLauncher: ActivityResultLauncher<PlaidSession> =
+        registerForActivityResult(OpenPlaidLink()) { result -> bankLinkResult = result }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,7 +105,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
-                    AptidoApp(walletCallback)
+                    AptidoApp(
+                        walletCallback = walletCallback,
+                        bankLinkResult = bankLinkResult,
+                        onClearBankLinkResult = { bankLinkResult = null },
+                        onOpenBankLink = { session -> bankLinkLauncher.launch(session) }
+                    )
                 }
             }
         }
@@ -107,6 +125,8 @@ class MainActivity : ComponentActivity() {
 
 private enum class AptidoStage { AUTH, PIN, APP }
 private data class ChatLine(val fromUser: Boolean, val text: String)
+private data class BankAccountLine(val connectionId: String, val institution: String, val name: String, val mask: String, val type: String, val subtype: String, val currency: String, val available: String, val current: String)
+private data class BankTransactionLine(val institution: String, val account: String, val date: String, val name: String, val amount: String, val currency: String, val pending: Boolean)
 private data class DownloadApp(val name: String, val category: String, val description: String, val url: String)
 private data class AssetLine(
     val symbol: String,
@@ -139,6 +159,9 @@ private class AptidoApi {
 
     suspend fun post(path: String, body: JSONObject, bearer: String? = null): JSONObject =
         withContext(Dispatchers.IO) { request(path, "POST", body, bearer) }
+
+    suspend fun delete(path: String, bearer: String): JSONObject =
+        withContext(Dispatchers.IO) { request(path, "DELETE", null, bearer) }
 
     private fun request(path: String, method: String, body: JSONObject?, bearer: String?): JSONObject {
         val connection = URL(baseUrl + path).openConnection() as HttpURLConnection
@@ -245,7 +268,12 @@ private class SecureSessionStore(context: android.content.Context) {
 }
 
 @Composable
-private fun AptidoApp(walletCallback: MutableState<Uri?>) {
+private fun AptidoApp(
+    walletCallback: MutableState<Uri?>,
+    bankLinkResult: LinkResult?,
+    onClearBankLinkResult: () -> Unit,
+    onOpenBankLink: (PlaidLinkSession) -> Unit
+) {
     val context = LocalContext.current
     val api = remember { AptidoApi() }
     val store = remember { SecureSessionStore(context) }
@@ -275,6 +303,16 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
     var externalWalletProofs by remember { mutableStateOf<List<PendingExternalWalletProof>>(emptyList()) }
     var externalWalletNotice by remember { mutableStateOf("") }
     var externalWalletBridgeUrl by remember { mutableStateOf("") }
+    var bankLinkToken by remember { mutableStateOf("") }
+    var bankAccounts by remember { mutableStateOf<List<BankAccountLine>>(emptyList()) }
+    var bankTransactions by remember { mutableStateOf<List<BankTransactionLine>>(emptyList()) }
+    var bankConnectMessage by remember { mutableStateOf("Connect a supported US bank to view accounts and live balances.") }
+    var bankConnectBusy by remember { mutableStateOf(false) }
+    var bankOwnerEmail by remember { mutableStateOf("") }
+    var bankOtpEmail by remember { mutableStateOf("") }
+    var bankEmailVerified by remember { mutableStateOf(false) }
+    var bankEmailBusy by remember { mutableStateOf(false) }
+    var bankEmailMessage by remember { mutableStateOf("Add the account holder Gmail and the Gmail that should receive a BALMZ verification code.") }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
@@ -720,6 +758,130 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
         refreshVerifiedBalances()
     }
 
+
+    LaunchedEffect(bankLinkResult, pinToken, stage) {
+        val result = bankLinkResult
+        if (result != null && stage == AptidoStage.APP && pinToken.isNotBlank()) {
+            when (result) {
+                is LinkSuccess -> {
+                    val publicToken = result.publicToken
+                    if (publicToken.isNotBlank()) {
+                        bankConnectBusy = true
+                        try {
+                            val saved = api.post("/api/v1/bankconnect/exchange", JSONObject().put("public_token", publicToken), pinToken)
+                            bankConnectMessage = saved.optString("message", "Bank connected securely.")
+                            val response = api.get("/api/v1/bankconnect/accounts", pinToken)
+                            val rows = response.optJSONArray("accounts") ?: JSONArray()
+                            bankAccounts = (0 until rows.length()).mapNotNull { index ->
+                                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                                BankAccountLine(
+                                    item.optString("connection_id"),
+                                    item.optString("institution_name", "Connected bank"),
+                                    item.optString("name", "Bank account"),
+                                    item.optString("mask"),
+                                    item.optString("type"),
+                                    item.optString("subtype"),
+                                    item.optString("currency", "USD"),
+                                    if (item.isNull("available_balance")) "Unavailable" else item.optString("available_balance"),
+                                    if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
+                                )
+                            }
+                            val transactionResponse = api.get("/api/v1/bankconnect/transactions", pinToken)
+                            val transactionRows = transactionResponse.optJSONArray("transactions") ?: JSONArray()
+                            bankTransactions = (0 until transactionRows.length()).mapNotNull { index ->
+                                val item = transactionRows.optJSONObject(index) ?: return@mapNotNull null
+                                BankTransactionLine(
+                                    item.optString("institution_name"),
+                                    item.optString("account_name") + if (item.optString("account_mask").isNotBlank()) " •••• " + item.optString("account_mask") else "",
+                                    item.optString("date"),
+                                    item.optString("name"),
+                                    item.optString("amount", "Unavailable"),
+                                    item.optString("currency", "USD"),
+                                    item.optBoolean("pending", false)
+                                )
+                            }
+                        } catch (error: Exception) {
+                            bankConnectMessage = error.message ?: "The bank connection could not be saved."
+                        } finally {
+                            bankLinkToken = ""
+                            bankConnectBusy = false
+                            onClearBankLinkResult()
+                        }
+                    } else {
+                        bankConnectMessage = "The bank provider did not return a public token."
+                        onClearBankLinkResult()
+                    }
+                }
+                is LinkExit -> {
+                    bankConnectMessage = result.error?.displayMessage?.takeIf { it.isNotBlank() }
+                        ?: result.error?.errorMessage
+                        ?: "Bank linking was cancelled. No account was connected."
+                    bankLinkToken = ""
+                    onClearBankLinkResult()
+                }
+            }
+        }
+    }
+
+    suspend fun refreshBankEmailSettings() {
+        try {
+            val response = api.get("/api/v1/bankconnect/email/settings", pinToken)
+            bankOwnerEmail = response.optString("owner_email").ifBlank { activeEmail }
+            bankOtpEmail = response.optString("otp_email")
+            bankEmailVerified = response.optBoolean("verified", false)
+            bankEmailMessage = if (bankEmailVerified) {
+                "BALMZ code-delivery Gmail is verified. Bank-issued OTPs remain bank-controlled."
+            } else {
+                "Verify the BALMZ code-delivery Gmail before starting official bank authentication."
+            }
+        } catch (error: Exception) {
+            bankEmailVerified = false
+            bankEmailMessage = error.message ?: "BankConnect email settings could not be loaded."
+        }
+    }
+
+    suspend fun refreshBankAccounts() {
+        bankConnectBusy = true
+        refreshBankEmailSettings()
+        try {
+            val response = api.get("/api/v1/bankconnect/accounts", pinToken)
+            val rows = response.optJSONArray("accounts") ?: JSONArray()
+            bankAccounts = (0 until rows.length()).mapNotNull { index ->
+                val item = rows.optJSONObject(index) ?: return@mapNotNull null
+                BankAccountLine(
+                    item.optString("connection_id"),
+                    item.optString("institution_name", "Connected bank"),
+                    item.optString("name", "Bank account"),
+                    item.optString("mask"),
+                    item.optString("type"),
+                    item.optString("subtype"),
+                    item.optString("currency", "USD"),
+                    if (item.isNull("available_balance")) "Unavailable" else item.optString("available_balance"),
+                    if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
+                )
+            }
+            val transactionResponse = api.get("/api/v1/bankconnect/transactions", pinToken)
+            val transactionRows = transactionResponse.optJSONArray("transactions") ?: JSONArray()
+            bankTransactions = (0 until transactionRows.length()).mapNotNull { index ->
+                val item = transactionRows.optJSONObject(index) ?: return@mapNotNull null
+                BankTransactionLine(
+                    item.optString("institution_name"),
+                    item.optString("account_name") + if (item.optString("account_mask").isNotBlank()) " •••• " + item.optString("account_mask") else "",
+                    item.optString("date"),
+                    item.optString("name"),
+                    item.optString("amount", "Unavailable"),
+                    item.optString("currency", "USD"),
+                    item.optBoolean("pending", false)
+                )
+            }
+            bankConnectMessage = if (bankAccounts.isEmpty()) "No bank accounts are connected to this wallet yet." else "Bank accounts refreshed from the provider."
+        } catch (error: Exception) {
+            bankConnectMessage = error.message ?: "Bank accounts could not be refreshed."
+        } finally {
+            bankConnectBusy = false
+        }
+    }
+
     LaunchedEffect(walletCallback.value, pinToken, stage) {
         val returnedUri = walletCallback.value
         if (returnedUri != null && pinToken.isNotBlank() && stage == AptidoStage.APP) {
@@ -1024,6 +1186,81 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
             onRefreshBalances = {
                 scope.launch { refreshVerifiedBalances() }
             },
+            bankAccounts = bankAccounts,
+            bankTransactions = bankTransactions,
+            bankConnectMessage = bankConnectMessage,
+            bankOwnerEmail = bankOwnerEmail,
+            bankOtpEmail = bankOtpEmail,
+            bankEmailVerified = bankEmailVerified,
+            bankEmailBusy = bankEmailBusy,
+            bankEmailMessage = bankEmailMessage,
+            bankConnectBusy = bankConnectBusy,
+            bankLinkToken = bankLinkToken,
+            onRequestBankEmailCode = { ownerEmail, otpEmail ->
+                scope.launch {
+                    bankEmailBusy = true
+                    bankEmailVerified = false
+                    bankEmailMessage = ""
+                    try {
+                        val result = api.post(
+                            "/api/v1/bankconnect/email/request-code",
+                            JSONObject().put("owner_email", ownerEmail.trim()).put("otp_email", otpEmail.trim()),
+                            pinToken
+                        )
+                        bankOwnerEmail = ownerEmail.trim()
+                        bankOtpEmail = otpEmail.trim()
+                        bankEmailVerified = false
+                        bankEmailMessage = result.optString("message", "BALMZ verification code sent.")
+                    } catch (error: Exception) {
+                        bankEmailMessage = error.message ?: "Could not send the BALMZ verification code."
+                    } finally { bankEmailBusy = false }
+                }
+            },
+            onVerifyBankEmailCode = { code ->
+                scope.launch {
+                    bankEmailBusy = true
+                    try {
+                        val result = api.post(
+                            "/api/v1/bankconnect/email/verify-code",
+                            JSONObject().put("code", code.trim()),
+                            pinToken
+                        )
+                        bankEmailVerified = result.optBoolean("verified", false)
+                        bankEmailMessage = result.optString("message", "BALMZ email verified.")
+                    } catch (error: Exception) {
+                        bankEmailVerified = false
+                        bankEmailMessage = error.message ?: "The BALMZ email code could not be verified."
+                    } finally { bankEmailBusy = false }
+                }
+            },
+            onConnectBank = {
+                scope.launch {
+                    bankConnectBusy = true
+                    try {
+                        if (!bankEmailVerified) throw IllegalStateException("Verify the BALMZ code-delivery Gmail first.")
+                        val response = api.post("/api/v1/bankconnect/link-token", JSONObject().put("android_package_name", BuildConfig.APPLICATION_ID), pinToken)
+                        bankLinkToken = response.optString("link_token")
+                        if (bankLinkToken.isBlank()) throw IllegalStateException("The bank provider did not return a Link token.")
+                        bankConnectMessage = "Secure bank authentication is ready. Continue in the official provider window."
+                    } catch (error: Exception) {
+                        bankConnectMessage = error.message ?: "Could not start bank linking."
+                    } finally { bankConnectBusy = false }
+                }
+            },
+            onRefreshBankAccounts = { scope.launch { refreshBankAccounts() } },
+            onDisconnectBank = { connectionId ->
+                scope.launch {
+                    bankConnectBusy = true
+                    try {
+                        api.delete("/api/v1/bankconnect/connections/" + connectionId, pinToken)
+                        refreshBankAccounts()
+                        bankConnectMessage = "Bank connection removed and provider access revoked."
+                    } catch (error: Exception) {
+                        bankConnectMessage = error.message ?: "Could not disconnect bank."
+                    } finally { bankConnectBusy = false }
+                }
+            },
+            onOpenBankLink = onOpenBankLink,
             onAsk = { question, includeWallet ->
                 scope.launch {
                     if (question.isBlank() || busy) return@launch
@@ -1254,6 +1491,22 @@ private fun AppHome(
     onRefreshWalletDirectory: () -> Unit,
     onCreateWalletProfile: (String) -> Unit,
     onSwitchWalletProfile: (String) -> Unit,
+    bankAccounts: List<BankAccountLine>,
+    bankTransactions: List<BankTransactionLine>,
+    bankConnectMessage: String,
+    bankOwnerEmail: String,
+    bankOtpEmail: String,
+    bankEmailVerified: Boolean,
+    bankEmailBusy: Boolean,
+    bankEmailMessage: String,
+    bankConnectBusy: Boolean,
+    bankLinkToken: String,
+    onConnectBank: () -> Unit,
+    onRequestBankEmailCode: (String, String) -> Unit,
+    onVerifyBankEmailCode: (String) -> Unit,
+    onRefreshBankAccounts: () -> Unit,
+    onDisconnectBank: (String) -> Unit,
+    onOpenBankLink: (PlaidLinkSession) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
     externalWalletAccounts: List<ExternalWalletAccount>,
     externalWalletProofs: List<PendingExternalWalletProof>,
@@ -1287,10 +1540,10 @@ private fun AppHome(
             modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            listOf("Home", "Wallets", "AI Chat", "Downloads", "Account").forEach { item ->
+            listOf("Home", "Wallets", "BankConnect", "AI Chat", "Downloads", "Account").forEach { item ->
                 val selected = tab == item
                 Box(
-                    modifier = Modifier.width(82.dp).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
+                    modifier = Modifier.width(if (item == "BankConnect") 108.dp else 82.dp).background(if (selected) Orange else Panel, RoundedCornerShape(12.dp))
                         .clickable { tab = item }.padding(vertical = 12.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -1324,6 +1577,24 @@ private fun AppHome(
                 onStartBinanceOwnershipProof = onStartBinanceOwnershipProof,
                 onShowRecoveryPhrase = onShowWalletRecoveryPhrase,
                 onRestoreWallet = onRestoreWallet
+            )
+            "BankConnect" -> BankConnectPanel(
+                accounts = bankAccounts,
+                transactions = bankTransactions,
+                message = bankConnectMessage,
+                ownerEmail = bankOwnerEmail,
+                otpEmail = bankOtpEmail,
+                emailVerified = bankEmailVerified,
+                emailBusy = bankEmailBusy,
+                emailMessage = bankEmailMessage,
+                busy = bankConnectBusy,
+                linkToken = bankLinkToken,
+                onConnect = onConnectBank,
+                onRequestEmailCode = onRequestBankEmailCode,
+                onVerifyEmailCode = onVerifyBankEmailCode,
+                onRefresh = onRefreshBankAccounts,
+                onDisconnect = onDisconnectBank,
+                onOpen = onOpenBankLink
             )
             "AI Chat" -> ChatPanel(
                 messages = chat,
@@ -1377,6 +1648,179 @@ private fun AppHome(
                 }
             )
         }
+    }
+}
+
+
+@Composable
+private fun BankConnectPanel(
+    accounts: List<BankAccountLine>,
+    transactions: List<BankTransactionLine>,
+    message: String,
+    ownerEmail: String,
+    otpEmail: String,
+    emailVerified: Boolean,
+    emailBusy: Boolean,
+    emailMessage: String,
+    busy: Boolean,
+    linkToken: String,
+    onConnect: () -> Unit,
+    onRequestEmailCode: (String, String) -> Unit,
+    onVerifyEmailCode: (String) -> Unit,
+    onRefresh: () -> Unit,
+    onDisconnect: (String) -> Unit,
+    onOpen: (PlaidLinkSession) -> Unit
+) {
+    val context = LocalContext.current
+    var session by remember { mutableStateOf<PlaidLinkSession?>(null) }
+    var sessionReady by remember { mutableStateOf(false) }
+    var ownerEmailInput by remember(ownerEmail) { mutableStateOf(ownerEmail) }
+    var otpEmailInput by remember(otpEmail) { mutableStateOf(otpEmail) }
+    var emailCodeInput by remember { mutableStateOf("") }
+    var emailCodeSent by remember { mutableStateOf(false) }
+    val emailFieldsMatchVerified = emailVerified &&
+        ownerEmailInput.trim().equals(ownerEmail, ignoreCase = true) &&
+        otpEmailInput.trim().equals(otpEmail, ignoreCase = true)
+    LaunchedEffect(Unit) { onRefresh() }
+    LaunchedEffect(linkToken) {
+        session = null
+        sessionReady = false
+        if (linkToken.isNotBlank()) {
+            session = Plaid.createPlaidLinkSession(
+                context,
+                linkTokenConfiguration {
+                    token = linkToken
+                    onLoad = OnLoadCallback { sessionReady = true }
+                }
+            )
+        }
+    }
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("BankConnect", color = Paper, fontSize = 23.sp, fontWeight = FontWeight.Bold)
+        Text("Secure, read-only access to supported US bank accounts through official bank authentication.", color = Muted, fontSize = 12.sp)
+        InfoCard("Your bank signs you in through Plaid Link. BALMZ APT never asks for or stores your bank password or bank-issued one-time code. You choose which accounts to share.")
+        Text("BankConnect email details", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("Owner Gmail is taken from the verified BALMZ APT sign-in account. The second Gmail receives BALMZ's own one-time code.", color = Muted, fontSize = 10.sp)
+        OutlinedTextField(
+            value = ownerEmailInput,
+            onValueChange = { ownerEmailInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Owner Gmail · verified APT account") },
+            placeholder = { Text("account.owner@gmail.com") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            readOnly = true,
+            enabled = !emailBusy
+        )
+        Text("New Gmail to receive BALMZ one-time codes", color = Muted, fontSize = 10.sp)
+        OutlinedTextField(
+            value = otpEmailInput,
+            onValueChange = { otpEmailInput = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Code-delivery Gmail") },
+            placeholder = { Text("new.address@gmail.com") },
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+            enabled = !emailBusy
+        )
+        Button(
+            onClick = {
+                emailCodeInput = ""
+                onRequestEmailCode(ownerEmailInput.trim(), otpEmailInput.trim())
+                emailCodeSent = true
+            },
+            enabled = !emailBusy && !emailFieldsMatchVerified && ownerEmailInput.contains("@") && otpEmailInput.contains("@"),
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+        ) { Text(if (emailVerified && !emailFieldsMatchVerified) "Verify new code-delivery Gmail" else if (emailCodeSent) "Resend BALMZ code" else "Send one-time code to new Gmail") }
+        if (!emailVerified) {
+            OutlinedTextField(
+                value = emailCodeInput,
+                onValueChange = { emailCodeInput = it.filter(Char::isDigit).take(6) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Six-digit BALMZ code") },
+                placeholder = { Text("000000") },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                enabled = !emailBusy
+            )
+            Button(
+                onClick = { onVerifyEmailCode(emailCodeInput) },
+                enabled = !emailBusy && emailCodeInput.length == 6,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+            ) { Text(if (emailBusy) "Verifying…" else "Verify code-delivery Gmail") }
+        }
+        InfoCard(if (emailFieldsMatchVerified) emailMessage else "Email fields changed. Send and verify a new BALMZ code for these addresses before continuing.")
+        InfoCard("Important: this is a BALMZ APT email-verification code only. It does not capture, forward, or replace a bank-issued OTP. Any bank MFA code stays with the bank's registered contact method inside official bank authentication.")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Button(
+                onClick = onConnect,
+                enabled = !busy && emailFieldsMatchVerified && linkToken.isBlank(),
+                colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink),
+                modifier = Modifier.weight(1f)
+            ) { Text(if (busy) "Please wait…" else if (emailFieldsMatchVerified) "Connect a US bank" else "Verify Gmail to continue", fontWeight = FontWeight.Bold) }
+            Button(
+                onClick = onRefresh,
+                enabled = !busy,
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text("Refresh") }
+        }
+        if (linkToken.isNotBlank()) {
+            Text("Secure bank session prepared. Continue to the provider's official authentication flow.", color = Green, fontSize = 11.sp)
+            Button(
+                onClick = { session?.let(onOpen) },
+                enabled = sessionReady && session != null,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text(if (sessionReady) "Open secure bank connection" else "Preparing secure connection…") }
+        }
+        if (busy) CircularProgressIndicator(color = Orange)
+        InfoCard(message)
+        Text("Connected accounts", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (accounts.isEmpty()) {
+            InfoCard("No linked bank accounts are available. Connect a bank to begin.")
+        } else {
+            accounts.forEach { account ->
+                Column(
+                    modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(14.dp)).padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(account.institution, color = Orange, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Text(account.name + if (account.mask.isNotBlank()) " •••• " + account.mask else "", color = Paper, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text(listOf(account.type, account.subtype).filter { it.isNotBlank() }.joinToString(" · "), color = Muted, fontSize = 10.sp)
+                    Text("Available: " + account.available + " " + account.currency, color = Paper, fontSize = 12.sp)
+                    Text("Current: " + account.current + " " + account.currency, color = Paper, fontSize = 12.sp)
+                    Text("Read-only · Provider-reported balance (may be cached)", color = Green, fontSize = 10.sp)
+                    TextButton(onClick = { onDisconnect(account.connectionId) }, enabled = !busy) {
+                        Text("Disconnect bank", color = Red)
+                    }
+                }
+            }
+        }
+        Text("Recent transactions · Last 30 days", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (transactions.isEmpty()) {
+            InfoCard("No recent transactions were returned by the provider.")
+        } else {
+            transactions.forEach { transaction ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(transaction.name, color = Paper, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(transaction.institution + " · " + transaction.account, color = Muted, fontSize = 9.sp)
+                        Text(transaction.date + if (transaction.pending) " · Pending" else "", color = Muted, fontSize = 9.sp)
+                    }
+                    Text(transaction.amount + " " + transaction.currency, color = Paper, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Text("Bank balances may be cached until the provider refreshes the institution. Transaction history may take time to become available after first linking. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
     }
 }
 
