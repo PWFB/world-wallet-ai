@@ -18,6 +18,7 @@ internal object BinanceWalletBridge {
     const val CALLBACK_SCHEME = "balmzaptido"
     const val CALLBACK_HOST = "wallet-connect"
     const val BRIDGE_URL = "https://world-wallet-ai-backend.onrender.com/api/v1/public/aptido-wallet-bridge"
+    const val REQUEST_TTL_MILLIS = 10 * 60 * 1000L
     private val secureRandom = SecureRandom()
 
     fun newNonce(): String {
@@ -90,6 +91,9 @@ internal object BinanceWalletBridge {
     }
 
     fun isNonce(value: String): Boolean = Regex("^[0-9a-fA-F]{64}$").matches(value)
+
+    fun isFreshRequest(createdAt: Long, now: Long = System.currentTimeMillis()): Boolean =
+        createdAt > 0L && now >= createdAt && now - createdAt <= REQUEST_TTL_MILLIS
 
     fun isEvmAddress(value: String): Boolean = Regex("^0x[0-9a-fA-F]{40}$").matches(value)
 }
