@@ -275,6 +275,12 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         if not wallet_id:
             raise HTTPException(status_code=409, detail="Create or select a BALMZ wallet before configuring BankConnect email.")
         owner_email = _normalize_email(request.owner_email, "account holder")
+        authenticated_email = _normalize_email(str(user.get("email") or ""), "signed-in account")
+        if owner_email != authenticated_email:
+            raise HTTPException(
+                status_code=403,
+                detail="The owner Gmail must match the verified email on the signed-in BALMZ AI APT account.",
+            )
         otp_email = _normalize_email(request.otp_email, "BALMZ code-delivery")
         # Validate sender configuration before creating a challenge.
         _email_sender_config()
