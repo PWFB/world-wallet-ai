@@ -29,6 +29,10 @@ class PublicTokenExchange(BaseModel):
     public_token: str = Field(min_length=20, max_length=4096)
 
 
+class LinkTokenRequest(BaseModel):
+    android_package_name: str = Field(default=PLAID_PACKAGE_NAME, max_length=128)
+
+
 def build_bankconnect_router(db_factory: Callable, current_user_dependency: Callable):
     router = APIRouter(prefix="/api/v1/bankconnect", tags=["BankConnect"])
 
@@ -143,9 +147,11 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         }
 
     @router.post("/link-token")
-    async def create_link_token(user=Depends(current_user_dependency)):
+    async def create_link_token(request: LinkTokenRequest, user=Depends(current_user_dependency)):
         config = _config()
         _encryption_key()
+        if request.android_package_name not in {PLAID_PACKAGE_NAME, PLAID_PACKAGE_NAME + ".debug"}:
+            raise HTTPException(status_code=400, detail="The Android package name is not an approved BALMZ APT application ID.")
         client_user_id = hashlib.sha256(str(user["id"]).encode("utf-8")).hexdigest()
         result = await _plaid_post("/link/token/create", {
             "user": {"client_user_id": client_user_id},
@@ -153,7 +159,7 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             "products": PLAID_PRODUCTS,
             "country_codes": PLAID_COUNTRIES,
             "language": "en",
-            "android_package_name": PLAID_PACKAGE_NAME,
+            "android_package_name": request.android_package_name,
         })
         token = str(result.get("link_token") or "")
         if not token:
