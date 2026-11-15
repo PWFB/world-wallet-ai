@@ -64,6 +64,7 @@ import androidx.compose.ui.unit.sp
 import com.plaid.link.OpenPlaidLink
 import com.plaid.link.Plaid
 import com.plaid.link.PlaidSession
+import com.plaid.link.PlaidLinkSession
 import com.plaid.link.configuration.linkTokenConfiguration
 import com.plaid.link.OnLoadCallback
 import com.plaid.link.result.LinkResult
@@ -271,7 +272,7 @@ private fun AptidoApp(
     walletCallback: MutableState<Uri?>,
     bankLinkResult: LinkResult?,
     onClearBankLinkResult: () -> Unit,
-    onOpenBankLink: (PlaidSession) -> Unit
+    onOpenBankLink: (PlaidLinkSession) -> Unit
 ) {
     val context = LocalContext.current
     val api = remember { AptidoApi() }
@@ -1668,10 +1669,10 @@ private fun BankConnectPanel(
     onVerifyEmailCode: (String) -> Unit,
     onRefresh: () -> Unit,
     onDisconnect: (String) -> Unit,
-    onOpen: (PlaidSession) -> Unit
+    onOpen: (PlaidLinkSession) -> Unit
 ) {
     val context = LocalContext.current
-    var session by remember { mutableStateOf<PlaidSession?>(null) }
+    var session by remember { mutableStateOf<PlaidLinkSession?>(null) }
     var sessionReady by remember { mutableStateOf(false) }
     var ownerEmailInput by remember(ownerEmail) { mutableStateOf(ownerEmail) }
     var otpEmailInput by remember(otpEmail) { mutableStateOf(otpEmail) }
