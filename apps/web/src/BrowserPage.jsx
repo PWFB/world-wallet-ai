@@ -5,7 +5,6 @@ const shortcuts = [
   { label: "Sepolia", detail: "Ethereum testnet explorer", url: "https://sepolia.etherscan.io/" },
   { label: "BscScan", detail: "BNB Chain explorer", url: "https://bscscan.com/" },
   { label: "CoinGecko", detail: "Crypto market data", url: "https://www.coingecko.com/" },
-  { label: "WalletConnect", detail: "Wallet connection tools", url: "https://walletconnect.com/" },
   { label: "Google", detail: "Search the web", url: "https://www.google.com/" },
 ];
 

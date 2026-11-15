@@ -2,7 +2,6 @@ import { lazy, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
-import { getWalletConnectSessionConnections } from "./walletconnect-accounts.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -15,11 +14,6 @@ const ActivityTrace = lazy(() => import("./ActivityTrace.jsx"));
 const WalletWizard = lazy(() => import("./WalletWizard.jsx"));
 const BalmzAI = lazy(() => import("./BalmzAI.jsx"));
 const ReceiptCenter = lazy(() => import("./ReceiptCenter.jsx"));
-
-// Load the WalletConnect SDK only after the user explicitly starts a connection.
-const WALLETCONNECT_PROJECT_ID = (import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "97c5ce3ec72a9236f613ee0b340a5000").trim();
-const WALLETCONNECT_CHAINS = [1, 11155111, 56];
-
 
 const ASSET_LOGO_URLS = {
   BTC: "https://cdn.jsdelivr.net/gh/spothq/cryptocurrency-icons@master/128/color/btc.png",
@@ -259,7 +253,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   }, [walletId, addressesLoadedForWallet, accessToken, apiBaseUrl, accountUserId]);
 
   // Attach every saved external EVM address to its matching network on the active wallet.
-  // Disconnecting a WalletConnect session does not erase saved public receiving addresses.
+  // Removing an external wallet session does not erase saved public receiving addresses.
   useEffect(() => {
     if (!walletId || addressesLoadedForWallet !== walletId) return;
     const connections = getSavedExternalConnections().filter(connection => String(connection.walletId || "") === String(walletId));
@@ -789,12 +783,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [swapAmount, setSwapAmount] = useState("");
   const [swapNotice, setSwapNotice] = useState("");
   const [addressMessage, setAddressMessage] = useState("");
-  const [wcProvider, setWcProvider] = useState(null);
-  const [wcProviderKind, setWcProviderKind] = useState("");
-  const [wcAccount, setWcAccount] = useState("");
-  const [wcChainId, setWcChainId] = useState(null);
-  const [wcBusy, setWcBusy] = useState(false);
-  const [wcError, setWcError] = useState("");
+  const [okxProvider, setOkxProvider] = useState(null);
+  const [okxAccount, setOkxAccount] = useState("");
+  const [okxChainId, setOkxChainId] = useState(null);
   const [syncBusy, setSyncBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState("");
   const [historyTransactions, setHistoryTransactions] = useState([]);
@@ -1156,186 +1147,6 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: connection || null }));
   }
 
-  function parseExternalChainId(value) {
-    if (typeof value === "number") return value;
-    const text = String(value || "");
-    if (!text) return null;
-    const parsed = text.startsWith("0x") ? Number.parseInt(text, 16) : Number.parseInt(text, 10);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function persistWalletConnectSessionAccounts(provider, fallbackChainId, fallbackAccounts = []) {
-    const connections = getWalletConnectSessionConnections(
-      provider?.session,
-      fallbackChainId,
-      Array.isArray(fallbackAccounts) ? fallbackAccounts : [],
-    );
-    for (const [index, connection] of connections.entries()) {
-      const networkLabel = ({
-        1: "Ethereum Mainnet",
-        56: "BNB Chain",
-        11155111: "Ethereum Sepolia",
-      })[connection.chainId];
-      persistExternalConnection({
-        ...connection,
-        provider: "walletconnect",
-        label: "WalletConnect · " + networkLabel + " · account " + (index + 1),
-        connectedAt: new Date().toISOString(),
-      });
-    }
-    return connections;
-  }
-
-  async function connectInjectedWallet(kind) {
-    setWcBusy(true);
-    setWcError("");
-    try {
-      const candidates = [
-        ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
-        ...(window.ethereum ? [window.ethereum] : []),
-        ...(window.coinbaseWalletExtension ? [window.coinbaseWalletExtension] : []),
-      ].filter((provider, index, all) => provider && typeof provider.request === "function" && all.indexOf(provider) === index);
-      const provider = kind === "coinbase"
-        ? candidates.find(item => item.isCoinbaseWallet) || null
-        : candidates.find(item => item.isMetaMask && !item.isCoinbaseWallet) || null;
-      if (!provider) {
-        throw new Error(kind === "coinbase"
-          ? "Coinbase Wallet extension was not detected. Open World Wallet AI in Coinbase Wallet's browser, or use WalletConnect."
-          : "MetaMask was not detected. Open World Wallet AI in MetaMask's browser, install the extension, or use WalletConnect.");
-      }
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
-      const address = Array.isArray(accounts) ? accounts[0] : "";
-      if (!address || !/^0x[a-fA-F0-9]{40}$/.test(address)) throw new Error("The wallet did not provide a valid EVM address.");
-      const rawChain = await provider.request({ method: "eth_chainId" });
-      const chainId = parseExternalChainId(rawChain);
-      const connection = { address, chainId, provider: kind, connectedAt: new Date().toISOString() };
-      setWcProvider(provider);
-      setWcProviderKind(kind);
-      setWcAccount(address);
-      setWcChainId(chainId);
-      persistExternalConnection(connection);
-      if (typeof provider.on === "function") {
-        provider.on("accountsChanged", accountsChanged => {
-          const nextAddress = Array.isArray(accountsChanged) ? accountsChanged[0] || "" : "";
-          setWcAccount(nextAddress);
-          persistExternalConnection(nextAddress ? { address: nextAddress, chainId: parseExternalChainId(provider.chainId) || chainId, provider: kind, connectedAt: new Date().toISOString() } : null);
-        });
-        provider.on("chainChanged", nextChain => {
-          const nextChainId = parseExternalChainId(nextChain);
-          setWcChainId(nextChainId);
-          try {
-            const previous = JSON.parse(localStorage.getItem("world_wallet_external_connection_v1") || "null");
-            if (previous?.address) persistExternalConnection({ ...previous, chainId: nextChainId });
-          } catch {}
-        });
-        provider.on("disconnect", () => {
-          setWcAccount("");
-          setWcChainId(null);
-          setWcProvider(null);
-          setWcProviderKind("");
-          persistExternalConnection(null);
-        });
-      }
-    } catch (error) {
-      setWcError(error?.message || "External wallet connection failed.");
-    } finally {
-      setWcBusy(false);
-    }
-  }
-
-  async function connectWalletConnect() {
-    setWcBusy(true);
-    setWcError("");
-    try {
-      const { EthereumProvider } = await import("@walletconnect/ethereum-provider");
-      const provider = await EthereumProvider.init({
-        projectId: WALLETCONNECT_PROJECT_ID,
-        // Ask for every supported EVM chain as optional. Requiring BNB here
-        // caused wallets to approve only the active chain in some sessions.
-        optionalChains: WALLETCONNECT_CHAINS,
-        showQrModal: true,
-        methods: ["eth_sendTransaction", "personal_sign", "eth_signTypedData", "eth_signTypedData_v4", "eth_accounts", "eth_requestAccounts", "wallet_switchEthereumChain", "wallet_addEthereumChain"],
-        events: ["accountsChanged", "chainChanged", "disconnect"],
-        metadata: {
-          name: "World Wallet AI",
-          description: "Connect an external wallet to World Wallet AI",
-          url: window.location.origin,
-          icons: [window.location.origin + "/favicon.ico"],
-        },
-      });
-      provider.on("accountsChanged", accounts => {
-        const chainId = parseExternalChainId(provider.chainId);
-        const currentAccounts = Array.isArray(accounts) ? accounts : [];
-        setWcAccount(currentAccounts[0] || "");
-        persistWalletConnectSessionAccounts(provider, chainId, currentAccounts);
-      });
-      provider.on("chainChanged", async chain => {
-        const chainId = parseExternalChainId(chain);
-        setWcChainId(chainId);
-        try {
-          const accounts = await provider.request({ method: "eth_accounts" });
-          persistWalletConnectSessionAccounts(provider, chainId, accounts);
-        } catch {
-          persistWalletConnectSessionAccounts(provider, chainId, []);
-        }
-      });
-      provider.on("session_update", async () => {
-        const chainId = parseExternalChainId(provider.chainId);
-        try {
-          const accounts = await provider.request({ method: "eth_accounts" });
-          persistWalletConnectSessionAccounts(provider, chainId, accounts);
-        } catch {
-          persistWalletConnectSessionAccounts(provider, chainId, []);
-        }
-      });
-      provider.on("disconnect", () => {
-        setWcAccount(""); setWcChainId(null); setWcProvider(null); setWcProviderKind("");
-        // Keep previously attached addresses; disconnecting a session must not delete receiving routes.
-        window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
-      });
-      await provider.connect();
-      const accounts = await provider.request({ method: "eth_accounts" });
-      const chainId = parseExternalChainId(provider.chainId);
-      setWcAccount(accounts?.[0] || "");
-      setWcChainId(chainId);
-      setWcProvider(provider);
-      setWcProviderKind("walletconnect");
-      persistWalletConnectSessionAccounts(provider, chainId, accounts);
-      if (!accounts?.[0]) setWcError("Wallet connected without exposing an account. Unlock your wallet and try again.");
-    } catch (error) {
-      setWcError(error?.message || "WalletConnect could not connect. Check the Project ID and try again.");
-    } finally {
-      setWcBusy(false);
-    }
-  }
-
-  async function disconnectWalletConnect() {
-    setWcBusy(true);
-    setWcError("");
-    try {
-      if (wcProvider) {
-        if (wcProviderKind === "walletconnect" && typeof wcProvider.disconnect === "function") await wcProvider.disconnect();
-        if (typeof wcProvider.removeAllListeners === "function") wcProvider.removeAllListeners();
-      }
-    } catch (error) {
-      setWcError(error?.message || "Could not disconnect the wallet session cleanly.");
-    } finally {
-      setWcProvider(null);
-      setWcProviderKind("");
-      setWcAccount("");
-      setWcChainId(null);
-      try { localStorage.removeItem("world_wallet_external_connection_v1"); } catch {}
-      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: null }));
-      setWcBusy(false);
-    }
-  }
-
-  async function changeWalletConnect() {
-    // Close the existing WalletConnect session before opening a fresh wallet picker.
-    await disconnectWalletConnect();
-    await connectWalletConnect();
-  }
-
   async function loadTransactionHistory({ offset = 0, append = false } = {}) {
     if (!accessToken || historyBusy) return;
     setHistoryBusy(true);
@@ -1536,7 +1347,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   async function broadcastExternalEvm({ transactionId, endpoint, asset, amount, network, destination, sourceAddress }) {
     const expectedSigner = String(sourceAddress || "").toLowerCase();
     const providerCandidates = [
-      wcProvider,
+      okxProvider,
       ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
       window.ethereum,
       window.okxwallet,
@@ -1665,7 +1476,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !(wcProvider || window.ethereum)) throw new Error("Connect a compatible external EVM wallet or WalletConnect to send live funds. No transaction will be recorded without a signer.");
+      if (isLiveEvm && !(okxProvider || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
       const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
       if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
@@ -1727,14 +1538,11 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     apiBaseUrl={apiBaseUrl}
     sourceAddresses={withdrawalAddresses}
     wallet={wallet}
-    externalProvider={wcProvider}
-    onConnectWalletConnect={connectWalletConnect}
     setActive={setActive}
     onEvmProviderConnected={(provider, connection) => {
-      setWcProvider(provider);
-      setWcProviderKind("okx");
-      setWcAccount(connection.address);
-      setWcChainId(connection.chainId);
+      setOkxProvider(provider);
+      setOkxAccount(connection.address);
+      setOkxChainId(connection.chainId);
       persistExternalConnection({
         ...connection,
         provider: "okx",
@@ -2305,7 +2113,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
   if (active === "Contract Generator" || active === "Verify Contract") return <ContractTools active={active} setActive={setActive} />;
 
-  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={wcProvider} externalAccount={wcAccount} externalChainId={wcChainId} accountUserId={accountUserId} />;
+  if (active === "Wallets") return <WalletManager accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} onTransactionsUpdated={onTransactionsUpdated} onWalletUpdated={onWalletUpdated} externalProvider={okxProvider} externalAccount={okxAccount} externalChainId={okxChainId} accountUserId={accountUserId} />;
 
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
@@ -2859,43 +2667,6 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">TOOLS</p><h1>Request Center</h1><p className="muted">Create and track database-backed support requests.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
       <div className="feature-grid"><article className="panel action-panel"><h2>New request</h2><label>Title<input value={destination} onChange={e=>setDestination(e.target.value)} maxLength="120" placeholder="Request title"/></label><label>Details<textarea value={note} onChange={e=>setNote(e.target.value)} maxLength="1000" placeholder="Describe what you need"/></label>{message&&<div className="feature-success">{message}</div>}<button className="primary feature-submit" disabled={toolBusy||!destination.trim()} onClick={createRequest}>{toolBusy?"Saving…":"Create request →"}</button></article>
       <article className="panel tool-panel"><div className="panel-head"><div><h2>My requests</h2><span>Real records for this wallet</span></div><button className="secondary" onClick={loadRequests} disabled={requestBusy}>{requestBusy?"Loading…":"↻ Refresh"}</button></div>{requestError&&<div role="status" className="feature-error">{requestError}</div>}{requestItems.length?requestItems.map(r=><div className="tool-row" key={r.id} style={{ alignItems: "center" }}><div style={{ flex: 1, minWidth: 0 }}><b>{r.title}</b><small>{r.kind} • {r.status}</small><small>{r.created_at ? new Date(r.created_at).toLocaleString() : "Date unavailable"}</small></div><code>{r.id}</code><button type="button" className="secondary" aria-expanded={selectedRequest?.id === r.id} onClick={()=>setSelectedRequest(current=>current?.id===r.id?null:r)}>{selectedRequest?.id===r.id?"Close details":"View details"}</button></div>):<div className="live-chart-empty">{requestBusy ? "Loading your saved requests…" : requestError ? "Requests could not be loaded. Retry to check again." : "No requests have been created yet."}</div>}{selectedRequest && <article className="panel action-panel" aria-live="polite"><div className="panel-head"><div><p className="feature-kicker">REQUEST DETAILS</p><h2>{selectedRequest.title}</h2></div><span className="neutral">{selectedRequest.status}</span></div><div className="tool-row"><div><b>Request ID</b></div><code>{selectedRequest.id}</code></div><div className="tool-row"><div><b>Type</b></div><strong>{selectedRequest.kind}</strong></div><div className="tool-row"><div><b>Created</b></div><strong>{selectedRequest.created_at ? new Date(selectedRequest.created_at).toLocaleString() : "Unavailable"}</strong></div><div className="tool-row"><div><b>Last updated</b></div><strong>{selectedRequest.updated_at ? new Date(selectedRequest.updated_at).toLocaleString() : "Unavailable"}</strong></div><div><b>Full details</b><p className="muted" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{selectedRequest.details || "No additional details were saved with this request."}</p></div></article>}</article></div></section>;
-  }
-
-  if (active === "Wallet Connect") {
-    const chainNames = { 1: "Ethereum Mainnet", 11155111: "Sepolia Testnet", 56: "BNB Smart Chain" };
-    return <section className="content feature-content">
-      <div className="security-note">Google sign-in connects your Google account to World Wallet AI, but Google Wallet is not itself a standard EVM Web3 wallet provider for signing Ethereum or BNB Chain transactions. For blockchain signing, use a WalletConnect-compatible crypto wallet. Never enter Google account credentials or wallet recovery phrases here.</div>
-      <div className="page-heading"><div><p className="eyebrow">EXTERNAL WALLET</p><h1>Wallet Connect</h1><p className="muted">Connect MetaMask, Rainbow, Trust Wallet, and other WalletConnect-compatible wallets. Signing requests always require approval in your wallet.</p></div><button className="secondary" onClick={()=>setActive("Dashboard")}>← Dashboard</button></div>
-      <article className="panel tool-panel">
-        <div className="tool-status"><span className="status-dot"></span><b>{wcAccount ? "External wallet connected" : "Choose an external wallet"}</b></div>
-        <div className="security-note"><b>Need Solana Devnet?</b> This external-wallet picker currently supports EVM chains only. Solana Devnet addresses are attached separately as public addresses; no WalletConnect EVM session is needed.</div>
-        <button className="primary feature-submit" onClick={() => setActive("Wallets")}>Attach a Solana Devnet address →</button>
-        <p className="muted">Connect an existing wallet. World Wallet AI receives the public address and asks the wallet itself to approve signatures and transactions; it never receives the private key.</p>
-        {wcAccount ? <>
-          <div className="tool-row"><div><b>Wallet address</b><small>{wcProviderKind === "walletconnect" ? "Connected through WalletConnect" : wcProviderKind === "coinbase" ? "Connected through Coinbase Wallet" : "Connected through MetaMask"}</small></div><code>{wcAccount}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(wcAccount)}>Copy address</button></div>
-          <a className="secondary" href={wcChainId === 11155111 ? "https://sepolia.etherscan.io/address/" + wcAccount : wcChainId === 56 ? "https://bscscan.com/address/" + wcAccount : wcChainId === 1 ? "https://etherscan.io/address/" + wcAccount : "https://etherscan.io/"} target="_blank" rel="noreferrer">View wallet address in Explorer ↗</a>
-          <div className="tool-row"><div><b>Network</b><small>Detected from connected wallet</small></div><strong>{chainNames[wcChainId] || (wcChainId ? "Chain ID " + wcChainId : "Unknown network")}</strong></div>
-          <div className="security-note">Use Explorer to inspect the public address. This connection screen does not display or request a private key or contract address.</div>
-          <div className="wallet-connection-actions">
-            <button className="primary" disabled={wcBusy} onClick={changeWalletConnect}>{wcBusy ? "Opening wallet picker…" : "⇄ Change wallet (WalletConnect)"}</button>
-            <button className="secondary" disabled={wcBusy} onClick={disconnectWalletConnect}>Disconnect from World Wallet AI</button>
-          </div>
-        </> : <div className="wallet-connection-actions">
-          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("metamask")}>{wcBusy ? "Connecting…" : "Connect MetaMask"}</button>
-          <button className="primary feature-submit" disabled={wcBusy} onClick={()=>connectInjectedWallet("coinbase")}>{wcBusy ? "Connecting…" : "Connect Coinbase Wallet"}</button>
-          <button className="secondary" disabled={wcBusy} onClick={connectWalletConnect}>{wcBusy ? "Opening wallet picker…" : "Connect with WalletConnect"}</button>
-        </div>}
-        {wcError && <div className="feature-error" role="alert">{wcError}</div>}
-        <div className="security-note">MetaMask and Coinbase direct connections require their provider or in-app browser to be available. WalletConnect offers a QR/mobile linking path for compatible wallets. If a provider is not installed or supported, the screen reports that instead of pretending the wallet connected.</div>
-        <div className="security-note">Google sign-in is separate from crypto-wallet connection. Never enter a Google password, wallet private key, or recovery phrase into this site.</div>
-      </article>
-      <article className="panel tool-panel">
-        <h2>Configured production addresses</h2>
-        <p className="muted">These are backend-configured addresses, separate from the external wallet session above.</p>
-        <button className="secondary" onClick={async()=>{setSyncBusy(true);try{const r=await fetch(apiBaseUrl+"/api/v1/wallet/connect",{headers:{Authorization:"Bearer "+accessToken}});const d=await r.json();setAddresses(d.addresses||[]);setAddressMessage(d.message||"");}catch{setAddressMessage("Unable to load connection status.");}finally{setSyncBusy(false)}}}>{syncBusy?"Checking…":"Check production addresses"}</button>
-        {addresses.length?addresses.map(a=><div className="tool-row" key={a.network+a.address}><div><b>{a.network.toUpperCase()}</b><small>{a.label}</small></div><code>{a.address}</code><button className="secondary" onClick={()=>navigator.clipboard?.writeText(a.address)}>Copy</button></div>):<div className="live-chart-empty">{addressMessage||"No configured production address loaded."}</div>}
-      </article>
-    </section>;
   }
 
   if (active === "Profile") {

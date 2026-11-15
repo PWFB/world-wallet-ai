@@ -120,12 +120,33 @@ The recovery phrase is encrypted at rest on this Android installation. Keep the 
 Newly attached addresses remain unverified until the backend's cryptographic signature challenge flow is completed. This change does not claim that external WalletConnect sessions or transaction signing/broadcast are complete. Do not use this as a production send/receive wallet until signature ownership verification, transaction preview, signing, broadcast, reconnect behavior and real-device recovery tests have passed.
 
 
-## BankConnect — US bank account access
+## Private Bank & Crypto services
 
-The APT includes a BankConnect tab powered by the official Plaid Link Android SDK. Users choose a participating US bank and authenticate through the bank/provider's official flow, including any required bank-issued one-time passcode or multi-factor challenge. BALMZ APT does not create a universal bank code and never receives or stores bank passwords or bank OTPs.
+The BALMZ APT places **Private Services** under the **More** tab. The section is collapsed by default and is not shown as a main wallet action. WalletConnect and the external Bitcoin wallet-connection flow are not required.
 
-After consent, the feature can display connected account names, masked account numbers, provider-returned balances, and recent transactions (30 days). It is read-only and supports disconnect/revocation. No transfers or withdrawals are enabled.
+### Buy Bitcoin and supported crypto
 
-Before connecting a bank, BALMZ APT displays the read-only owner Gmail from the user's verified sign-in identity and asks for a Gmail address for BALMZ APT's own one-time verification code. The backend requires the owner Gmail to match the signed-in account. The BALMZ code goes to the code-delivery Gmail and only verifies that notification destination. It does not change the bank's registered MFA contact or intercept a bank-issued OTP.
+- Coinbase Onramp opens a Coinbase-hosted checkout using a short-lived, single-use session token created by the backend.
+- Purchases are addressed only to a Bitcoin, Ethereum or Solana Mainnet address attached to the active BALMZ wallet and marked ownership-verified by the backend.
+- Current app options: BTC to Bitcoin Mainnet; ETH and USDC to Ethereum Mainnet; SOL to Solana Mainnet.
+- The user completes payment, identity checks and any bank-account linking inside Coinbase. Eligible payment methods depend on Coinbase account and regional availability. BALMZ never collects a bank password or bank-issued OTP.
+- The backend validates the active wallet owner and verified address before requesting each session token. API credentials and JWTs remain server-side.
 
-The backend must be configured with `PLAID_CLIENT_ID`, `PLAID_SECRET`, `PLAID_ENV`, the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, and the dedicated `BANKCONNECT_SMTP_HOST`, `BANKCONNECT_SMTP_PORT`, `BANKCONNECT_SMTP_USERNAME`, `BANKCONNECT_SMTP_APP_PASSWORD`, and `BANKCONNECT_SMTP_FROM_EMAIL` settings. Keep provider and SMTP credentials on Render only. Do not reuse the Super Admin recovery Gmail credential. Register `com.balmz.aptido` in Plaid Dashboard. Production access and institution coverage are controlled by Plaid approval and bank availability; sandbox mode is for test institutions only.
+Backend-only Render variables:
+
+- `COINBASE_CDP_API_KEY_NAME` — CDP API key name/ID.
+- `COINBASE_CDP_API_KEY_SECRET` — CDP EC private-key PEM; keep the full PEM formatting.
+- `COINBASE_ONRAMP_ENV` — `sandbox` for testing or `production` for approved live purchases.
+- `COINBASE_ONRAMP_ENABLED` — leave `false` until CDP Onramp access and credentials are confirmed; set `true` only after that review.
+
+The app does not show a successful purchase merely because the checkout opened. Coinbase controls checkout, payment authorization and settlement. Refresh the wallet and confirm the chain transaction before treating crypto as received.
+
+### Send USD to another US bank
+
+The same hidden section reserves a separate US bank payout area. It is **not enabled** yet. Nium is the provider candidate for approved US ACH/IAT payouts, but BALMZ must complete provider onboarding and receive written approval for its legal entity, user/customer model, source of funds, KYC/KYB, USD funding wallet and US payout permissions. Users must not enter their bank credentials into BALMZ. No transfer is represented as sent or settled until the provider's confirmed status and return handling are integrated.
+
+Nium's documented hosted payout flow requires an approved Nium customer and funded provider wallet. For clients onboarded with a non-US Nium entity, US payouts are processed as IAT rather than domestic same-day ACH. See the backend `US_BANK_TRANSFERS.md` runbook before requesting production activation.
+
+### No Plaid requirement for these flows
+
+The APT no longer includes Plaid Link or depends on Plaid to open Private Services or create Coinbase crypto-purchase sessions. Existing legacy server-side Plaid endpoints are not used by this APT screen. No Plaid credentials are required for the new crypto-purchase flow.

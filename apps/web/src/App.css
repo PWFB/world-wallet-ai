@@ -1903,3 +1903,11 @@
 @media(max-width:560px){.balmz-token-metadata-fields{grid-template-columns:1fr}.balmz-token-metadata-content{gap:10px}}
 
 .balmz-token-metadata-description{margin:8px 0;color:var(--muted,#8192a9);font-size:11px;line-height:1.6}
+
+
+/* Dashboard cards are actionable; nested buttons, inputs and links keep their own actions. */
+.dashboard-action-card{cursor:pointer;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease}
+.dashboard-action-card:hover{border-color:rgba(255,122,24,.42);box-shadow:0 10px 28px rgba(0,0,0,.16)}
+.dashboard-action-card:focus-visible,.market-price-action:focus-visible,.activity-row-action:focus-visible{outline:2px solid #ff7a18;outline-offset:3px}
+.market-price-action,.activity-row-action{cursor:pointer;transition:background .14s ease}
+.market-price-action:hover,.activity-row-action:hover{background:rgba(255,122,24,.07)}

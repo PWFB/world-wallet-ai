@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "vite build",
     "test:network-selection": "node --test src/network-selection.test.js",
-    "test:walletconnect-accounts": "node --test src/walletconnect-accounts.test.js",
     "preview": "vite preview",
     "cap:add:android": "cap add android",
     "cap:sync": "npm run build && cap sync android",
@@ -23,7 +22,6 @@
     "@neondatabase/auth": "^0.5.0-beta",
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
-    "@walletconnect/ethereum-provider": "^2.23.3",
     "@capacitor/core": "^8.6.0"
   },
   "devDependencies": {
