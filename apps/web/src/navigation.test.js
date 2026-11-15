@@ -127,9 +127,10 @@ test("BALMZ Token Mining is discoverable and has a genuine early-access registra
   assert.match(featureSource, /No claimable BALMZ rewards are being represented/);
 });
 
-test("WalletConnect is removed from the sidebar and runtime connection screens", () => {
+test("WalletConnect is removed from the sidebar, dashboard, and web runtime", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
   assert.ok(!pages.includes("Wallet Connect"));
+  assert.doesNotMatch(appSource, /externalWalletConnection|world_wallet_external_connection_v1|WalletConnect|walletconnect/i);
   assert.ok(!featureSource.includes("@walletconnect/ethereum-provider"));
   assert.doesNotMatch(featureSource, /WalletConnect|walletconnect|connectWalletConnect/i);
   assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
