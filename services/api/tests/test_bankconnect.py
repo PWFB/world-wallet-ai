@@ -78,6 +78,30 @@ class BankConnectEmailTests(unittest.TestCase):
             route.endpoint(user={"id": "bankconnect-user-test", "wallet_id": ""})
         self.assertEqual(raised.exception.status_code, 409)
 
+    def test_email_code_request_rejects_an_owner_email_different_from_signed_in_identity(self):
+        route = next(
+            route for route in self.router(user={
+                "id": "bankconnect-user-test",
+                "wallet_id": "wallet-test",
+                "email": "verified.owner@gmail.com",
+            }).routes
+            if route.path == "/api/v1/bankconnect/email/request-code"
+        )
+        request = bankconnect.BankEmailRequest(
+            owner_email="someone.else@gmail.com",
+            otp_email="new.address@gmail.com",
+        )
+        with self.assertRaises(HTTPException) as raised:
+            route.endpoint(
+                request=request,
+                user={
+                    "id": "bankconnect-user-test",
+                    "wallet_id": "wallet-test",
+                    "email": "verified.owner@gmail.com",
+                },
+            )
+        self.assertEqual(raised.exception.status_code, 403)
+
     def test_email_code_request_requires_an_active_wallet(self):
         route = next(
             route for route in self.router(user={"id": "bankconnect-user-test", "wallet_id": ""}).routes
