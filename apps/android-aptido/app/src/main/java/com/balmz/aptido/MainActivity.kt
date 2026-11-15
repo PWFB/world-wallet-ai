@@ -283,6 +283,10 @@ private fun AptidoApp(
     var externalWalletBridgeUrl by remember { mutableStateOf("") }
     var bankConnectMessage by remember { mutableStateOf("Open private services to buy supported crypto or review US bank transfer availability.") }
     var bankConnectBusy by remember { mutableStateOf(false) }
+    var coinbaseOnrampEnabled by remember { mutableStateOf(false) }
+    var coinbaseOnrampStatus by remember { mutableStateOf("Checking Coinbase Onramp configuration…") }
+    var usBankTransferStatus by remember { mutableStateOf("US bank payouts are disabled pending provider approval.") }
+    var privateServicesStatusBusy by remember { mutableStateOf(false) }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
@@ -729,6 +733,33 @@ private fun AptidoApp(
     }
 
 
+    suspend fun refreshPrivateServicesStatus() {
+        privateServicesStatusBusy = true
+        try {
+            val crypto = api.get("/api/v1/bankconnect/crypto/status", pinToken)
+            coinbaseOnrampEnabled = crypto.optBoolean("enabled", false)
+            coinbaseOnrampStatus = when {
+                coinbaseOnrampEnabled -> "Coinbase Onramp is enabled in " + crypto.optString("environment", "configured") + " mode. Coinbase controls region and payment eligibility."
+                !crypto.optBoolean("configured", false) -> "Coinbase Onramp is not configured. Add the CDP key name and EC private-key secret to Render."
+                else -> "Coinbase credentials are present, but Onramp is disabled. Complete provider approval and explicitly enable it on Render."
+            }
+        } catch (error: Exception) {
+            coinbaseOnrampEnabled = false
+            coinbaseOnrampStatus = error.message ?: "Coinbase Onramp status could not be checked."
+        }
+        try {
+            val transfers = api.get("/api/v1/bankconnect/transfers/status", pinToken)
+            usBankTransferStatus = transfers.optString(
+                "message",
+                "US bank payouts remain disabled until Nium approves the program and funding model."
+            )
+        } catch (error: Exception) {
+            usBankTransferStatus = error.message ?: "US bank transfer status could not be checked."
+        } finally {
+            privateServicesStatusBusy = false
+        }
+    }
+
     LaunchedEffect(walletCallback.value, pinToken, stage) {
         val returnedUri = walletCallback.value
         if (returnedUri != null && pinToken.isNotBlank() && stage == AptidoStage.APP) {
@@ -1035,6 +1066,11 @@ private fun AptidoApp(
             },
             bankConnectMessage = bankConnectMessage,
             bankConnectBusy = bankConnectBusy,
+            coinbaseOnrampEnabled = coinbaseOnrampEnabled,
+            coinbaseOnrampStatus = coinbaseOnrampStatus,
+            usBankTransferStatus = usBankTransferStatus,
+            privateServicesStatusBusy = privateServicesStatusBusy,
+            onRefreshPrivateServicesStatus = { scope.launch { refreshPrivateServicesStatus() } },
             onBuyCrypto = { asset, network, address ->
                 scope.launch {
                     bankConnectBusy = true
@@ -1293,6 +1329,11 @@ private fun AppHome(
     onSwitchWalletProfile: (String) -> Unit,
     bankConnectMessage: String,
     bankConnectBusy: Boolean,
+    coinbaseOnrampEnabled: Boolean,
+    coinbaseOnrampStatus: String,
+    usBankTransferStatus: String,
+    privateServicesStatusBusy: Boolean,
+    onRefreshPrivateServicesStatus: () -> Unit,
     onBuyCrypto: (String, String, String) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
     externalWalletAccounts: List<ExternalWalletAccount>,
@@ -1370,6 +1411,11 @@ private fun AppHome(
                 walletAddresses = walletAddresses,
                 message = bankConnectMessage,
                 busy = bankConnectBusy,
+                coinbaseOnrampEnabled = coinbaseOnrampEnabled,
+                coinbaseOnrampStatus = coinbaseOnrampStatus,
+                usBankTransferStatus = usBankTransferStatus,
+                statusBusy = privateServicesStatusBusy,
+                onRefreshStatus = onRefreshPrivateServicesStatus,
                 onBuyCrypto = onBuyCrypto
             )
             "AI Chat" -> ChatPanel(
@@ -1433,9 +1479,15 @@ private fun BankConnectPanel(
     walletAddresses: List<WalletAddressLine>,
     message: String,
     busy: Boolean,
+    coinbaseOnrampEnabled: Boolean,
+    coinbaseOnrampStatus: String,
+    usBankTransferStatus: String,
+    statusBusy: Boolean,
+    onRefreshStatus: () -> Unit,
     onBuyCrypto: (String, String, String) -> Unit
 ) {
     var showPrivateServices by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { onRefreshStatus() }
     val supportedAddresses = walletAddresses.filter { address ->
         address.ownershipVerified && address.network in setOf("bitcoin", "ethereum", "solana_mainnet")
     }
@@ -1494,7 +1546,7 @@ private fun BankConnectPanel(
                                 assets.forEach { asset ->
                                     Button(
                                         onClick = { onBuyCrypto(asset, address.network, address.address) },
-                                        enabled = !busy,
+                                        enabled = !busy && coinbaseOnrampEnabled,
                                         colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink),
                                         modifier = Modifier.weight(1f)
                                     ) { Text("Buy $asset", fontWeight = FontWeight.Bold, fontSize = 11.sp) }
@@ -1503,10 +1555,14 @@ private fun BankConnectPanel(
                         }
                     }
                 }
+                InfoCard(coinbaseOnrampStatus)
                 InfoCard("A purchase is not credited until Coinbase completes it. BALMZ does not collect bank login details or bank-issued OTPs. A US bank payment method may need to be linked and verified inside the user's Coinbase account.")
+                TextButton(onClick = onRefreshStatus, enabled = !statusBusy, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (statusBusy) "Checking provider status…" else "Refresh provider status", color = Orange)
+                }
                 Divider(color = PanelLight)
                 Text("Send USD to another US bank", color = Paper, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                InfoCard("US bank payouts are currently unavailable. Nium must first approve BALMZ's legal entity, US customer model, source of funds, KYC/KYB, funded USD wallet and ACH/IAT payout permissions. No send-money control is enabled before those checks.")
+                InfoCard(usBankTransferStatus)
                 InfoCard("For a program onboarded outside the United States, Nium documents US IAT payouts as next-business-day rather than same-day domestic ACH. The exact BALMZ route and eligibility still require written provider approval.")
             }
         }
