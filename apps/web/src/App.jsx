@@ -11,6 +11,26 @@ import BrowserPage from "./BrowserPage.jsx";
 import DashboardWalletPanel from "./DashboardWalletPanel.jsx";
 import BalmzAI from "./BalmzAI.jsx";
 
+function dashboardCardAction(onActivate) {
+  const isNestedControl = event => {
+    const target = event.target;
+    if (!target || target === event.currentTarget || typeof target.closest !== "function") return false;
+    return Boolean(target.closest("button,input,textarea,select,a,[role='button']"));
+  };
+  return {
+    role: "group",
+    tabIndex: 0,
+    onClick: event => {
+      if (!isNestedControl(event)) onActivate();
+    },
+    onKeyDown: event => {
+      if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+      event.preventDefault();
+      onActivate();
+    },
+  };
+}
+
 function WorldGlobeLogo({ compact = false }) {
   return <img className={compact ? "ww-world-logo ww-world-logo-compact" : "ww-world-logo"}
     src="/world-wallet-ai-logo.svg" alt="World Wallet AI gold W shield logo" />;
@@ -2194,32 +2214,32 @@ function App() {
                 <button className="primary" onClick={() => setActive("Send")}>Send</button>
               </div>
             </div>
-            {walletAnnouncement?.enabled && <article className="panel wallet-announcement" role="status">
+            {walletAnnouncement?.enabled && <article className="panel wallet-announcement" role="status" onClick={() => setActive("Help & Docs")} style={{ cursor: "pointer" }}>
               <div><span className="feature-kicker">WORLD WALLET AI ANNOUNCEMENT</span><h2>{walletAnnouncement.title}</h2><p>{walletAnnouncement.body}</p></div>
             </article>}
 
             
 
             <div className="balance-grid web3-balance-grid">
-              <article className="hero-card">
+              <article className="hero-card dashboard-action-card" {...dashboardCardAction(() => setActive("Wallets"))}>
                 <div className="card-top"><span>{selectedNetworkBalance ? (selectedNetwork === "solana_devnet" ? "SOLANA DEVNET BALANCE" : selectedNetwork === "solana_mainnet" ? "SOLANA MAINNET BALANCE" : selectedNetwork === "sepolia" ? "SEPOLIA BALANCE" : selectedNetwork === "bnb" ? "BNB CHAIN BALANCE" : selectedNetwork === "bitcoin" ? "BITCOIN BALANCE" : "ETHEREUM MAINNET BALANCE") : "PORTFOLIO VALUE"}</span><div className="balance-card-tools"><DashboardWalletPanel accessToken={accessToken} apiBaseUrl={API_BASE_URL} onWalletSwitched={async () => { await syncWallet(); await refreshSelectedNetworkBalance(true); }} /><button onClick={() => setShowBalance(!showBalance)} aria-label={showBalance ? "Hide balance" : "Show balance"}>{showBalance ? "◉" : "◎"}</button></div></div>
                 <div className="hero-balance">{showBalance ? (selectedNetworkBalance ? number(selectedNetworkBalance.balance) : walletBalanceText) : "••••••••"} <small>{selectedNetworkBalance ? selectedNetworkBalance.asset : selectedNetworkBalanceMessage ? "" : "USD"}</small></div>
                 <div className="balance-meta"><span>{!showBalance ? "Balance hidden" : selectedNetworkBalance ? (selectedNetwork === "solana_devnet" || selectedNetwork === "sepolia" ? "On-chain testnet balance · not USD" : "Live on-chain balance · token value shown separately") : selectedNetworkBalanceMessage || walletBalanceCaption}</span><b className="neutral">{selectedNetworkBalance ? (selectedNetworkBalance.syncedAt ? "Synced " + new Date(selectedNetworkBalance.syncedAt).toLocaleTimeString() : "On-chain balance") : wallet.change_24h == null ? "24h change unavailable" : Number(wallet.change_24h).toFixed(2) + "% 24h"}</b></div>
 
                 <div className="card-actions"><button onClick={() => setActive("Send")}>↗ Send</button><button onClick={() => setActive("Receive")}>↙ Receive</button><button onClick={() => setActive("Swap")}>⇄ Swap</button></div>
               </article>
-              <article className="stat-card"><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
-              <article className="stat-card"><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
-              <article className="stat-card balmz-balance-card"><span>BALMZ · Ethereum Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ") ? number(verifiedBalancesByAsset.get("BALMZ").available_balance) : "Unavailable"} <small>BALMZ</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ")?.status || "No verified Mainnet contract/address balance"}</b><div className="stat-source">Ethereum Mainnet only · based on the ownership-verified ERC-20 contract balance.</div></article>
-              <article className="stat-card"><span>BALMZ · BNB Chain Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-BNB") ? number(verifiedBalancesByAsset.get("BALMZ-BNB").available_balance) : "Unavailable"} <small>BALMZ-BNB</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-BNB")?.status || "No verified BNB Mainnet contract/address balance"}</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-SOL") ? number(verifiedBalancesByAsset.get("BALMZ-SOL").available_balance) : "Unavailable"} <small>BALMZ-SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-SOL")?.status || "Mainnet mint or address not verified"}</b></article>
-              <article className="stat-card"><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>Unavailable <small>BALMZ-SEP</small></strong><b className="neutral">Testnet balance is not included in this Mainnet verification report.</b></article>
-              <article className="stat-card"><span>BALMZ · Solana Devnet (testnet)</span><strong>Unavailable <small>BALMZ-SOL-DEVNET</small></strong><b className="neutral">Testnet balance is separate and requires its own verified testnet read.</b></article>
-              <article className="stat-card"><span>Solana Mainnet SOL</span><strong>{verifiedBalancesByAsset.has("SOL") ? number(verifiedBalancesByAsset.get("SOL").available_balance) : "Unavailable"} <small>SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("SOL")?.status || "No verified Solana Mainnet address balance"}</b></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setActive("Transactions"))}><span>Total received</span><strong>{walletReceivedText}</strong><b className="neutral">{walletReceivedStatus}</b><div className="stat-source">{walletReceivedSource}</div></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setActive("Transactions"))}><span>Total sent</span><strong>{walletSentText}</strong><b className="neutral">{walletSentStatus} · {activity.length} recent transactions</b><div className="stat-source">{walletSentSource}</div></article>
+              <article className="stat-card balmz-balance-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("BALMZ"))}><span>BALMZ · Ethereum Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ") ? number(verifiedBalancesByAsset.get("BALMZ").available_balance) : "Unavailable"} <small>BALMZ</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ")?.status || "No verified Mainnet contract/address balance"}</b><div className="stat-source">Ethereum Mainnet only · based on the ownership-verified ERC-20 contract balance.</div></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("BALMZ-BNB"))}><span>BALMZ · BNB Chain Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-BNB") ? number(verifiedBalancesByAsset.get("BALMZ-BNB").available_balance) : "Unavailable"} <small>BALMZ-BNB</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-BNB")?.status || "No verified BNB Mainnet contract/address balance"}</b></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("BALMZ-SOL"))}><span>BALMZ · Solana Mainnet</span><strong>{verifiedBalancesByAsset.has("BALMZ-SOL") ? number(verifiedBalancesByAsset.get("BALMZ-SOL").available_balance) : "Unavailable"} <small>BALMZ-SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("BALMZ-SOL")?.status || "Mainnet mint or address not verified"}</b></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("BALMZ-SEP"))}><span>BALMZ · Ethereum Sepolia (testnet)</span><strong>Unavailable <small>BALMZ-SEP</small></strong><b className="neutral">Testnet balance is not included in this Mainnet verification report.</b></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("BALMZ-SOL-DEVNET"))}><span>BALMZ · Solana Devnet (testnet)</span><strong>Unavailable <small>BALMZ-SOL-DEVNET</small></strong><b className="neutral">Testnet balance is separate and requires its own verified testnet read.</b></article>
+              <article className="stat-card dashboard-action-card" {...dashboardCardAction(() => setSelectedCoin("SOL"))}><span>Solana Mainnet SOL</span><strong>{verifiedBalancesByAsset.has("SOL") ? number(verifiedBalancesByAsset.get("SOL").available_balance) : "Unavailable"} <small>SOL</small></strong><b className="neutral">{verifiedBalancesByAsset.get("SOL")?.status || "No verified Solana Mainnet address balance"}</b></article>
             </div>
 
 
-            <article className="panel wallet-address-trace-panel">
+            <article className="panel wallet-address-trace-panel dashboard-action-card" {...dashboardCardAction(() => setActive("Wallets"))}>
               <div className="panel-head">
                 <div><h2>Verified network addresses &amp; asset trace</h2><span>Public addresses and contract balances returned by the read-only chain verifier</span></div>
                 <button type="button" className="text-btn" onClick={() => {
@@ -2281,7 +2301,7 @@ function App() {
                   const hasPrice = quote.usd != null && Number.isFinite(Number(quote.usd)) && Number(quote.usd) > 0;
                   const change = quote.usd_24h_change == null ? null : Number(quote.usd_24h_change);
                   const coin = walletCoinCatalog.find(item => item.symbol === symbol) || {};
-                  return <div className="market-price-item" key={symbol}>
+                  return <div className="market-price-item market-price-action" key={symbol} role="group" tabIndex={0} onClick={() => setSelectedCoin(symbol)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedCoin(symbol); } }}>
                     <AssetIcon symbol={symbol} fallback={coin.icon || "•"} />
                     <div className="market-price-name"><b>{symbol}</b><small>{symbol === "BALMZ" ? "World Wallet token" : coin.name || symbol}</small></div>
                     <div className="market-price-value"><b>{hasPrice ? money(Number(quote.usd)) : symbol === "BALMZ" ? "Not listed" : marketPricesLoading && !marketPricesUpdatedAt ? "Loading…" : "Unavailable"}</b><small className={change == null ? "neutral" : change >= 0 ? "positive" : "negative"}>{change == null ? (symbol === "BALMZ" ? "No verified quote" : "24h change unavailable") : (change >= 0 ? "+" : "") + change.toFixed(2) + "% · 24h"}</small></div>
@@ -2292,7 +2312,7 @@ function App() {
             </article>
 
             <div className="dashboard-grid">
-              <article className="panel chart-panel">
+              <article className="panel chart-panel dashboard-action-card" {...dashboardCardAction(() => setActive("Portfolio"))}>
                 <div className="panel-head">
                   <div><h2>Portfolio performance</h2><span>Recorded portfolio value over time</span></div>
                   <div className="ranges" role="group" aria-label="Portfolio performance period">
@@ -2334,14 +2354,14 @@ function App() {
                 <div className="chart-foot"><span>Source: timestamped wallet snapshots</span><span>{performance.points.length} recorded point{performance.points.length === 1 ? "" : "s"}</span></div>
               </article>
 
-              <article className="panel ai-panel">
+              <article className="panel ai-panel dashboard-action-card" {...dashboardCardAction(() => setActive("BALMZ AI"))}>
                 <div className="ai-title"><div className="ai-orb">✦</div><div><h2>BALMZ AI</h2><span>Your intelligent wallet assistant</span></div><b>LIVE</b></div>
                 <div className="ai-message">{apiStatus === "error" ? "Wallet data could not be loaded from the API. Check the connection and refresh before drawing conclusions about balances." : assets.length === 0 ? "No wallet assets are available yet. Sync a configured production wallet to let BALMZ AI analyze live data." : wallet.available_balance_usd == null || wallet.valuation_complete === false ? "Wallet valuation is unavailable until all held assets have verified live prices." : Number(wallet.available_balance_usd) > 0 ? <>Your current available balance is <strong>{money(wallet.available_balance_usd)}</strong>. BALMZ AI can analyze the live asset mix and recent activity.</> : "Your wallet is authenticated, but no funded asset balance is currently recorded."}</div>
-                <div className="ai-actions"><button>Run portfolio scan</button><button>Ask BALMZ AI</button></div>
+                <div className="ai-actions"><button type="button" onClick={() => setActive("Proof of Reserves")}>Run portfolio scan</button><button type="button" onClick={() => setActive("BALMZ AI")}>Ask BALMZ AI</button></div>
                 <div className="ai-input">Ask anything about your wallet... <span>↗</span></div>
               </article>
 
-              <article className="panel assets-panel">
+              <article className="panel assets-panel dashboard-action-card" {...dashboardCardAction(() => setActive("Portfolio"))}>
                 <div className="panel-head">
                   <div><h2>Your assets</h2><span>{walletCoinCatalogWithRegistry.length} catalog assets • {walletCoinCatalogWithRegistry.filter(c => c.connected).length} registry-ready • {verifiedBalancesByAsset.size} chain-verified balances</span></div>
                   <button className="text-btn" onClick={() => setActive("Portfolio")}>View portfolio →</button>
@@ -2379,9 +2399,9 @@ function App() {
                 <div className="coin-catalog-note">Market prices are refreshed from CoinGecko{marketPricesUpdatedAt ? ` • Updated ${marketPricesUpdatedAt.toLocaleTimeString()}` : ""}. Wallet values require a real connected balance. BALMZ stays unpriced until a verified market quote exists.</div>
               </article>
 
-              <article className="panel activity-panel">
+              <article className="panel activity-panel dashboard-action-card" {...dashboardCardAction(() => setActive("Transactions"))}>
                 <div className="panel-head"><div><h2>On-chain activity</h2><span>Latest saved wallet transactions</span></div><button className="text-btn" onClick={() => setActive("Transactions")}>View all →</button></div>
-                <div className="activity-list">{activity.map((a,i) => <div className="activity-row" key={i}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small>{a.reference && <small>Ref: {a.reference}</small>}</div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
+                <div className="activity-list">{activity.map((a,i) => <div className="activity-row activity-row-action" key={a.id || a.tx_hash || i} role="group" tabIndex={0} onClick={() => { setFocusedTransaction(a); setActive("Transactions"); }} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setFocusedTransaction(a); setActive("Transactions"); } }}><span className="activity-icon">{a.type[0].toUpperCase()}</span><div><b>{a.type}</b><small>{a.description}</small>{a.reference && <small>Ref: {a.reference}</small>}</div><div className="activity-value"><b className={a.amount.startsWith("+") ? "positive" : ""}>{a.amount}</b><small>{a.time}</small></div></div>)}</div>
               </article>
             </div>
 
@@ -2389,7 +2409,7 @@ function App() {
 
 
 
-            <article className="panel dashboard-security-bridge">
+            <article className="panel dashboard-security-bridge dashboard-action-card" {...dashboardCardAction(() => setActive("Wallet Safety"))}>
               <div><p className="feature-kicker">SELF-CUSTODY CONTROLS</p><h2>Wallet tools &amp; support</h2><span>Manage connected signing apps, verify addresses and get help without leaving your wallet workspace.</span></div>
               <div className="dashboard-security-actions">
                 <button className="secondary" onClick={() => setActive("Wallet Safety")}>Wallet safety</button>
