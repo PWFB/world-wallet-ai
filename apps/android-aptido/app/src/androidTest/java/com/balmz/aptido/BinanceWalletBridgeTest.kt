@@ -40,6 +40,16 @@ class BinanceWalletBridgeTest {
     }
 
     @Test
+    fun bridgeRequestsExpireAfterTenMinutesAndRejectFutureTimestamps() {
+        val now = 1_800_000_000_000L
+        assertTrue(BinanceWalletBridge.isFreshRequest(now, now))
+        assertTrue(BinanceWalletBridge.isFreshRequest(now, now + BinanceWalletBridge.REQUEST_TTL_MILLIS))
+        assertFalse(BinanceWalletBridge.isFreshRequest(now, now + BinanceWalletBridge.REQUEST_TTL_MILLIS + 1))
+        assertFalse(BinanceWalletBridge.isFreshRequest(now + 1, now))
+        assertFalse(BinanceWalletBridge.isFreshRequest(0L, now))
+    }
+
+    @Test
     fun proofLinkCarriesOnlyPublicChallengeFields() {
         val nonce = BinanceWalletBridge.newNonce()
         val address = "0x1111111111111111111111111111111111111111"
