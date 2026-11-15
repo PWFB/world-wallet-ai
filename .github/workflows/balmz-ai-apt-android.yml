@@ -57,7 +57,7 @@ jobs:
           token_login=$(USER_JSON="$RUNNER_TEMP/github-user.json" python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])')
           echo "GITHUB_USER=$token_login" >> "$GITHUB_ENV"
           echo "GitHub package token authenticated as: $token_login"
-          scopes=$(sed -n 's/^[Xx]-[Oo]auth-[Ss]copes:[[:space:]]*//p' "$RUNNER_TEMP/github-user.headers" | tr -d '\\r')
+          scopes=$(sed -n 's/^[Xx]-[Oo]auth-[Ss]copes:[[:space:]]*//p' "$RUNNER_TEMP/github-user.headers" | tr -d '\r')
           if [ -z "$scopes" ]; then
             echo "::error::GitHub did not return X-OAuth-Scopes. Verify that TRUST_WALLET_PACKAGES_TOKEN is a classic PAT with read:packages."
             exit 1
