@@ -35,6 +35,29 @@ Wise Platform offers partner and enterprise APIs, but those require a separate W
 - https://docs.wise.com/guides/product/partner/business-account-support
 - https://wise.com/help/articles/2810318/can-i-get-usd-account-details/
 
+## Recommended architecture to evaluate: Nium-funded USD wallet, then US bank payout
+
+This is the closest documented fit for a non-US-operated APT, subject to Nium's approval of BALMZ and the exact customer/use-case model:
+
+1. Nium onboards the BALMZ program and each eligible sender using its KYB/KYC process.
+2. Where approved and supported by the Nium client configuration, BALMZ requests a customer-specific USD Virtual Account Number (VAN)/payment ID.
+3. The sender pushes USD from their own US bank to that assigned account using their bank's ACH service. Nium confirms the incoming credit (Inward Credit Confirmation) before the USD is treated as available in the Nium wallet.
+4. The sender chooses a previously verified US beneficiary, reviews the bank/account, amount, fee and delivery method, then confirms the payout.
+5. BALMZ submits the payout from the funded Nium USD wallet and tracks provider events through final status, including returns and RFIs.
+
+This is **not** an instant debit from the user's bank account inside BALMZ and not a direct bank-to-bank rail: funds pass through a provider-managed USD wallet. The source bank's ACH credit into the VAN is initiated by the sender at their bank. The provider must confirm the USD VAN is available for BALMZ's client region and the individual/corporate sender model.
+
+Nium's documentation says payouts from clients onboarded with a Nium non-US entity use International ACH Transactions (IAT) for US beneficiaries; its published guide describes next-business-day beneficiary credit for that route. Do not advertise same-day domestic ACH for a non-US client configuration. Nium's generic payout product documents P2P, B2P, B2B and P2B, but the exact BALMZ program and payment purpose still require approval.
+
+Official implementation references:
+- Payouts supports person-to-person and business payment types: https://docs.nium.com/docs/payouts
+- Nium wallets and USD Virtual Accounts: https://docs.nium.com/docs/wallets and https://preview.docs.nium.com/docs/payins/fund-wallet
+- US ACH/IAT payout corridor and return lifecycle: https://docs.nium.com/docs/payouts/country-and-regional-guides/usd-payments-to-the-united-states-ach
+- Provider-hosted beneficiary onboarding form: https://docs.nium.com/docs/sdks/payouts/beneficiary-management
+- Sandbox and production environments: https://preview.docs.nium.com/docs/developers/nium-api/nium-enviorments
+
+Nium credentials are issued per environment. API calls use the x-api-key header and clientHashId path parameter. Some embedded components additionally require a server-generated PKCE authorization code and client secret; that secret must never reach the mobile app or web bundle. Nium also requires backend IP allowlisting. Render uses shared regional outbound ranges by default; dedicated outbound IPs are available on Pro workspaces and above for an additional monthly charge. Confirm the chosen Render egress/IP arrangement with Nium before production.
+
 ## Activation gate
 
 Do not enable the send action until the selected provider has confirmed in writing that it supports BALMZ's legal entity, US domestic ACH collection and payout, and the proposed sender-to-recipient funds flow. Store provider credentials only as backend environment variables; never in the Android app, browser bundle, or source control.
