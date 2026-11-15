@@ -41,8 +41,11 @@ jobs:
         with:
           gradle-version: "9.6.0"
 
-      - name: Build debug APK
-        run: gradle -p apps/android-aptido :app:assembleDebug --no-daemon --stacktrace
+      - name: Build debug APK and instrumentation test APK
+        env:
+          GITHUB_USER: ${{ github.actor }}
+          TRUST_WALLET_PACKAGES_TOKEN: ${{ secrets.TRUST_WALLET_PACKAGES_TOKEN }}
+        run: gradle -p apps/android-aptido :app:assembleDebug :app:assembleAndroidTest --no-daemon --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
@@ -94,6 +97,8 @@ jobs:
 
       - name: Build signed release APK
         env:
+          GITHUB_USER: ${{ github.actor }}
+          TRUST_WALLET_PACKAGES_TOKEN: ${{ secrets.TRUST_WALLET_PACKAGES_TOKEN }}
           APTIDO_KEYSTORE_PATH: ${{ runner.temp }}/aptido-release.jks
           APTIDO_KEYSTORE_PASSWORD: ${{ secrets.APTIDO_KEYSTORE_PASSWORD }}
           APTIDO_KEY_ALIAS: ${{ secrets.APTIDO_KEY_ALIAS }}

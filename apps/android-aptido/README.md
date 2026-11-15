@@ -92,3 +92,29 @@ After a signed tag build succeeds, the workflow attaches `app-release.apk` to a 
 https://github.com/PWFB/world-wallet-ai/releases
 
 The first release must not be advertised as production-ready until the signed APK is installed and tested on a real ARM64 Android 16 device, authentication/PIN flows pass, AI replies work, and the download checksum and install/update path are verified.
+
+
+## Trust Wallet Core self-custody wallet
+
+The Android client integrates the Trust Wallet Core Android Maven artifact, version **4.9.3**, from the Trust Wallet GitHub Packages repository.
+
+- Creates a 12-word BIP-39 recovery phrase on-device.
+- Restores a wallet from a valid 12- or 24-word BIP-39 phrase on-device.
+- Derives one Ethereum/BNB EVM mainnet address, plus Bitcoin and Solana mainnet addresses.
+- Derives separate Ethereum Sepolia and Solana Devnet accounts using account index 1.
+- Encrypts recovery material at rest using AES-GCM and an Android Keystore-held key.
+- Requires the user to acknowledge an offline recovery backup before the app attaches public addresses to the backend.
+- Sends public addresses only. The mnemonic and private keys are never included in API requests.
+- Logout removes authentication/PIN session tokens but deliberately preserves encrypted local wallet recovery material.
+
+### Package access
+
+Builds access Trust Wallet Core through the existing repository Actions secret `TRUST_WALLET_PACKAGES_TOKEN` (GitHub Packages read access). The token is injected into Gradle at build time and is not stored in source files.
+
+For local builds, set `GITHUB_USER` and `TRUST_WALLET_PACKAGES_TOKEN` in the shell environment. Never put the token in source code or chat.
+
+### Security and current scope
+
+The recovery phrase is encrypted at rest on this Android installation. Keep the offline backup: uninstalling the app, clearing app data, losing the device, or losing its Keystore key can make the local encrypted copy unavailable.
+
+Newly attached addresses remain unverified until the backend's cryptographic signature challenge flow is completed. This change does not claim that external WalletConnect sessions or transaction signing/broadcast are complete. Do not use this as a production send/receive wallet until signature ownership verification, transaction preview, signing, broadcast, reconnect behavior and real-device recovery tests have passed.
