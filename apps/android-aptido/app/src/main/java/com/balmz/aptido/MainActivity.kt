@@ -892,7 +892,7 @@ private fun AppHome(
             }
         }
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             listOf("Home", "Wallets", "AI Chat", "Downloads", "Account").forEach { item ->
