@@ -141,3 +141,9 @@ test("US bank transfers are tucked into a collapsed BankConnect area, not the ma
   assert.match(aptSource, /Open US bank transfers/);
   assert.match(aptSource, /Transfers are not active yet/);
 });
+
+test("Bitcoin external wallet connection is removed without removing built-in Bitcoin wallet support", () => {
+  assert.doesNotMatch(returnCenterSource, /connectBitcoin|normalizeOkxBitcoinAccount/);
+  assert.doesNotMatch(returnCenterSource, /key: "bitcoin"/);
+  assert.match(aptSource, /"Bitcoin Mainnet" to "bitcoin"/);
+});
