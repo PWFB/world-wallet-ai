@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   build-debug:
@@ -40,6 +41,30 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.6.0"
+
+      - name: Verify Trust Wallet Core package access
+        id: walletcore-auth
+        env:
+          TRUST_WALLET_PACKAGES_TOKEN: ${{ secrets.TRUST_WALLET_PACKAGES_TOKEN }}
+        shell: bash
+        run: |
+          test -n "$TRUST_WALLET_PACKAGES_TOKEN" || (echo "::error::Missing repository secret TRUST_WALLET_PACKAGES_TOKEN in PWFB/world-wallet-ai." && exit 1)
+          user_status=$(curl -sS -o "$RUNNER_TEMP/github-user.json" -w "%{http_code}" -H "Authorization: Bearer $TRUST_WALLET_PACKAGES_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/user)
+          if [ "$user_status" != "200" ]; then
+            echo "::error::TRUST_WALLET_PACKAGES_TOKEN was rejected by GitHub API (HTTP $user_status). Refresh the classic PAT and save it as the repository secret."
+            exit 1
+          fi
+          token_login=$(python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])' USER_JSON="$RUNNER_TEMP/github-user.json")
+          echo "GITHUB_USER=$token_login" >> "$GITHUB_ENV"
+          echo "GitHub package token authenticated as: $token_login"
+          scopes=$(curl -sSI -H "Authorization: Bearer $TRUST_WALLET_PACKAGES_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/user | awk -F': ' 'tolower($1)== "x-oauth-scopes" {gsub("\\r","",$2); print $2}')
+          echo "Token scopes reported by GitHub: ${scopes:-not provided}"
+          package_status=$(curl -sS -o /dev/null -w "%{http_code}" -u "$token_login:$TRUST_WALLET_PACKAGES_TOKEN" "https://maven.pkg.github.com/trustwallet/wallet-core/com/trustwallet/wallet-core/4.9.3/wallet-core-4.9.3.pom")
+          echo "Trust Wallet Core 4.9.3 Maven metadata HTTP status: $package_status"
+          if [ "$package_status" != "200" ]; then
+            echo "::error::The PAT authenticated to GitHub but cannot download Trust Wallet Core 4.9.3 (HTTP $package_status). Check read:packages and whether the Trust Wallet package grants your GitHub account read access. If the package is private, repository read access may also be required."
+            exit 1
+          fi
 
       - name: Build debug APK and instrumentation test APK
         env:
