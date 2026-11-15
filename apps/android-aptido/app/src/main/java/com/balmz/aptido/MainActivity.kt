@@ -1080,7 +1080,7 @@ private fun AppHome(
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         Text(
-                            "Write these 12 words down offline and keep them private. Anyone with this phrase can control the wallet. Never send it to anyone or paste it into a website.",
+                            "Write these recovery words down offline and keep them private. Anyone with this phrase can control the wallet. Never send it to anyone or paste it into a website.",
                             color = Muted,
                             fontSize = 12.sp
                         )

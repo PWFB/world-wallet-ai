@@ -57,7 +57,7 @@ jobs:
           token_login=$(USER_JSON="$RUNNER_TEMP/github-user.json" python3 -c 'import json,os; print(json.load(open(os.environ["USER_JSON"]))["login"])')
           echo "GITHUB_USER=$token_login" >> "$GITHUB_ENV"
           echo "GitHub package token authenticated as: $token_login"
-          scopes=$(awk -F': ' 'tolower($1)== "x-oauth-scopes:" {gsub("\\r","",$2); print $2}' "$RUNNER_TEMP/github-user.headers")
+          scopes=$(awk -F': *' 'tolower($1)== "x-oauth-scopes" {gsub("\\r","",$2); print $2}' "$RUNNER_TEMP/github-user.headers")
           if [ -z "$scopes" ]; then
             echo "GitHub did not return X-OAuth-Scopes. Confirm this is a classic PAT, not a fine-grained token; GitHub Packages requires classic PAT authentication."
           else

@@ -41,7 +41,7 @@ internal object TrustWalletCoreWallet {
     }
 
     private fun derive(wallet: HDWallet): GeneratedSelfCustodyWallet {
-        val phrase = wallet.mnemonic()
+        val phrase = wallet.mnemonic
         require(Mnemonic.isValid(phrase)) { "Trust Wallet Core returned an invalid recovery phrase." }
 
         // One mainnet EVM address for both Ethereum and BNB Chain.
