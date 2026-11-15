@@ -1672,6 +1672,7 @@ private fun BankConnectPanel(
     onOpen: (PlaidLinkSession) -> Unit
 ) {
     val context = LocalContext.current
+    var showUsBankTransfers by remember { mutableStateOf(false) }
     var session by remember { mutableStateOf<PlaidLinkSession?>(null) }
     var sessionReady by remember { mutableStateOf(false) }
     var ownerEmailInput by remember(ownerEmail) { mutableStateOf(ownerEmail) }
@@ -1820,7 +1821,34 @@ private fun BankConnectPanel(
                 }
             }
         }
-        Text("Bank balances may be cached until the provider refreshes the institution. Transaction history may take time to become available after first linking. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
+        Text("Bank balances may be cached until the provider refreshes the institution. This account-history section is read-only; transfers are kept separate below.", color = Muted, fontSize = 10.sp)
+        Divider(color = PanelLight)
+        TextButton(
+            onClick = { showUsBankTransfers = !showUsBankTransfers },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                if (showUsBankTransfers) "Hide US bank transfers" else "Open US bank transfers",
+                color = Orange,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        if (showUsBankTransfers) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("US bank transfers", color = Paper, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    "This separate banking area is not shown in the main app navigation. It is intended for sending USD from a verified US bank source to another eligible US bank account.",
+                    color = Muted,
+                    fontSize = 11.sp
+                )
+                InfoCard(
+                    "Transfers are not active yet. BALMZ must first connect an approved US ACH payment provider, verify the business and customer accounts, and receive approval for both ACH collection and payout. No money will be sent from this screen until those checks pass."
+                )
+                InfoCard(
+                    "Do not enter bank passwords, bank OTPs, or full account details into BALMZ chat or ordinary app fields. Bank linking and verification must use the payment provider's secure hosted flow."
+                )
+            }
+        }
     }
 }
 
