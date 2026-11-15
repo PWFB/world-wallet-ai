@@ -242,6 +242,8 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             logger.warning("Plaid request failed: endpoint=%s status=%s code=%s", path, response.status_code, code[:80])
             if code in {"INVALID_ACCESS_TOKEN", "ITEM_LOGIN_REQUIRED"}:
                 raise HTTPException(status_code=409, detail="This bank connection needs to be repaired. Reconnect the bank through BankConnect.")
+            if code == "PRODUCT_NOT_READY":
+                raise HTTPException(status_code=409, detail="The bank provider is still preparing transaction history. Try refreshing later.")
             if response.status_code in {401, 403}:
                 raise HTTPException(status_code=503, detail="BankConnect provider credentials or product access are not valid.")
             raise HTTPException(status_code=502, detail="The bank provider could not complete this request. Try again later.")
@@ -502,18 +504,37 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
         output = []
         for row in rows:
             access_token = _decrypt(row[2], row[3], row[4])
-            result = await _plaid_post("/transactions/get", {
-                "access_token": access_token,
-                "start_date": start_date,
-                "end_date": end_date,
-                "options": {"count": 100, "offset": 0},
-            })
+            try:
+                result = await _plaid_post("/transactions/get", {
+                    "access_token": access_token,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "options": {"count": 100, "offset": 0},
+                })
+            except HTTPException as exc:
+                if exc.status_code == 409:
+                    logger.info("BankConnect transactions not ready for linked institution")
+                    continue
+                raise
             account_map = {
                 str(account.get("account_id") or ""): account
                 for account in result.get("accounts", [])
                 if isinstance(account, dict)
             }
-            for transaction in result.get("transactions", []):
+            page_transactions = list(result.get("transactions", []))
+            total_transactions = min(int(result.get("total_transactions") or len(page_transactions)), 200)
+            while len(page_transactions) < total_transactions:
+                page = await _plaid_post("/transactions/get", {
+                    "access_token": access_token,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "options": {"count": 100, "offset": len(page_transactions)},
+                })
+                new_rows = page.get("transactions", [])
+                if not new_rows:
+                    break
+                page_transactions.extend(new_rows)
+            for transaction in page_transactions[:200]:
                 if not isinstance(transaction, dict):
                     continue
                 account = account_map.get(str(transaction.get("account_id") or ""), {})
