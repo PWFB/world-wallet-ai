@@ -1344,7 +1344,8 @@ private fun AppHome(
                 verifiedAssets = verifiedAssets,
                 balanceMessage = balanceMessage,
                 balanceBusy = balanceBusy,
-                onRefreshBalances = onRefreshBalances
+                onRefreshBalances = onRefreshBalances,
+                onNavigate = { destination -> tab = destination }
             )
             "Wallets" -> WalletsPanel(
                 wallets = walletDirectory,
@@ -1912,7 +1913,8 @@ private fun HomePanel(
     verifiedAssets: List<AssetLine>,
     balanceMessage: String,
     balanceBusy: Boolean,
-    onRefreshBalances: () -> Unit
+    onRefreshBalances: () -> Unit,
+    onNavigate: (String) -> Unit
 ) {
     val walletObject = wallet.optJSONObject("wallet") ?: JSONObject()
     val assets = wallet.optJSONArray("assets") ?: JSONArray()
@@ -1926,7 +1928,8 @@ private fun HomePanel(
     ) {
         item {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(Panel, RoundedCornerShape(20.dp)).padding(18.dp)
+                modifier = Modifier.fillMaxWidth().padding(top = 18.dp).background(Panel, RoundedCornerShape(20.dp))
+                    .clickable { onNavigate("Account") }.padding(18.dp)
             ) {
                 Text(displayName, color = Muted, fontSize = 13.sp)
                 Text("Your workspace", color = Paper, fontSize = 22.sp, fontWeight = FontWeight.Bold)
@@ -1937,23 +1940,24 @@ private fun HomePanel(
             }
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth().clickable { onNavigate("Wallets") }) {
                 Text("Wallet assets", color = Paper, fontWeight = FontWeight.Bold, fontSize = 17.sp)
                 Text(assets.length().toString() + " records", color = Muted, fontSize = 11.sp)
             }
         }
         if (assets.length() == 0) {
-            item { InfoCard("No wallet asset records were returned. No balance has been assumed or generated.") }
+            item { InfoCard("No wallet asset records were returned. No balance has been assumed or generated.", onClick = { onNavigate("Wallets") }) }
         } else {
             items((0 until assets.length()).mapNotNull { assets.optJSONObject(it) }) { asset ->
                 val symbol = asset.optString("symbol", "Asset")
                 val amount = if (asset.isNull("available_balance")) "Unavailable" else asset.opt("available_balance").toString()
                 val network = asset.optString("network_label", "Network not classified")
-                AssetCard(symbol, network, amount, verified = false)
+                AssetCard(symbol, network, amount, verified = false, onClick = { onNavigate("Wallets") })
             }
         }
         item {
-            Column(modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(18.dp)).padding(16.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(18.dp))
+                .clickable { onNavigate("Wallets") }.padding(16.dp)) {
                 Text("Live balance verification", color = Paper, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 Text(balanceMessage, color = Muted, fontSize = 12.sp)
                 Spacer(Modifier.height(10.dp))
@@ -1968,16 +1972,23 @@ private fun HomePanel(
             }
         }
         items(verifiedAssets) { asset ->
-            AssetCard(asset.symbol, asset.network, asset.amount, asset.verified)
+            AssetCard(asset.symbol, asset.network, asset.amount, asset.verified, onClick = { onNavigate("Wallets") })
         }
         item { Spacer(Modifier.height(12.dp)) }
     }
 }
 
 @Composable
-private fun AssetCard(symbol: String, network: String, amount: String, verified: Boolean) {
+private fun AssetCard(
+    symbol: String,
+    network: String,
+    amount: String,
+    verified: Boolean,
+    onClick: (() -> Unit)? = null
+) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp)).padding(14.dp),
+        modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -2101,12 +2112,13 @@ private fun AccountPanel(wallet: JSONObject, onLogout: () -> Unit) {
 }
 
 @Composable
-private fun InfoCard(text: String) {
+private fun InfoCard(text: String, onClick: (() -> Unit)? = null) {
     Text(
         text,
         color = Muted,
         fontSize = 12.sp,
-        modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp)).padding(16.dp)
+        modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(16.dp))
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier).padding(16.dp)
     )
 }
 
