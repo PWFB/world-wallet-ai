@@ -83,39 +83,44 @@ Sepolia uses the same EVM public address as Ethereum for a given wallet. The API
 Use real chain responses for balances and transaction status. Never fabricate token balances, settlement confirmations, or market prices.
 
 
-## BALMZ APT BankConnect (US read-only account access)
+## BALMZ APT private Bank & Crypto services
 
-BankConnect uses the official Plaid API and Plaid Link Android SDK. The bank/customer completes authentication and any bank-required MFA/OTP inside the provider's secure Link flow. World Wallet AI never receives or stores bank login credentials or bank-issued OTPs.
+The APT's **More → Open private services** screen keeps crypto purchases and US bank payouts separate from the self-custody wallet navigation.
 
-Backend-only Render environment variables:
+### Coinbase Onramp — crypto purchase
 
-- `PLAID_CLIENT_ID` — Plaid client ID.
-- `PLAID_SECRET` — Plaid secret for the selected environment.
-- `PLAID_ENV` — `sandbox` or `production`; defaults to `sandbox`. Plaid's former Development environment is decommissioned.
-- `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing server-side encryption key used to encrypt Plaid access tokens at rest and protect the BALMZ OTP hash.
-- `BANKCONNECT_SMTP_HOST` — SMTP server; defaults to `smtp.gmail.com`.
-- `BANKCONNECT_SMTP_PORT` — SMTP port; defaults to `465` (SSL). Port `587` uses STARTTLS.
-- `BANKCONNECT_SMTP_USERNAME` — dedicated sender Gmail address.
-- `BANKCONNECT_SMTP_APP_PASSWORD` — dedicated Google App Password for that sender (not the normal Gmail password).
-- `BANKCONNECT_SMTP_FROM_EMAIL` — verified sender address; defaults to the SMTP username.
-- `BANKCONNECT_SMTP_FROM_NAME` — optional sender label; defaults to `BALMZ AI APT`.
+Endpoints (wallet-PIN authenticated):
 
-Do not reuse `WORLD_WALLET_ADMIN_GMAIL_APP_PASSWORD`: that existing credential remains restricted to Super Admin recovery. Do not add Plaid or SMTP credentials to Android build configuration, frontend variables, Git, or chat. BankConnect creates Link tokens on the backend, exchanges one-time public tokens on the backend, encrypts long-lived access tokens with AES-GCM, scopes records to the authenticated user's active wallet, and exposes only sanitized account and transaction data. Disconnect calls Plaid `/item/remove` before deleting the stored connection.
+- `GET /api/v1/bankconnect/crypto/status` — reports whether Coinbase Onramp is configured and enabled without exposing credentials.
+- `POST /api/v1/bankconnect/crypto/buy-session` — validates the requested asset/network, validates that the destination address belongs to the authenticated user's active wallet and has `ownership_verified=TRUE`, then creates a short-lived, single-use Coinbase Onramp session and returns a Coinbase-hosted checkout URL.
 
-Endpoints (all require the authenticated wallet-PIN session):
+Current asset/network pairs:
 
-- `GET /api/v1/bankconnect/status`
-- `GET /api/v1/bankconnect/email/settings`
-- `POST /api/v1/bankconnect/email/request-code` — sends a BALMZ-generated 6-digit code to the user-selected code-delivery email; 10-minute expiry, one use, maximum 5 attempts and 5 sends per 15 minutes.
-- `POST /api/v1/bankconnect/email/verify-code`
-- `POST /api/v1/bankconnect/link-token`
-- `POST /api/v1/bankconnect/exchange`
-- `GET /api/v1/bankconnect/accounts`
-- `GET /api/v1/bankconnect/transactions` (last 30 days)
-- `DELETE /api/v1/bankconnect/connections/{connection_id}`
+- BTC → Bitcoin Mainnet (`bitcoin`)
+- ETH → Ethereum Mainnet (`ethereum`)
+- USDC → Ethereum Mainnet (`ethereum`)
+- SOL → Solana Mainnet (`solana` on Coinbase)
 
-BankConnect displays the owner Gmail from the signed-in, email-verified BALMZ AI APT identity as a read-only field. The user supplies a separate or same Gmail to receive BALMZ's own email-verification code. The backend rejects an owner Gmail that does not match the signed-in account email. The code confirms the BALMZ notification destination only; it is not a bank-issued OTP, cannot be forwarded to a bank's registered contact, and does not prove bank-account ownership. The bank and Plaid Link independently authenticate the account holder and decide where bank MFA is delivered. Changing the code-delivery email clears the previous BALMZ email verification and requires a fresh code. This extra email check must be configured with the dedicated `BANKCONNECT_SMTP_*` variables above.
+The backend creates a per-request ES256 CDP JWT and calls `POST https://api.developer.coinbase.com/onramp/v1/token`. The JWT, API key name and EC private-key secret are never returned to the client or logged. The returned session token is single-use and is only passed to the Coinbase-hosted checkout URL.
 
-The Android package `com.balmz.aptido` must be registered in Plaid Dashboard under Build → API → Allowed Android package names. Register `com.balmz.aptido.debug` separately only if testing the debug build with real Plaid Link sessions.
+Render environment variables (backend only):
 
-Start with Plaid Sandbox and test institutions. Live access to Chase and other real US banks requires a Plaid account with approved production access and the relevant product permissions; a successful APK build does not prove those external approvals. This release is read-only: it does not initiate transfers, payments, withdrawals, or account changes. Account balances may be delayed according to provider/bank refresh behavior.
+- `COINBASE_CDP_API_KEY_NAME` — CDP API key name/ID.
+- `COINBASE_CDP_API_KEY_SECRET` — CDP EC private-key PEM.
+- `COINBASE_ONRAMP_ENV` — `sandbox` or `production`; defaults to `sandbox`.
+- `COINBASE_ONRAMP_ENABLED` — defaults to `false`; must be explicitly enabled after CDP access and credentials have been verified.
+
+Coinbase controls available payment methods, region checks, user KYC and payment settlement. Users who want to pay with a US bank account must use an eligible payment method offered in their Coinbase checkout/account; BALMZ does not collect bank login credentials or bank-issued OTPs. The backend does not record checkout opening as a purchase confirmation.
+
+### Nium — US bank payout readiness
+
+- `GET /api/v1/bankconnect/transfers/status` — explicitly reports the US payout feature as disabled and provides the provider-onboarding reason.
+- Real payouts are not initiated by this release.
+
+Nium's hosted payout form requires a provider-onboarded customer, approved beneficiary management, a funded Nium wallet and a server-issued PKCE authorization code. US payouts from a Nium non-US entity are processed as International ACH Transactions (IAT). The exact BALMZ entity, customer type, source-of-funds flow, funding instruments and P2P/B2P use case require written Nium approval before implementing or enabling payout initiation.
+
+Do not collect bank passwords, bank OTPs or unverified account details in BALMZ. Do not enable a transfer action based only on API credentials; provider permission, KYC/KYB, verified beneficiaries, funded balance, idempotency, webhooks/status polling and ACH return/reversal handling are required.
+
+### Legacy Plaid routes
+
+The older Plaid account-history endpoints remain on the backend for compatibility with previously linked data, but the Android APT no longer ships Plaid Link, no longer calls those endpoints, and does not require Plaid credentials for the new Private Services flows. These legacy endpoints are not part of crypto purchase or US bank payout processing.
