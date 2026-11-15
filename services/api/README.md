@@ -81,3 +81,30 @@ Sepolia uses the same EVM public address as Ethereum for a given wallet. The API
 ## Development
 
 Use real chain responses for balances and transaction status. Never fabricate token balances, settlement confirmations, or market prices.
+
+
+## BALMZ APT BankConnect (US read-only account access)
+
+BankConnect uses the official Plaid API and Plaid Link Android SDK. The bank/customer completes authentication and any bank-required MFA/OTP inside the provider's secure Link flow. World Wallet AI never receives or stores bank login credentials or bank-issued OTPs.
+
+Backend-only Render environment variables:
+
+- `PLAID_CLIENT_ID` — Plaid client ID.
+- `PLAID_SECRET` — Plaid secret for the selected environment.
+- `PLAID_ENV` — `sandbox`, `development`, or `production`; defaults to `sandbox`.
+- `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing server-side encryption key used to encrypt Plaid access tokens at rest.
+
+Do not add Plaid credentials to Android build configuration, frontend variables, Git, or chat. BankConnect creates Link tokens on the backend, exchanges one-time public tokens on the backend, encrypts long-lived access tokens with AES-GCM, scopes records to the authenticated user's active wallet, and exposes only sanitized account and transaction data. Disconnect calls Plaid `/item/remove` before deleting the stored connection.
+
+Endpoints (all require the authenticated wallet-PIN session):
+
+- `GET /api/v1/bankconnect/status`
+- `POST /api/v1/bankconnect/link-token`
+- `POST /api/v1/bankconnect/exchange`
+- `GET /api/v1/bankconnect/accounts`
+- `GET /api/v1/bankconnect/transactions` (last 30 days)
+- `DELETE /api/v1/bankconnect/connections/{connection_id}`
+
+The Android package `com.balmz.aptido` must be registered in Plaid Dashboard under Build → API → Allowed Android package names. Register `com.balmz.aptido.debug` separately only if testing the debug build with real Plaid Link sessions.
+
+Start with Plaid Sandbox and test institutions. Live access to Chase and other real US banks requires a Plaid account with approved production access and the relevant product permissions; a successful APK build does not prove those external approvals. This release is read-only: it does not initiate transfers, payments, withdrawals, or account changes. Account balances may be delayed according to provider/bank refresh behavior.
