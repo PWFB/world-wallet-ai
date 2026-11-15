@@ -822,6 +822,23 @@ private fun AptidoApp(
         }
     }
 
+    suspend fun refreshBankEmailSettings() {
+        try {
+            val response = api.get("/api/v1/bankconnect/email/settings", pinToken)
+            bankOwnerEmail = response.optString("owner_email")
+            bankOtpEmail = response.optString("otp_email")
+            bankEmailVerified = response.optBoolean("verified", false)
+            bankEmailMessage = if (bankEmailVerified) {
+                "BALMZ code-delivery Gmail is verified. Bank-issued OTPs remain bank-controlled."
+            } else {
+                "Verify the BALMZ code-delivery Gmail before starting official bank authentication."
+            }
+        } catch (error: Exception) {
+            bankEmailVerified = false
+            bankEmailMessage = error.message ?: "BankConnect email settings could not be loaded."
+        }
+    }
+
     suspend fun refreshBankAccounts() {
         bankConnectBusy = true
         refreshBankEmailSettings()
