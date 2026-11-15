@@ -127,7 +127,6 @@ export default function MainnetReturnCenter({
         throw new Error("OKX is currently connected to " + MAINNET_LABELS[selected.network] + ". Switch to " + MAINNET_LABELS[network] + " in OKX and reconnect.");
       }
 
-      const discovered = [selected];
       persistDestinations(current => ({ ...current, [selected.network]: selected.address }));
       onEvmProviderConnected?.(provider, selected);
       setMessage(MAINNET_LABELS[network] + " receiving address read directly from OKX Wallet.");
