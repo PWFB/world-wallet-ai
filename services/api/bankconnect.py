@@ -11,6 +11,11 @@ import re
 import secrets
 import smtplib
 import hmac
+import time
+from urllib.parse import urlencode
+
+import jwt
+from cryptography.hazmat.primitives import serialization
 from email.message import EmailMessage
 from datetime import date, timedelta
 from typing import Callable
@@ -45,6 +50,59 @@ class BankEmailRequest(BaseModel):
 
 class BankEmailCodeRequest(BaseModel):
     code: str = Field(pattern=r"^[0-9]{6}$")
+
+
+
+class CoinbaseOnrampSessionRequest(BaseModel):
+    asset: str = Field(min_length=2, max_length=12)
+    network: str = Field(min_length=3, max_length=32)
+    address: str = Field(min_length=26, max_length=100)
+
+
+COINBASE_ONRAMP_ASSETS = {
+    ("BTC", "bitcoin"): ("bitcoin", "BTC"),
+    ("ETH", "ethereum"): ("ethereum", "ETH"),
+    ("USDC", "ethereum"): ("ethereum", "USDC"),
+    ("SOL", "solana_mainnet"): ("solana", "SOL"),
+}
+
+
+def _coinbase_onramp_jwt(api_key_name: str, api_key_secret: str) -> str:
+    """Create a short-lived CDP JWT for exactly one Coinbase Onramp token request."""
+    key_name = str(api_key_name or "").strip()
+    pem = str(api_key_secret or "").replace("\\n", "\n").strip()
+    if not key_name or not pem:
+        raise HTTPException(status_code=503, detail="Coinbase Onramp is not configured on the backend.")
+    try:
+        private_key = serialization.load_pem_private_key(pem.encode("utf-8"), password=None)
+        now = int(time.time())
+        claims = {
+            "sub": key_name,
+            "iss": "coinbase-cloud",
+            "nbf": now,
+            "exp": now + 120,
+            "uri": "POST api.developer.coinbase.com/onramp/v1/token",
+        }
+        return jwt.encode(
+            claims,
+            private_key,
+            algorithm="ES256",
+            headers={"kid": key_name, "nonce": secrets.token_hex(16)},
+        )
+    except Exception as exc:
+        logger.warning("Coinbase Onramp JWT creation failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Coinbase Onramp credentials are invalid. Check the CDP API key name and EC private-key secret.") from exc
+
+
+def _valid_onramp_destination(network: str, address: str) -> bool:
+    value = str(address or "").strip()
+    if network == "ethereum":
+        return bool(re.fullmatch(r"0x[a-fA-F0-9]{40}", value))
+    if network == "bitcoin":
+        return bool(re.fullmatch(r"(?:bc1[ac-hj-np-z02-9]{11,71}|[13][a-km-zA-HJ-NP-Z1-9]{25,34})", value))
+    if network == "solana_mainnet":
+        return bool(re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{32,44}", value))
+    return False
 
 
 def build_bankconnect_router(db_factory: Callable, current_user_dependency: Callable):
@@ -573,5 +631,122 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             conn.execute("DELETE FROM bankconnect_items WHERE id=%s AND owner_id=%s", (connection_id, str(user["id"])))
             conn.commit()
         return {"disconnected": True}
+
+
+    @router.get("/crypto/status")
+    def coinbase_onramp_status(user=Depends(current_user_dependency)):
+        key_name = os.getenv("COINBASE_CDP_API_KEY_NAME", "").strip()
+        key_secret = os.getenv("COINBASE_CDP_API_KEY_SECRET", "").strip()
+        environment = os.getenv("COINBASE_ONRAMP_ENV", "sandbox").strip().lower()
+        enabled = os.getenv("COINBASE_ONRAMP_ENABLED", "false").strip().lower() == "true"
+        return {
+            "provider": "Coinbase Onramp",
+            "configured": bool(key_name and key_secret),
+            "enabled": bool(enabled and key_name and key_secret and environment in {"sandbox", "production"}),
+            "environment": environment if environment in {"sandbox", "production"} else "unconfigured",
+            "supported_assets": ["BTC", "ETH", "USDC", "SOL"],
+            "requires_verified_wallet_address": True,
+            "bank_credentials_collected_by_balmz": False,
+        }
+
+    @router.post("/crypto/buy-session")
+    async def create_coinbase_onramp_session(
+        request: CoinbaseOnrampSessionRequest,
+        user=Depends(current_user_dependency),
+    ):
+        asset = str(request.asset or "").strip().upper()
+        network = str(request.network or "").strip().lower()
+        supported = COINBASE_ONRAMP_ASSETS.get((asset, network))
+        if not supported:
+            raise HTTPException(status_code=400, detail="This asset and network combination is not supported by the BALMZ crypto purchase flow.")
+        blockchain, default_asset = supported
+        address = str(request.address or "").strip()
+        if not _valid_onramp_destination(network, address):
+            raise HTTPException(status_code=400, detail="Enter a valid destination address for the selected mainnet.")
+        wallet_id = str(user.get("wallet_id") or "").strip()
+        owner_id = str(user.get("id") or "").strip()
+        if not wallet_id or not owner_id:
+            raise HTTPException(status_code=409, detail="Sign in and select an active BALMZ wallet before buying crypto.")
+
+        # A destination must belong to this account's active wallet and have a
+        # completed cryptographic ownership proof. Never trust a client-supplied
+        # address merely because its format is valid.
+        with db_factory() as conn:
+            owned = conn.execute("""
+                SELECT 1
+                FROM wallet_addresses wa
+                JOIN wallets w ON w.id=wa.wallet_id
+                WHERE w.id=%s AND w.owner_id=%s
+                  AND wa.network=%s AND wa.address=%s
+                  AND wa.ownership_verified=TRUE
+                LIMIT 1
+            """, (wallet_id, owner_id, network, address)).fetchone()
+        if not owned:
+            raise HTTPException(status_code=409, detail="Verify ownership of this address in the active BALMZ wallet before buying crypto.")
+
+        api_key_name = os.getenv("COINBASE_CDP_API_KEY_NAME", "").strip()
+        api_key_secret = os.getenv("COINBASE_CDP_API_KEY_SECRET", "").strip()
+        environment = os.getenv("COINBASE_ONRAMP_ENV", "sandbox").strip().lower()
+        enabled = os.getenv("COINBASE_ONRAMP_ENABLED", "false").strip().lower() == "true"
+        if environment not in {"sandbox", "production"}:
+            raise HTTPException(status_code=503, detail="COINBASE_ONRAMP_ENV must be sandbox or production.")
+        if not enabled or not api_key_name or not api_key_secret:
+            raise HTTPException(status_code=503, detail="Crypto purchases are not activated. Add the Coinbase CDP API credentials to Render and enable Coinbase Onramp after provider approval.")
+        bearer = _coinbase_onramp_jwt(api_key_name, api_key_secret)
+        payload = {
+            "addresses": [{"address": address, "blockchains": [blockchain]}],
+            "assets": [default_asset],
+        }
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=8.0)) as client:
+                response = await client.post(
+                    "https://api.developer.coinbase.com/onramp/v1/token",
+                    json=payload,
+                    headers={"Authorization": "Bearer " + bearer, "Content-Type": "application/json"},
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail="Coinbase Onramp timed out. Request a new purchase session.") from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail="Coinbase Onramp could not be reached. Try again later.") from exc
+        if not response.is_success:
+            logger.warning("Coinbase Onramp session request failed: status=%s asset=%s network=%s", response.status_code, asset, network)
+            if response.status_code in {401, 403}:
+                raise HTTPException(status_code=503, detail="Coinbase CDP credentials or Onramp access were rejected.")
+            raise HTTPException(status_code=502, detail="Coinbase could not create a purchase session. Try again later.")
+        try:
+            response_data = response.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail="Coinbase returned an invalid purchase-session response.") from exc
+        session_token = str(response_data.get("token") or "").strip()
+        if len(session_token) < 20:
+            raise HTTPException(status_code=502, detail="Coinbase did not return a usable one-time purchase session.")
+        checkout_base = "https://pay-sandbox.coinbase.com/buy/select-asset" if environment == "sandbox" else "https://pay.coinbase.com/buy/select-asset"
+        checkout_url = checkout_base + "?" + urlencode({"sessionToken": session_token, "defaultAsset": default_asset})
+        return {
+            "provider": "Coinbase Onramp",
+            "checkout_url": checkout_url,
+            "asset": asset,
+            "network": network,
+            "destination_address": address,
+            "session_expires_in_seconds": 300,
+            "single_use": True,
+            "message": "Continue in Coinbase's secure checkout. Payment methods and availability are determined by Coinbase for the user's verified region and account.",
+        }
+
+    @router.get("/transfers/status")
+    def us_bank_transfer_status(user=Depends(current_user_dependency)):
+        nium_configured = all(
+            os.getenv(name, "").strip()
+            for name in ("NIUM_CLIENT_HASH_ID", "NIUM_API_KEY", "NIUM_CLIENT_SECRET")
+        )
+        return {
+            "provider": "Nium",
+            "provider_credentials_configured": nium_configured,
+            "enabled": False,
+            "status": "provider_onboarding_required",
+            "rail": "US ACH / IAT payout",
+            "message": "US bank payouts remain disabled until Nium approves BALMZ's legal entity, customer type, source-of-funds model, customer KYC/KYB, funded USD wallet and ACH/IAT payout permissions.",
+            "bank_credentials_collected_by_balmz": False,
+        }
 
     return router
