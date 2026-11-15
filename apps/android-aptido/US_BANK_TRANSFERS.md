@@ -61,3 +61,16 @@ Nium credentials are issued per environment. API calls use the x-api-key header 
 ## Activation gate
 
 Do not enable the send action until the selected provider has confirmed in writing that it supports BALMZ's legal entity, US domestic ACH collection and payout, and the proposed sender-to-recipient funds flow. Store provider credentials only as backend environment variables; never in the Android app, browser bundle, or source control.
+
+
+## Crypto purchases (implemented separately from bank payouts)
+
+The hidden APT section also supports Coinbase Onramp session creation for BTC, ETH, USDC and SOL. It accepts only destinations that are attached to the signed-in user's active BALMZ wallet and marked `ownership_verified=TRUE`. The backend creates the short-lived CDP JWT, obtains a single-use Coinbase session token and returns a hosted checkout URL. No Plaid credentials or WalletConnect session are used by this flow. The user completes Coinbase identity/payment checks and must use a payment method Coinbase offers for their account and region.
+
+Required Render variables (backend only): `COINBASE_CDP_API_KEY_NAME`, `COINBASE_CDP_API_KEY_SECRET`, `COINBASE_ONRAMP_ENV=sandbox`, and `COINBASE_ONRAMP_ENABLED=false`. After credentials and provider access are verified, enable sandbox first; production must be a separate approval step.
+
+API routes: `GET /api/v1/bankconnect/crypto/status` and `POST /api/v1/bankconnect/crypto/buy-session`.
+
+## Current implementation boundary
+
+Coinbase purchase-session creation is implemented; it is not a proof that a payment settled or that crypto has arrived. Confirm the resulting on-chain transaction before showing a completed purchase. Nium USD bank payouts are still **disabled** because provider onboarding, KYC/KYB, the funded USD wallet, approved user/source-of-funds model and production ACH/IAT permissions are not available in this repository context. The APT deliberately shows an unavailable status instead of a false Send button.
