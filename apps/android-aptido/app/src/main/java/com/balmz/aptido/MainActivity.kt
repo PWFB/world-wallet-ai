@@ -125,6 +125,7 @@ class MainActivity : ComponentActivity() {
 private enum class AptidoStage { AUTH, PIN, APP }
 private data class ChatLine(val fromUser: Boolean, val text: String)
 private data class BankAccountLine(val connectionId: String, val institution: String, val name: String, val mask: String, val type: String, val subtype: String, val currency: String, val available: String, val current: String)
+private data class BankTransactionLine(val institution: String, val account: String, val date: String, val name: String, val amount: String, val currency: String, val pending: Boolean)
 private data class DownloadApp(val name: String, val category: String, val description: String, val url: String)
 private data class AssetLine(
     val symbol: String,
@@ -303,6 +304,7 @@ private fun AptidoApp(
     var externalWalletBridgeUrl by remember { mutableStateOf("") }
     var bankLinkToken by remember { mutableStateOf("") }
     var bankAccounts by remember { mutableStateOf<List<BankAccountLine>>(emptyList()) }
+    var bankTransactions by remember { mutableStateOf<List<BankTransactionLine>>(emptyList()) }
     var bankConnectMessage by remember { mutableStateOf("Connect a supported US bank to view accounts and live balances.") }
     var bankConnectBusy by remember { mutableStateOf(false) }
 
@@ -779,6 +781,20 @@ private fun AptidoApp(
                                     if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
                                 )
                             }
+                            val transactionResponse = api.get("/api/v1/bankconnect/transactions", pinToken)
+                            val transactionRows = transactionResponse.optJSONArray("transactions") ?: JSONArray()
+                            bankTransactions = (0 until transactionRows.length()).mapNotNull { index ->
+                                val item = transactionRows.optJSONObject(index) ?: return@mapNotNull null
+                                BankTransactionLine(
+                                    item.optString("institution_name"),
+                                    item.optString("account_name") + if (item.optString("account_mask").isNotBlank()) " •••• " + item.optString("account_mask") else "",
+                                    item.optString("date"),
+                                    item.optString("name"),
+                                    item.optString("amount", "Unavailable"),
+                                    item.optString("currency", "USD"),
+                                    item.optBoolean("pending", false)
+                                )
+                            }
                         } catch (error: Exception) {
                             bankConnectMessage = error.message ?: "The bank connection could not be saved."
                         } finally {
@@ -817,6 +833,20 @@ private fun AptidoApp(
                     item.optString("currency", "USD"),
                     if (item.isNull("available_balance")) "Unavailable" else item.optString("available_balance"),
                     if (item.isNull("current_balance")) "Unavailable" else item.optString("current_balance")
+                )
+            }
+            val transactionResponse = api.get("/api/v1/bankconnect/transactions", pinToken)
+            val transactionRows = transactionResponse.optJSONArray("transactions") ?: JSONArray()
+            bankTransactions = (0 until transactionRows.length()).mapNotNull { index ->
+                val item = transactionRows.optJSONObject(index) ?: return@mapNotNull null
+                BankTransactionLine(
+                    item.optString("institution_name"),
+                    item.optString("account_name") + if (item.optString("account_mask").isNotBlank()) " •••• " + item.optString("account_mask") else "",
+                    item.optString("date"),
+                    item.optString("name"),
+                    item.optString("amount", "Unavailable"),
+                    item.optString("currency", "USD"),
+                    item.optBoolean("pending", false)
                 )
             }
             bankConnectMessage = if (bankAccounts.isEmpty()) "No bank accounts are connected to this wallet yet." else "Bank accounts refreshed from the provider."
@@ -1132,6 +1162,7 @@ private fun AptidoApp(
                 scope.launch { refreshVerifiedBalances() }
             },
             bankAccounts = bankAccounts,
+            bankTransactions = bankTransactions,
             bankConnectMessage = bankConnectMessage,
             bankConnectBusy = bankConnectBusy,
             bankLinkToken = bankLinkToken,
@@ -1393,6 +1424,7 @@ private fun AppHome(
     onCreateWalletProfile: (String) -> Unit,
     onSwitchWalletProfile: (String) -> Unit,
     bankAccounts: List<BankAccountLine>,
+    bankTransactions: List<BankTransactionLine>,
     bankConnectMessage: String,
     bankConnectBusy: Boolean,
     bankLinkToken: String,
@@ -1473,6 +1505,7 @@ private fun AppHome(
             )
             "BankConnect" -> BankConnectPanel(
                 accounts = bankAccounts,
+                transactions = bankTransactions,
                 message = bankConnectMessage,
                 busy = bankConnectBusy,
                 linkToken = bankLinkToken,
@@ -1540,6 +1573,7 @@ private fun AppHome(
 @Composable
 private fun BankConnectPanel(
     accounts: List<BankAccountLine>,
+    transactions: List<BankTransactionLine>,
     message: String,
     busy: Boolean,
     linkToken: String,
@@ -1616,7 +1650,26 @@ private fun BankConnectPanel(
                 }
             }
         }
-        Text("Balances are provided by the bank-data provider and may be delayed. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
+        Text("Recent transactions · Last 30 days", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        if (transactions.isEmpty()) {
+            InfoCard("No recent transactions were returned by the provider.")
+        } else {
+            transactions.forEach { transaction ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().background(Panel, RoundedCornerShape(12.dp)).padding(12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text(transaction.name, color = Paper, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text(transaction.institution + " · " + transaction.account, color = Muted, fontSize = 9.sp)
+                        Text(transaction.date + if (transaction.pending) " · Pending" else "", color = Muted, fontSize = 9.sp)
+                    }
+                    Text(transaction.amount + " " + transaction.currency, color = Paper, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+        Text("Balances and transactions are provided by the bank-data provider and may be delayed. No transfers or withdrawals are enabled in this feature.", color = Muted, fontSize = 10.sp)
     }
 }
 
