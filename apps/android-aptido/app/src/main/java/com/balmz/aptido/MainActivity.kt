@@ -1732,10 +1732,10 @@ private fun BankConnectPanel(
                 onRequestEmailCode(ownerEmailInput.trim(), otpEmailInput.trim())
                 emailCodeSent = true
             },
-            enabled = !emailBusy && ownerEmailInput.contains("@") && otpEmailInput.contains("@"),
+            enabled = !emailBusy && !emailFieldsMatchVerified && ownerEmailInput.contains("@") && otpEmailInput.contains("@"),
             modifier = Modifier.fillMaxWidth(),
             colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
-        ) { Text(if (emailCodeSent) "Resend BALMZ code" else "Send one-time code to new Gmail") }
+        ) { Text(if (emailVerified && !emailFieldsMatchVerified) "Verify new code-delivery Gmail" else if (emailCodeSent) "Resend BALMZ code" else "Send one-time code to new Gmail") }
         if (!emailVerified) {
             OutlinedTextField(
                 value = emailCodeInput,
