@@ -45,6 +45,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,15 +84,24 @@ private val Green = Color(0xFF68D5A0)
 private val Red = Color(0xFFFF8585)
 
 class MainActivity : ComponentActivity() {
+    private val walletCallback = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        walletCallback.value = intent?.data
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize(), color = Ink) {
-                    AptidoApp()
+                    AptidoApp(walletCallback)
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        walletCallback.value = intent.data
     }
 }
 
@@ -235,7 +245,7 @@ private class SecureSessionStore(context: android.content.Context) {
 }
 
 @Composable
-private fun AptidoApp() {
+private fun AptidoApp(walletCallback: MutableState<Uri?>) {
     val context = LocalContext.current
     val api = remember { AptidoApi() }
     val store = remember { SecureSessionStore(context) }
@@ -261,12 +271,213 @@ private fun AptidoApp() {
     var pendingRecoveryPhrase by remember { mutableStateOf("") }
     var pendingRecoveryWalletId by remember { mutableStateOf("") }
     var pendingRecoveryAddresses by remember { mutableStateOf<List<SelfCustodyAddress>>(emptyList()) }
+    var externalWalletAccounts by remember { mutableStateOf<List<ExternalWalletAccount>>(emptyList()) }
+    var externalWalletProofs by remember { mutableStateOf<List<PendingExternalWalletProof>>(emptyList()) }
+    var externalWalletNotice by remember { mutableStateOf("") }
+    var externalWalletBridgeUrl by remember { mutableStateOf("") }
 
     fun persistConversation() {
         if (activeEmail.isBlank()) return
         val rows = JSONArray()
         chat.forEach { rows.put(JSONObject().put("from_user", it.fromUser).put("text", it.text)) }
         store.put("chat_" + activeEmail.lowercase(), rows.toString())
+    }
+
+    fun loadExternalWalletAccounts(walletId: String): List<ExternalWalletAccount> {
+        if (walletId.isBlank()) return emptyList()
+        val raw = store.get("external_wallet_accounts_" + walletId)
+        if (raw.isBlank()) return emptyList()
+        return try {
+            val rows = JSONArray(raw)
+            (0 until rows.length()).mapNotNull { index ->
+                rows.optJSONObject(index)?.let(ExternalWalletAccount::fromJson)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveExternalWalletAccounts(walletId: String, accounts: List<ExternalWalletAccount>) {
+        if (walletId.isBlank()) return
+        val rows = JSONArray()
+        accounts.forEach { rows.put(it.toJson()) }
+        store.put("external_wallet_accounts_" + walletId, rows.toString())
+    }
+
+    fun loadExternalWalletProofs(walletId: String): List<PendingExternalWalletProof> {
+        if (walletId.isBlank()) return emptyList()
+        val raw = store.get("external_wallet_proofs_" + walletId)
+        if (raw.isBlank()) return emptyList()
+        return try {
+            val rows = JSONArray(raw)
+            (0 until rows.length()).mapNotNull { index ->
+                rows.optJSONObject(index)?.let(PendingExternalWalletProof::fromJson)
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveExternalWalletProofs(walletId: String, proofs: List<PendingExternalWalletProof>) {
+        if (walletId.isBlank()) return
+        val rows = JSONArray()
+        proofs.forEach { rows.put(it.toJson()) }
+        store.put("external_wallet_proofs_" + walletId, rows.toString())
+        externalWalletProofs = proofs
+    }
+
+    fun copyExternalBridgeUrl() {
+        val value = externalWalletBridgeUrl
+        if (value.isBlank()) {
+            externalWalletNotice = "Create a Binance connection or proof link first."
+            return
+        }
+        val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager
+        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("BALMZ AI APT wallet link", value))
+        externalWalletNotice = "Link copied. Open Binance Web3 Wallet → DApp Browser and paste it there. The bridge endpoint must be deployed before the link can load."
+    }
+
+    fun startBinanceConnect() {
+        val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
+        if (activeId.isBlank()) {
+            externalWalletNotice = "Create or select a wallet profile before linking Binance."
+            return
+        }
+        val nonce = BinanceWalletBridge.newNonce()
+        store.put(
+            "aptido_external_pending_connect",
+            JSONObject().put("nonce", nonce).put("wallet_id", activeId).toString()
+        )
+        externalWalletBridgeUrl = BinanceWalletBridge.connectUrl(nonce)
+        externalWalletNotice = "Connection link prepared. Copy it, then open it inside Binance Web3 Wallet → DApp Browser. Do not open it in ordinary Chrome."
+    }
+
+    fun startBinanceOwnershipProof(proof: PendingExternalWalletProof) {
+        val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
+        if (activeId.isBlank() || activeId != proof.walletId) {
+            externalWalletNotice = "Switch back to the wallet profile that owns this address before signing."
+            return
+        }
+        try {
+            val nonce = BinanceWalletBridge.newNonce()
+            store.put(
+                "aptido_external_pending_verify",
+                proof.toJson().put("nonce", nonce).toString()
+            )
+            externalWalletBridgeUrl = BinanceWalletBridge.verifyUrl(
+                nonce, proof.chainId, proof.address, proof.challengeId, proof.message
+            )
+            externalWalletNotice = "Ownership proof link prepared for ${proof.network}. Copy it and open it inside Binance Web3 Wallet → DApp Browser. Review the exact message before approving the signature."
+        } catch (error: Exception) {
+            externalWalletNotice = error.message ?: "Could not prepare the ownership proof link."
+        }
+    }
+
+    suspend fun handleExternalWalletCallback(uri: Uri) {
+        val callback = BinanceWalletBridge.parseCallback(uri)
+        when (callback.mode) {
+            "connected" -> {
+                val rawPending = store.get("aptido_external_pending_connect")
+                require(rawPending.isNotBlank()) { "No Binance connection request is waiting for a return." }
+                val pending = JSONObject(rawPending)
+                require(pending.optString("nonce").equals(callback.nonce, ignoreCase = true)) {
+                    "This Binance connection link is expired or has already been used."
+                }
+                val walletId = pending.optString("wallet_id")
+                val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
+                require(walletId.isNotBlank() && walletId == activeId) {
+                    "The active wallet changed while Binance was open. Start the connection again."
+                }
+                store.put("aptido_external_pending_connect", "")
+                val network = BinanceWalletBridge.networkFor(callback.chainId)
+                api.post(
+                    "/api/v1/wallets/" + walletId + "/addresses",
+                    JSONObject()
+                        .put("network", network)
+                        .put("address", callback.address)
+                        .put("label", "Binance Web3 Wallet"),
+                    pinToken
+                )
+                val current = loadExternalWalletAccounts(walletId)
+                val account = ExternalWalletAccount(
+                    provider = "binance",
+                    namespace = "eip155",
+                    chainId = callback.chainId,
+                    network = network,
+                    address = callback.address,
+                    connectedAt = System.currentTimeMillis(),
+                    ownershipVerified = false
+                )
+                val updated = current.filterNot {
+                    it.provider == account.provider && it.namespace == account.namespace &&
+                        it.chainId == account.chainId && it.address.equals(account.address, ignoreCase = true)
+                } + account
+                saveExternalWalletAccounts(walletId, updated)
+                externalWalletAccounts = updated
+                try {
+                    val challenge = api.post(
+                        "/api/v1/wallets/" + walletId + "/addresses/challenge",
+                        JSONObject().put("network", network).put("address", callback.address),
+                        pinToken
+                    )
+                    val proof = PendingExternalWalletProof(
+                        walletId = walletId,
+                        network = network,
+                        chainId = callback.chainId,
+                        address = callback.address,
+                        challengeId = challenge.optString("challenge_id"),
+                        message = challenge.optString("message")
+                    )
+                    require(proof.challengeId.isNotBlank() && proof.message.isNotBlank()) {
+                        "The backend did not return a complete ownership challenge."
+                    }
+                    val proofs = loadExternalWalletProofs(walletId)
+                        .filterNot { it.network == network && it.address.equals(callback.address, ignoreCase = true) } + proof
+                    saveExternalWalletProofs(walletId, proofs)
+                    externalWalletNotice = "Binance ${network} address attached. Ownership is not verified yet; sign the backend challenge to complete linking."
+                } catch (error: Exception) {
+                    externalWalletNotice = "Binance address attached but ownership challenge could not be prepared: ${error.message ?: "service error"}. Refresh and reconnect to request a new proof."
+                }
+                refreshWalletDirectory(pinToken)
+            }
+            "verified" -> {
+                val rawPending = store.get("aptido_external_pending_verify")
+                require(rawPending.isNotBlank()) { "No Binance ownership proof is waiting for a return." }
+                val pending = JSONObject(rawPending)
+                require(pending.optString("nonce").equals(callback.nonce, ignoreCase = true)) {
+                    "This ownership proof link is expired or has already been used."
+                }
+                val proof = PendingExternalWalletProof.fromJson(pending)
+                    ?: throw IllegalStateException("The saved ownership challenge is incomplete.")
+                require(callback.challengeId == proof.challengeId &&
+                    callback.chainId == proof.chainId &&
+                    callback.address.equals(proof.address, ignoreCase = true)
+                ) { "The returned signature does not match the pending address, network or challenge." }
+                val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
+                require(activeId == proof.walletId) { "The active wallet changed. Select the correct wallet and retry." }
+                store.put("aptido_external_pending_verify", "")
+                api.post(
+                    "/api/v1/wallets/" + proof.walletId + "/addresses/verify",
+                    JSONObject().put("challenge_id", proof.challengeId).put("signature", callback.signature),
+                    pinToken
+                )
+                val verifiedAccounts = loadExternalWalletAccounts(proof.walletId).map { item ->
+                    if (item.provider == "binance" && item.chainId == proof.chainId &&
+                        item.address.equals(proof.address, ignoreCase = true)
+                    ) item.copy(ownershipVerified = true) else item
+                }
+                saveExternalWalletAccounts(proof.walletId, verifiedAccounts)
+                externalWalletAccounts = verifiedAccounts
+                val remaining = loadExternalWalletProofs(proof.walletId).filterNot {
+                    it.challengeId == proof.challengeId
+                }
+                saveExternalWalletProofs(proof.walletId, remaining)
+                externalWalletNotice = "Binance ${proof.network} address ownership is verified by World Wallet AI."
+                refreshWalletDirectory(pinToken)
+            }
+            else -> throw IllegalStateException("Unsupported Binance callback.")
+        }
     }
 
     suspend fun checkPinStatus(identityToken: String) {
@@ -296,6 +507,8 @@ private fun AptidoApp() {
             }
             val activeId = result.optString("active_wallet_id")
                 .ifBlank { wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty() }
+            externalWalletAccounts = loadExternalWalletAccounts(activeId)
+            externalWalletProofs = loadExternalWalletProofs(activeId)
             if (activeId.isBlank()) {
                 walletAddresses = emptyList()
                 walletDirectoryMessage = "No active wallet profile is available."
@@ -480,6 +693,19 @@ private fun AptidoApp() {
         if (session.isBlank()) throw IllegalStateException("The server did not create a wallet session.")
         refreshWallet(session)
         refreshVerifiedBalances()
+    }
+
+    LaunchedEffect(walletCallback.value, pinToken, stage) {
+        val returnedUri = walletCallback.value
+        if (returnedUri != null && pinToken.isNotBlank() && stage == AptidoStage.APP) {
+            walletCallback.value = null
+            try {
+                handleExternalWalletCallback(returnedUri)
+            } catch (error: Exception) {
+                externalWalletNotice = error.message ?: "The Binance wallet return could not be processed."
+                walletDirectoryMessage = externalWalletNotice
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -758,6 +984,13 @@ private fun AptidoApp() {
                     }
                 }
             },
+            externalWalletAccounts = externalWalletAccounts,
+            externalWalletProofs = externalWalletProofs,
+            externalWalletNotice = externalWalletNotice,
+            externalWalletBridgeUrl = externalWalletBridgeUrl,
+            onStartBinanceConnect = { startBinanceConnect() },
+            onCopyExternalBridgeUrl = { copyExternalBridgeUrl() },
+            onStartBinanceOwnershipProof = { proof -> startBinanceOwnershipProof(proof) },
             verifiedAssets = verifiedAssets,
             balanceMessage = balanceMessage,
             balanceBusy = balanceBusy,
@@ -806,6 +1039,8 @@ private fun AptidoApp() {
                         // Local credentials are still cleared even when offline.
                     }
                     store.clearSession()
+                    store.put("aptido_external_pending_connect", "")
+                    store.put("aptido_external_pending_verify", "")
                     authToken = ""
                     pinToken = ""
                     wallet = JSONObject()
@@ -995,6 +1230,13 @@ private fun AppHome(
     onCreateWalletProfile: (String) -> Unit,
     onSwitchWalletProfile: (String) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
+    externalWalletAccounts: List<ExternalWalletAccount>,
+    externalWalletProofs: List<PendingExternalWalletProof>,
+    externalWalletNotice: String,
+    externalWalletBridgeUrl: String,
+    onStartBinanceConnect: () -> Unit,
+    onCopyExternalBridgeUrl: () -> Unit,
+    onStartBinanceOwnershipProof: (PendingExternalWalletProof) -> Unit,
     verifiedAssets: List<AssetLine>,
     balanceMessage: String,
     balanceBusy: Boolean,
@@ -1048,6 +1290,13 @@ private fun AppHome(
                 onCreateWalletProfile = onCreateWalletProfile,
                 onSwitchWalletProfile = onSwitchWalletProfile,
                 onAttachPublicAddress = onAttachPublicAddress,
+                externalWalletAccounts = externalWalletAccounts,
+                externalWalletProofs = externalWalletProofs,
+                externalWalletNotice = externalWalletNotice,
+                externalWalletBridgeUrl = externalWalletBridgeUrl,
+                onStartBinanceConnect = onStartBinanceConnect,
+                onCopyExternalBridgeUrl = onCopyExternalBridgeUrl,
+                onStartBinanceOwnershipProof = onStartBinanceOwnershipProof,
                 onShowRecoveryPhrase = onShowWalletRecoveryPhrase,
                 onRestoreWallet = onRestoreWallet
             )
@@ -1116,6 +1365,13 @@ private fun WalletsPanel(
     onCreateWalletProfile: (String) -> Unit,
     onSwitchWalletProfile: (String) -> Unit,
     onAttachPublicAddress: (List<String>, String) -> Unit,
+    externalWalletAccounts: List<ExternalWalletAccount>,
+    externalWalletProofs: List<PendingExternalWalletProof>,
+    externalWalletNotice: String,
+    externalWalletBridgeUrl: String,
+    onStartBinanceConnect: () -> Unit,
+    onCopyExternalBridgeUrl: () -> Unit,
+    onStartBinanceOwnershipProof: (PendingExternalWalletProof) -> Unit,
     onShowRecoveryPhrase: (String) -> Unit,
     onRestoreWallet: (String, String) -> Unit
 ) {
@@ -1274,6 +1530,82 @@ private fun WalletsPanel(
                 }
             }
         }
+
+        Divider(color = PanelLight)
+        Text("External wallet connections", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Connect Binance EVM from its own Web3 Wallet DApp Browser. The bridge returns only the public account; World Wallet AI verifies ownership with a separate message signature.",
+            color = Muted,
+            fontSize = 11.sp
+        )
+        Button(
+            onClick = onStartBinanceConnect,
+            enabled = wallets.any { it.active } && !busy,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+        ) { Text("Connect Binance Web3 Wallet", fontWeight = FontWeight.Bold) }
+        if (externalWalletBridgeUrl.isNotBlank()) {
+            OutlinedTextField(
+                value = externalWalletBridgeUrl,
+                onValueChange = {},
+                modifier = Modifier.fillMaxWidth(),
+                readOnly = true,
+                minLines = 2,
+                maxLines = 3,
+                label = { Text("One-time Binance bridge link") },
+                colors = fieldColors()
+            )
+            Button(
+                onClick = onCopyExternalBridgeUrl,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = PanelLight, contentColor = Paper)
+            ) { Text("Copy bridge link") }
+        }
+        if (externalWalletNotice.isNotBlank()) InfoCard(externalWalletNotice)
+        if (externalWalletAccounts.isNotEmpty()) {
+            externalWalletAccounts.forEach { account ->
+                Column(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(Panel, RoundedCornerShape(14.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text("Binance Web3 Wallet · ${account.network}", color = Paper, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Text(account.address, color = Muted, fontSize = 11.sp)
+                    Text(
+                        if (account.ownershipVerified) "Ownership verified" else "Connected · ownership proof required",
+                        color = if (account.ownershipVerified) Green else Orange,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+        if (externalWalletProofs.isNotEmpty()) {
+            Text("Pending ownership proofs", color = Paper, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            externalWalletProofs.forEach { proof ->
+                Row(
+                    modifier = Modifier.fillMaxWidth()
+                        .background(Panel, RoundedCornerShape(12.dp))
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(proof.network.uppercase(), color = Paper, fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                        Text(proof.address, color = Muted, fontSize = 10.sp)
+                    }
+                    Button(
+                        onClick = { onStartBinanceOwnershipProof(proof) },
+                        colors = ButtonDefaults.buttonColors(containerColor = Orange, contentColor = Ink)
+                    ) { Text("Sign proof", fontSize = 10.sp) }
+                }
+            }
+        }
+        Text(
+            "The bridge endpoint is part of this PR and becomes available after the World Wallet AI API branch is deployed. Until then, connection links will not load on the live service.",
+            color = Muted,
+            fontSize = 10.sp
+        )
 
         Text("Attach an existing public address", color = Paper, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text(
