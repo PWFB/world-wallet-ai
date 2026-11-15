@@ -25,6 +25,11 @@ A bank-to-bank ACH flow is not a simple direct credential exchange. Depending on
 
 Moov's published prohibited-business policy, updated October 29, 2026, lists businesses headquartered or primarily operating outside the United States as prohibited. Therefore, Moov must not be activated if BALMZ's contracting entity is headquartered/primarily operated in Nigeria or another non-US country. See: https://moov.io/legal/platform-agreement/prohibited-restricted-businesses/
 
+Nium is a more relevant candidate to evaluate for US payouts from a non-US program: its documentation lists USD ACH payouts to all US ABA-network banks and says payouts from clients onboarded with a Nium non-US entity are processed as IAT. Its US direct-debit documentation, however, limits that funding flow to Nium clients in the United States and business customers. Therefore Nium's payout capability does not by itself prove that BALMZ can debit a consumer's existing US bank account from a Nigeria-based platform. Confirm the exact sender type, funds source, customer geography, and P2P/B2P use case with Nium before selecting it. See:
+- https://docs.nium.com/docs/payouts/country-and-regional-guides/usd-payments-to-the-united-states-ach
+- https://docs.nium.com/docs/payins/direct-debit/direct-debit-us
+- https://info.nium.com/country/united-states
+
 Wise Platform offers partner and enterprise APIs, but those require a separate Wise relationship. Wise's standard business-account API documentation also limits API-funded transfers to selected business-account countries, and Wise's help documentation lists Nigeria among locations that cannot receive USD account details. These distinctions mean Wise should not be assumed to provide this exact US bank-to-US bank product for a Nigeria-based entity. See:
 - https://docs.wise.com/guides/product/send-money/use-cases/payouts-smbs
 - https://docs.wise.com/guides/product/partner/business-account-support
