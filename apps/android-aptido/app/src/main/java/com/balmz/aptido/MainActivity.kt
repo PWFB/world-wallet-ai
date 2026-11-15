@@ -347,7 +347,7 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
         val nonce = BinanceWalletBridge.newNonce()
         store.put(
             "aptido_external_pending_connect",
-            JSONObject().put("nonce", nonce).put("wallet_id", activeId).toString()
+            JSONObject().put("nonce", nonce).put("wallet_id", activeId).put("created_at", System.currentTimeMillis()).toString()
         )
         externalWalletBridgeUrl = BinanceWalletBridge.connectUrl(nonce)
         externalWalletNotice = "Connection link prepared. Copy it, then open it inside Binance Web3 Wallet → DApp Browser. Do not open it in ordinary Chrome."
@@ -363,7 +363,7 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
             val nonce = BinanceWalletBridge.newNonce()
             store.put(
                 "aptido_external_pending_verify",
-                proof.toJson().put("nonce", nonce).toString()
+                proof.toJson().put("nonce", nonce).put("created_at", System.currentTimeMillis()).toString()
             )
             externalWalletBridgeUrl = BinanceWalletBridge.verifyUrl(
                 nonce, proof.chainId, proof.address, proof.challengeId, proof.message
@@ -443,6 +443,10 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                 require(pending.optString("nonce").equals(callback.nonce, ignoreCase = true)) {
                     "This Binance connection link is expired or has already been used."
                 }
+                require(BinanceWalletBridge.isFreshRequest(pending.optLong("created_at"))) {
+                    store.put("aptido_external_pending_connect", "")
+                    "This Binance connection request has expired. Start a new connection."
+                }
                 val walletId = pending.optString("wallet_id")
                 val activeId = wallet.optJSONObject("wallet")?.optString("wallet_id").orEmpty()
                 require(walletId.isNotBlank() && walletId == activeId) {
@@ -506,6 +510,10 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                 val pending = JSONObject(rawPending)
                 require(pending.optString("nonce").equals(callback.nonce, ignoreCase = true)) {
                     "This ownership proof link is expired or has already been used."
+                }
+                require(BinanceWalletBridge.isFreshRequest(pending.optLong("created_at"))) {
+                    store.put("aptido_external_pending_verify", "")
+                    "This ownership proof request has expired. Request a new proof."
                 }
                 val proof = PendingExternalWalletProof.fromJson(pending)
                     ?: throw IllegalStateException("The saved ownership challenge is incomplete.")
