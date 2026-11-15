@@ -8,6 +8,7 @@ import hmac
 import smtplib
 from email.message import EmailMessage
 import re
+from pathlib import Path
 import secrets
 import time
 from datetime import datetime, timezone, timedelta
@@ -18,7 +19,7 @@ from anyio import to_thread
 
 import psycopg
 from fastapi import Depends, FastAPI, Header, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
@@ -41,6 +42,24 @@ except ModuleNotFoundError:
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="World Wallet AI API", version="1.0.0")
+
+APTIDO_WALLET_BRIDGE_HTML = Path(__file__).resolve().parent / "static" / "aptido-wallet-bridge.html"
+
+
+@app.get("/api/v1/public/aptido-wallet-bridge", response_class=HTMLResponse)
+def aptido_wallet_bridge():
+    """Serve the isolated, no-credentials Binance EVM account-linking bridge."""
+    if not APTIDO_WALLET_BRIDGE_HTML.is_file():
+        raise HTTPException(status_code=503, detail="The wallet connection bridge is not installed")
+    return HTMLResponse(
+        content=APTIDO_WALLET_BRIDGE_HTML.read_text(encoding="utf-8"),
+        headers={
+            "Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
