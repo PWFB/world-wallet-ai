@@ -454,14 +454,27 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                 }
                 store.put("aptido_external_pending_connect", "")
                 val network = BinanceWalletBridge.networkFor(callback.chainId)
-                api.post(
-                    "/api/v1/wallets/" + walletId + "/addresses",
-                    JSONObject()
-                        .put("network", network)
-                        .put("address", callback.address)
-                        .put("label", "Binance Web3 Wallet"),
-                    pinToken
-                )
+                // Keep an existing backend label and verification state if this address
+                // was already attached through another provider or a self-custody wallet.
+                val attachedResult = api.get("/api/v1/wallets/" + walletId + "/addresses", pinToken)
+                val attachedRows = attachedResult.optJSONArray("addresses") ?: JSONArray()
+                val existingAddress = (0 until attachedRows.length())
+                    .mapNotNull { attachedRows.optJSONObject(it) }
+                    .firstOrNull {
+                        it.optString("network") == network &&
+                            it.optString("address").equals(callback.address, ignoreCase = true)
+                    }
+                val addressAlreadyVerified = existingAddress?.optBoolean("ownership_verified", false) ?: false
+                if (existingAddress == null) {
+                    api.post(
+                        "/api/v1/wallets/" + walletId + "/addresses",
+                        JSONObject()
+                            .put("network", network)
+                            .put("address", callback.address)
+                            .put("label", "Binance Web3 Wallet"),
+                        pinToken
+                    )
+                }
                 val current = loadExternalWalletAccounts(walletId)
                 val account = ExternalWalletAccount(
                     provider = "binance",
@@ -470,7 +483,7 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                     network = network,
                     address = callback.address,
                     connectedAt = System.currentTimeMillis(),
-                    ownershipVerified = false
+                    ownershipVerified = addressAlreadyVerified
                 )
                 val updated = current.filterNot {
                     it.provider == account.provider && it.namespace == account.namespace &&
@@ -478,29 +491,33 @@ private fun AptidoApp(walletCallback: MutableState<Uri?>) {
                 } + account
                 saveExternalWalletAccounts(walletId, updated)
                 externalWalletAccounts = updated
-                try {
-                    val challenge = api.post(
-                        "/api/v1/wallets/" + walletId + "/addresses/challenge",
-                        JSONObject().put("network", network).put("address", callback.address),
-                        pinToken
-                    )
-                    val proof = PendingExternalWalletProof(
-                        walletId = walletId,
-                        network = network,
-                        chainId = callback.chainId,
-                        address = callback.address,
-                        challengeId = challenge.optString("challenge_id"),
-                        message = challenge.optString("message")
-                    )
-                    require(proof.challengeId.isNotBlank() && proof.message.isNotBlank()) {
-                        "The backend did not return a complete ownership challenge."
+                if (addressAlreadyVerified) {
+                    externalWalletNotice = "Binance ${network} address is already ownership-verified by World Wallet AI."
+                } else {
+                    try {
+                        val challenge = api.post(
+                            "/api/v1/wallets/" + walletId + "/addresses/challenge",
+                            JSONObject().put("network", network).put("address", callback.address),
+                            pinToken
+                        )
+                        val proof = PendingExternalWalletProof(
+                            walletId = walletId,
+                            network = network,
+                            chainId = callback.chainId,
+                            address = callback.address,
+                            challengeId = challenge.optString("challenge_id"),
+                            message = challenge.optString("message")
+                        )
+                        require(proof.challengeId.isNotBlank() && proof.message.isNotBlank()) {
+                            "The backend did not return a complete ownership challenge."
+                        }
+                        val proofs = loadExternalWalletProofs(walletId)
+                            .filterNot { it.network == network && it.address.equals(callback.address, ignoreCase = true) } + proof
+                        saveExternalWalletProofs(walletId, proofs)
+                        externalWalletNotice = "Binance ${network} address attached. Ownership is not verified yet; sign the backend challenge to complete linking."
+                    } catch (error: Exception) {
+                        externalWalletNotice = "Binance address attached but ownership challenge could not be prepared: ${error.message ?: "service error"}. Refresh and reconnect to request a new proof."
                     }
-                    val proofs = loadExternalWalletProofs(walletId)
-                        .filterNot { it.network == network && it.address.equals(callback.address, ignoreCase = true) } + proof
-                    saveExternalWalletProofs(walletId, proofs)
-                    externalWalletNotice = "Binance ${network} address attached. Ownership is not verified yet; sign the backend challenge to complete linking."
-                } catch (error: Exception) {
-                    externalWalletNotice = "Binance address attached but ownership challenge could not be prepared: ${error.message ?: "service error"}. Refresh and reconnect to request a new proof."
                 }
                 refreshWalletDirectory(pinToken)
             }
