@@ -764,7 +764,6 @@ private fun AptidoApp(
                         try {
                             val saved = api.post("/api/v1/bankconnect/exchange", JSONObject().put("public_token", publicToken), pinToken)
                             bankConnectMessage = saved.optString("message", "Bank connected securely.")
-                            bankLinkToken = ""
                             val response = api.get("/api/v1/bankconnect/accounts", pinToken)
                             val rows = response.optJSONArray("accounts") ?: JSONArray()
                             bankAccounts = (0 until rows.length()).mapNotNull { index ->
@@ -798,6 +797,7 @@ private fun AptidoApp(
                         } catch (error: Exception) {
                             bankConnectMessage = error.message ?: "The bank connection could not be saved."
                         } finally {
+                            bankLinkToken = ""
                             bankConnectBusy = false
                             onClearBankLinkResult()
                         }
@@ -1586,6 +1586,7 @@ private fun BankConnectPanel(
     val context = LocalContext.current
     var session by remember { mutableStateOf<PlaidSession?>(null) }
     var sessionReady by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { onRefresh() }
     LaunchedEffect(linkToken) {
         session = null
         sessionReady = false
