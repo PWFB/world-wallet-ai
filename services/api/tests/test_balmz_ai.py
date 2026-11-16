@@ -250,7 +250,7 @@ class BalmzAIGeminiProxyTests(unittest.IsolatedAsyncioTestCase):
                 "Bearer " + token,
             )
         self.assertEqual(result["provider"], "google")
-        self.assertEqual(result["model"], "gemini-test-model")
+        self.assertEqual(result["model"], "gemini-3.5-flash-lite")
         self.assertEqual(result["reply"], "Evidence-based answer.")
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(client.calls[0]["headers"], {"x-goog-api-key": "backend-only-test-key"})
