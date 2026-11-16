@@ -8682,7 +8682,6 @@ async def _ask_standalone_balmz_ai(question: str, user: dict, context: dict, his
             model_response = await client.get(
                 BALMZ_AI_SERVICE_URL + "/api/ai/models",
                 headers=headers,
-                cache="no-store",
             )
             if not model_response.is_success:
                 payload = model_response.json() if "application/json" in model_response.headers.get("content-type", "") else {}
