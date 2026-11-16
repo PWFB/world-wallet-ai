@@ -73,6 +73,8 @@ GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID", "")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 GEMINI_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_GEMINI_ADMIN_EMAIL") or os.getenv("WORLD_WALLET_GITHUB_ADMIN_EMAIL") or "").strip().lower()
 GEMINI_MODEL = os.getenv("WORLD_WALLET_GEMINI_MODEL", "gemini-3.8-flash").strip()
+# BALMZ AI chat uses a separate low-latency model setting; wallet/other Gemini features keep their configured model.
+BALMZ_AI_GEMINI_MODEL = os.getenv("WORLD_WALLET_BALMZ_AI_GEMINI_MODEL", "gemini-3.5-flash-lite").strip()
 BALMZ_AI_SERVICE_URL = os.getenv("BALMZ_AI_SERVICE_URL", "").strip().rstrip("/")
 BALMZ_AI_INTEGRATION_SECRET = os.getenv("WORLD_WALLET_AI_INTEGRATION_SECRET", "").strip()
 COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
@@ -8673,7 +8675,7 @@ def balmz_ai_gemini_proxy_status(authorization: str = Header(default="")):
     return {
         "configured": bool(GEMINI_API_KEY),
         "provider": "Google Gemini",
-        "model": GEMINI_MODEL,
+        "model": BALMZ_AI_GEMINI_MODEL,
     }
 
 
@@ -8736,7 +8738,7 @@ async def balmz_ai_gemini_proxy_chat(payload: dict, authorization: str = Header(
     if not contents or contents[-1]["role"] != "user":
         raise HTTPException(status_code=400, detail="The latest chat message must be from the user.")
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{BALMZ_AI_GEMINI_MODEL}:generateContent"
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=8.0)) as client:
             response = await client.post(
@@ -8745,7 +8747,11 @@ async def balmz_ai_gemini_proxy_chat(payload: dict, authorization: str = Header(
                 json={
                     "systemInstruction": {"parts": [{"text": "\n\n".join(system_text)}]},
                     "contents": contents,
-                    "generationConfig": {"maxOutputTokens": 1800},
+                    "generationConfig": {
+                        "maxOutputTokens": 1200,
+                        "thinkingConfig": {"thinkingLevel": "MINIMAL"}
+                            if BALMZ_AI_GEMINI_MODEL == "gemini-3.5-flash-lite" else {},
+                    },
                 },
             )
     except httpx.TimeoutException as exc:
@@ -8775,7 +8781,7 @@ async def balmz_ai_gemini_proxy_chat(payload: dict, authorization: str = Header(
     if not answer:
         raise HTTPException(status_code=502, detail="Google Gemini returned no answer text.")
 
-    return {"reply": answer[:8000], "provider": "google", "model": GEMINI_MODEL}
+    return {"reply": answer[:6000], "provider": "google", "model": BALMZ_AI_GEMINI_MODEL}
 
 
 async def _ask_standalone_balmz_ai(question: str, user: dict, context: dict, history: list[dict]):
