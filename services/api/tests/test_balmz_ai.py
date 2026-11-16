@@ -184,6 +184,77 @@ class BalmzAIAssistantTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(body["requestId"])
 
 
+
+class FakeProxyGeminiClient(FakeGeminiClient):
+    calls = []
+
+    async def __aenter__(self):
+        self.__class__.calls = []
+        return self
+
+    async def post(self, url, headers=None, json=None):
+        self.__class__.calls.append({"url": url, "headers": headers, "json": json})
+        return FakeResponse()
+
+
+class BalmzAIGeminiProxyTests(unittest.IsolatedAsyncioTestCase):
+    def make_assertion(self, secret):
+        now = int(main.time.time())
+        return main.jwt.encode({
+            "iss": "balmz-ai-service",
+            "aud": "world-wallet-ai-gemini-proxy",
+            "sub": "balmz-user-123",
+            "email": "owner@example.test",
+            "iat": now,
+            "exp": now + 45,
+            "jti": "unique-test-request",
+        }, secret, algorithm="HS256")
+
+    async def test_internal_gemini_status_requires_service_assertion(self):
+        secret = "test-world-wallet-ai-integration-secret-0123456789"
+        token = self.make_assertion(secret)
+        with patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", secret), patch.object(main, "GEMINI_API_KEY", "backend-only-test-key"):
+            status = main.balmz_ai_gemini_proxy_status("Bearer " + token)
+        self.assertTrue(status["configured"])
+        self.assertEqual(status["provider"], "Google Gemini")
+        self.assertNotIn("key", str(status).lower())
+
+    async def test_internal_gemini_proxy_rejects_missing_or_invalid_assertion(self):
+        with patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", "test-world-wallet-ai-integration-secret-0123456789"):
+            with self.assertRaises(HTTPException) as context:
+                main.balmz_ai_gemini_proxy_status("")
+        self.assertEqual(context.exception.status_code, 401)
+
+    async def test_internal_gemini_proxy_uses_backend_key_and_returns_reply(self):
+        secret = "test-world-wallet-ai-integration-secret-0123456789"
+        token = self.make_assertion(secret)
+        client = FakeProxyGeminiClient()
+        with (
+            patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", secret),
+            patch.object(main, "GEMINI_API_KEY", "backend-only-test-key"),
+            patch.object(main, "GEMINI_MODEL", "gemini-test-model"),
+            patch.object(main.httpx, "AsyncClient", return_value=client),
+        ):
+            result = await main.balmz_ai_gemini_proxy_chat(
+                {"messages": [
+                    {"role": "system", "content": "Verified context only."},
+                    {"role": "user", "content": "How do I protect my wallet?"},
+                    {"role": "assistant", "content": "Keep recovery material offline."},
+                    {"role": "user", "content": "What else should I do?"},
+                ]},
+                "Bearer " + token,
+            )
+        self.assertEqual(result["provider"], "google")
+        self.assertEqual(result["model"], "gemini-test-model")
+        self.assertEqual(result["reply"], "Evidence-based answer.")
+        self.assertEqual(len(client.calls), 1)
+        self.assertEqual(client.calls[0]["headers"], {"x-goog-api-key": "backend-only-test-key"})
+        payload = client.calls[0]["json"]
+        self.assertIn("Verified context only.", payload["systemInstruction"]["parts"][0]["text"])
+        self.assertEqual([item["role"] for item in payload["contents"]], ["user", "model", "user"])
+        self.assertNotIn("temperature", payload["generationConfig"])
+
+
 class FakeBridgeResponse:
     def __init__(self, payload, status_code=200):
         self.payload = payload
