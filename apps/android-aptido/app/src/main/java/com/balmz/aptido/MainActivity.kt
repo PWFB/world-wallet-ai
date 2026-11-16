@@ -1098,16 +1098,29 @@ private fun AptidoApp(
                 }
             },
             onAsk = { question, includeWallet ->
+                val previousConversation = chat.takeLast(20)
                 scope.launch {
                     if (question.isBlank() || busy) return@launch
                     chat = chat + ChatLine(true, question.trim())
                     persistConversation()
                     busy = true
                     try {
+                        val history = JSONArray()
+                        previousConversation.forEach { line ->
+                            val message = line.text.trim()
+                            if (message.isNotBlank()) {
+                                history.put(
+                                    JSONObject()
+                                        .put("role", if (line.fromUser) "user" else "model")
+                                        .put("content", message.take(2000))
+                                )
+                            }
+                        }
                         val response = api.post(
                             "/api/v1/balmz-ai/ask",
                             JSONObject()
                                 .put("question", question.trim())
+                                .put("conversation_history", history)
                                 .put("include_wallet_context", includeWallet),
                             pinToken
                         )
