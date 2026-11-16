@@ -213,10 +213,15 @@ class BalmzAIGeminiProxyTests(unittest.IsolatedAsyncioTestCase):
     async def test_internal_gemini_status_requires_service_assertion(self):
         secret = "test-world-wallet-ai-integration-secret-0123456789"
         token = self.make_assertion(secret)
-        with patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", secret), patch.object(main, "GEMINI_API_KEY", "backend-only-test-key"):
+        with (
+            patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", secret),
+            patch.object(main, "GEMINI_API_KEY", "backend-only-test-key"),
+            patch.object(main, "BALMZ_AI_GEMINI_MODEL", "gemini-3.5-flash-lite"),
+        ):
             status = main.balmz_ai_gemini_proxy_status("Bearer " + token)
         self.assertTrue(status["configured"])
         self.assertEqual(status["provider"], "Google Gemini")
+        self.assertEqual(status["model"], "gemini-3.5-flash-lite")
         self.assertNotIn("key", str(status).lower())
 
     async def test_internal_gemini_proxy_rejects_missing_or_invalid_assertion(self):
@@ -232,7 +237,7 @@ class BalmzAIGeminiProxyTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(main, "BALMZ_AI_INTEGRATION_SECRET", secret),
             patch.object(main, "GEMINI_API_KEY", "backend-only-test-key"),
-            patch.object(main, "GEMINI_MODEL", "gemini-test-model"),
+            patch.object(main, "BALMZ_AI_GEMINI_MODEL", "gemini-3.5-flash-lite"),
             patch.object(main.httpx, "AsyncClient", return_value=client),
         ):
             result = await main.balmz_ai_gemini_proxy_chat(
@@ -245,13 +250,16 @@ class BalmzAIGeminiProxyTests(unittest.IsolatedAsyncioTestCase):
                 "Bearer " + token,
             )
         self.assertEqual(result["provider"], "google")
-        self.assertEqual(result["model"], "gemini-test-model")
+        self.assertEqual(result["model"], "gemini-3.5-flash-lite")
         self.assertEqual(result["reply"], "Evidence-based answer.")
         self.assertEqual(len(client.calls), 1)
         self.assertEqual(client.calls[0]["headers"], {"x-goog-api-key": "backend-only-test-key"})
         payload = client.calls[0]["json"]
         self.assertIn("Verified context only.", payload["systemInstruction"]["parts"][0]["text"])
         self.assertEqual([item["role"] for item in payload["contents"]], ["user", "model", "user"])
+        self.assertEqual(client.calls[0]["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent")
+        self.assertEqual(payload["generationConfig"]["maxOutputTokens"], 1200)
+        self.assertEqual(payload["generationConfig"]["thinkingConfig"], {"thinkingLevel": "MINIMAL"})
         self.assertNotIn("temperature", payload["generationConfig"])
 
 
