@@ -29,7 +29,8 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
   const [walletError, setWalletError] = useState("");
   const [updatedAt, setUpdatedAt] = useState(null);
   const [question, setQuestion] = useState("");
-  const [report, setReport] = useState("");
+  const [conversation, setConversation] = useState([]);
+  const [assistantError, setAssistantError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [includeWalletContext, setIncludeWalletContext] = useState(false);
 
@@ -108,9 +109,10 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
 
   async function makeReport() {
     const prompt = question.trim() || (token ? "Summarize the current " + token.symbol + " market metrics, liquidity and important limitations." : "Explain how World Wallet AI verifies balances, reserves and transaction evidence.");
-    if (!accessToken || !apiBaseUrl) { setReport("Sign in to use the BALMZ AI assistant."); return; }
+    if (!accessToken || !apiBaseUrl) { setAssistantError("Sign in to use the BALMZ AI assistant."); return; }
+    const history = conversation.slice(-20).map(message => ({ role: message.role, content: message.text }));
     setAiLoading(true);
-    setReport("");
+    setAssistantError("");
     const marketContext = token && market ? {
       token_name: token.name,
       token_symbol: token.symbol,
@@ -124,14 +126,22 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
       const response = await fetch(apiBaseUrl + "/api/v1/balmz-ai/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: "Bearer " + accessToken },
-        body: JSON.stringify({ question: prompt, include_wallet_context: includeWalletContext, market_context: marketContext }),
+        body: JSON.stringify({
+          question: prompt,
+          conversation_history: history,
+          include_wallet_context: includeWalletContext,
+          market_context: marketContext,
+        }),
         cache: "no-store",
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "BALMZ AI could not generate a response.");
-      setReport(data.answer || "BALMZ AI returned an empty response.");
+      const answer = typeof data.answer === "string" ? data.answer.trim() : "";
+      if (!answer) throw new Error("BALMZ AI returned an empty response.");
+      setConversation(current => [...current, { role: "user", text: prompt }, { role: "model", text: answer }].slice(-20));
+      setQuestion(current => current === prompt ? "" : current);
     } catch (cause) {
-      setReport(cause?.message || "BALMZ AI request failed. Check backend Gemini configuration and try again.");
+      setAssistantError(cause?.message || "BALMZ AI request failed. Check backend Gemini configuration and try again.");
     } finally {
       setAiLoading(false);
     }
@@ -204,7 +214,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
 
     {tab === "Security" && <section className="panel balmz-ai-security"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">⌑</span><div><h2>Security review</h2><p>Separate observable facts from checks that still need on-chain verification.</p></div></div></div><div className="balmz-ai-security-grid"><article><span className="balmz-ai-check">01</span><h3>Market availability</h3><p>{token ? "Market pair found by Dexscreener. This does not establish legitimacy." : "Scan a token to check whether market pairs are returned."}</p></article><article><span className="balmz-ai-check">02</span><h3>Liquidity & price</h3><p>{market ? "Selected pair liquidity: " + usd(market.liquidity?.usd) + ". Thin liquidity can increase slippage." : "No verified pair metrics loaded."}</p></article><article><span className="balmz-ai-check">03</span><h3>Authority & holder checks</h3><p>Not yet verified by this module. Solana mint/freeze authorities, holder concentration, BSC ownership, proxy status and sell restrictions require chain-specific analysis.</p></article></div><p className="balmz-ai-disclaimer">A market listing is not a safety guarantee. Do not treat this panel as a complete audit.</p></section>}
 
-    {tab === "AI Reports" && <section className="panel balmz-ai-report-panel"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">✳</span><div><h2>Ask BALMZ AI</h2><p>Live assistant responses from the configured Google Gemini backend, with sourced market context when available.</p></div></div></div><label htmlFor="balmz-report-question">Your question</label><textarea id="balmz-report-question" value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask about a token, balance verification, liquidity or wallet activity…" rows={3}/><label className="balmz-ai-context-consent"><input type="checkbox" checked={includeWalletContext} onChange={e => setIncludeWalletContext(e.target.checked)} /> Include my verified Mainnet balance snapshot in this request</label><p className="balmz-ai-data-foot">When checked, verified balance amounts are sent to Google Gemini for this answer. Wallet addresses, transaction hashes, PINs, recovery phrases and private keys are never included. Leave unchecked for a general question.</p><button onClick={makeReport} disabled={aiLoading || !accessToken}>{aiLoading ? "BALMZ AI is thinking…" : "Ask BALMZ AI"}</button>{report && <div className="balmz-ai-report-output"><strong>Assistant response</strong><p>{report}</p></div>}</section>}
+    {tab === "AI Reports" && <section className="panel balmz-ai-report-panel"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">✳</span><div><h2>Ask BALMZ AI</h2><p>Continue a conversation with the same secured BALMZ AI service used by the Android APT.</p></div></div><button type="button" className="balmz-ai-chat-reset" onClick={() => { setConversation([]); setAssistantError(""); }} disabled={aiLoading || conversation.length === 0}>New conversation</button></div><div className="balmz-ai-chat-transcript" role="log" aria-label="BALMZ AI conversation" aria-live="polite">{conversation.length === 0 ? <p className="balmz-ai-empty">Ask a question about your wallet, token markets, security or supported features. Follow-up questions will use this conversation.</p> : conversation.map((message, index) => <article key={index} className={"balmz-ai-chat-message " + (message.role === "user" ? "is-user" : "is-assistant")}><strong>{message.role === "user" ? "YOU" : "BALMZ AI"}</strong><p>{message.text}</p></article>)}{aiLoading && <p className="balmz-ai-chat-pending">BALMZ AI is responding…</p>}</div><label htmlFor="balmz-report-question">Your message</label><textarea id="balmz-report-question" value={question} onChange={e => setQuestion(e.target.value)} placeholder="Ask a question or continue the conversation…" rows={3}/><label className="balmz-ai-context-consent"><input type="checkbox" checked={includeWalletContext} onChange={e => setIncludeWalletContext(e.target.checked)} /> Include my verified Mainnet balance snapshot in this request</label><p className="balmz-ai-data-foot">When checked, verified balance amounts are sent to Google Gemini for this answer. Wallet addresses, transaction hashes, PINs, recovery phrases and private keys are never included. Leave unchecked for a general question.</p><button onClick={makeReport} disabled={aiLoading || !accessToken}>{aiLoading ? "BALMZ AI is thinking…" : "Send message"}</button>{assistantError && <p className="balmz-ai-error" role="alert">{assistantError}</p>}</section>}
 
     <footer className="balmz-ai-footer"><span>Data source: Dexscreener public API{walletBalance ? " · " + walletBalance.source : ""}</span><span>Refresh: 30 seconds when a token is loaded · No fabricated prices or balances</span></footer>
   </section>;

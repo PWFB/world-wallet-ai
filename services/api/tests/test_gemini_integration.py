@@ -77,6 +77,7 @@ class GeminiIntegrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(call["url"], "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent")
         self.assertEqual(call["headers"]["x-goog-api-key"], "private-gemini-test-key")
         self.assertIn("Reply with exactly:", call["json"]["contents"][0]["parts"][0]["text"])
+        self.assertNotIn("temperature", call["json"]["generationConfig"])
         self.assertNotIn("private-gemini-test-key", str(result))
 
     async def test_missing_key_fails_without_provider_request(self):

@@ -10,3 +10,13 @@
 .balmz-ai-page .balmz-ai-wallet-panel>.balmz-ai-pairs>div>span{display:flex;flex-direction:column;gap:4px;min-width:0}
 .balmz-ai-page .balmz-ai-wallet-panel>.balmz-ai-pairs>div small{font-size:10px;color:var(--ba-muted)}
 .balmz-ai-page .balmz-ai-wallet-panel>.balmz-ai-pairs>div strong{font-size:11px;white-space:nowrap}
+
+.balmz-ai-chat-transcript{display:flex;flex-direction:column;gap:10px;max-height:430px;overflow:auto;margin:14px 0;padding:12px;border:1px solid var(--ba-line);border-radius:12px;background:#0c131d}
+.balmz-ai-chat-message{max-width:88%;padding:11px 13px;border-radius:12px;overflow-wrap:anywhere}
+.balmz-ai-chat-message.is-user{align-self:flex-end;background:#ff7a181c;border:1px solid #ff7a1855}
+.balmz-ai-chat-message.is-assistant{align-self:flex-start;background:#152235;border:1px solid var(--ba-line)}
+.balmz-ai-chat-message strong{display:block;font-size:10px;color:var(--ba-orange);letter-spacing:.08em}
+.balmz-ai-chat-message p{font-size:12px;line-height:1.65;white-space:pre-wrap;color:#d2d9e3;margin:6px 0 0}
+.balmz-ai-chat-pending{font-size:12px;color:var(--ba-muted);padding:7px 2px}
+.balmz-ai-chat-reset{border:1px solid var(--ba-line);border-radius:8px;background:transparent;color:var(--ba-muted);padding:8px 10px;font-size:11px;cursor:pointer}
+.balmz-ai-chat-reset:disabled{opacity:.45;cursor:not-allowed}
