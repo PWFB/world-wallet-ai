@@ -1572,7 +1572,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         {vaultSecurityMessage && <div className={/could not|failed|incorrect|invalid|expired|too many|unavailable/i.test(vaultSecurityMessage) ? "feature-error" : "feature-success"}>{vaultSecurityMessage}</div>}
       </div>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
-      <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
+      <button className="primary feature-submit" disabled={busy || !selected || !password || !vaultGrantToken} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
       {unlocked && <div className="wallet-message-signing">
         <h3>Private key security</h3>
         <p className="muted">The private key is the wallet's secret signing key. It remains in this browser and is never sent to World Wallet AI.</p>
