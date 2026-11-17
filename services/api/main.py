@@ -9138,6 +9138,21 @@ except ModuleNotFoundError:
 
 app.include_router(build_bankconnect_router(db, current_user))
 
+
+# Sensitive local-vault reveal requires an interactive second-factor wallet PIN session.
+def vault_security_user(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip().startswith("wwpin_"):
+        raise HTTPException(status_code=403, detail="A verified World Wallet AI wallet-PIN session is required for Secret Room access.")
+    return current_user(authorization)
+
+
+try:
+    from services.api.vault_security import build_vault_security_router
+except ModuleNotFoundError:
+    from vault_security import build_vault_security_router
+
+app.include_router(build_vault_security_router(db, vault_security_user))
+
 # Step-up Gmail verification before the local Secret Room reveals a private key.
 try:
     from services.api.vault_security import build_vault_security_router
