@@ -2437,7 +2437,7 @@ function App() {
             tx_hash: tx.tx_hash,
             confirmations: Number(tx.confirmations || 0),
             block_height: tx.block_height,
-          }))) } />
+          }))) } onLogout={handleLogout} />
           </Suspense>
         }
 
