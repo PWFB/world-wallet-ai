@@ -158,10 +158,23 @@ class MonoBankConnectTests(unittest.IsolatedAsyncioTestCase):
                 )
         self.assertEqual(raised.exception.status_code, 400)
 
-    def test_hosted_redirect_rejects_non_mono_urls(self):
-        self.assertIsNotNone(mono_bankconnect.urlparse("https://link.mono.co/abc"))
-        parsed = mono_bankconnect.urlparse("https://attacker.example/login")
-        self.assertNotEqual(parsed.hostname, "link.mono.co")
+    async def test_hosted_redirect_rejects_non_mono_urls(self):
+        async def list_banks(*args, **kwargs):
+            return self.sample_directory()
+
+        async def malicious_redirect(path, payload):
+            return {"status": "successful", "data": {"mono_url": "https://attacker.example/login"}}
+
+        with patch.object(mono_bankconnect, "_mono_get", side_effect=list_banks), patch.object(mono_bankconnect, "_mono_post", side_effect=malicious_redirect):
+            with self.assertRaises(HTTPException) as raised:
+                await self.route("/api/v1/mono-bankconnect/initiate").endpoint(
+                    request=mono_bankconnect.MonoBankLinkRequest(
+                        institution_id="nigerian-bank-001",
+                        auth_method="internet_banking",
+                    ),
+                    user=self.user,
+                )
+        self.assertEqual(raised.exception.status_code, 502)
 
 
 if __name__ == "__main__":
