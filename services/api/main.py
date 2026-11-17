@@ -9139,17 +9139,10 @@ except ModuleNotFoundError:
 app.include_router(build_bankconnect_router(db, current_user))
 
 
-# Sensitive local-vault reveal requires an interactive second-factor wallet PIN session.
-def vault_security_user(authorization: str | None = Header(default=None)):
-    if not authorization or not authorization.startswith("Bearer ") or not authorization[7:].strip().startswith("wwpin_"):
-        raise HTTPException(status_code=403, detail="A verified World Wallet AI wallet-PIN session is required for Secret Room access.")
-    return current_user(authorization)
-
-
+# Alternate-Gmail verification protects authenticated BALMZ AI account password changes.
 try:
-    from services.api.vault_security import build_vault_security_router
+    from services.api.auth_security import build_auth_security_router
 except ModuleNotFoundError:
-    from vault_security import build_vault_security_router
+    from auth_security import build_auth_security_router
 
-app.include_router(build_vault_security_router(db, vault_security_user))
-
+app.include_router(build_auth_security_router(db, current_user))
