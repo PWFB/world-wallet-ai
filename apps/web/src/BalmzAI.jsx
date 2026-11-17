@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./BalmzAI.css";
+import AccountPasswordSecurity from "./AccountPasswordSecurity.jsx";
 
 const ETH_RPC = "https://ethereum-rpc.publicnode.com";
 const BSC_RPC = "https://bsc-dataseed.binance.org/";
@@ -14,7 +15,7 @@ async function readJson(url, options) {
   return response.json();
 }
 
-export default function BalmzAI({ wallet = null, assets = [], activity = [], accessToken = "", apiBaseUrl = "", setActive }) {
+export default function BalmzAI({ wallet = null, assets = [], activity = [], accessToken = "", apiBaseUrl = "", accountEmail = "", onLogout = null, setActive }) {
   const [chain, setChain] = useState("ethereum");
   const [tab, setTab] = useState("Overview");
   const [address, setAddress] = useState("");
@@ -281,7 +282,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
     </div>
 
     <nav className="balmz-ai-tabs" aria-label="BALMZ AI modules">
-      {["Overview", "Token Scanner", "Portfolio", "Banking", "Security", "AI Reports"].map(item => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
+      {["Overview", "Token Scanner", "Portfolio", "Banking", "Secret Room", "Security", "AI Reports"].map(item => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
     </nav>
 
     <div className="balmz-ai-chainbar">
@@ -328,6 +329,11 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
       </section>
     </div>}
 
+
+    {tab === "Secret Room" && <div className="balmz-ai-secret-room">
+      <div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">⌑</span><div><h2>Secret Room</h2><p>Secure recovery Gmail verification and BALMZ AI account password management.</p></div></div><span className="balmz-ai-source">ACCOUNT SECURITY</span></div>
+      <AccountPasswordSecurity accountEmail={accountEmail} accessToken={accessToken} apiBaseUrl={apiBaseUrl} onLogout={onLogout} />
+    </div>}
 
     {tab === "Banking" && <section className="panel balmz-ai-banking">
       <div className="balmz-ai-panel-title">
