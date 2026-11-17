@@ -129,7 +129,8 @@ class AuthSecurityTests(unittest.TestCase):
         )
 
     def route(self, path):
-        return next(route for route in self.router.routes if route.path == path)
+        full_path = path if path.startswith("/api/") else "/api/v1/auth/neon/account-security" + path
+        return next(route for route in self.router.routes if route.path == full_path)
 
     def test_account_security_routes_are_registered(self):
         paths = {route.path for route in self.router.routes}
@@ -171,7 +172,7 @@ class AuthSecurityTests(unittest.TestCase):
             "BANKCONNECT_SMTP_APP_PASSWORD": "test-app-password",
             "BANKCONNECT_SMTP_FROM_EMAIL": "sender@gmail.com",
         }
-        with patch.dict(os.environ, env), patch.object(auth_security, "_send_security_code", side_effect=lambda address, code, purpose: sent.append((address, code, purpose))), patch.object(auth_security.secrets, "randbelow", return_value=0):
+        with patch.dict(os.environ, env), patch.object(auth_security, "_send_security_code", side_effect=lambda address, code, purpose: sent.append((address, code, purpose))), patch.object(auth_security.secrets, "randbelow", side_effect=[0, 1]):
             self.route("/receiver-email/request").endpoint(
                 request=auth_security.ReceiverEmailRequest(receiver_email="receiver@gmail.com"),
                 user=self.user,
@@ -188,6 +189,7 @@ class AuthSecurityTests(unittest.TestCase):
             self.assertTrue(grant["verified"])
             self.assertEqual([item[0] for item in sent], ["receiver@gmail.com", "receiver@gmail.com"])
             self.assertEqual([item[2] for item in sent], ["receiver_verify", "password_change"])
+            self.assertNotEqual(sent[0][1], sent[1][1])
             request = auth_security.PasswordChangeGrantRequest(grant_token=grant["grant_token"])
             self.assertTrue(self.route("/password-change/complete").endpoint(request=request, user=self.user)["authorized"])
             with self.assertRaises(HTTPException) as raised:
