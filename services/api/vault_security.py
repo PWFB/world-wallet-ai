@@ -38,7 +38,7 @@ class VaultGrantRequest(BaseModel):
 
 def normalize_gmail(value: str) -> str:
     email = str(value or "").strip().lower()
-    if len(email) > 254 or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:gmail\\.com|googlemail\\.com)", email):
+    if len(email) > 254 or not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@(?:gmail\.com|googlemail\.com)", email):
         raise HTTPException(status_code=400, detail="Enter a valid Gmail address for Secret Room code delivery.")
     return email
 
@@ -84,7 +84,7 @@ def _send_security_code(recipient: str, code: str, purpose: str) -> None:
     message["To"] = recipient
     message.set_content(
         intro + code
-        + "\\n\\nThis code expires in 5 minutes and can be used once. "
+        + "\n\nThis code expires in 5 minutes and can be used once. "
           "It was requested for a sensitive local wallet-vault action. "
           "World Wallet AI will never ask you to reply with this code. "
           "Never share it with anyone. If you did not request it, ignore this message."
