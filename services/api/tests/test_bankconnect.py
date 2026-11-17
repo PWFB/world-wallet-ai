@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -49,6 +50,7 @@ class BankConnectEmailTests(unittest.TestCase):
         self.assertIn("/api/v1/bankconnect/email/request-code", paths)
         self.assertIn("/api/v1/bankconnect/email/verify-code", paths)
         self.assertIn("/api/v1/bankconnect/link-token", paths)
+        self.assertIn("/api/v1/bankconnect/admin/test-credentials", paths)
         self.assertIn("/api/v1/bankconnect/accounts", paths)
 
     def test_code_request_requires_six_digits(self):
@@ -115,6 +117,26 @@ class BankConnectEmailTests(unittest.TestCase):
             route.endpoint(request=request, user={"id": "bankconnect-user-test", "wallet_id": ""})
         self.assertEqual(raised.exception.status_code, 409)
 
+
+    def test_plaid_credential_test_is_restricted_to_configured_admin(self):
+        route = next(
+            route for route in self.router().routes
+            if route.path == "/api/v1/bankconnect/admin/test-credentials"
+        )
+        with patch.object(bankconnect, "PLAID_ADMIN_EMAIL", "admin@example.com"):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(route.endpoint(user=self.user))
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_plaid_credential_test_rejects_unconfigured_admin_identity(self):
+        route = next(
+            route for route in self.router().routes
+            if route.path == "/api/v1/bankconnect/admin/test-credentials"
+        )
+        with patch.object(bankconnect, "PLAID_ADMIN_EMAIL", ""):
+            with self.assertRaises(HTTPException) as raised:
+                asyncio.run(route.endpoint(user={"id": "user", "email": "admin@example.com"}))
+        self.assertEqual(raised.exception.status_code, 403)
 
 if __name__ == "__main__":
     unittest.main()
