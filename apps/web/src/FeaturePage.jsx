@@ -1,7 +1,6 @@
 import { lazy, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
-import AccountPasswordSecurity from "./AccountPasswordSecurity.jsx";
 import { isTestnetNetwork } from "./network-selection.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
@@ -1564,7 +1563,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     }}
   />;
 
-  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
+  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} accountEmail={accountEmail} onLogout={onLogout} setActive={setActive} />;
   if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "WizzU Helper") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
   if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
