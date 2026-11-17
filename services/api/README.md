@@ -121,6 +121,25 @@ Nium's hosted payout form requires a provider-onboarded customer, approved benef
 
 Do not collect bank passwords, bank OTPs or unverified account details in BALMZ. Do not enable a transfer action based only on API credentials; provider permission, KYC/KYB, verified beneficiaries, funded balance, idempotency, webhooks/status polling and ACH return/reversal handling are required.
 
-### Legacy Plaid routes
+### Plaid — legacy read-only BankConnect
 
-The older Plaid account-history endpoints remain on the backend for compatibility with previously linked data, but the Android APT no longer ships Plaid Link, no longer calls those endpoints, and does not require Plaid credentials for the new Private Services flows. These legacy endpoints are not part of crypto purchase or US bank payout processing.
+The existing FastAPI backend retains wallet-scoped Plaid Link and account-history routes for compatibility with previously linked bank accounts. Plaid is **read-only** in this integration: it does not initiate bank transfers or fund crypto purchases.
+
+Configure these values only on the World Wallet AI backend service in Render:
+
+- `PLAID_CLIENT_ID` — Plaid team Client ID.
+- `PLAID_SECRET` — the secret copied from the same Plaid environment as the Client ID.
+- `PLAID_ENV` — `sandbox` or `production`; defaults to `sandbox`.
+- `WORLD_WALLET_SECRET_ENCRYPTION_KEY` — existing backend encryption key used to encrypt saved Plaid access tokens.
+- `WORLD_WALLET_ADMIN_EMAIL` — existing configured administrator email allowed to run the credential check.
+
+The administrator-only `POST /api/v1/bankconnect/admin/test-credentials` endpoint calls Plaid `/institutions/get` with the configured environment and product filter. It does not create an Item, link a customer's bank, or return credentials. A credential rejection means the Client ID and Secret must be checked against the same environment in the Plaid Dashboard. The response includes the configured environment and Plaid request ID for support.
+
+Existing user-authenticated routes:
+
+- `POST /api/v1/bankconnect/link-token` — creates a short-lived Plaid Link token after the BALMZ email verification gate.
+- `POST /api/v1/bankconnect/exchange` — exchanges a public token and stores the resulting access token encrypted in PostgreSQL.
+- `GET /api/v1/bankconnect/accounts` and `GET /api/v1/bankconnect/transactions` — retrieve read-only account and transaction data for the signed-in user's active wallet.
+- `DELETE /api/v1/bankconnect/connections/{connection_id}` — removes that user's bank connection.
+
+The Android APT no longer ships Plaid Link or calls these legacy routes for its current Private Services flows. The web frontend also does not currently expose a Plaid Link screen. These routes are not part of crypto purchase or US bank payout processing. Never collect bank login credentials or bank-issued OTPs in BALMZ.
