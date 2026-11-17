@@ -9137,3 +9137,20 @@ except ModuleNotFoundError:
     from bankconnect import build_bankconnect_router
 
 app.include_router(build_bankconnect_router(db, current_user))
+
+
+# Alternate-Gmail verification protects authenticated BALMZ AI account password changes.
+try:
+    from services.api.auth_security import build_auth_security_router
+except ModuleNotFoundError:
+    from auth_security import build_auth_security_router
+
+app.include_router(build_auth_security_router(db, current_user))
+
+# Nigerian bank directory and hosted institution authentication for the BALMZ AI banking tab.
+try:
+    from services.api.mono_bankconnect import build_mono_bankconnect_router
+except ModuleNotFoundError:
+    from mono_bankconnect import build_mono_bankconnect_router
+
+app.include_router(build_mono_bankconnect_router(db, current_user))
