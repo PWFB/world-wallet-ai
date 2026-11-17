@@ -33,6 +33,7 @@ PLAID_ENV = os.getenv("PLAID_ENV", "sandbox").strip().lower()
 PLAID_PRODUCTS = ["transactions"]
 PLAID_COUNTRIES = ["US"]
 PLAID_PACKAGE_NAME = "com.balmz.aptido"
+PLAID_ADMIN_EMAIL = os.getenv("WORLD_WALLET_ADMIN_EMAIL", "").strip().lower()
 
 
 class PublicTokenExchange(BaseModel):
@@ -303,7 +304,13 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             if code == "PRODUCT_NOT_READY":
                 raise HTTPException(status_code=409, detail="The bank provider is still preparing transaction history. Try refreshing later.")
             if response.status_code in {401, 403}:
-                raise HTTPException(status_code=503, detail="BankConnect provider credentials or product access are not valid.")
+                raise HTTPException(
+                    status_code=503,
+                    detail=(
+                        f"Plaid rejected the configured credentials for the {PLAID_ENV} environment. "
+                        "Confirm PLAID_CLIENT_ID and PLAID_SECRET were copied from the same Plaid environment."
+                    ),
+                )
             raise HTTPException(status_code=502, detail="The bank provider could not complete this request. Try again later.")
         try:
             return response.json()
@@ -443,6 +450,34 @@ def build_bankconnect_router(db_factory: Callable, current_user_dependency: Call
             "country_codes": PLAID_COUNTRIES,
             "products": PLAID_PRODUCTS,
             "read_only": True,
+        }
+
+    @router.post("/admin/test-credentials")
+    async def test_plaid_credentials(user=Depends(current_user_dependency)):
+        # Plaid secrets must only be tested by the configured World Wallet AI administrator.
+        email = str((user or {}).get("email") or "").strip().lower()
+        if not PLAID_ADMIN_EMAIL or email != PLAID_ADMIN_EMAIL:
+            raise HTTPException(status_code=403, detail="This Plaid credential test is restricted to the configured World Wallet AI administrator.")
+
+        # /institutions/get requires only the environment's API credentials; it does not
+        # create a bank connection, access a customer's account, or expose a secret.
+        result = await _plaid_post("/institutions/get", {
+            "count": 1,
+            "offset": 0,
+            "country_codes": PLAID_COUNTRIES,
+            "options": {"products": PLAID_PRODUCTS},
+        })
+        institutions = result.get("institutions") if isinstance(result, dict) else []
+        return {
+            "success": True,
+            "credentials_valid": True,
+            "provider": "Plaid",
+            "environment": PLAID_ENV,
+            "products_checked": PLAID_PRODUCTS,
+            "country_codes": PLAID_COUNTRIES,
+            "matching_institution_count": len(institutions) if isinstance(institutions, list) else 0,
+            "request_id": result.get("request_id") if isinstance(result, dict) else None,
+            "message": "Plaid accepted the configured credentials for this environment.",
         }
 
     @router.post("/link-token")
