@@ -183,7 +183,7 @@ class AuthSecurityTests(unittest.TestCase):
             )
             self.route("/password-change/request").endpoint(user=self.user)
             grant = self.route("/password-change/verify").endpoint(
-                request=auth_security.EmailCodeRequest(code="100000"),
+                request=auth_security.EmailCodeRequest(code="100001"),
                 user=self.user,
             )
             self.assertTrue(grant["verified"])
