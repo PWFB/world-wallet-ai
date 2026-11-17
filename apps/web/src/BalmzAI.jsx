@@ -187,10 +187,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
   }
 
   useEffect(() => {
-    if (tab !== "Banking") return undefined;
-    let active = true;
-    loadBankDirectory().then(() => {});
-    return () => { active = false; };
+    if (tab === "Banking") void loadBankDirectory();
   }, [tab, accessToken, apiBaseUrl]);
 
   useEffect(() => {
@@ -202,8 +199,11 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
     setBankLinkReference(reference);
     setBankMessage("Bank provider returned you to BALMZ AI. Checking the signed connection result.");
     window.history.replaceState({}, document.title, window.location.pathname);
-    refreshBankLinkStatus(reference);
   }, [accessToken, apiBaseUrl]);
+
+  useEffect(() => {
+    if (bankLinkReference && accessToken) refreshBankLinkStatus(bankLinkReference);
+  }, [bankLinkReference, accessToken, apiBaseUrl]);
 
   const filteredBankInstitutions = useMemo(() => {
     const query = bankSearch.trim().toLocaleLowerCase();
