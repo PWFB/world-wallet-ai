@@ -33,6 +33,16 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
   const [assistantError, setAssistantError] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [includeWalletContext, setIncludeWalletContext] = useState(false);
+  const [bankInstitutions, setBankInstitutions] = useState([]);
+  const [bankSearch, setBankSearch] = useState("");
+  const [selectedBankId, setSelectedBankId] = useState("");
+  const [selectedBankAuthMethod, setSelectedBankAuthMethod] = useState("");
+  const [bankDirectoryLoading, setBankDirectoryLoading] = useState(false);
+  const [bankLinkBusy, setBankLinkBusy] = useState(false);
+  const [bankError, setBankError] = useState("");
+  const [bankMessage, setBankMessage] = useState("");
+  const [bankLinkReference, setBankLinkReference] = useState("");
+  const [bankLinkStatus, setBankLinkStatus] = useState("");
 
   const scanToken = useCallback(async (target = address, network = chain) => {
     const clean = target.trim();
@@ -96,6 +106,112 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
       setWalletError(e?.message || "Wallet connection failed.");
     } finally { setWalletLoading(false); }
   };
+
+
+  const bankAuthHeaders = { Authorization: "Bearer " + accessToken, Accept: "application/json" };
+
+  async function loadBankDirectory() {
+    if (!accessToken || !apiBaseUrl) { setBankError("Sign in to connect a bank account."); return; }
+    setBankDirectoryLoading(true); setBankError(""); setBankMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/mono-bankconnect/institutions", {
+        headers: bankAuthHeaders,
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "The supported bank directory could not be loaded.");
+      const items = Array.isArray(data.institutions) ? data.institutions : [];
+      setBankInstitutions(items);
+      setSelectedBankId(current => items.some(item => item.id === current) ? current : (items[0]?.id || ""));
+      setSelectedBankAuthMethod(current => {
+        const selected = items.find(item => item.id === selectedBankId) || items[0];
+        return selected?.auth_methods?.includes(current) ? current : (selected?.auth_methods?.[0] || "");
+      });
+      setBankMessage(items.length
+        ? "Loaded " + items.length.toLocaleString() + " Nigerian institutions from Mono's live directory."
+        : "Mono returned no Nigerian institutions for the configured product and account.");
+    } catch (cause) {
+      setBankError(cause?.message || "Unable to load the supported bank list.");
+      setBankInstitutions([]);
+    } finally { setBankDirectoryLoading(false); }
+  }
+
+  async function refreshBankLinkStatus(reference = bankLinkReference) {
+    if (!reference || !accessToken || !apiBaseUrl) return;
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/mono-bankconnect/link-status/" + encodeURIComponent(reference), {
+        headers: bankAuthHeaders,
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Bank connection status is unavailable.");
+      setBankLinkStatus(data.status || "pending_provider_auth");
+      if (data.status === "connected" || data.status === "data_available") {
+        setBankMessage(data.institution_name + " authentication was confirmed by Mono.");
+      } else if (data.status === "pending_provider_auth") {
+        setBankMessage("Returned from Mono. Waiting for the signed provider confirmation; the bank login is not marked complete until that arrives.");
+      } else if (data.status === "failed") {
+        setBankError("Mono reported that the selected bank connection could not be completed.");
+      }
+    } catch (cause) {
+      setBankError(cause?.message || "Could not confirm the selected bank connection.");
+    }
+  }
+
+  async function startBankAuthentication() {
+    const selected = bankInstitutions.find(item => item.id === selectedBankId);
+    if (!selected) { setBankError("Choose a bank from the live directory first."); return; }
+    if (!selectedBankAuthMethod || !selected.auth_methods?.includes(selectedBankAuthMethod)) {
+      setBankError("Choose an authentication method offered for this bank.");
+      return;
+    }
+    setBankLinkBusy(true); setBankError(""); setBankMessage("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/mono-bankconnect/initiate", {
+        method: "POST",
+        headers: { ...bankAuthHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({ institution_id: selected.id, auth_method: selectedBankAuthMethod }),
+        cache: "no-store",
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || "Could not start secure bank authentication.");
+      const destination = String(data.redirect_url || "");
+      if (!destination.startsWith("https://link.mono.co/")) throw new Error("Mono did not return an approved hosted authentication link.");
+      setBankLinkReference(data.reference || "");
+      setBankMessage(data.message || "Opening Mono's hosted bank authentication.");
+      window.location.assign(destination);
+    } catch (cause) {
+      setBankError(cause?.message || "Could not start secure bank authentication.");
+      setBankLinkBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (tab !== "Banking") return undefined;
+    let active = true;
+    loadBankDirectory().then(() => {});
+    return () => { active = false; };
+  }, [tab, accessToken, apiBaseUrl]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("balmz_bank_return") !== "1") return;
+    const reference = params.get("bank_ref") || "";
+    if (!reference) return;
+    setTab("Banking");
+    setBankLinkReference(reference);
+    setBankMessage("Bank provider returned you to BALMZ AI. Checking the signed connection result.");
+    window.history.replaceState({}, document.title, window.location.pathname);
+    refreshBankLinkStatus(reference);
+  }, [accessToken, apiBaseUrl]);
+
+  const filteredBankInstitutions = useMemo(() => {
+    const query = bankSearch.trim().toLocaleLowerCase();
+    if (!query) return bankInstitutions;
+    return bankInstitutions.filter(item => item.name.toLocaleLowerCase().includes(query));
+  }, [bankInstitutions, bankSearch]);
+
+  const selectedBank = bankInstitutions.find(item => item.id === selectedBankId) || null;
 
   const metrics = useMemo(() => {
     const change = market?.priceChange?.h24;
@@ -165,7 +281,7 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
     </div>
 
     <nav className="balmz-ai-tabs" aria-label="BALMZ AI modules">
-      {["Overview", "Token Scanner", "Portfolio", "Security", "AI Reports"].map(item => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
+      {["Overview", "Token Scanner", "Portfolio", "Banking", "Security", "AI Reports"].map(item => <button key={item} className={tab === item ? "active" : ""} onClick={() => setTab(item)}>{item}</button>)}
     </nav>
 
     <div className="balmz-ai-chainbar">
@@ -211,6 +327,56 @@ export default function BalmzAI({ wallet = null, assets = [], activity = [], acc
         {pairs.length ? <div className="balmz-ai-pairs">{pairs.slice(0, 5).map(pair => <a key={pair.pairAddress} href={pair.url} target="_blank" rel="noreferrer"><span><b>{pair.baseToken?.symbol || "Token"}/{pair.quoteToken?.symbol || "Quote"}</b><small>{pair.dexId || "DEX"} · {pair.pairAddress ? short(pair.pairAddress) : "Pair address unavailable"}</small></span><strong>{usd(pair.priceUsd)}</strong></a>)}</div> : <div className="balmz-ai-empty">Scan a token to load its available market pairs.</div>}
       </section>
     </div>}
+
+
+    {tab === "Banking" && <section className="panel balmz-ai-banking">
+      <div className="balmz-ai-panel-title">
+        <div><span className="balmz-ai-icon">▤</span><div><h2>Connect your bank</h2><p>Select an institution from Mono's live Nigeria directory. The next step opens Mono's hosted authentication.</p></div></div>
+        <span className="balmz-ai-source">MONO · NIGERIA</span>
+      </div>
+      <div className="balmz-ai-bank-security-note">
+        <strong>Bank login stays with your bank and Mono.</strong>
+        <span>BALMZ AI does not ask for, receive, or store your bank password or bank-issued OTP. The selected bank/provider verifies those credentials in its hosted flow.</span>
+      </div>
+      <div className="balmz-ai-bank-toolbar">
+        <input type="search" value={bankSearch} onChange={event => setBankSearch(event.target.value)} placeholder="Search supported banks" aria-label="Search supported banks" />
+        <button type="button" onClick={loadBankDirectory} disabled={bankDirectoryLoading}>{bankDirectoryLoading ? "Loading…" : "Refresh bank list"}</button>
+      </div>
+      {bankDirectoryLoading && <div className="balmz-ai-empty" role="status">Loading the live bank directory…</div>}
+      {!bankDirectoryLoading && filteredBankInstitutions.length > 0 && <div className="balmz-ai-bank-list" role="listbox" aria-label="Supported Nigerian banks">
+        {filteredBankInstitutions.map(item => <button
+          type="button"
+          role="option"
+          aria-selected={selectedBankId === item.id}
+          key={item.id}
+          className={"balmz-ai-bank-option" + (selectedBankId === item.id ? " selected" : "")}
+          onClick={() => {
+            setSelectedBankId(item.id);
+            setSelectedBankAuthMethod(item.auth_methods?.[0] || "");
+            setBankError("");
+          }}
+        >
+          <span className="balmz-ai-bank-icon">{item.icon ? <img src={item.icon} alt="" loading="lazy" onError={event => { event.currentTarget.style.display = "none"; }} /> : <b>{item.name.slice(0, 1).toUpperCase()}</b>}</span>
+          <span className="balmz-ai-bank-details"><strong>{item.name}</strong><small>{item.type || "Financial institution"}</small></span>
+          <span className="balmz-ai-bank-check">{selectedBankId === item.id ? "✓" : "›"}</span>
+        </button>)}
+      </div>}
+      {!bankDirectoryLoading && bankSearch.trim() && filteredBankInstitutions.length === 0 && <div className="balmz-ai-empty">No supported bank matches that search. Refresh the provider directory or check the bank name.</div>}
+      {!bankDirectoryLoading && bankInstitutions.length === 0 && !bankError && <div className="balmz-ai-empty">The bank directory will appear when the Mono provider key is configured on the backend.</div>}
+      {selectedBank && <div className="balmz-ai-bank-selected">
+        <div><small>SELECTED BANK</small><strong>{selectedBank.name}</strong></div>
+        <label>Available authentication method
+          <select value={selectedBankAuthMethod} onChange={event => setSelectedBankAuthMethod(event.target.value)}>
+            {(selectedBank.auth_methods || []).map(method => <option key={method} value={method}>{method.replace(/_/g, " ")}</option>)}
+          </select>
+        </label>
+        <button type="button" className="balmz-ai-primary" disabled={bankLinkBusy || !selectedBankAuthMethod} onClick={startBankAuthentication}>{bankLinkBusy ? "Opening secure bank login…" : "Continue securely to " + selectedBank.name + " →"}</button>
+      </div>}
+      {bankMessage && <p className="balmz-ai-bank-message" role="status">{bankMessage}</p>}
+      {bankError && <p className="balmz-ai-error" role="alert">{bankError}</p>}
+      {bankLinkReference && <button type="button" className="balmz-ai-text-button" onClick={() => refreshBankLinkStatus()} disabled={bankLinkStatus === "connected" || bankLinkStatus === "data_available"}>Check provider connection status</button>}
+      <p className="balmz-ai-data-foot">The bank list is supplied by Mono and may vary by institution, supported authentication method, provider coverage and environment. An institution is not marked connected until Mono confirms it through the signed webhook.</p>
+    </section>}
 
     {tab === "Security" && <section className="panel balmz-ai-security"><div className="balmz-ai-panel-title"><div><span className="balmz-ai-icon">⌑</span><div><h2>Security review</h2><p>Separate observable facts from checks that still need on-chain verification.</p></div></div></div><div className="balmz-ai-security-grid"><article><span className="balmz-ai-check">01</span><h3>Market availability</h3><p>{token ? "Market pair found by Dexscreener. This does not establish legitimacy." : "Scan a token to check whether market pairs are returned."}</p></article><article><span className="balmz-ai-check">02</span><h3>Liquidity & price</h3><p>{market ? "Selected pair liquidity: " + usd(market.liquidity?.usd) + ". Thin liquidity can increase slippage." : "No verified pair metrics loaded."}</p></article><article><span className="balmz-ai-check">03</span><h3>Authority & holder checks</h3><p>Not yet verified by this module. Solana mint/freeze authorities, holder concentration, BSC ownership, proxy status and sell restrictions require chain-specific analysis.</p></article></div><p className="balmz-ai-disclaimer">A market listing is not a safety guarantee. Do not treat this panel as a complete audit.</p></section>}
 
