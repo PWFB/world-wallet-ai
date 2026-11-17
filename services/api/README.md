@@ -74,16 +74,16 @@ Do not enable a real customer rollout until that test arrives and you verify sig
 
 Google OAuth secrets belong only in Neon Auth provider configuration. Never store a Google account password in World Wallet AI or ask users for it; the user signs in through Google's OAuth consent flow.
 
-## Secret Room private-key reveal — verified receiver Gmail
+## Secret Room wallet unlock — verified receiver Gmail
 
-The Wallets page's local **Private key security** reveal action uses a separate step-up email check:
+The Wallets page requires a separate email factor before unlocking a saved local wallet:
 
 1. The user signs in through the existing World Wallet AI account login and completes the existing wallet security PIN gate. The Secret Room never asks for a Google account password or resubmits the account password.
 2. The user registers a separate Gmail receiver address and verifies it with a server-generated six-digit code.
-3. For each private-key reveal, the backend sends a fresh code only to that already-verified receiver Gmail. The user enters the code and then the local vault password.
-4. The backend issues a five-minute, single-use authorization. Only after the authorization is consumed does the browser decrypt the local encrypted wallet. The private key and vault password are never uploaded.
+3. Before each local wallet unlock, the backend sends a fresh code only to that already-verified receiver Gmail. The user enters this code and the local vault password.
+4. The backend issues a five-minute, single-use authorization. The browser consumes it before decrypting the local encrypted wallet. The vault password, private key and recovery phrase are never uploaded.
 
-The receiver address cannot be changed from the normal login or reveal screen after verification. An account-recovery process is required to replace it, preventing someone with only the login form from redirecting future access codes to a new mailbox. Codes are hashed with the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, expire after five minutes, allow at most five attempts, and are rate-limited to three requests per purpose per 15 minutes. No code is returned to the frontend or written to logs.
+A verified receiver address cannot be changed from the normal login or wallet-unlock screen. Replacing it requires a separately authenticated account-recovery procedure; this endpoint intentionally does not provide a self-service change operation. Codes are hashed with the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, expire after five minutes, allow at most five incorrect attempts, and are rate-limited to three requests per purpose per 15 minutes. No code is returned to the frontend or written to logs.
 
 The backend reuses the dedicated sender configuration already used for BankConnect email delivery:
 
@@ -94,7 +94,7 @@ The backend reuses the dedicated sender configuration already used for BankConne
 - `BANKCONNECT_SMTP_FROM_EMAIL`
 - `BANKCONNECT_SMTP_FROM_NAME` (optional)
 
-Do not use a customer's Gmail password as SMTP credentials. Use a server-side Gmail App Password for the sender mailbox. The Secret Room routes require a `wwpin_` wallet-PIN session; service credentials and API keys cannot enroll a receiver or request a reveal grant.
+Do not use a customer's Gmail password as SMTP credentials. Use a server-side Gmail App Password for the sender mailbox. Secret Room routes require a `wwpin_` wallet-PIN session; service credentials and API keys cannot enroll a receiver or request an unlock grant.
 
 Routes:
 
@@ -105,7 +105,7 @@ Routes:
 - `POST /api/v1/vault-security/access/verify`
 - `POST /api/v1/vault-security/access/consume`
 
-This is a step-up control on the Wallets page's private-key reveal action. Local self-custody means a person with full control of the browser and its local encrypted backup can still inspect or decrypt their own data outside the application; this feature does not make a compromised device safe.
+This is an app-level step-up gate. Local self-custody means a person with full control of the browser and its encrypted backup can still decrypt their own data outside the application; this feature does not make a compromised device safe. After a wallet is unlocked in the browser, existing local session controls apply until it is locked or the page session ends.
 
 ## Sepolia wallet
 
