@@ -74,6 +74,39 @@ Do not enable a real customer rollout until that test arrives and you verify sig
 
 Google OAuth secrets belong only in Neon Auth provider configuration. Never store a Google account password in World Wallet AI or ask users for it; the user signs in through Google's OAuth consent flow.
 
+## Secret Room private-key reveal — verified receiver Gmail
+
+The Wallets page's local **Private key security** reveal action uses a separate step-up email check:
+
+1. The user signs in through the existing World Wallet AI account login and completes the existing wallet security PIN gate. The Secret Room never asks for a Google account password or resubmits the account password.
+2. The user registers a separate Gmail receiver address and verifies it with a server-generated six-digit code.
+3. For each private-key reveal, the backend sends a fresh code only to that already-verified receiver Gmail. The user enters the code and then the local vault password.
+4. The backend issues a five-minute, single-use authorization. Only after the authorization is consumed does the browser decrypt the local encrypted wallet. The private key and vault password are never uploaded.
+
+The receiver address cannot be changed from the normal login or reveal screen after verification. An account-recovery process is required to replace it, preventing someone with only the login form from redirecting future access codes to a new mailbox. Codes are hashed with the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, expire after five minutes, allow at most five attempts, and are rate-limited to three requests per purpose per 15 minutes. No code is returned to the frontend or written to logs.
+
+The backend reuses the dedicated sender configuration already used for BankConnect email delivery:
+
+- `BANKCONNECT_SMTP_HOST` (defaults to `smtp.gmail.com`)
+- `BANKCONNECT_SMTP_PORT` (defaults to `465`)
+- `BANKCONNECT_SMTP_USERNAME`
+- `BANKCONNECT_SMTP_APP_PASSWORD`
+- `BANKCONNECT_SMTP_FROM_EMAIL`
+- `BANKCONNECT_SMTP_FROM_NAME` (optional)
+
+Do not use a customer's Gmail password as SMTP credentials. Use a server-side Gmail App Password for the sender mailbox. The Secret Room routes require a `wwpin_` wallet-PIN session; service credentials and API keys cannot enroll a receiver or request a reveal grant.
+
+Routes:
+
+- `GET /api/v1/vault-security/email/status`
+- `POST /api/v1/vault-security/email/enroll`
+- `POST /api/v1/vault-security/email/verify`
+- `POST /api/v1/vault-security/access/request`
+- `POST /api/v1/vault-security/access/verify`
+- `POST /api/v1/vault-security/access/consume`
+
+This is a step-up control on the Wallets page's private-key reveal action. Local self-custody means a person with full control of the browser and its local encrypted backup can still inspect or decrypt their own data outside the application; this feature does not make a compromised device safe.
+
 ## Sepolia wallet
 
 Sepolia uses the same EVM public address as Ethereum for a given wallet. The API exposes a separate `sepolia` address record and network status when a valid EVM address is configured. Set `WORLD_WALLET_EVM_ADDRESS` to the user's public address and `WORLD_WALLET_SEPOLIA_RPC_URL` to a Sepolia RPC endpoint. Do not invent an address or put private keys in the API.
