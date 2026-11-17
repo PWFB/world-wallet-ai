@@ -771,7 +771,7 @@ function AccountPasswordSecurity({ accountEmail = "", accessToken, apiBaseUrl, o
   const [error, setError] = useState("");
 
   async function securityRequest(path, body) {
-    const response = await fetch(String(apiBaseUrl || "").replace(/\\/$/, "") + path, {
+    const response = await fetch(String(apiBaseUrl || "").replace(/\/$/, "") + path, {
       method: body ? "POST" : "GET",
       headers: {
         Authorization: "Bearer " + accessToken,
@@ -870,6 +870,9 @@ function AccountPasswordSecurity({ accountEmail = "", accessToken, apiBaseUrl, o
       });
       if (signInResult?.error) throw new Error(signInResult.error.message || "Your current account password was not accepted.");
 
+      await securityRequest("/api/v1/auth/neon/account-security/password-change/complete", { grant_token: passwordGrant });
+      setPasswordGrant("");
+
       const changeResult = await authClient.changePassword({
         currentPassword,
         newPassword,
@@ -877,22 +880,19 @@ function AccountPasswordSecurity({ accountEmail = "", accessToken, apiBaseUrl, o
       });
       if (changeResult?.error) throw new Error(changeResult.error.message || "Neon Auth could not update your password.");
       passwordUpdated = true;
-
-      await securityRequest("/api/v1/auth/neon/account-security/password-change/complete", { grant_token: passwordGrant });
-      setPasswordGrant("");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
       setPasswordCodeSent(false);
       setMessage("Your BALMZ AI account password was changed successfully. Other active Neon Auth sessions were revoked. Sign in again with your new password.");
-      await authClient.signOut().catch(() => {});
       if (typeof onLogout === "function") await onLogout();
+      else await authClient.signOut().catch(() => {});
     } catch (err) {
       if (passwordUpdated) {
         setPasswordGrant("");
         setError("Your password was changed in Neon Auth, but BALMZ AI could not record the final verification receipt. Sign in with your new password and contact support if this message remains.");
-        try { await authClient.signOut(); } catch {}
         if (typeof onLogout === "function") await onLogout();
+        else try { await authClient.signOut(); } catch {}
       } else {
         setError(err.message || "The BALMZ AI account password could not be changed.");
       }
@@ -904,10 +904,10 @@ function AccountPasswordSecurity({ accountEmail = "", accessToken, apiBaseUrl, o
     <p className="muted">Your login Gmail remains the account identity. The receiver Gmail must be a different mailbox. BALMZ AI verifies both codes, while Neon Auth securely stores and changes your BALMZ AI account password.</p>
     {!receiverVerified ? <>
       <label>Separate receiver Gmail<input type="email" value={receiverEmail} onChange={event => setReceiverEmail(event.target.value)} placeholder="another-address@gmail.com" autoComplete="email" disabled={receiverCodeSent || busy} /></label>
-      <button type="button" className="secondary" disabled={busy || !/^[^\\s@]+@(?:gmail\\.com|googlemail\\.com)$/i.test(receiverEmail.trim()) || receiverCodeSent} onClick={sendReceiverCode}>{busy ? "Sending…" : "Send first verification code"}</button>
+      <button type="button" className="secondary" disabled={busy || !/^[^\s@]+@(?:gmail\.com|googlemail\.com)$/i.test(receiverEmail.trim()) || receiverCodeSent} onClick={sendReceiverCode}>{busy ? "Sending…" : "Send first verification code"}</button>
       {receiverCodeSent && <>
-        <label>First code — verify receiver Gmail<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={receiverCode} onChange={event => setReceiverCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter six-digit code" /></label>
-        <button type="button" className="secondary" disabled={busy || receiverCode.length !== 6} onClick={verifyReceiverCode}>{busy ? "Verifying…" : "Verify receiver Gmail"}</button>
+        <label>First code — verify receiver Gmail<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={receiverCode} onChange={event => setReceiverCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter six-digit code" /></label>
+        <div className="page-actions"><button type="button" className="secondary" disabled={busy || receiverCode.length !== 6} onClick={verifyReceiverCode}>{busy ? "Verifying…" : "Verify receiver Gmail"}</button><button type="button" className="text-btn" disabled={busy} onClick={sendReceiverCode}>Send a new code</button></div>
       </>}
     </> : <>
       <div className="security-note">Verified receiver Gmail: <strong>{receiverEmail}</strong>. Both verification codes are sent to this mailbox. Changing it requires account recovery.</div>
@@ -917,8 +917,8 @@ function AccountPasswordSecurity({ accountEmail = "", accessToken, apiBaseUrl, o
       <label>Confirm new password<input type="password" value={confirmPassword} onChange={event => { setConfirmPassword(event.target.value); setPasswordGrant(""); }} autoComplete="new-password" minLength={8} placeholder="Re-enter your new password" /></label>
       <button type="button" className="secondary" disabled={busy || passwordCodeSent || Boolean(passwordGrant)} onClick={sendPasswordCode}>{busy ? "Sending…" : "Send second password-change code"}</button>
       {passwordCodeSent && <>
-        <label>Second code — authorize password change<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={passwordCode} onChange={event => setPasswordCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter the second six-digit code" /></label>
-        <button type="button" className="secondary" disabled={busy || passwordCode.length !== 6} onClick={verifyPasswordCode}>{busy ? "Verifying…" : "Verify second code"}</button>
+        <label>Second code — authorize password change<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={passwordCode} onChange={event => setPasswordCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the second six-digit code" /></label>
+        <div className="page-actions"><button type="button" className="secondary" disabled={busy || passwordCode.length !== 6} onClick={verifyPasswordCode}>{busy ? "Verifying…" : "Verify second code"}</button><button type="button" className="text-btn" disabled={busy} onClick={sendPasswordCode}>Send a new code</button></div>
       </>}
       {passwordGrant && <button type="button" className="primary feature-submit" disabled={busy} onClick={changeAccountPassword}>{busy ? "Updating password…" : "Confirm and change password →"}</button>}
     </>}
