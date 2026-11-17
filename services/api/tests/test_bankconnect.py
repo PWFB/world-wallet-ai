@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -122,7 +123,7 @@ class BankConnectEmailTests(unittest.TestCase):
             route for route in self.router().routes
             if route.path == "/api/v1/bankconnect/admin/test-credentials"
         )
-        with unittest.mock.patch.object(bankconnect, "PLAID_ADMIN_EMAIL", "admin@example.com"):
+        with patch.object(bankconnect, "PLAID_ADMIN_EMAIL", "admin@example.com"):
             with self.assertRaises(HTTPException) as raised:
                 asyncio.run(route.endpoint(user=self.user))
         self.assertEqual(raised.exception.status_code, 403)
@@ -132,7 +133,7 @@ class BankConnectEmailTests(unittest.TestCase):
             route for route in self.router().routes
             if route.path == "/api/v1/bankconnect/admin/test-credentials"
         )
-        with unittest.mock.patch.object(bankconnect, "PLAID_ADMIN_EMAIL", ""):
+        with patch.object(bankconnect, "PLAID_ADMIN_EMAIL", ""):
             with self.assertRaises(HTTPException) as raised:
                 asyncio.run(route.endpoint(user={"id": "user", "email": "admin@example.com"}))
         self.assertEqual(raised.exception.status_code, 403)
