@@ -455,6 +455,12 @@ function App() {
     ? String(entry.ownerUserId) === accountUserId
     : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
   const [accessToken, setAccessToken] = useState("");
+  useEffect(() => {
+    if (!accessToken) return;
+    if (new URLSearchParams(window.location.search).get("balmz_bank_return") === "1") {
+      setActive("BALMZ AI");
+    }
+  }, [accessToken]);
   const [pinGateOpen, setPinGateOpen] = useState(false);
   const [pendingPinToken, setPendingPinToken] = useState("");
   const [pendingPinUser, setPendingPinUser] = useState(null);
