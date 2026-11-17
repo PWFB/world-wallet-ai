@@ -53,7 +53,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [vaultSecurityMessage, setVaultSecurityMessage] = useState("");
   
   async function vaultSecurityRequest(path, body) {
-    const base = String(apiBaseUrl || "").replace(/\\/+$/, "");
+    const base = String(apiBaseUrl || "").replace(/\/+$/, "");
     if (!base || !accessToken) throw new Error("Sign in and complete your wallet security PIN before opening the Secret Room.");
     const response = await fetch(base + path, {
       method: body ? "POST" : "GET",
@@ -1553,16 +1553,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         {!revealedPrivateKey ? <>
           {!vaultReceiverVerified ? <>
             <label>Receiver Gmail for Secret Room codes<input type="email" value={vaultReceiverEmail} onChange={event => setVaultReceiverEmail(event.target.value)} autoComplete="email" placeholder="another-address@gmail.com" disabled={vaultEnrollSent || vaultSecurityBusy} /></label>
-            <button type="button" className="secondary" disabled={vaultSecurityBusy || !/^.+@(?:gmail\\.com|googlemail\\.com)$/i.test(vaultReceiverEmail.trim())} onClick={sendVaultReceiverEmailCode}>{vaultSecurityBusy ? "Sending…" : "Send receiver verification code"}</button>
+            <button type="button" className="secondary" disabled={vaultSecurityBusy || !/^.+@(?:gmail\.com|googlemail\.com)$/i.test(vaultReceiverEmail.trim())} onClick={sendVaultReceiverEmailCode}>{vaultSecurityBusy ? "Sending…" : "Send receiver verification code"}</button>
             {vaultEnrollSent && <>
-              <label>Receiver Gmail verification code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultEnrollCode} onChange={event => setVaultEnrollCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter the six-digit email code" /></label>
+              <label>Receiver Gmail verification code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultEnrollCode} onChange={event => setVaultEnrollCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the six-digit email code" /></label>
               <button type="button" className="secondary" disabled={vaultSecurityBusy || vaultEnrollCode.length !== 6} onClick={verifyVaultReceiverEmail}>{vaultSecurityBusy ? "Verifying…" : "Verify receiver Gmail"}</button>
             </>}
           </> : <>
             <div className="security-note">Verified receiver Gmail: <strong>{vaultReceiverEmail}</strong>. Secret Room access codes are sent only to this saved address. Changing it requires the account recovery process.</div>
             <button type="button" className="secondary" disabled={vaultSecurityBusy || Boolean(vaultGrantToken)} onClick={sendVaultAccessCode}>{vaultSecurityBusy ? "Sending…" : "Send one-time Secret Room code"}</button>
             {vaultAccessSent && <>
-              <label>One-time Secret Room code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultAccessCode} onChange={event => setVaultAccessCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="Enter the six-digit code" /></label>
+              <label>One-time Secret Room code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultAccessCode} onChange={event => setVaultAccessCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the six-digit code" /></label>
               <button type="button" className="secondary" disabled={vaultSecurityBusy || vaultAccessCode.length !== 6} onClick={verifyVaultAccessCode}>{vaultSecurityBusy ? "Verifying…" : "Verify one-time code"}</button>
             </>}
             {vaultGrantToken && <div className="feature-success">Email code verified. The access authorization is single-use and expires in five minutes.</div>}
