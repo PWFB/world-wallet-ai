@@ -42,121 +42,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
   const [unlockedAddresses, setUnlockedAddresses] = useState(null);
   const [keyRevealPassword, setKeyRevealPassword] = useState("");
   const [revealedPrivateKey, setRevealedPrivateKey] = useState("");
-  const [vaultReceiverEmail, setVaultReceiverEmail] = useState("");
-  const [vaultReceiverVerified, setVaultReceiverVerified] = useState(false);
-  const [vaultEnrollCode, setVaultEnrollCode] = useState("");
-  const [vaultEnrollSent, setVaultEnrollSent] = useState(false);
-  const [vaultAccessCode, setVaultAccessCode] = useState("");
-  const [vaultAccessSent, setVaultAccessSent] = useState(false);
-  const [vaultGrantToken, setVaultGrantToken] = useState("");
-  const [vaultSecurityBusy, setVaultSecurityBusy] = useState(false);
-  const [vaultSecurityMessage, setVaultSecurityMessage] = useState("");
-  
-  async function vaultSecurityRequest(path, body) {
-    const base = String(apiBaseUrl || "").replace(/\/+$/, "");
-    if (!base || !accessToken) throw new Error("Sign in and complete your wallet security PIN before opening the Secret Room.");
-    const response = await fetch(base + path, {
-      method: body ? "POST" : "GET",
-      headers: {
-        Authorization: "Bearer " + accessToken,
-        Accept: "application/json",
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-      cache: "no-store",
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || "Secret Room email verification failed.");
-    return data;
-  }
-
-  async function sendVaultReceiverEmailCode() {
-    setVaultSecurityBusy(true);
-    setVaultSecurityMessage("");
-    try {
-      const data = await vaultSecurityRequest("/api/v1/vault-security/email/enroll", { receiver_email: vaultReceiverEmail });
-      setVaultReceiverEmail(data.receiver_email || vaultReceiverEmail.trim().toLowerCase());
-      setVaultEnrollSent(true);
-      setVaultEnrollCode("");
-      setVaultSecurityMessage("A real six-digit verification code was sent to the receiver Gmail. It expires in five minutes.");
-    } catch (error) {
-      setVaultSecurityMessage(error?.message || "Could not send the receiver Gmail verification code.");
-    } finally {
-      setVaultSecurityBusy(false);
-    }
-  }
-
-  async function verifyVaultReceiverEmail() {
-    setVaultSecurityBusy(true);
-    setVaultSecurityMessage("");
-    try {
-      const data = await vaultSecurityRequest("/api/v1/vault-security/email/verify", { code: vaultEnrollCode.trim() });
-      setVaultReceiverEmail(data.receiver_email || vaultReceiverEmail);
-      setVaultReceiverVerified(true);
-      setVaultEnrollSent(false);
-      setVaultEnrollCode("");
-      setVaultSecurityMessage("Receiver Gmail verified. Request a fresh access code whenever you reveal a private key.");
-    } catch (error) {
-      setVaultSecurityMessage(error?.message || "Receiver Gmail verification failed.");
-    } finally {
-      setVaultSecurityBusy(false);
-    }
-  }
-
-  async function sendVaultAccessCode() {
-    setVaultSecurityBusy(true);
-    setVaultSecurityMessage("");
-    setVaultGrantToken("");
-    try {
-      const data = await vaultSecurityRequest("/api/v1/vault-security/access/request");
-      setVaultReceiverEmail(data.receiver_email || vaultReceiverEmail);
-      setVaultAccessSent(true);
-      setVaultAccessCode("");
-      setVaultSecurityMessage("A new one-time access code was sent to your verified receiver Gmail. It expires in five minutes.");
-    } catch (error) {
-      setVaultSecurityMessage(error?.message || "Could not send the Secret Room access code.");
-    } finally {
-      setVaultSecurityBusy(false);
-    }
-  }
-
-  async function verifyVaultAccessCode() {
-    setVaultSecurityBusy(true);
-    setVaultSecurityMessage("");
-    try {
-      const data = await vaultSecurityRequest("/api/v1/vault-security/access/verify", { code: vaultAccessCode.trim() });
-      setVaultGrantToken(data.grant_token || "");
-      setVaultAccessSent(false);
-      setVaultAccessCode("");
-      setVaultSecurityMessage("One-time code verified. Enter the local vault password to reveal the private key.");
-    } catch (error) {
-      setVaultGrantToken("");
-      setVaultSecurityMessage(error?.message || "Secret Room access code verification failed.");
-    } finally {
-      setVaultSecurityBusy(false);
-    }
-  }
-
-  async function consumeVaultAccessGrant() {
-    if (!vaultGrantToken) throw new Error("Request and verify a fresh Secret Room email code first.");
-    await vaultSecurityRequest("/api/v1/vault-security/access/consume", { grant_token: vaultGrantToken });
-    setVaultGrantToken("");
-  }
-
-  useEffect(() => {
-    if (!accessToken || !apiBaseUrl) return undefined;
-    let active = true;
-    vaultSecurityRequest("/api/v1/vault-security/email/status")
-      .then(data => {
-        if (!active) return;
-        setVaultReceiverEmail(data.receiver_email || "");
-        setVaultReceiverVerified(Boolean(data.verified));
-      })
-      .catch(error => {
-        if (active) setVaultSecurityMessage(error?.message || "Secret Room email status could not be loaded.");
-      });
-    return () => { active = false; };
-  }, [accessToken, apiBaseUrl]);
   const [signMessage, setSignMessage] = useState("");
   const [signature, setSignature] = useState("");
   const [typedDataDomainJson, setTypedDataDomainJson] = useState("");
@@ -886,7 +771,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     const entry = entries.find(item => item.walletId === selectedId);
     if (!entry) return setMessage("Choose a locally saved wallet first.");
     if (!password) return setMessage("Enter the vault password used when creating this wallet.");
-    if (!vaultGrantToken) return setMessage("Verify a fresh Secret Room code sent to your registered receiver Gmail before unlocking this wallet.");
     setBusy(true);
     setMessage("");
     setSignature("");
@@ -899,7 +783,6 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     setVerifyMessageInput("");
     setVerifySignatureInput("");
     try {
-      await consumeVaultAccessGrant();
       const signer = await Wallet.fromEncryptedJson(entry.encryptedJson, password);
       const expectedEvmAddress = entry.addresses?.ethereum || entry.address;
       if (signer.address.toLowerCase() !== String(expectedEvmAddress).toLowerCase()) throw new Error("Wallet address integrity check failed.");
@@ -936,15 +819,12 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
           setMessage("Wallet unlocked locally, but the Sepolia balance could not be checked: " + (rpcError?.shortMessage || rpcError?.message || "RPC unavailable") + ". Your key remains local; retry the balance check later.");
         }
       }
-    } catch (error) {
-      setVaultGrantToken("");
-      setVaultAccessCode("");
-      setVaultAccessSent(false);
+    } catch {
       setUnlocked(null);
       setUnlockedAddresses(null);
       setKeyRevealPassword("");
       setRevealedPrivateKey("");
-      setMessage(error?.message || "Could not unlock this wallet. Check the password; the vault cannot recover a lost password.");
+      setMessage("Could not unlock this wallet. Check the password; the vault cannot recover a lost password.");
     } finally {
       setBusy(false);
     }
@@ -1547,37 +1427,16 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
       <p className="feature-kicker">MULTI-WALLET LOCAL SIGNING</p>
       <h2>Unlock a saved wallet</h2>
       <p className="muted">Choose one of the encrypted wallet copies saved in this browser. Passwords and decrypted keys stay in memory only while this page is open.</p>
-      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); else if (nextEntry && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setVaultGrantToken(""); setVaultAccessCode(""); setVaultAccessSent(false); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); if (nextEntry && !nextEntry.serverWalletId && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); else setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
+      <label>Wallet<select disabled={busy} value={selectedId} onChange={event => { const nextId = event.target.value; const nextEntry = entries.find(item => item.walletId === nextId); setSelectedId(nextId); setPassword(""); setUnlocked(null); setUnlockedAddresses(null); setGenerated(null); if (nextEntry?.serverWalletId) onWalletSelected?.(nextEntry.serverWalletId); else if (nextEntry && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setTokenRecipient(""); setTokenAmount(""); setSendAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setVerifyResult(null); setSignMessage(""); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); if (nextEntry && !nextEntry.serverWalletId && activeWalletId) setMessage("This imported wallet is local-only until attached. The active account wallet, balances, and history remain separate."); else setMessage(""); }}><option value="">Select a wallet</option>{entries.map(item => <option key={item.walletId} value={item.walletId}>{item.name} · ID {item.walletNumber || "legacy"} — {item.address.slice(0, 8)}…</option>)}</select></label>
       {selected && <div className="wallet-detail-grid"><div><small>Wallet ID</small><code>{selected.walletNumber || "Legacy ID unavailable"}</code></div>{Object.entries(selected.addresses || { ethereum: selected.address }).map(([addressNetwork, addressValue]) => <div key={addressNetwork}><small>{({ethereum:"Ethereum Mainnet",bnb:"BNB Chain Mainnet",bitcoin:"Bitcoin Mainnet",solana_mainnet:"Solana Mainnet",sepolia:"Ethereum Sepolia",solana_devnet:"Solana Devnet"})[addressNetwork] || addressNetwork}</small><code>{addressValue}</code></div>)}</div>}
       {selected && <a className="secondary" href={selected.network === "sepolia" ? "https://sepolia.etherscan.io/address/" + selected.address : selected.network === "bnb" ? "https://bscscan.com/address/" + selected.address : selected.network === "ethereum" ? "https://etherscan.io/address/" + selected.address : "https://etherscan.io/"} target="_blank" rel="noreferrer">View selected wallet in Explorer ↗</a>}
-      {selected && !unlocked && <div className="wallet-message-signing">
-        <h3>Secret Room access</h3>
-        <p className="muted">Before the local vault can unlock, register a separate Gmail and verify a real one-time code sent to that mailbox. Your account login password and Google password are never sent to the code receiver or used by the mail sender.</p>
-        {!vaultReceiverVerified ? <>
-          <label>Receiver Gmail for Secret Room codes<input type="email" value={vaultReceiverEmail} onChange={event => setVaultReceiverEmail(event.target.value)} autoComplete="email" placeholder="another-address@gmail.com" disabled={vaultEnrollSent || vaultSecurityBusy} /></label>
-          <button type="button" className="secondary" disabled={vaultSecurityBusy || !/^.+@(?:gmail\.com|googlemail\.com)$/i.test(vaultReceiverEmail.trim())} onClick={sendVaultReceiverEmailCode}>{vaultSecurityBusy ? "Sending…" : "Send receiver verification code"}</button>
-          {vaultEnrollSent && <>
-            <label>Receiver Gmail verification code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultEnrollCode} onChange={event => setVaultEnrollCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the six-digit email code" /></label>
-            <button type="button" className="secondary" disabled={vaultSecurityBusy || vaultEnrollCode.length !== 6} onClick={verifyVaultReceiverEmail}>{vaultSecurityBusy ? "Verifying…" : "Verify receiver Gmail"}</button>
-          </>}
-        </> : <>
-          <div className="security-note">Verified receiver Gmail: <strong>{vaultReceiverEmail}</strong>. Access codes are sent only to this saved address. Changing it requires the account recovery process.</div>
-          <button type="button" className="secondary" disabled={vaultSecurityBusy || Boolean(vaultGrantToken)} onClick={sendVaultAccessCode}>{vaultSecurityBusy ? "Sending…" : "Send one-time Secret Room code"}</button>
-          {vaultAccessSent && <>
-            <label>One-time Secret Room code<input inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={vaultAccessCode} onChange={event => setVaultAccessCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="Enter the six-digit code" /></label>
-            <button type="button" className="secondary" disabled={vaultSecurityBusy || vaultAccessCode.length !== 6} onClick={verifyVaultAccessCode}>{vaultSecurityBusy ? "Verifying…" : "Verify one-time code"}</button>
-          </>}
-          {vaultGrantToken && <div className="feature-success">Email code verified. This authorization unlocks one wallet once and expires in five minutes.</div>}
-        </>}
-        {vaultSecurityMessage && <div className={/could not|failed|incorrect|invalid|expired|too many|unavailable/i.test(vaultSecurityMessage) ? "feature-error" : "feature-success"}>{vaultSecurityMessage}</div>}
-      </div>}
       <label>Vault password<input type="password" value={password} onChange={event => setPassword(event.target.value)} autoComplete="current-password" placeholder="Vault password" /></label>
-      <button className="primary feature-submit" disabled={busy || !selected || !password || !vaultGrantToken} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
+      <button className="primary feature-submit" disabled={busy || !selected || !password} onClick={unlockWallet}>{busy ? "Unlocking…" : "Unlock selected wallet →"}</button>
       {unlocked && <div className="wallet-message-signing">
         <h3>Private key security</h3>
-        <p className="muted">The private key is the wallet's secret signing key. It remains in this browser and is never sent to World Wallet AI.</p>
+        <p className="muted">The private key is the wallet's secret signing key. Reveal it only on a trusted device. It stays in this browser and is never sent to World Wallet AI.</p>
         {!revealedPrivateKey ? <>
-          <label>Confirm vault password to reveal private key<input type="password" value={keyRevealPassword} onChange={event => setKeyRevealPassword(event.target.value)} autoComplete="current-password" placeholder="Re-enter local vault password" /></label>
+          <label>Confirm vault password to reveal private key<input type="password" value={keyRevealPassword} onChange={event => setKeyRevealPassword(event.target.value)} autoComplete="current-password" placeholder="Re-enter vault password" /></label>
           <button className="secondary" disabled={busy || !keyRevealPassword} onClick={async () => {
             setBusy(true);
             try {
@@ -1598,7 +1457,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
         <div className="security-note">Never share this key. Anyone who obtains it can control the wallet. Recovery phrases are shown only when generated and are not recoverable from this screen.</div>
       </div>}
       {unlocked && <div className="wallet-message-signing">
-        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setVaultGrantToken(""); setVaultAccessCode(""); setVaultAccessSent(false); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setSmartWalletSignature(""); setSmartWalletResult(null); setSmartWalletTxResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
+        <button className="secondary" onClick={() => { setUnlocked(null); setUnlockedAddresses(null); setPassword(""); setNativeBalance(""); setTxHash(""); setTokenTxHash(""); setRecipient(""); setSendAmount(""); setTokenRecipient(""); setTokenAmount(""); setKeyRevealPassword(""); setRevealedPrivateKey(""); setSignature(""); setSignMessage(""); setTypedDataSignature(""); setTypedDataResult(null); setSmartWalletSignature(""); setSmartWalletResult(null); setSmartWalletTxResult(null); setVerifyResult(null); setVerifyAddressInput(""); setVerifyMessageInput(""); setVerifySignatureInput(""); setMessage("Wallet locked in this browser session. Balance, signatures, and transaction details were cleared from this view."); }}>Lock wallet</button>
         <label>Message to sign<textarea rows="3" value={signMessage} onChange={event => { setSignMessage(event.target.value); setSignature(""); }} placeholder="Sign a message to prove control of this address" /></label>
         <button className="secondary" disabled={busy || !signMessage.trim()} onClick={signLocalMessage}>{busy ? "Signing…" : "Sign message inside World Wallet AI"}</button>
         {signature && <label>Signature<textarea readOnly rows="3" value={signature} /></label>}
