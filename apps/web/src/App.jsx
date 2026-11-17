@@ -269,6 +269,7 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [rootSearch, setRootSearch] = useState("");
   const [active, setActive] = useState(() => {
+    if (new URLSearchParams(window.location.search).get("balmz_bank_return") === "1") return "BALMZ AI";
     try {
       const saved = localStorage.getItem("ww_active_page");
       return saved || "Dashboard";
