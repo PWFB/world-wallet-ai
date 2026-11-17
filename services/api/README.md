@@ -74,39 +74,6 @@ Do not enable a real customer rollout until that test arrives and you verify sig
 
 Google OAuth secrets belong only in Neon Auth provider configuration. Never store a Google account password in World Wallet AI or ask users for it; the user signs in through Google's OAuth consent flow.
 
-## Secret Room wallet unlock — verified receiver Gmail
-
-The Wallets page requires a separate email factor before unlocking a saved local wallet:
-
-1. The user signs in through the existing World Wallet AI account login and completes the existing wallet security PIN gate. The Secret Room never asks for a Google account password or resubmits the account password.
-2. The user registers a separate Gmail receiver address and verifies it with a server-generated six-digit code.
-3. Before each local wallet unlock, the backend sends a fresh code only to that already-verified receiver Gmail. The user enters this code and the local vault password.
-4. The backend issues a five-minute, single-use authorization. The browser consumes it before decrypting the local encrypted wallet. The vault password, private key and recovery phrase are never uploaded.
-
-A verified receiver address cannot be changed from the normal login or wallet-unlock screen. Replacing it requires a separately authenticated account-recovery procedure; this endpoint intentionally does not provide a self-service change operation. Codes are hashed with the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`, expire after five minutes, allow at most five incorrect attempts, and are rate-limited to three requests per purpose per 15 minutes. No code is returned to the frontend or written to logs.
-
-The backend reuses the dedicated sender configuration already used for BankConnect email delivery:
-
-- `BANKCONNECT_SMTP_HOST` (defaults to `smtp.gmail.com`)
-- `BANKCONNECT_SMTP_PORT` (defaults to `465`)
-- `BANKCONNECT_SMTP_USERNAME`
-- `BANKCONNECT_SMTP_APP_PASSWORD`
-- `BANKCONNECT_SMTP_FROM_EMAIL`
-- `BANKCONNECT_SMTP_FROM_NAME` (optional)
-
-Do not use a customer's Gmail password as SMTP credentials. Use a server-side Gmail App Password for the sender mailbox. Secret Room routes require a `wwpin_` wallet-PIN session; service credentials and API keys cannot enroll a receiver or request an unlock grant.
-
-Routes:
-
-- `GET /api/v1/vault-security/email/status`
-- `POST /api/v1/vault-security/email/enroll`
-- `POST /api/v1/vault-security/email/verify`
-- `POST /api/v1/vault-security/access/request`
-- `POST /api/v1/vault-security/access/verify`
-- `POST /api/v1/vault-security/access/consume`
-
-This is an app-level step-up gate. Local self-custody means a person with full control of the browser and its encrypted backup can still decrypt their own data outside the application; this feature does not make a compromised device safe. After a wallet is unlocked in the browser, existing local session controls apply until it is locked or the page session ends.
-
 ## Sepolia wallet
 
 Sepolia uses the same EVM public address as Ethereum for a given wallet. The API exposes a separate `sepolia` address record and network status when a valid EVM address is configured. Set `WORLD_WALLET_EVM_ADDRESS` to the user's public address and `WORLD_WALLET_SEPOLIA_RPC_URL` to a Sepolia RPC endpoint. Do not invent an address or put private keys in the API.
@@ -176,3 +143,17 @@ Existing user-authenticated routes:
 - `DELETE /api/v1/bankconnect/connections/{connection_id}` — removes that user's bank connection.
 
 The Android APT no longer ships Plaid Link or calls these legacy routes for its current Private Services flows. The web frontend also does not currently expose a Plaid Link screen. These routes are not part of crypto purchase or US bank payout processing. Never collect bank login credentials or bank-issued OTPs in BALMZ.
+
+
+## BALMZ AI alternate-Gmail account password change
+
+The signed-in account can register one separate receiver Gmail from **Profile → Account security & password**. BALMZ AI sends two distinct server-generated six-digit codes to that same receiver mailbox:
+
+1. The first code verifies the alternate receiver Gmail.
+2. After the user enters their current BALMZ AI password and a matching new password, the second code authorizes the change.
+
+Both codes expire after five minutes, are single-use, are stored only as keyed hashes, allow at most five verification attempts, and are rate-limited to three requests per purpose per 15 minutes. A verified receiver mailbox cannot be silently replaced from the normal account screen; account recovery is required.
+
+The backend uses the existing server-side `BANKCONNECT_SMTP_HOST`, `BANKCONNECT_SMTP_PORT`, `BANKCONNECT_SMTP_USERNAME`, `BANKCONNECT_SMTP_APP_PASSWORD`, `BANKCONNECT_SMTP_FROM_EMAIL`, and optional `BANKCONNECT_SMTP_FROM_NAME` settings, plus the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`. No customer password is stored in the application database. After both codes are verified, the browser re-authenticates the account through Neon Auth and calls its authenticated password-change API with session revocation enabled. The final result is recorded with a short-lived single-use grant.
+
+This changes the **BALMZ AI / World Wallet AI account password**, not the user's Google/Gmail password. Google account passwords, bank passwords, and bank-issued OTPs are never collected by this feature. It currently supports accounts that use an email/password credential; social-only accounts need a separate password-setup flow.
