@@ -1,6 +1,6 @@
 # External wallet linking: provider-adapter decision
 
-**Status:** Binance EVM proof-of-concept implemented in draft PR #255; live deployment and physical-device tests pending  
+**Status:** Web OKX EVM account-linking entry point implemented on feat/okx-wallet-web-connect; browser/device verification pending. Android Binance proof-of-concept remains in draft PR #255.  
 **Date:** 2026-11-15  
 **Scope:** BALMZ AI APT Android external-wallet account linking
 
@@ -42,6 +42,14 @@ Official references:
 - https://www.npmjs.com/package/@okxconnect/connect-kit
 - https://web3.okx.com/onchainos/dev-docs/wallet/dapp-connect/okx-wallet-integration-introduction
 - https://web3.okx.com/onchainos/dev-docs/wallet/dapp-connect/app-connect-preparation
+
+## Web OKX EVM connection
+
+The web Wallets page now exposes an explicit **Connect OKX Wallet** action. It uses the OKX-injected EVM provider (window.okxwallet) when World Wallet AI is opened in the OKX Wallet DApp browser; it does not add WalletConnect, Reown AppKit or a third-party SDK. The connection flow requests the public account and reads the provider's current chain ID. It accepts Ethereum Mainnet (1), BNB Chain Mainnet (56) and Ethereum Sepolia (11155111) only.
+
+The web client stores each public account by World Wallet profile, provider ID, EVM namespace, chain ID and address in its existing external-connection registry. The existing Wallets synchronization attaches the public address to the active backend wallet. Connection does not imply ownership verification: the user must complete the existing backend challenge and personal_sign verification before the address is eligible for verified spending. No transaction signing or broadcast occurs during connection.
+
+This is a browser-injected EVM connection, not a persistent OKX session guarantee. It requires a browser context where OKX exposes window.okxwallet; ordinary mobile Chrome may not expose it. Provider reconnect, account/chain changes, multiple accounts and page reload behavior must be verified in the target OKX browser before production enablement.
 
 ## Android and backend flow
 

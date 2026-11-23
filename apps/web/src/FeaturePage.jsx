@@ -607,6 +607,54 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     }
   };
 
+  const connectOkxWallet = async () => {
+    if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
+    setBusy(true); setMessage("");
+    try {
+      // OKX injects its EVM provider in the OKX Wallet dApp browser.
+      // Do not silently treat another wallet provider as OKX.
+      const provider = window.okxwallet && typeof window.okxwallet.request === "function"
+        ? window.okxwallet
+        : (externalProvider && (externalProvider.isOKXWallet || externalProvider.isOkxWallet) ? externalProvider : null);
+      if (!provider) {
+        throw new Error("OKX Wallet was not detected. Open World Wallet AI inside OKX Wallet's DApp browser, then retry.");
+      }
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const selectedAddress = Array.isArray(accounts) ? accounts.find(value => /^0x[a-fA-F0-9]{40}$/.test(String(value || ""))) : "";
+      if (!selectedAddress) throw new Error("OKX did not return an EVM account.");
+      const chainValue = await provider.request({ method: "eth_chainId" });
+      const chainText = String(chainValue || "");
+      const chainId = typeof chainValue === "number" ? chainValue
+        : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
+      const networkByChain = { 1: "ethereum", 56: "bnb", 11155111: "sepolia" };
+      const networkName = networkByChain[chainId];
+      if (!networkName) throw new Error("Unsupported network. Switch OKX to Ethereum Mainnet, BNB Chain Mainnet, or Ethereum Sepolia.");
+      const saved = getSavedExternalConnections();
+      const record = {
+        provider: "okx",
+        providerId: "okx",
+        namespace: "eip155",
+        chainId,
+        network: networkName,
+        address: selectedAddress,
+        label: "OKX Wallet · " + ({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain Mainnet", sepolia: "Ethereum Sepolia" }[networkName]),
+        connectedAt: new Date().toISOString(),
+        walletId,
+      };
+      const next = [...saved.filter(item => !(
+        String(item.walletId || "") === String(walletId) &&
+        Number(item.chainId) === chainId &&
+        String(item.address || "").toLowerCase() === selectedAddress.toLowerCase()
+      )), record];
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: record }));
+      await loadAddresses(walletId);
+      setMessage("OKX account connected and its public address saved for " + record.label.split(" · ")[1] + ". Ownership is not yet verified; use Verify ownership before spending. No transaction was sent.");
+    } catch (error) {
+      setMessage(error?.message || "OKX Wallet connection failed.");
+    } finally { setBusy(false); }
+  };
+
   const selectedWallet = wallets.find(w => w.id === walletId);
   const allAccountLocalEntries = localEntries.filter(entry => {
     const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
@@ -708,6 +756,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         <p className="feature-kicker">ACTIVE WALLET</p>
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
         <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
+        <div className="address-row-actions" style={{ margin: "12px 0" }}>
+          <button type="button" className="primary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
+          <span className="security-note">Connects the selected OKX EVM account on Ethereum, BNB Chain, or Sepolia. Each network address is saved separately.</span>
+        </div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} · ID {walletNumberFor(w.id)}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
         </select>
