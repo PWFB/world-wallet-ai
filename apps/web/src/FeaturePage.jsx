@@ -121,6 +121,7 @@ function getSavedExternalConnections() {
     return list.filter(item => item?.address && /^0x[a-fA-F0-9]{40}$/.test(item.address) && [1, 56, 11155111].includes(Number(item.chainId)))
       .filter((item, index, all) => all.findIndex(other =>
         String(other.walletId || "") === String(item.walletId || "") &&
+        String(other.providerId || other.provider || "").toLowerCase() === String(item.providerId || item.provider || "").toLowerCase() &&
         Number(other.chainId) === Number(item.chainId) &&
         other.address.toLowerCase() === item.address.toLowerCase()
       ) === index);
@@ -655,6 +656,62 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     } finally { setBusy(false); }
   };
 
+  const connectBinanceWallet = async () => {
+    if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
+    setBusy(true); setMessage("");
+    try {
+      // Use only Binance's injected provider; never silently fall back to another wallet.
+      const provider = window.binancew3w?.ethereum;
+      if (!provider || typeof provider.request !== "function") {
+        throw new Error("Binance Web3 Wallet was not detected. Open World Wallet AI inside Binance Wallet's DApp browser, then retry.");
+      }
+      const accounts = await provider.request({ method: "eth_requestAccounts" });
+      const selectedAddress = Array.isArray(accounts) ? accounts.find(value => /^0x[a-fA-F0-9]{40}$/.test(String(value || ""))) : "";
+      if (!selectedAddress) throw new Error("Binance Wallet did not return an EVM account.");
+      const chainValue = await provider.request({ method: "eth_chainId" });
+      const chainText = String(chainValue || "");
+      const chainId = typeof chainValue === "number" ? chainValue : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
+      const networkByChain = { 1: "ethereum", 56: "bnb", 11155111: "sepolia" };
+      const networkName = networkByChain[chainId];
+      if (!networkName) throw new Error("Unsupported Binance Wallet network. Switch to Ethereum Mainnet, BNB Chain Mainnet, or Ethereum Sepolia.");
+      const saved = getSavedExternalConnections();
+      const record = { provider: "binance", providerId: "binance", namespace: "eip155", chainId, network: networkName, address: selectedAddress, label: "Binance Wallet · " + ({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain Mainnet", sepolia: "Ethereum Sepolia" }[networkName]), connectedAt: new Date().toISOString(), walletId };
+      const next = [...saved.filter(item => !(String(item.walletId || "") === String(walletId) && String(item.providerId || item.provider || "").toLowerCase() === "binance" && Number(item.chainId) === chainId && String(item.address || "").toLowerCase() === selectedAddress.toLowerCase())), record];
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: record }));
+      await loadAddresses(walletId);
+      setMessage("Binance Wallet account connected and its public address saved for " + record.label.split(" · ")[1] + ". Ownership is not yet verified; use Verify ownership before spending. No transaction was sent.");
+    } catch (error) { setMessage(error?.message || "Binance Wallet connection failed."); }
+    finally { setBusy(false); }
+  };
+  const connectWalletConnect = async () => {
+    if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
+    const projectId = import.meta.env.VITE_WALLETCONNECT_PROJECT_ID;
+    if (!projectId) { setMessage("WalletConnect is not configured yet. Add VITE_WALLETCONNECT_PROJECT_ID to the frontend environment before connecting."); return; }
+    setBusy(true); setMessage("");
+    try {
+      const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
+      const provider = await EthereumProvider.init({ projectId, chains: [1, 56], optionalChains: [11155111], showQrModal: true, metadata: { name: "World Wallet AI", description: "Connect your self-custody wallet", url: window.location.origin, icons: [window.location.origin + "/favicon.ico"] } });
+      await provider.connect();
+      const accounts = await provider.request({ method: "eth_accounts" });
+      const selectedAddress = Array.isArray(accounts) ? accounts.find(value => /^0x[a-fA-F0-9]{40}$/.test(String(value || ""))) : "";
+      if (!selectedAddress) throw new Error("WalletConnect did not return an EVM account.");
+      const chainValue = await provider.request({ method: "eth_chainId" });
+      const chainText = String(chainValue || "");
+      const chainId = typeof chainValue === "number" ? chainValue : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
+      const networkByChain = { 1: "ethereum", 56: "bnb", 11155111: "sepolia" };
+      const networkName = networkByChain[chainId];
+      if (!networkName) throw new Error("Unsupported network. Select Ethereum Mainnet, BNB Chain Mainnet, or Ethereum Sepolia.");
+      const saved = getSavedExternalConnections();
+      const record = { provider: "walletconnect", providerId: "walletconnect", namespace: "eip155", chainId, network: networkName, address: selectedAddress, label: "WalletConnect · " + ({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain Mainnet", sepolia: "Ethereum Sepolia" }[networkName]), connectedAt: new Date().toISOString(), walletId };
+      const next = [...saved.filter(item => !(String(item.walletId || "") === String(walletId) && String(item.providerId || item.provider || "").toLowerCase() === "walletconnect" && Number(item.chainId) === chainId && String(item.address || "").toLowerCase() === selectedAddress.toLowerCase())), record];
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: record }));
+      await loadAddresses(walletId);
+      setMessage("WalletConnect account connected and its public address saved for " + record.label.split(" · ")[1] + ". Ownership is not yet verified; use Verify ownership before spending. No transaction was sent.");
+    } catch (error) { setMessage(error?.message || "WalletConnect connection failed."); }
+    finally { setBusy(false); }
+  };
   const selectedWallet = wallets.find(w => w.id === walletId);
   const allAccountLocalEntries = localEntries.filter(entry => {
     const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
@@ -757,8 +814,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
         <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
         <div className="address-row-actions" style={{ margin: "12px 0" }}>
-          <button type="button" className="primary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
-          <span className="security-note">Connects the selected OKX EVM account on Ethereum, BNB Chain, or Sepolia. Each network address is saved separately.</span>
+          <button type="button" className="primary" disabled={busy || !walletId} onClick={connectBinanceWallet}>Connect Binance Wallet</button>
+          <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
+          <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectWalletConnect}>Connect WalletConnect</button>
+          <span className="security-note">Connect each provider separately inside its own DApp browser. Ethereum, BNB Chain, and Sepolia addresses are saved by wallet profile, provider, and network.</span>
         </div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} · ID {walletNumberFor(w.id)}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
