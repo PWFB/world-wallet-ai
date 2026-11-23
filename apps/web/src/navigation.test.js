@@ -135,15 +135,20 @@ test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
   assert.match(featureSource, /ownership is not yet verified/i);
   assert.match(featureSource, /Verify ownership/);
   assert.match(featureSource, /No transaction was sent/);
-  assert.doesNotMatch(featureSource, /@walletconnect\//i);
+  assert.match(featureSource, /Connect WalletConnect/);
+  assert.match(featureSource, /connectWalletConnect/);
+  assert.match(featureSource, /@walletconnect\/ethereum-provider/);
 });
 
-test("WalletConnect is removed from the sidebar, dashboard, and web runtime", () => {
+test("WalletConnect is available as a provider without becoming a sidebar destination", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
-  assert.ok(!pages.includes("Wallet Connect"));
+  assert.ok(!pages.includes("Wallet Connect"), "provider connection is an action, not a navigation page");
   assert.doesNotMatch(appSource, /externalWalletConnection|world_wallet_external_connection_v1|WalletConnect|walletconnect/i);
-  assert.ok(!featureSource.includes("@walletconnect/ethereum-provider"));
-  assert.doesNotMatch(featureSource, /WalletConnect|walletconnect|connectWalletConnect/i);
+  assert.match(featureSource, /Connect WalletConnect/);
+  assert.match(featureSource, /connectWalletConnect/);
+  assert.match(featureSource, /@walletconnect\\/ethereum-provider/);
+  assert.match(featureSource, /VITE_WALLETCONNECT_PROJECT_ID/);
+  assert.match(featureSource, /world_wallet_external_connections_v2/);
   assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
 });
 
