@@ -146,7 +146,7 @@ test("WalletConnect is available as a provider without becoming a sidebar destin
   assert.doesNotMatch(appSource, /externalWalletConnection|world_wallet_external_connection_v1|WalletConnect|walletconnect/i);
   assert.match(featureSource, /Connect WalletConnect/);
   assert.match(featureSource, /connectWalletConnect/);
-  assert.match(featureSource, /@walletconnect\\/ethereum-provider/);
+  assert.match(featureSource, /@walletconnect\/ethereum-provider/);
   assert.match(featureSource, /VITE_WALLETCONNECT_PROJECT_ID/);
   assert.match(featureSource, /world_wallet_external_connections_v2/);
   assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
