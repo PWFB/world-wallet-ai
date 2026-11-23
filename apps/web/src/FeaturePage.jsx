@@ -1589,7 +1589,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !(okxProvider || window.binancew3w?.ethereum || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
+      if (isLiveEvm && !(okxProvider || window.binancew3w?.ethereum || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as Binance, OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
       const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
       if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
@@ -2284,6 +2284,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
                 onClick={() => {
                   setDestination(item.address);
                   setNetwork(item.network);
+                  setSelectedSourceAddress("");
                   setMessage("Binance Web3 Wallet destination filled. Review the asset, network, amount and fee before approving in your source wallet.");
                 }}
               >Use Binance Wallet · {item.network === "bnb" ? "BNB Chain" : "Ethereum"}</button>)}
