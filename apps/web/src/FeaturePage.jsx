@@ -467,6 +467,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const providerCandidates = [
         externalProvider,
+        window.binancew3w?.ethereum,
         ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
         window.ethereum,
         window.okxwallet,
@@ -1459,6 +1460,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const expectedSigner = String(sourceAddress || "").toLowerCase();
     const providerCandidates = [
       okxProvider,
+      window.binancew3w?.ethereum,
       ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
       window.ethereum,
       window.okxwallet,
@@ -1587,7 +1589,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
       const isLiveBitcoin = network === "bitcoin" && asset === "BTC";
-      if (isLiveEvm && !(okxProvider || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
+      if (isLiveEvm && !(okxProvider || window.binancew3w?.ethereum || window.ethereum || window.okxwallet)) throw new Error("Open BALMZ AI in a compatible EVM wallet browser (such as Binance, OKX or MetaMask) before sending. No transaction will be recorded without an approved signer.");
       if (isLiveBitcoin && !window.unisat) throw new Error("Connect a compatible external Bitcoin wallet to send live BTC. No transaction will be recorded without a signer.");
       const evmNetwork = ["ethereum", "bnb", "sepolia"].includes(network);
       if (!selectedSourceAddress) throw new Error("Select an attached source address before submitting this transaction.");
@@ -2229,6 +2231,13 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   if (active === "Send" || active === "Withdraw") {
     const send = active === "Send";
     const networkOptions = networksForAsset(asset);
+    const binanceDepositTargets = send
+      ? withdrawalAddresses.filter(item =>
+          /^Binance Wallet(?:\s|$)/i.test(String(item.label || "")) &&
+          ["ethereum", "bnb"].includes(String(item.network || "")) &&
+          networkOptions.some(option => option.value === item.network)
+        )
+      : [];
     const availableForAsset = selectedAssetAvailable;
     const selectedPrice = Number(selectedWalletAsset?.price_usd ?? (Number(selectedWalletAsset?.balance) > 0 ? Number(selectedWalletAsset?.value_usd || 0) / Number(selectedWalletAsset.balance) : 0));
     const amountUsd = selectedPrice > 0 && Number(amount) > 0 ? Number(amount) * selectedPrice : null;
@@ -2264,6 +2273,24 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <label>{send ? "Recipient wallet address" : "Withdrawal destination"}
             <input value={destination} onChange={e => { setDestination(e.target.value); setMessage(""); }} placeholder={network === "bitcoin" ? "bc1… or 1… / 3…" : "0x…"} autoComplete="off" spellCheck="false"/>
           </label>
+          {send && binanceDepositTargets.length > 0 && <div className="security-note">
+            <b>Deposit to your Binance Web3 Wallet</b>
+            <div className="address-row-actions" style={{ marginTop: 8 }}>
+              {binanceDepositTargets.map(item => <button
+                key={item.network + ":" + item.address}
+                type="button"
+                className="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setDestination(item.address);
+                  setNetwork(item.network);
+                  setSelectedSourceAddress("");
+                  setMessage("Binance Web3 Wallet destination filled. Review the asset, network, amount and fee before approving in your source wallet.");
+                }}
+              >Use Binance Wallet · {item.network === "bnb" ? "BNB Chain" : "Ethereum"}</button>)}
+            </div>
+            <small>Choose the matching mainnet address. Confirm that Binance Web3 Wallet supports the selected asset on this network. This only fills the recipient; it does not initiate a transfer.</small>
+          </div>}
           <label>Network
             <select value={network} onChange={e => { setNetwork(e.target.value); setSelectedSourceAddress(""); setMessage(""); }} disabled={!networkOptions.length}>
               {networkOptions.length ? networkOptions.map(item => <option key={item.value} value={item.value}>{item.label}</option>) : <option value="">No supported network</option>}
