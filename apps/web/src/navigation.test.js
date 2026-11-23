@@ -180,3 +180,15 @@ test("Bitcoin external wallet connection is removed without removing built-in Bi
   assert.doesNotMatch(returnCenterSource, /key: "bitcoin"/);
   assert.match(aptSource, /"Bitcoin Mainnet" to "bitcoin"/);
 });
+
+
+test("Binance Web3 Wallet can be selected as a mainnet deposit recipient", () => {
+  assert.match(featureSource, /Deposit to your Binance Web3 Wallet/);
+  assert.match(featureSource, /Binance Wallet destination filled/);
+  assert.match(featureSource, /Use Binance Wallet/);
+  assert.match(featureSource, /\["ethereum", "bnb"\]/);
+  assert.match(featureSource, /window\.binancew3w\?\.ethereum/);
+  assert.match(featureSource, /does not initiate a transfer/);
+  assert.match(featureSource, /eth_sendTransaction/);
+  assert.match(featureSource, /ownership_verified !== true/);
+});
