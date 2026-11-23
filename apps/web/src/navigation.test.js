@@ -127,6 +127,17 @@ test("BALMZ Token Mining is discoverable and has a genuine early-access registra
   assert.match(featureSource, /No claimable BALMZ rewards are being represented/);
 });
 
+test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
+  assert.match(featureSource, /Connect OKX Wallet/);
+  assert.match(featureSource, /window\.okxwallet/);
+  assert.match(featureSource, /eth_requestAccounts/);
+  assert.match(featureSource, /world_wallet_external_connections_v2/);
+  assert.match(featureSource, /ownership is not yet verified/i);
+  assert.match(featureSource, /Verify ownership/);
+  assert.match(featureSource, /No transaction was sent/);
+  assert.doesNotMatch(featureSource, /@walletconnect\//i);
+});
+
 test("WalletConnect is removed from the sidebar, dashboard, and web runtime", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
   assert.ok(!pages.includes("Wallet Connect"));
