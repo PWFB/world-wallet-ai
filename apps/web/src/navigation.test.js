@@ -184,7 +184,7 @@ test("Bitcoin external wallet connection is removed without removing built-in Bi
 
 test("Binance Web3 Wallet can be selected as a mainnet deposit recipient", () => {
   assert.match(featureSource, /Deposit to your Binance Web3 Wallet/);
-  assert.match(featureSource, /Binance Wallet destination filled/);
+  assert.match(featureSource, /Binance Web3 Wallet destination filled/);
   assert.match(featureSource, /Use Binance Wallet/);
   assert.match(featureSource, /\["ethereum", "bnb"\]/);
   assert.match(featureSource, /window\.binancew3w\?\.ethereum/);
