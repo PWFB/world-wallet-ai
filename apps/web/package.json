@@ -12,7 +12,7 @@
     "cap:sync": "npm run build && cap sync android",
     "cap:open:android": "cap open android",
     "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js src/verified-balances.test.js",
-    "test:navigation": "node --test src/navigation.test.js src/eip6963-wallets.test.js",
+    "test:navigation": "node --test src/navigation.test.js src/eip6963-wallets.test.js src/walletconnect-evm.test.js",
     "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js",
     "test:wallet-signatures": "node --test src/wallet-signatures.test.js"
   },
@@ -22,7 +22,8 @@
     "@neondatabase/auth": "^0.5.0-beta",
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
-    "@capacitor/core": "^8.6.0"
+    "@capacitor/core": "^8.6.0",
+    "@walletconnect/ethereum-provider": "^2.21.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
