@@ -808,6 +808,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       };
       const next = [...saved.filter(item => !(
         String(item.walletId || "") === String(walletId) &&
+        String(item.providerId || item.provider || "").toLowerCase() === "okx" &&
         Number(item.chainId) === chainId &&
         String(item.address || "").toLowerCase() === selectedAddress.toLowerCase()
       )), record];
