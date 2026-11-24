@@ -3,6 +3,7 @@ import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
 import { discoverEip6963Providers, networkForEvmChain, withProviderTimeout } from "./eip6963-wallets.js";
+import { collectWalletConnectAccounts, mergeWalletConnectConnections } from "./walletconnect-evm.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
