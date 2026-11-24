@@ -4,7 +4,7 @@ export function parseWalletConnectAccount(value) {
   const parts = String(value || "").split(":");
   if (parts.length !== 3 || parts[0] !== "eip155") return null;
   // CAIP-10 EIP-155 references are decimal chain IDs, not hex RPC IDs.
-  if (!/^\\d+$/.test(parts[1])) return null;
+  if (!/^\d+$/.test(parts[1])) return null;
   const chainId = normalizeEvmChainId(parts[1]);
   const network = networkForEvmChain(chainId);
   const address = parts[2];
