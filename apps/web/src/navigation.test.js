@@ -148,6 +148,15 @@ test("WalletConnect requires Ethereum Mainnet, BNB Mainnet and Sepolia for addre
   assert.match(featureSource, /OKX connected without approving all required networks/);
 });
 
+test("OKX connection records remain separate from Binance records for the same chain and address", () => {
+  const start = featureSource.indexOf("const connectOkxWallet");
+  const end = featureSource.indexOf("const connectBinanceWallet", start);
+  const okxFlow = featureSource.slice(start, end);
+  assert.match(okxFlow, /providerId \|\| item\.provider[\s\S]*?=== "okx"/);
+  assert.match(okxFlow, /provider: "okx"/);
+  assert.match(okxFlow, /window\.okxwallet/);
+});
+
 test("WalletConnect QR connection is available from the Wallets page without a duplicate sidebar page", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
   assert.ok(!pages.includes("Wallet Connect"));
