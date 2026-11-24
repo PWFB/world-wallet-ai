@@ -179,6 +179,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [addressesLoadedForWallet, setAddressesLoadedForWallet] = useState("");
   const externalAttachRef = useRef(new Set());
   const adminDefaultAttachRef = useRef(new Set());
+  const walletConnectProviderRef = useRef(null);
+  const walletConnectListenersRef = useRef(null);
+  const walletIdRef = useRef(walletId);
+  walletIdRef.current = walletId;
   const [network, setNetwork] = useState("ethereum");
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("primary");
@@ -731,6 +735,105 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     } catch (error) { setMessage(error?.message || "Binance Wallet connection failed."); }
     finally { setBusy(false); }
   };
+
+  const persistWalletConnectAddresses = async (provider, targetWalletId, announce = true) => {
+    if (!targetWalletId) return [];
+    const [activeAccounts, activeChainId] = await Promise.all([
+      withProviderTimeout(provider.request({ method: "eth_accounts" }), 15000, "WalletConnect account refresh"),
+      withProviderTimeout(provider.request({ method: "eth_chainId" }), 15000, "WalletConnect network refresh"),
+    ]);
+    const approvedAccounts = collectWalletConnectAccounts(provider.session, activeChainId, activeAccounts);
+    if (!approvedAccounts.length) {
+      throw new Error("WalletConnect is active but returned no supported Ethereum, BNB Chain, or Sepolia address.");
+    }
+    const connectedAt = new Date().toISOString();
+    const records = approvedAccounts.map(account => ({
+      provider: "walletconnect",
+      providerId: "walletconnect",
+      namespace: "eip155",
+      chainId: account.chainId,
+      network: account.network,
+      address: account.address,
+      label: "WalletConnect · " + ({ ethereum: "Ethereum Mainnet", bnb: "BNB Chain Mainnet", sepolia: "Ethereum Sepolia" }[account.network]),
+      connectedAt,
+      walletId: targetWalletId,
+    }));
+    const next = mergeWalletConnectConnections(getSavedExternalConnections(), records);
+    localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+    for (const record of records) {
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: record }));
+    }
+    await loadAddresses(targetWalletId);
+    if (announce) {
+      setMessage("WalletConnect connected. Saved " + records.length + " approved public address record(s) for this wallet across supported EVM networks. Ownership remains unverified until you select Verify ownership. No transaction was sent.");
+    }
+    return records;
+  };
+
+  const installWalletConnectListeners = provider => {
+    if (!provider || walletConnectListenersRef.current === provider) return;
+    walletConnectListenersRef.current = provider;
+    const refresh = async () => {
+      const targetWalletId = walletIdRef.current;
+      if (!targetWalletId || !provider.session) return;
+      try {
+        await persistWalletConnectAddresses(provider, targetWalletId, false);
+        setMessage("WalletConnect session updated. Approved public addresses were retained by network; ownership verification is still required.");
+      } catch (error) {
+        setMessage(error?.message || "WalletConnect session changed, but address refresh did not complete.");
+      }
+    };
+    provider.on("accountsChanged", refresh);
+    provider.on("chainChanged", refresh);
+    provider.on("session_event", refresh);
+    provider.on("session_update", refresh);
+    provider.on("disconnect", () => {
+      // Session disconnect never deletes previously saved or attached public addresses.
+      walletConnectProviderRef.current = null;
+      walletConnectListenersRef.current = null;
+      setMessage("WalletConnect session disconnected. Previously saved public addresses remain attached; reconnect to refresh the session.");
+    });
+  };
+
+  const connectWalletConnect = async () => {
+    if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
+    const projectId = String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim();
+    if (!projectId) {
+      setMessage("WalletConnect is not configured on this frontend yet. Set VITE_WALLETCONNECT_PROJECT_ID in the frontend build environment, then rebuild and deploy.");
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      let provider = walletConnectProviderRef.current;
+      if (!provider) {
+        const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
+        provider = await EthereumProvider.init({
+          projectId,
+          chains: [1, 56],
+          optionalChains: [11155111],
+          showQrModal: true,
+          metadata: {
+            name: "World Wallet AI",
+            description: "Connect your self-custody wallet",
+            url: window.location.origin,
+            icons: [window.location.origin + "/favicon.ico"],
+          },
+        });
+        walletConnectProviderRef.current = provider;
+      }
+      installWalletConnectListeners(provider);
+      if (!provider.session) {
+        await withProviderTimeout(provider.connect(), 180000, "WalletConnect connection");
+      }
+      await persistWalletConnectAddresses(provider, walletId, true);
+    } catch (error) {
+      setMessage(error?.message || "WalletConnect connection failed. Approve the QR/deep-link request in your wallet, then retry.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const selectedWallet = wallets.find(w => w.id === walletId);
   const allAccountLocalEntries = localEntries.filter(entry => {
     const serverWalletId = entry.serverWalletId || (String(entry.walletId || "").startsWith("wallet_") ? entry.walletId : "");
@@ -836,7 +939,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           <button type="button" className="primary" disabled={busy || !walletId} onClick={() => { setShowWalletPicker(true); void discoverWallets(); }}>{discoveringWallets ? "Finding wallets…" : "Connect Wallet"}</button>
           <button type="button" className="primary" disabled={busy || !walletId} onClick={connectBinanceWallet}>Connect Binance Wallet</button>
           <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
-          <span className="security-note">Connect Wallet discovers injected browser wallets using EIP-6963 and standard EVM injection. No QR session, transaction, or signature is started by discovery. Select a detected wallet below to request account access.</span>
+          <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectWalletConnect}>{busy ? "Connecting…" : "Connect WalletConnect (QR)"}</button>
+          <span className="security-note">Use WalletConnect QR or your wallet's supported mobile hand-off. Approved Ethereum, BNB Chain and Sepolia addresses are retained separately for this World Wallet profile. Connection only reads public addresses; ownership verification is a separate step.</span>
+          <span className="security-note">WalletConnect requires the frontend build variable VITE_WALLETCONNECT_PROJECT_ID. Missing configuration is reported here; no private key or recovery phrase is requested.</span>
           {showWalletPicker && <div className="wallet-provider-list" role="group" aria-label="Choose a wallet" style={{ display: "grid", gap: 10, padding: 12, marginTop: 10, border: "1px solid var(--border, #444)", borderRadius: 12 }}>
             <strong>Choose a wallet</strong>
             <div className="security-note">Select a wallet provider. If it is not detected, open this website in that wallet’s DApp browser and try again. No transaction or signature is requested until you choose a provider.</div>
