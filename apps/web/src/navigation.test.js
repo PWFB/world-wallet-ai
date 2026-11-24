@@ -192,3 +192,25 @@ test("Binance Web3 Wallet can be selected as a mainnet deposit recipient", () =>
   assert.match(featureSource, /eth_sendTransaction/);
   assert.match(featureSource, /ownership_verified !== true/);
 });
+
+
+test("normal Connect Wallet discovers injected providers without WalletConnect", () => {
+  assert.match(featureSource, /Connect Wallet/);
+  assert.match(featureSource, /discoverEip6963Providers/);
+  assert.match(featureSource, /eip6963-wallets/);
+  assert.match(featureSource, /connectDiscoveredWallet/);
+  assert.match(featureSource, /withProviderTimeout/);
+  assert.match(featureSource, /No WalletConnect session/);
+  assert.match(featureSource, /world_wallet_external_connections_v2/);
+  assert.doesNotMatch(featureSource, /@walletconnect\\//i);
+});
+
+test("injected wallet discovery utilities map supported chains and impose request timeouts", () => {
+  const source = readFileSync(new URL("./eip6963-wallets.js", import.meta.url), "utf8");
+  assert.match(source, /eip6963:announceProvider/);
+  assert.match(source, /eip6963:requestProvider/);
+  assert.match(source, /windowRef\\.ethereum/);
+  assert.match(source, /windowRef\\.binancew3w/);
+  assert.match(source, /windowRef\\.okxwallet/);
+  assert.match(source, /60000/); // connection handler's account-request timeout
+});
