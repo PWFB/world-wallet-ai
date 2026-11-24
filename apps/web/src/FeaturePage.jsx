@@ -2,6 +2,7 @@ import { lazy, useEffect, useRef, useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
+import { discoverEip6963Providers, networkForEvmChain, withProviderTimeout } from "./eip6963-wallets.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -186,6 +187,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [verificationBusy, setVerificationBusy] = useState("");
   const balanceRequestGeneration = useRef(0);
   const [showAddressForm, setShowAddressForm] = useState(false);
+  const [discoveredWallets, setDiscoveredWallets] = useState([]);
+  const [discoveringWallets, setDiscoveringWallets] = useState(false);
   const [localEntries, setLocalEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
 
   useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
@@ -609,6 +612,47 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     }
   };
 
+  const discoverWallets = async () => {
+    setDiscoveringWallets(true);
+    setMessage("");
+    setDiscoveredWallets([]);
+    try {
+      const providers = await discoverEip6963Providers(window);
+      setDiscoveredWallets(providers);
+      if (!providers.length) setMessage("No injected EVM wallets were detected. Open a supported wallet's DApp browser or install its browser extension, then retry. WalletConnect is not used.");
+      else setMessage("Found " + providers.length + " wallet provider(s). Select one below to connect; discovery did not request account access.");
+    } catch (error) {
+      setMessage(error?.message || "Wallet discovery failed. You can retry or use the provider-specific buttons.");
+    } finally { setDiscoveringWallets(false); }
+  };
+
+  const connectDiscoveredWallet = async entry => {
+    if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
+    if (!entry?.provider || typeof entry.provider.request !== "function") return;
+    setBusy(true); setMessage("");
+    try {
+      const accounts = await withProviderTimeout(entry.provider.request({ method: "eth_requestAccounts" }), 60000, entry.name + " account request");
+      const selectedAddress = Array.isArray(accounts) ? accounts.find(value => /^0x[a-fA-F0-9]{40}$/.test(String(value || ""))) : "";
+      if (!selectedAddress) throw new Error(entry.name + " did not return an EVM account.");
+      const chainValue = await withProviderTimeout(entry.provider.request({ method: "eth_chainId" }), 15000, entry.name + " network request");
+      const chainId = typeof chainValue === "number" ? chainValue : (/^0x/i.test(String(chainValue)) ? Number.parseInt(String(chainValue), 16) : Number.parseInt(String(chainValue), 10));
+      const networkName = networkForEvmChain(chainId);
+      if (!networkName) throw new Error("Unsupported network (" + String(chainValue) + "). Switch to Ethereum Mainnet, BNB Chain Mainnet, or Ethereum Sepolia, then reconnect.");
+      const providerId = (entry.rdns || entry.name || "injected").toLowerCase().replace(/[^a-z0-9.-]/g, "-");
+      const networkLabel = { ethereum: "Ethereum Mainnet", bnb: "BNB Chain Mainnet", sepolia: "Ethereum Sepolia" }[networkName];
+      const record = { provider: entry.name, providerId, namespace: "eip155", chainId, network: networkName, address: selectedAddress, label: entry.name + " · " + networkLabel, connectedAt: new Date().toISOString(), walletId };
+      const saved = getSavedExternalConnections();
+      const next = [...saved.filter(item => !(String(item.walletId || "") === String(walletId) && String(item.providerId || item.provider || "").toLowerCase() === providerId && Number(item.chainId) === chainId && String(item.address || "").toLowerCase() === selectedAddress.toLowerCase())), record];
+      localStorage.setItem("world_wallet_external_connections_v2", JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("world-wallet-external-connection-updated", { detail: record }));
+      await loadAddresses(walletId);
+      setMessage(entry.name + " connected. Its public address was saved for " + networkLabel + ". Ownership is not yet verified; use Verify ownership. No transaction was sent.");
+      setDiscoveredWallets([]);
+    } catch (error) {
+      setMessage(error?.message || entry.name + " connection failed.");
+    } finally { setBusy(false); }
+  };
+
   const connectOkxWallet = async () => {
     if (!walletId) { setMessage("Select an active World Wallet profile first."); return; }
     setBusy(true); setMessage("");
@@ -787,9 +831,16 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
         <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
         <div className="address-row-actions" style={{ margin: "12px 0" }}>
+          <button type="button" className="primary" disabled={busy || !walletId || discoveringWallets} onClick={discoverWallets}>{discoveringWallets ? "Finding wallets…" : "Connect Wallet"}</button>
           <button type="button" className="primary" disabled={busy || !walletId} onClick={connectBinanceWallet}>Connect Binance Wallet</button>
           <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
-          <span className="security-note">Connect each provider separately inside its own DApp browser. Ethereum, BNB Chain, and Sepolia addresses are saved by wallet profile, provider, and network.</span>
+          <span className="security-note">Connect Wallet discovers injected browser wallets using EIP-6963 and standard EVM injection. No WalletConnect session, transaction, or signature is started by discovery. Select a detected wallet below to request account access.</span>
+          {discoveredWallets.length > 0 && <div className="wallet-provider-list" role="group" aria-label="Detected wallet providers">
+            {discoveredWallets.map((entry, index) => <button type="button" className="secondary" key={entry.uuid || entry.rdns || entry.name + index} disabled={busy} onClick={() => connectDiscoveredWallet(entry)}>
+              {entry.icon && <img src={entry.icon} alt="" width="20" height="20" style={{ verticalAlign: "middle", marginRight: 8 }} />}
+              Connect {entry.name}
+            </button>)}
+          </div>}
         </div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
           {wallets.length ? wallets.map(w => <option key={w.id} value={w.id}>{w.name} · ID {walletNumberFor(w.id)}{w.active ? " • Active" : ""}</option>) : <option value="">No wallets</option>}
