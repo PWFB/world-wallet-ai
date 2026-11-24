@@ -619,7 +619,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     try {
       const providers = await discoverEip6963Providers(window);
       setDiscoveredWallets(providers);
-      if (!providers.length) setMessage("No injected EVM wallets were detected. Open a supported wallet's DApp browser or install its browser extension, then retry. WalletConnect is not used.");
+      if (!providers.length) setMessage("No injected EVM wallets were detected. Open a supported wallet's DApp browser or install its browser extension, then retry.");
       else setMessage("Found " + providers.length + " wallet provider(s). Select one below to connect; discovery did not request account access.");
     } catch (error) {
       setMessage(error?.message || "Wallet discovery failed. You can retry or use the provider-specific buttons.");
@@ -834,7 +834,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
           <button type="button" className="primary" disabled={busy || !walletId || discoveringWallets} onClick={discoverWallets}>{discoveringWallets ? "Finding wallets…" : "Connect Wallet"}</button>
           <button type="button" className="primary" disabled={busy || !walletId} onClick={connectBinanceWallet}>Connect Binance Wallet</button>
           <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
-          <span className="security-note">Connect Wallet discovers injected browser wallets using EIP-6963 and standard EVM injection. No WalletConnect session, transaction, or signature is started by discovery. Select a detected wallet below to request account access.</span>
+          <span className="security-note">Connect Wallet discovers injected browser wallets using EIP-6963 and standard EVM injection. No QR session, transaction, or signature is started by discovery. Select a detected wallet below to request account access.</span>
           {discoveredWallets.length > 0 && <div className="wallet-provider-list" role="group" aria-label="Detected wallet providers">
             {discoveredWallets.map((entry, index) => <button type="button" className="secondary" key={entry.uuid || entry.rdns || entry.name + index} disabled={busy} onClick={() => connectDiscoveredWallet(entry)}>
               {entry.icon && <img src={entry.icon} alt="" width="20" height="20" style={{ verticalAlign: "middle", marginRight: 8 }} />}
