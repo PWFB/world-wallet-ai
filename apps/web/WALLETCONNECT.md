@@ -1,6 +1,6 @@
 # WalletConnect web connection
 
-World Wallet AI's web **Wallets** page restores the WalletConnect QR connection flow through the pinned `@walletconnect/ethereum-provider` v2 integration.
+World Wallet AI's web **Wallets** page provides WalletConnect QR connection and compatible mobile wallet hand-off through the pinned `@walletconnect/ethereum-provider@2.21.1` SDK.
 
 ## Frontend setup
 
@@ -9,27 +9,25 @@ World Wallet AI's web **Wallets** page restores the WalletConnect QR connection 
 3. Allow the production web origin in the project configuration, where required by the provider dashboard.
 4. Rebuild the frontend after setting the value. The project ID is a public client identifier, not a wallet secret.
 
-When the user selects **Connect WalletConnect (QR)**, the QR modal opens on desktop and WalletConnect handles supported wallet-app hand-off/deep-link behavior on mobile. Only EVM accounts approved in the session are read. Supported network IDs are Ethereum Mainnet (1), BNB Chain Mainnet (56), and Sepolia (11155111).
+When the user selects **Connect WalletConnect (QR)**, the QR modal opens on desktop and the SDK can hand off to supported wallet apps on mobile. Only EVM accounts approved in the session are read. Supported networks are Ethereum Mainnet (1), BNB Chain Mainnet (56), and Sepolia (11155111).
 
 All approved session addresses are saved separately under the currently selected World Wallet profile. Existing saved addresses from other providers or networks are retained. Disconnecting WalletConnect does not delete previously attached public receiving addresses. The existing Wallets sync attaches public addresses to the backend; the user must separately complete the ownership challenge before an address becomes verified.
 
 Connection does not sign a transaction, broadcast, transfer funds, or request a private key, recovery phrase, or wallet PIN.
 
-## License and attribution
+## Package licensing
 
-The SDK is provided under the **WalletConnect Community License**. Review the exact `LICENSE.md` shipped with the installed package in `node_modules/@walletconnect/ethereum-provider/`; the build copies that file to `/licenses/walletconnect-ethereum-provider-LICENSE.md`.
+The exact pinned `@walletconnect/ethereum-provider@2.21.1` npm package metadata declares **Apache-2.0**. Its published package contents do not include a separate license text file, so the build writes a package-metadata notice under `public/licenses/` instead of claiming to copy a license file that is not present.
 
-Required attribution for distributed builds:
+The SDK is deprecated in npm in favour of later reliability/performance updates. This project pins the historical v2 version to restore the earlier integration; do not upgrade it without reviewing the replacement's license and compatibility.
 
-> Portions © 2025 Reown, Inc. All Rights Reserved
+This is not a complete third-party license clearance. The provider has a transitive dependency tree (including Reown packages); generate and review a complete SBOM/license report before production distribution. The package metadata identifier and the dependency tree are distinct checks. The current Community License terms and thresholds for newer SDK releases must not be assumed to apply to this pinned package without checking each exact package version.
 
-The license describes usage limits of 2,500,000 monthly RPC calls and 500 monthly active users before a commercial license is required, and reserves the right to change thresholds. Review the current agreement and Reown terms before production use; this note is not legal advice. The SDK must use the Reown gateway/WalletConnect network as required by its license.
-
-Official references:
-- https://docs.walletconnect.com/license-update
-- https://app.unpkg.com/@walletconnect/ethereum-provider@2.21.1/files/LICENSE.md
-- https://reown.com/terms-of-service
+References:
+- https://app.unpkg.com/@walletconnect/ethereum-provider@2.21.1/files/package.json
+- https://www.apache.org/licenses/LICENSE-2.0
+- https://docs.walletconnect.com/
 
 ## Verification gate
 
-The connection code and regression tests can be reviewed in this branch, but production use still requires the project ID, current license/attribution review, successful CI, and real Binance/OKX/WalletConnect mobile-device tests. A build or QR display alone does not prove a successful wallet connection.
+Before production use, configure the project ID, complete a transitive dependency license/SBOM review, pass CI, and test QR/mobile hand-off with actual Binance and OKX mobile wallets. Complete ownership verification separately. A displayed QR alone does not prove a successful wallet connection.
