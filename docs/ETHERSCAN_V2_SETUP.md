@@ -26,6 +26,17 @@ Sign in to the World Wallet AI owner account and open **Admin → System Setting
 
 The configuration list reports only whether the Etherscan key is present. Use **Test Etherscan API** to run read-only account-balance probes on Ethereum Mainnet, BNB Smart Chain, Sepolia and Polygon PoS against a fixed public address. The response reports each chain's result without returning the key or customer wallet data.
 
+## Read-only address data endpoint
+
+Authenticated users can request indexed address activity from the backend:
+
+- `POST /api/v1/explorer/address`
+- JSON body: `{"network":"polygon","address":"0x...","page":1,"offset":25}`
+- Supported networks: `ethereum` (1), `bnb` (56), and `polygon` (137).
+- Returns the native balance in base units plus paginated normal transactions, ERC-20 transfers, and internal transactions.
+
+The endpoint validates the EVM address, caps page size at 100, and keeps the API key on the backend. It does not sign, send, or modify transactions. Provider plan limits and rate limits apply; the balance is a live latest-state read while activity is returned from the explorer's indexed history.
+
 ## Contract checks
 
 **Tools → Verify Contract** first checks deployed bytecode using the network's configured RPC endpoint. When `ETHERSCAN_API_KEY` is configured, it separately asks Etherscan whether source code is verified and returns limited metadata such as contract name and compiler version.
