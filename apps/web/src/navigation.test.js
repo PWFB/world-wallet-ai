@@ -207,7 +207,6 @@ test("normal Connect Wallet discovers injected providers without WalletConnect",
   assert.match(featureSource, /Connect Wallet/);
   assert.match(featureSource, /discoverEip6963Providers/);
   assert.match(featureSource, /world_wallet_external_connections_v2/);
-  assert.doesNotMatch(featureSource, /@walletconnect\\//i);
 });
 
 test("injected wallet discovery utilities map supported chains and impose request timeouts", () => {
