@@ -515,46 +515,84 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       ].filter((candidate, index, all) =>
         candidate && typeof candidate.request === "function" && all.indexOf(candidate) === index
       );
-      let provider = null;
+      // Match the exact saved address first, but do not stop at the first provider:
+      // an injected provider may expose the same account on a different chain while
+      // WalletConnect (or another installed wallet) already has the required chain.
+      const matchingProviders = [];
       for (const candidate of providerCandidates) {
         try {
           const accounts = await candidate.request({ method: "eth_accounts" });
           if (Array.isArray(accounts) && accounts.some(account =>
             String(account || "").toLowerCase() === String(item.address).toLowerCase()
-          )) {
-            provider = candidate;
-            break;
-          }
+          )) matchingProviders.push(candidate);
         } catch {}
       }
-      if (!provider) {
+      if (!matchingProviders.length) {
         for (const candidate of providerCandidates) {
           try {
             const accounts = await candidate.request({ method: "eth_requestAccounts" });
             if (Array.isArray(accounts) && accounts.some(account =>
               String(account || "").toLowerCase() === String(item.address).toLowerCase()
-            )) {
-              provider = candidate;
-              break;
-            }
+            )) matchingProviders.push(candidate);
           } catch (error) {
             if (isUserRejectedError(error)) throw error;
           }
         }
       }
-      if (!provider) {
+      if (!matchingProviders.length) {
         throw new Error("Connect the wallet that owns this exact address, then retry. No recovery phrase or private key is needed.");
       }
 
-      const chainValue = await provider.request({ method: "eth_chainId" });
-      const chainText = String(chainValue || "");
-      const connectedChain = typeof chainValue === "number" ? chainValue
-        : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
       const expectedChain = { ethereum: 1, bnb: 56, sepolia: 11155111 }[item.network];
-      if (connectedChain !== expectedChain) {
-        const networkLabel = item.network === "ethereum" ? "Ethereum Mainnet"
-          : item.network === "bnb" ? "BNB Chain Mainnet" : "Ethereum Sepolia";
-        throw new Error("Switch the connected wallet to " + networkLabel + " and retry the ownership signature.");
+      const expectedChainHex = { ethereum: "0x1", bnb: "0x38", sepolia: "0xaa36a7" }[item.network];
+      const networkLabel = item.network === "ethereum" ? "Ethereum Mainnet"
+        : item.network === "bnb" ? "BNB Chain Mainnet" : "Ethereum Sepolia";
+      let provider = null;
+      let observedChain = null;
+      let switchError = null;
+      for (const candidate of matchingProviders) {
+        try {
+          const chainValue = await candidate.request({ method: "eth_chainId" });
+          const chainText = String(chainValue || "");
+          let connectedChain = typeof chainValue === "number" ? chainValue
+            : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
+          observedChain = connectedChain;
+          if (connectedChain !== expectedChain) {
+            // Ask the wallet to switch networks instead of making the user guess
+            // which provider or wallet tab World Wallet AI selected.
+            try {
+              await candidate.request({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: expectedChainHex }],
+              });
+              const switchedValue = await candidate.request({ method: "eth_chainId" });
+              const switchedText = String(switchedValue || "");
+              connectedChain = typeof switchedValue === "number" ? switchedValue
+                : (/^0x/i.test(switchedText) ? Number.parseInt(switchedText, 16) : Number.parseInt(switchedText, 10));
+              observedChain = connectedChain;
+            } catch (error) {
+              if (isUserRejectedError(error)) throw error;
+              switchError = error;
+              continue;
+            }
+          }
+          if (connectedChain === expectedChain) {
+            provider = candidate;
+            break;
+          }
+        } catch (error) {
+          if (isUserRejectedError(error)) throw error;
+          switchError = error;
+        }
+      }
+      if (!provider) {
+        const chainDescription = observedChain === null ? "unavailable"
+          : "0x" + observedChain.toString(16);
+        throw new Error(
+          "The connected wallet did not confirm " + networkLabel +
+          " (reported chain " + chainDescription + "). Approve the network switch in your wallet, then retry." +
+          (switchError?.message ? " Wallet response: " + switchError.message : "")
+        );
       }
 
       const challengeResponse = await fetch(
