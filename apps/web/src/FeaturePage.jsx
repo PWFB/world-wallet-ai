@@ -574,7 +574,6 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         throw new Error("Connect the wallet that owns this exact address, then retry. No recovery phrase or private key is needed.");
       }
 
-      const expectedChain = { ethereum: 1, bnb: 56, sepolia: 11155111 }[item.network];
       const expectedChainHex = { ethereum: "0x1", bnb: "0x38", sepolia: "0xaa36a7" }[item.network];
       const networkLabel = item.network === "ethereum" ? "Ethereum Mainnet"
         : item.network === "bnb" ? "BNB Chain Mainnet" : "Ethereum Sepolia";
