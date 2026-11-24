@@ -135,7 +135,7 @@ test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
   assert.match(featureSource, /ownership is not yet verified/i);
   assert.match(featureSource, /Verify ownership/);
   assert.match(featureSource, /No transaction was sent/);
-  assert.doesNotMatch(featureSource, /@walletconnect\//i);
+  assert.ok(!featureSource.includes("@walletconnect/"));
 });
 
 test("WalletConnect is removed from the sidebar, dashboard, and web runtime", () => {
@@ -200,7 +200,7 @@ test("normal Connect Wallet discovers injected providers without WalletConnect",
   assert.match(featureSource, /eip6963-wallets/);
   assert.match(featureSource, /connectDiscoveredWallet/);
   assert.match(featureSource, /withProviderTimeout/);
-  assert.doesNotMatch(featureSource, /WalletConnect|walletconnect/i);
+  assert.ok(!featureSource.toLowerCase().includes("walletconnect"));
   assert.match(featureSource, /world_wallet_external_connections_v2/);
   assert.doesNotMatch(featureSource, /@walletconnect\//i);
 });
