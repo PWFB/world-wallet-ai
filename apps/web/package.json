@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/copy-walletconnect-license.js && vite build",
     "test:network-selection": "node --test src/network-selection.test.js",
     "preview": "vite preview",
     "cap:add:android": "cap add android",
@@ -23,7 +23,7 @@
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
     "@capacitor/core": "^8.6.0",
-    "@walletconnect/ethereum-provider": "^2.21.1"
+    "@walletconnect/ethereum-provider": "2.21.1"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
