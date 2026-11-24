@@ -283,6 +283,38 @@ class WalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 403)
         database.assert_not_called()
 
+    def test_okx_inspector_selects_okx_address_not_first_binance_ethereum_address(self):
+        binance_address = "0x03a61EA0aBB73270562244823D6Be3BB890F1D4B"
+        okx_address = "0xBbDb482aE0895e496676eC84501d2945a404FF2C"
+        addresses = [
+            {"network": "ethereum", "address": binance_address, "label": "Binance Wallet · Ethereum Mainnet", "ownership_verified": False},
+            {"network": "ethereum", "address": okx_address, "label": "OKX Ethereum Mainnet", "ownership_verified": False},
+        ]
+        with (
+            patch.object(main, "configured_addresses", return_value=addresses),
+            patch.object(main, "ETH_RPC_URL", "https://ethereum.example"),
+            patch.object(main, "require_ethereum_mainnet_rpc", return_value=1),
+            patch.object(main, "rpc_call", return_value="0x") as rpc,
+        ):
+            result = main.wallet_erc7702_inspection({"id": "user_test", "wallet_id": "wallet_test"})
+
+        self.assertEqual(result["owner_address"], okx_address)
+        self.assertNotEqual(result["owner_address"], binance_address)
+        self.assertEqual(rpc.call_args.args[2][0], okx_address)
+
+    def test_okx_inspector_fails_closed_when_only_binance_address_is_attached(self):
+        from fastapi import HTTPException
+
+        addresses = [
+            {"network": "ethereum", "address": "0x03a61EA0aBB73270562244823D6Be3BB890F1D4B", "label": "Binance Wallet · Ethereum Mainnet", "ownership_verified": False},
+        ]
+        with patch.object(main, "configured_addresses", return_value=addresses):
+            with self.assertRaises(HTTPException) as caught:
+                main.wallet_erc7702_inspection({"id": "user_test", "wallet_id": "wallet_test"})
+
+        self.assertEqual(caught.exception.status_code, 404)
+        self.assertIn("OKX-labeled", caught.exception.detail)
+
     def test_unverified_evm_source_cannot_create_withdrawal(self):
         from decimal import Decimal
         from fastapi import HTTPException
