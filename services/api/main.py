@@ -81,7 +81,7 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 # Etherscan V2 key is backend-only; never expose it through frontend build variables or API responses.
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "").strip()
 ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
-ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111}
+ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111, "polygon": 137}
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 COINGECKO_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_COINGECKO_ADMIN_EMAIL") or GEMINI_ADMIN_EMAIL).strip().lower()
 WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
@@ -98,6 +98,7 @@ WORLD_WALLET_ADMIN_EVM_ADDRESS = os.getenv("WORLD_WALLET_ADMIN_EVM_ADDRESS", "0x
 ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
 ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+POLYGON_RPC_URL = os.getenv("WORLD_WALLET_POLYGON_RPC_URL", "https://polygon-rpc.com").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
@@ -1903,6 +1904,17 @@ def require_sepolia_rpc(url: str):
     chain_id = int(raw, 16)
     if chain_id != 11155111:
         raise ValueError("Configured Sepolia RPC returned chain ID %s, expected 11155111" % chain_id)
+    return chain_id
+
+
+def require_polygon_rpc(url: str):
+    """Fail closed if the configured Polygon RPC points at a different EVM chain."""
+    raw = rpc_call(url, "eth_chainId", [])
+    if not raw:
+        raise ValueError("Polygon RPC did not return a chain ID")
+    chain_id = int(raw, 16)
+    if chain_id != 137:
+        raise ValueError("Configured Polygon RPC returned chain ID %s, expected 137" % chain_id)
     return chain_id
 
 
@@ -5459,6 +5471,7 @@ def admin_settings(user: dict = Depends(current_user)):
         {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
         {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
         {"key": "BNB Chain Mainnet RPC", "configured": bool(BSC_RPC_URL)},
+        {"key": "Polygon PoS Mainnet RPC", "configured": bool(POLYGON_RPC_URL)},
         {"key": "Bitcoin address", "configured": bool(BTC_ADDRESS)},
         {"key": "Solana Mainnet RPC", "configured": bool(SOLANA_MAINNET_RPC_URL)},
         {"key": "Solana Devnet RPC", "configured": bool(SOLANA_DEVNET_RPC_URL)},
@@ -6757,9 +6770,10 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
         "ethereum": ETH_RPC_URL,
         "bnb": BSC_RPC_URL,
         "sepolia": SEPOLIA_RPC_URL,
+        "polygon": POLYGON_RPC_URL,
     }
     if network not in rpc_by_network:
-        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, or sepolia.")
+        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, sepolia, or polygon.")
     rpc = rpc_by_network[network]
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
@@ -6770,6 +6784,8 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
             require_bnb_rpc(rpc)
         elif network == "sepolia":
             require_sepolia_rpc(rpc)
+        elif network == "polygon":
+            require_polygon_rpc(rpc)
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Blockchain RPC unavailable or chain identity mismatch") from exc
