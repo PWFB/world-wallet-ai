@@ -81,7 +81,7 @@ class EtherscanProviderTests(unittest.TestCase):
                 result = main.etherscan_contract_source(1, "0x" + "a" * 40)
         self.assertFalse(result["source_verified"])
 
-    def test_admin_probe_checks_ethereum_bnb_and_sepolia_without_exposing_key(self):
+    def test_admin_probe_checks_ethereum_bnb_sepolia_and_polygon_without_exposing_key(self):
         response = {"status": "1", "message": "OK", "result": "0"}
         user = {"id": "owner", "email": "owner@example.com"}
         with patch.object(main, "require_world_wallet_admin"):
@@ -90,8 +90,8 @@ class EtherscanProviderTests(unittest.TestCase):
                     with patch.object(main, "etherscan_v2_request", return_value=response) as request:
                         result = main.admin_test_etherscan_provider(user)
         self.assertTrue(result["success"])
-        self.assertEqual([item["chain_id"] for item in result["results"]], [1, 56, 11155111])
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual([item["chain_id"] for item in result["results"]], [1, 56, 11155111, 137])
+        self.assertEqual(request.call_count, 4)
         self.assertNotIn("private-test-key", str(result))
         self.assertFalse(result["secrets_exposed"])
 
