@@ -135,18 +135,22 @@ test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
   assert.match(featureSource, /ownership is not yet verified/i);
   assert.match(featureSource, /Verify ownership/);
   assert.match(featureSource, /No transaction was sent/);
-  assert.doesNotMatch(featureSource, /@walletconnect\//i);
 });
 
-test("WalletConnect is removed from the sidebar, dashboard, and web runtime", () => {
+test("WalletConnect QR connection is available from the Wallets page without a duplicate sidebar page", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
   assert.ok(!pages.includes("Wallet Connect"));
-  assert.doesNotMatch(appSource, /externalWalletConnection|world_wallet_external_connection_v1|WalletConnect|walletconnect/i);
-  assert.ok(!featureSource.includes("@walletconnect/ethereum-provider"));
-  assert.doesNotMatch(featureSource, /WalletConnect|walletconnect|connectWalletConnect/i);
+  assert.match(featureSource, /Connect WalletConnect \(QR\)/);
+  assert.match(featureSource, /EthereumProvider\.init/);
+  assert.match(featureSource, /VITE_WALLETCONNECT_PROJECT_ID/);
+  assert.match(featureSource, /collectWalletConnectAccounts/);
+  assert.match(featureSource, /mergeWalletConnectConnections/);
+  assert.match(featureSource, /world_wallet_external_connections_v2/);
+  assert.match(featureSource, /ownership remains unverified/i);
+  assert.match(featureSource, /No transaction was sent/);
+  assert.doesNotMatch(appSource, /WalletConnect|walletconnect/i);
   assert.doesNotMatch(returnCenterSource, /WalletConnect|walletconnect|onConnectWalletConnect/i);
 });
-
 test("private Bank & Crypto services are tucked behind a collapsed APT section", () => {
   assert.ok(!Object.values(WALLET_NAVIGATION).flat().includes("US Bank Transfers"));
   assert.match(aptSource, /listOf\("Home", "Wallets", "More", "AI Chat"/);
@@ -194,15 +198,15 @@ test("Binance Web3 Wallet can be selected as a mainnet deposit recipient", () =>
 });
 
 
-test("normal Connect Wallet discovers injected providers without WalletConnect", () => {
+test("normal Connect Wallet remains a separate injected-provider discovery flow", () => {
   assert.match(featureSource, /Connect Wallet/);
   assert.match(featureSource, /discoverEip6963Providers/);
   assert.match(featureSource, /eip6963-wallets/);
   assert.match(featureSource, /connectDiscoveredWallet/);
   assert.match(featureSource, /withProviderTimeout/);
-  assert.doesNotMatch(featureSource, /WalletConnect|walletconnect/i);
+  assert.match(featureSource, /Connect Wallet/);
+  assert.match(featureSource, /discoverEip6963Providers/);
   assert.match(featureSource, /world_wallet_external_connections_v2/);
-  assert.doesNotMatch(featureSource, /@walletconnect\\//i);
 });
 
 test("injected wallet discovery utilities map supported chains and impose request timeouts", () => {

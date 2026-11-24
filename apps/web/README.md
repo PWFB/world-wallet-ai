@@ -22,6 +22,11 @@ npm run build
 npm run preview
 ```
 
-## Development
 
-*To be completed*
+## WalletConnect
+
+The Wallets page supports WalletConnect QR and compatible mobile wallet hand-off for Ethereum, BNB Chain and Sepolia. See [WALLETCONNECT.md](./WALLETCONNECT.md) for frontend configuration, security behavior and licensing requirements.
+
+**Portions © 2025 Reown, Inc. All Rights Reserved**
+
+The build publishes a third-party package license notice under `/licenses/`. See [WALLETCONNECT.md](./WALLETCONNECT.md) for the pinned SDK license metadata and the remaining transitive-license review.
