@@ -483,8 +483,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
         const initialized = await EthereumProvider.init({
           projectId: walletConnectProjectId,
-          chains: [1, 56],
-          optionalChains: [11155111],
+          // Request all supported EVM networks as required session chains.
+          // Ethereum Mainnet must not be left as an optional or silently omitted chain.
+          chains: [1, 56, 11155111],
           showQrModal: true,
           metadata: {
             name: "World Wallet AI",
@@ -506,13 +507,16 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       let walletConnectProvider = walletConnectProviderRef.current;
       if (walletConnectProvider?.session) {
         const namespace = walletConnectProvider.session.namespaces?.eip155;
-        const chainReference = "eip155:" + expectedChain;
         const approvedChains = Array.isArray(namespace?.chains) ? namespace.chains : [];
         const approvedAccounts = Array.isArray(namespace?.accounts) ? namespace.accounts : [];
-        const hasExpectedChain = approvedChains.includes(chainReference) ||
-          approvedAccounts.some(account => String(account).startsWith(chainReference + ":"));
+        const allSupportedChains = [1, 56, 11155111];
+        const missingChains = allSupportedChains.filter(chainId => {
+          const chainReference = "eip155:" + chainId;
+          return !approvedChains.includes(chainReference) &&
+            !approvedAccounts.some(account => String(account).startsWith(chainReference + ":"));
+        });
         const approvedMethods = Array.isArray(namespace?.methods) ? namespace.methods : [];
-        if (!hasExpectedChain || !approvedMethods.includes("personal_sign")) {
+        if (missingChains.length || !approvedMethods.includes("personal_sign")) {
           try {
             await walletConnectProvider.disconnect();
           } catch {}
@@ -921,8 +925,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
         provider = await EthereumProvider.init({
           projectId,
-          chains: [1, 56],
-          optionalChains: [11155111],
+          // Request all supported EVM networks as required session chains.
+          // Ethereum Mainnet must not be left as an optional or silently omitted chain.
+          chains: [1, 56, 11155111],
           showQrModal: true,
           metadata: {
             name: "World Wallet AI",
@@ -934,8 +939,44 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         walletConnectProviderRef.current = provider;
       }
       installWalletConnectListeners(provider);
+      // A restored session is usable only if OKX approved every supported EVM
+      // network and the personal_sign method required for ownership challenges.
+      const sessionSupportsAllNetworks = session => {
+        const namespace = session?.namespaces?.eip155;
+        const approvedChains = Array.isArray(namespace?.chains) ? namespace.chains : [];
+        const approvedAccounts = Array.isArray(namespace?.accounts) ? namespace.accounts : [];
+        const missingChains = [1, 56, 11155111].filter(chainId => {
+          const chainReference = "eip155:" + chainId;
+          return !approvedChains.includes(chainReference) &&
+            !approvedAccounts.some(account => String(account).startsWith(chainReference + ":"));
+        });
+        const methods = Array.isArray(namespace?.methods) ? namespace.methods : [];
+        return missingChains.length === 0 && methods.includes("personal_sign");
+      };
+      if (provider.session && !sessionSupportsAllNetworks(provider.session)) {
+        try { await provider.disconnect(); } catch {}
+        walletConnectProviderRef.current = null;
+        walletConnectListenersRef.current = null;
+        const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
+        provider = await EthereumProvider.init({
+          projectId,
+          chains: [1, 56, 11155111],
+          showQrModal: true,
+          metadata: {
+            name: "World Wallet AI",
+            description: "Connect your self-custody wallet",
+            url: window.location.origin,
+            icons: [window.location.origin + "/favicon.ico"],
+          },
+        });
+        walletConnectProviderRef.current = provider;
+        installWalletConnectListeners(provider);
+      }
       if (!provider.session) {
         await withProviderTimeout(provider.connect(), 180000, "WalletConnect connection");
+      }
+      if (!sessionSupportsAllNetworks(provider.session)) {
+        throw new Error("OKX connected without approving all required networks (Ethereum Mainnet, BNB Chain Mainnet and Sepolia). Reconnect and approve all three network permissions in OKX.");
       }
       await persistWalletConnectAddresses(provider, walletId, true);
     } catch (error) {

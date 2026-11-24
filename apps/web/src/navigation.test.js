@@ -137,6 +137,17 @@ test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
   assert.match(featureSource, /No transaction was sent/);
 });
 
+test("WalletConnect requires Ethereum Mainnet, BNB Mainnet and Sepolia for address ownership signing", () => {
+  assert.ok((featureSource.match(/chains: \[1, 56, 11155111\]/g) || []).length >= 2,
+    "both WalletConnect initialization paths must require all supported EVM chains");
+  assert.doesNotMatch(featureSource, /optionalChains: \[11155111\]/,
+    "Sepolia must not be optional while the session is expected to support all three networks");
+  assert.match(featureSource, /sessionSupportsAllNetworks/);
+  assert.match(featureSource, /missingChains/);
+  assert.match(featureSource, /personal_sign/);
+  assert.match(featureSource, /OKX connected without approving all required networks/);
+});
+
 test("WalletConnect QR connection is available from the Wallets page without a duplicate sidebar page", () => {
   const pages = Object.values(WALLET_NAVIGATION).flat();
   assert.ok(!pages.includes("Wallet Connect"));
