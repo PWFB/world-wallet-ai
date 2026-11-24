@@ -474,6 +474,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     setMessage("");
     try {
       const providerCandidates = [
+        // WalletConnect is a first-class signing provider for addresses saved from its session.
+        // Keep it ahead of injected providers so verification uses the same approved session.
+        walletConnectProviderRef.current,
         externalProvider,
         window.binancew3w?.ethereum,
         ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
