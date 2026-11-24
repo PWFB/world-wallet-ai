@@ -473,6 +473,35 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     setVerificationBusy(key);
     setMessage("");
     try {
+      // Restore the persisted WalletConnect session after a page reload. The provider
+      // ref is in-memory, so it is empty when the user returns to verify a saved address.
+      const walletConnectProjectId = String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim();
+      if (!walletConnectProviderRef.current && walletConnectProjectId) {
+        const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
+        const restoredProvider = await EthereumProvider.init({
+          projectId: walletConnectProjectId,
+          chains: [1, 56],
+          optionalChains: [11155111],
+          showQrModal: true,
+          metadata: {
+            name: "World Wallet AI",
+            description: "Connect your self-custody wallet",
+            url: window.location.origin,
+            icons: [window.location.origin + "/favicon.ico"],
+          },
+        });
+        walletConnectProviderRef.current = restoredProvider;
+        installWalletConnectListeners(restoredProvider);
+      }
+      // If no saved session is available, start the normal WalletConnect hand-off.
+      // The owner must approve it in their wallet; no signature or transaction is automatic.
+      if (walletConnectProviderRef.current && !walletConnectProviderRef.current.session) {
+        await withProviderTimeout(
+          walletConnectProviderRef.current.connect(),
+          180000,
+          "WalletConnect ownership-verification connection"
+        );
+      }
       const providerCandidates = [
         // WalletConnect is a first-class signing provider for addresses saved from its session.
         // Keep it ahead of injected providers so verification uses the same approved session.
