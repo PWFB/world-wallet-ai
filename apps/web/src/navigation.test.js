@@ -200,7 +200,7 @@ test("normal Connect Wallet discovers injected providers without WalletConnect",
   assert.match(featureSource, /eip6963-wallets/);
   assert.match(featureSource, /connectDiscoveredWallet/);
   assert.match(featureSource, /withProviderTimeout/);
-  assert.match(featureSource, /No WalletConnect session/);
+  assert.doesNotMatch(featureSource, /WalletConnect|walletconnect/i);
   assert.match(featureSource, /world_wallet_external_connections_v2/);
   assert.doesNotMatch(featureSource, /@walletconnect\\//i);
 });
