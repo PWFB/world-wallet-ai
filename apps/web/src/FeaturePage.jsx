@@ -473,12 +473,15 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     setVerificationBusy(key);
     setMessage("");
     try {
-      // Restore the persisted WalletConnect session after a page reload. The provider
-      // ref is in-memory, so it is empty when the user returns to verify a saved address.
+      // Restore or repair the WalletConnect session before asking the owner to sign.
+      // A previously paired session can survive in storage with an incomplete CAIP-155
+      // namespace; Universal Provider then rejects requests with
+      // "Missing or invalid. request() chainId: eip155:<id>" before OKX can show approval.
       const walletConnectProjectId = String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim();
-      if (!walletConnectProviderRef.current && walletConnectProjectId) {
+      const expectedChain = { ethereum: 1, bnb: 56, sepolia: 11155111 }[item.network];
+      const initializeWalletConnectProvider = async () => {
         const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
-        const restoredProvider = await EthereumProvider.init({
+        const initialized = await EthereumProvider.init({
           projectId: walletConnectProjectId,
           chains: [1, 56],
           optionalChains: [11155111],
@@ -490,14 +493,42 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
             icons: [window.location.origin + "/favicon.ico"],
           },
         });
-        walletConnectProviderRef.current = restoredProvider;
-        installWalletConnectListeners(restoredProvider);
+        walletConnectProviderRef.current = initialized;
+        installWalletConnectListeners(initialized);
+        return initialized;
+      };
+      if (!walletConnectProviderRef.current && walletConnectProjectId) {
+        await initializeWalletConnectProvider();
       }
-      // If no saved session is available, start the normal WalletConnect hand-off.
-      // The owner must approve it in their wallet; no signature or transaction is automatic.
-      if (walletConnectProviderRef.current && !walletConnectProviderRef.current.session) {
+
+      // Keep old saved public addresses untouched, but replace a stale WalletConnect
+      // pairing if it did not approve the requested chain or personal_sign method.
+      let walletConnectProvider = walletConnectProviderRef.current;
+      if (walletConnectProvider?.session) {
+        const namespace = walletConnectProvider.session.namespaces?.eip155;
+        const chainReference = "eip155:" + expectedChain;
+        const approvedChains = Array.isArray(namespace?.chains) ? namespace.chains : [];
+        const approvedAccounts = Array.isArray(namespace?.accounts) ? namespace.accounts : [];
+        const hasExpectedChain = approvedChains.includes(chainReference) ||
+          approvedAccounts.some(account => String(account).startsWith(chainReference + ":"));
+        const approvedMethods = Array.isArray(namespace?.methods) ? namespace.methods : [];
+        if (!hasExpectedChain || !approvedMethods.includes("personal_sign")) {
+          try {
+            await walletConnectProvider.disconnect();
+          } catch {}
+          walletConnectProviderRef.current = null;
+          walletConnectListenersRef.current = null;
+          walletConnectProvider = walletConnectProjectId
+            ? await initializeWalletConnectProvider()
+            : null;
+        }
+      }
+
+      // If no usable saved session remains, open a fresh WalletConnect hand-off.
+      // The owner must approve it in OKX; no signature or transaction is automatic.
+      if (walletConnectProvider && !walletConnectProvider.session) {
         await withProviderTimeout(
-          walletConnectProviderRef.current.connect(),
+          walletConnectProvider.connect(),
           180000,
           "WalletConnect ownership-verification connection"
         );
@@ -543,7 +574,6 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         throw new Error("Connect the wallet that owns this exact address, then retry. No recovery phrase or private key is needed.");
       }
 
-      const expectedChain = { ethereum: 1, bnb: 56, sepolia: 11155111 }[item.network];
       const expectedChainHex = { ethereum: "0x1", bnb: "0x38", sepolia: "0xaa36a7" }[item.network];
       const networkLabel = item.network === "ethereum" ? "Ethereum Mainnet"
         : item.network === "bnb" ? "BNB Chain Mainnet" : "Ethereum Sepolia";
