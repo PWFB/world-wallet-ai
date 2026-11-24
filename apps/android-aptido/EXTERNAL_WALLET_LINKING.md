@@ -6,7 +6,7 @@
 
 ## Decision
 
-Do not add Reown AppKit or another package that transitively introduces WalletConnect SDKs under the WalletConnect Community License.
+For the native Android APT, do not embed Reown AppKit or WalletConnect SDKs under the WalletConnect Community License. Keep the native app on the provider-adapter bridge described below. This restriction is scoped to the Android APT; the separate browser-based web frontend has its own WalletConnect Ethereum-provider integration and must follow that SDK's license, attribution and network requirements.
 
 Use a provider-adapter bridge instead. The Android app remains the owner of account selection and persistence. A small HTTPS bridge page is opened in the selected wallet's supported mobile browser / dApp browser. The first Binance EVM proof-of-concept now implements this flow for Ethereum Mainnet and BNB Chain Mainnet only: it obtains a public account and, only when requested, asks Binance Web3 Wallet to sign a short-lived ownership challenge. Android receives the public account and signature, then uses the existing authenticated World Wallet AI address attach and challenge/verify APIs. The implementation remains in draft PR #255 and is not active on the live backend until deployed.
 
@@ -43,9 +43,9 @@ Official references:
 - https://web3.okx.com/onchainos/dev-docs/wallet/dapp-connect/okx-wallet-integration-introduction
 - https://web3.okx.com/onchainos/dev-docs/wallet/dapp-connect/app-connect-preparation
 
-## Web OKX EVM connection
+## Web EVM wallet connections
 
-The web Wallets page now exposes an explicit **Connect OKX Wallet** action. It uses the OKX-injected EVM provider (window.okxwallet) when World Wallet AI is opened in the OKX Wallet DApp browser; it does not add WalletConnect, Reown AppKit or a third-party SDK. The connection flow requests the public account and reads the provider's current chain ID. It accepts Ethereum Mainnet (1), BNB Chain Mainnet (56) and Ethereum Sepolia (11155111) only.
+The web Wallets page exposes separate **Connect OKX Wallet**, **Connect Binance Wallet**, and **Connect WalletConnect (QR)** actions. OKX and Binance can use their provider-injected EVM account flows in their respective DApp browsers. WalletConnect uses the pinned `@walletconnect/ethereum-provider` v2 SDK to display a QR modal on desktop and supported mobile wallet hand-off/deep links. It accepts Ethereum Mainnet (1), BNB Chain Mainnet (56) and Ethereum Sepolia (11155111) only. See `apps/web/WALLETCONNECT.md` for its project-ID setup, attribution and license obligations.
 
 The web client stores each public account by World Wallet profile, provider ID, EVM namespace, chain ID and address in its existing external-connection registry. The existing Wallets synchronization attaches the public address to the active backend wallet. Connection does not imply ownership verification: the user must complete the existing backend challenge and personal_sign verification before the address is eligible for verified spending. No transaction signing or broadcast occurs during connection.
 
