@@ -181,8 +181,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const adminDefaultAttachRef = useRef(new Set());
   const walletConnectProviderRef = useRef(null);
   const walletConnectListenersRef = useRef(null);
-  const walletIdRef = useRef(walletId);
-  walletIdRef.current = walletId;
+  const walletConnectSessionWalletIdRef = useRef("");
   const [network, setNetwork] = useState("ethereum");
   const [address, setAddress] = useState("");
   const [label, setLabel] = useState("primary");
@@ -774,7 +773,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     if (!provider || walletConnectListenersRef.current === provider) return;
     walletConnectListenersRef.current = provider;
     const refresh = async () => {
-      const targetWalletId = walletIdRef.current;
+      const targetWalletId = walletConnectSessionWalletIdRef.current;
       if (!targetWalletId || !provider.session) return;
       try {
         await persistWalletConnectAddresses(provider, targetWalletId, false);
@@ -791,6 +790,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       // Session disconnect never deletes previously saved or attached public addresses.
       walletConnectProviderRef.current = null;
       walletConnectListenersRef.current = null;
+      walletConnectSessionWalletIdRef.current = "";
       setMessage("WalletConnect session disconnected. Previously saved public addresses remain attached; reconnect to refresh the session.");
     });
   };
@@ -804,6 +804,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     }
     setBusy(true);
     setMessage("");
+    walletConnectSessionWalletIdRef.current = walletId;
     try {
       let provider = walletConnectProviderRef.current;
       if (!provider) {
