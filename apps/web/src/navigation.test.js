@@ -198,7 +198,7 @@ test("Binance Web3 Wallet can be selected as a mainnet deposit recipient", () =>
 });
 
 
-test("normal Connect Wallet discovers injected providers without WalletConnect", () => {
+test("normal Connect Wallet remains a separate injected-provider discovery flow", () => {
   assert.match(featureSource, /Connect Wallet/);
   assert.match(featureSource, /discoverEip6963Providers/);
   assert.match(featureSource, /eip6963-wallets/);
