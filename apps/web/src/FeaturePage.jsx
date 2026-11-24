@@ -547,44 +547,54 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       const expectedChainHex = { ethereum: "0x1", bnb: "0x38", sepolia: "0xaa36a7" }[item.network];
       const networkLabel = item.network === "ethereum" ? "Ethereum Mainnet"
         : item.network === "bnb" ? "BNB Chain Mainnet" : "Ethereum Sepolia";
+      const readChainId = async candidate => {
+        const value = await candidate.request({ method: "eth_chainId" });
+        const valueText = String(value || "");
+        return typeof value === "number" ? value
+          : (/^0x/i.test(valueText) ? Number.parseInt(valueText, 16) : Number.parseInt(valueText, 10));
+      };
       let provider = null;
       let observedChain = null;
       let switchError = null;
+
+      // First inspect every matching provider. This avoids prompting a network
+      // switch on a stale WalletConnect provider when another wallet is already
+      // connected to the correct Ethereum Mainnet chain.
       for (const candidate of matchingProviders) {
         try {
-          const chainValue = await candidate.request({ method: "eth_chainId" });
-          const chainText = String(chainValue || "");
-          let connectedChain = typeof chainValue === "number" ? chainValue
-            : (/^0x/i.test(chainText) ? Number.parseInt(chainText, 16) : Number.parseInt(chainText, 10));
-          observedChain = connectedChain;
-          if (connectedChain !== expectedChain) {
-            // Ask the wallet to switch networks instead of making the user guess
-            // which provider or wallet tab World Wallet AI selected.
-            try {
-              await candidate.request({
-                method: "wallet_switchEthereumChain",
-                params: [{ chainId: expectedChainHex }],
-              });
-              const switchedValue = await candidate.request({ method: "eth_chainId" });
-              const switchedText = String(switchedValue || "");
-              connectedChain = typeof switchedValue === "number" ? switchedValue
-                : (/^0x/i.test(switchedText) ? Number.parseInt(switchedText, 16) : Number.parseInt(switchedText, 10));
-              observedChain = connectedChain;
-            } catch (error) {
-              if (isUserRejectedError(error)) throw error;
-              switchError = error;
-              continue;
-            }
-          }
-          if (connectedChain === expectedChain) {
+          const chainId = await readChainId(candidate);
+          if (chainId === expectedChain) {
             provider = candidate;
             break;
           }
+          observedChain = chainId;
         } catch (error) {
-          if (isUserRejectedError(error)) throw error;
           switchError = error;
         }
       }
+
+      // Only request a switch when none of the matching providers is already
+      // on the required chain. The wallet must approve this standard EIP-3326 request.
+      if (!provider) {
+        for (const candidate of matchingProviders) {
+          try {
+            await candidate.request({
+              method: "wallet_switchEthereumChain",
+              params: [{ chainId: expectedChainHex }],
+            });
+            const switchedChain = await readChainId(candidate);
+            observedChain = switchedChain;
+            if (switchedChain === expectedChain) {
+              provider = candidate;
+              break;
+            }
+          } catch (error) {
+            if (isUserRejectedError(error)) throw error;
+            switchError = error;
+          }
+        }
+      }
+
       if (!provider) {
         const chainDescription = observedChain === null ? "unavailable"
           : "0x" + observedChain.toString(16);
