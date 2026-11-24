@@ -189,6 +189,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [discoveredWallets, setDiscoveredWallets] = useState([]);
   const [discoveringWallets, setDiscoveringWallets] = useState(false);
+  const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [localEntries, setLocalEntries] = useState(() => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } });
 
   useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
@@ -831,15 +832,23 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         <h2>{selectedWallet?.name || "No wallet selected"}</h2>
         <div className="security-note">Wallet ID: <strong>{walletId ? walletNumberFor(walletId) : "No wallet selected"}</strong></div>
         <div className="address-row-actions" style={{ margin: "12px 0" }}>
-          <button type="button" className="primary" disabled={busy || !walletId || discoveringWallets} onClick={discoverWallets}>{discoveringWallets ? "Finding wallets…" : "Connect Wallet"}</button>
+          <button type="button" className="primary" disabled={busy || !walletId} onClick={() => { setShowWalletPicker(true); void discoverWallets(); }}>{discoveringWallets ? "Finding wallets…" : "Connect Wallet"}</button>
           <button type="button" className="primary" disabled={busy || !walletId} onClick={connectBinanceWallet}>Connect Binance Wallet</button>
           <button type="button" className="secondary" disabled={busy || !walletId} onClick={connectOkxWallet}>Connect OKX Wallet</button>
           <span className="security-note">Connect Wallet discovers injected browser wallets using EIP-6963 and standard EVM injection. No QR session, transaction, or signature is started by discovery. Select a detected wallet below to request account access.</span>
-          {discoveredWallets.length > 0 && <div className="wallet-provider-list" role="group" aria-label="Detected wallet providers">
+          {showWalletPicker && <div className="wallet-provider-list" role="group" aria-label="Choose a wallet" style={{ display: "grid", gap: 10, padding: 12, marginTop: 10, border: "1px solid var(--border, #444)", borderRadius: 12 }}>
+            <strong>Choose a wallet</strong>
+            <div className="security-note">Select a wallet provider. If it is not detected, open this website in that wallet’s DApp browser and try again. No transaction or signature is requested until you choose a provider.</div>
+            <button type="button" className="secondary" disabled={busy} onClick={connectBinanceWallet}>Binance Wallet <span className="security-note">· {window.binancew3w?.ethereum?.request ? "Detected" : "Not detected in this browser"}</span></button>
+            <button type="button" className="secondary" disabled={busy} onClick={connectOkxWallet}>OKX Wallet <span className="security-note">· {window.okxwallet?.request || externalProvider?.isOKXWallet || externalProvider?.isOkxWallet ? "Detected" : "Not detected in this browser"}</span></button>
             {discoveredWallets.map((entry, index) => <button type="button" className="secondary" key={entry.uuid || entry.rdns || entry.name + index} disabled={busy} onClick={() => connectDiscoveredWallet(entry)}>
               {entry.icon && <img src={entry.icon} alt="" width="20" height="20" style={{ verticalAlign: "middle", marginRight: 8 }} />}
-              Connect {entry.name}
+              {entry.name}
             </button>)}
+            {!discoveringWallets && discoveredWallets.length === 0 && <span className="security-note">No additional injected wallets were detected. Binance and OKX remain listed above so you can retry from their DApp browsers.</span>}
+            {discoveringWallets && <span className="security-note">Searching this browser for injected wallets…</span>}
+            <button type="button" className="secondary" disabled={discoveringWallets || busy} onClick={() => void discoverWallets()}>Scan again</button>
+            <button type="button" className="secondary" onClick={() => setShowWalletPicker(false)}>Close</button>
           </div>}
         </div>
         <select value={walletId} onChange={e => switchWallet(e.target.value)} disabled={busy || !wallets.length}>
