@@ -95,6 +95,35 @@ class EtherscanProviderTests(unittest.TestCase):
         self.assertNotIn("private-test-key", str(result))
         self.assertFalse(result["secrets_exposed"])
 
+    def test_address_data_returns_read_only_native_and_activity_data_for_polygon(self):
+        user = {"id": "user", "email": "user@example.com"}
+        address = "0x" + "1" * 40
+        def fake_request(chain_id, module, action, params=None):
+            self.assertEqual(chain_id, 137)
+            if action == "balance":
+                return {"status": "1", "result": "1230000000000000000"}
+            return {"status": "1", "result": [{"hash": action}]}
+        request = main.EtherscanAddressDataRequest(address=address, network="polygon", page=1, offset=10)
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main, "etherscan_v2_request", side_effect=fake_request) as call:
+                result = main.etherscan_address_data(request, user)
+        self.assertEqual(result["native_asset"], "POL")
+        self.assertEqual(result["native_balance_base_units"], "1230000000000000000")
+        self.assertEqual(result["transactions"], [{"hash": "txlist"}])
+        self.assertEqual(result["token_transfers"], [{"hash": "tokentx"}])
+        self.assertEqual(result["internal_transactions"], [{"hash": "txlistinternal"}])
+        self.assertEqual(call.call_count, 4)
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["secrets_exposed"])
+        self.assertNotIn("private-test-key", str(result))
+
+    def test_address_data_rejects_unsupported_network(self):
+        request = main.EtherscanAddressDataRequest(address="0x" + "1" * 40, network="sepolia")
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with self.assertRaises(main.HTTPException) as error:
+                main.etherscan_address_data(request, {"id": "user"})
+        self.assertEqual(error.exception.status_code, 400)
+
     def test_admin_settings_reports_only_etherscan_key_presence(self):
         user = {"id": "owner", "email": "owner@example.com"}
         with patch.object(main, "require_world_wallet_admin"):
