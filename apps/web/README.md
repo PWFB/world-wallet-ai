@@ -29,4 +29,4 @@ The Wallets page supports WalletConnect QR and compatible mobile wallet hand-off
 
 **Portions © 2025 Reown, Inc. All Rights Reserved**
 
-The build copies the provider's exact license from the installed package to `/licenses/walletconnect-ethereum-provider-LICENSE.md`.
+The build publishes a third-party package license notice under `/licenses/`. See [WALLETCONNECT.md](./WALLETCONNECT.md) for the pinned SDK license metadata and the remaining transitive-license review.
