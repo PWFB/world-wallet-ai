@@ -3450,9 +3450,23 @@ def _decode_okx_storage_proxy(code: str):
 @app.get("/api/v1/wallet/erc7702-inspection")
 def wallet_erc7702_inspection(user: dict = Depends(current_user)):
     """Read-only Ethereum Mainnet inspection of the active wallet's EIP-7702 delegation."""
-    owner = wallet_network_address(user, "ethereum")
+    # This is the OKX-specific inspector. Never use the generic first Ethereum
+    # address here: that may belong to Binance or another external provider.
+    okx_address = next(
+        (
+            item.get("address")
+            for item in configured_addresses(user)
+            if str(item.get("network") or "").strip().lower() == "ethereum"
+            and "okx" in str(item.get("label") or "").strip().lower()
+        ),
+        None,
+    )
+    owner = okx_address
     if not owner or not re.fullmatch(r"0x[a-fA-F0-9]{40}", str(owner)):
-        raise HTTPException(status_code=404, detail="No valid Ethereum Mainnet address is attached to the active wallet")
+        raise HTTPException(
+            status_code=404,
+            detail="No OKX-labeled Ethereum Mainnet address is attached to the active wallet. Connect the correct OKX account first.",
+        )
     if not ETH_RPC_URL:
         raise HTTPException(status_code=503, detail="Ethereum Mainnet RPC is not configured")
     try:
