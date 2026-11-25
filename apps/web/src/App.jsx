@@ -508,7 +508,7 @@ function App() {
       window.removeEventListener("focus", loadAnnouncement);
     };
   }, [accessToken]);
-  const [authRestoring, setAuthRestoring] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState("off");
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -672,6 +672,7 @@ function App() {
     setPinRecoveryCode("");
     setPinError("");
     setShowLogin(true);
+    setAuthRestoring(false);
   }
 
   const [showLogin, setShowLogin] = useState(() => {
@@ -898,6 +899,14 @@ function App() {
         } catch {
           // Continue to the normal Neon Auth restoration path below.
         }
+      }
+
+      // Wait until Neon Auth has finished restoring its browser session before
+      // falling back to the public landing page. The device-cookie path above
+      // can complete without waiting for Neon Auth.
+      if (sessionState.isPending && !socialReturn) {
+        if (!cancelled) setAuthRestoring(true);
+        return;
       }
 
       if (!socialReturn && !neonSessionUser) {
@@ -1867,6 +1876,7 @@ function App() {
       setPinRecoveryCode("");
       setPinError("");
       setShowLogin(false);
+      setAuthRestoring(false);
       setLoginError("");
       setAuthMessage("");
     } catch (error) {
@@ -1904,7 +1914,7 @@ function App() {
           <div className="ww-auth-copy">
             <span className="ww-live-badge"><i /> WALLET SECURITY</span>
             <h1>Your wallet.<br /><em>Your PIN.</em></h1>
-            <p>Your account password or approved sign-in is the first identity check. This six-digit PIN is the additional wallet unlock required before balances, reserves and transfers are available.</p>
+            <p>{pinGateMode === "setup" ? "Your first identity check is complete. Create a six-digit PIN now; this device will ask for it whenever you return to your wallet." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin, then choose a new six-digit wallet PIN." : "Your wallet is locked on this device. Enter your six-digit PIN to unlock balances, reserves and transfers."}</p>
             <div className="ww-auth-points">
               <div><b>01</b><span><strong>Six-digit PIN</strong><small>Stored as a salted server-side hash.</small></span></div>
               <div><b>02</b><span><strong>Attempt protection</strong><small>Five failed attempts trigger a 15-minute lock.</small></span></div>
@@ -1915,8 +1925,8 @@ function App() {
             <div className="ww-auth-card-head">
               <div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div>
               <div>
-                <small>SECOND FACTOR</small>
-                <h2>{pinGateMode === "setup" ? "Create login PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Unlock your wallet"}</h2>
+                <small>{pinGateMode === "setup" ? "FIRST-TIME WALLET SETUP" : pinGateMode === "recovery" ? "SECURE PIN RECOVERY" : "WALLET UNLOCK"}</small>
+                <h2>{pinGateMode === "setup" ? "Create your six-digit PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Enter your six-digit PIN"}</h2>
                 <p>{pinGateMode === "setup" ? "The first PIN you choose becomes this account’s six-digit wallet login PIN." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin and choose a new PIN." : "Enter your six-digit PIN to unlock the authenticated wallet session."}</p>
               </div>
             </div>
@@ -2156,6 +2166,19 @@ function App() {
     : walletUnpricedSentAssets.length
       ? "Excludes unpriced sends: " + walletUnpricedSentAssets.join(", ")
       : "Current quotes applied to recorded wallet sends";
+
+  if (authRestoring && !accessToken && !pinGateOpen) {
+    return (
+      <div className="ww-auth-shell ww-auth-restoring">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <div className="ww-auth-restoring-card">
+          <img src="/world-wallet-ai-logo.svg" alt="" />
+          <b>WORLD WALLET <em>AI</em></b>
+          <span>Restoring secure wallet session…</span>
+        </div>
+      </div>
+    );
+  }
 
   if (!accessToken && showLogin) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
