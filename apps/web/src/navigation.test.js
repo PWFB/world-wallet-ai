@@ -86,6 +86,15 @@ test("admin destinations use server-backed restricted endpoints", () => {
 });
 
 
+test("Etherscan API Test is directly discoverable in Admin and uses the owner-only read-only backend probe", () => {
+  assert.ok(WALLET_NAVIGATION.ADMIN.includes("Etherscan API Test"));
+  assert.ok(NAVIGATION_ICONS["Etherscan API Test"]);
+  assert.match(featureSource, /active === "Etherscan API Test"/);
+  assert.match(featureSource, /Test Etherscan API/);
+  assert.match(featureSource, /api\/v1\/admin\/etherscan-provider\/test/);
+  assert.match(featureSource, /fixed public probe address/);
+});
+
 test("admin System Settings exposes Alchemy runtime verification without client-side secrets", () => {
   assert.match(featureSource, /Alchemy NFT API connectivity/);
   assert.match(featureSource, /Test Alchemy API/);
