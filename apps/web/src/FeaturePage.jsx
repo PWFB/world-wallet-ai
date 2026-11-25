@@ -2153,6 +2153,13 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         </div> : null}
         {proofData?.address_inventory?.length ? <div className="security-note">Attached address inventory: {proofData.address_inventory.length} addresses · {proofData.unverified_addresses?.length || 0} need ownership verification. Only ownership-verified addresses contribute to reserve totals.</div> : null}
         <div className="panel action-panel">
+          <p className="feature-kicker">LIABILITY RECONCILIATION · WALLET LEDGER</p>
+          <h2>Recorded wallet liabilities</h2>
+          <p className="muted">These are internal balances recorded for this authenticated wallet only. Reserved amounts are included in total balances and shown separately; they are not added twice.</p>
+          {proofData?.wallet_liabilities_included ? (proofData.wallet_liabilities?.length ? <div className="tool-list">{proofData.wallet_liabilities.map((item,index)=><div className="tool-row" key={item.asset+":"+index}><div><b>{item.asset}</b><small>{item.name} · {item.source}</small><small>Reserved: {item.reserved_balance} · Available: {item.available_balance}</small></div><strong>{item.total_balance} {item.asset}</strong></div>)}</div> : <div className="live-chart-empty">No internal asset-ledger liabilities are recorded for this wallet.</div>) : <div className="feature-error">Wallet liability ledger could not be read. No liability total is being claimed.</div>}
+          <div className="security-note">Platform-wide liabilities are not included. This page does not yet calculate a platform reserve-coverage ratio because platform treasury addresses and complete cross-wallet liability evidence are not configured here. This wallet-level inventory is not an audit or solvency attestation.</div>
+        </div>
+        <div className="panel action-panel">
           <p className="feature-kicker">TRANSACTION HISTORY · EVIDENCE REVIEW</p>
           <h2>History reconciliation</h2>
           <p className="muted">Transaction history supports review of reserve movements, but incoming/outgoing totals are not current reserves. Each record must be checked against its network explorer; saved history alone is not an audit or proof of ownership.</p>
