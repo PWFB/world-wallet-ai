@@ -466,14 +466,46 @@ function App() {
   useEffect(() => {
     if (!accessToken) { setWalletAnnouncement(null); return undefined; }
     let cancelled = false;
-    fetch(API_BASE_URL + "/api/v1/announcement", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
-      .then(async response => {
+    let inFlight = false;
+    const loadAnnouncement = async () => {
+      if (cancelled || inFlight || document.visibilityState === "hidden") return;
+      inFlight = true;
+      try {
+        const response = await fetch(API_BASE_URL + "/api/v1/announcement", {
+          headers: { Authorization: "Bearer " + accessToken },
+          cache: "no-store",
+        });
         const data = await response.json();
         if (!response.ok) throw new Error(data.detail || "Announcement unavailable");
-        if (!cancelled) setWalletAnnouncement(data.announcement || null);
-      })
-      .catch(() => { if (!cancelled) setWalletAnnouncement(null); });
-    return () => { cancelled = true; };
+        if (!cancelled) {
+          const next = data.announcement || null;
+          setWalletAnnouncement(current => {
+            if (!current && !next) return current;
+            if (current && next && current.title === next.title && current.body === next.body &&
+                Boolean(current.enabled) === Boolean(next.enabled) && current.updated_at === next.updated_at) return current;
+            return next;
+          });
+        }
+      } catch {
+        // Keep the last confirmed announcement during temporary network failures.
+        // A failed refresh must not make a published notice disappear.
+      } finally {
+        inFlight = false;
+      }
+    };
+    loadAnnouncement();
+    const interval = window.setInterval(loadAnnouncement, 30_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") loadAnnouncement();
+    };
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    window.addEventListener("focus", loadAnnouncement);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+      window.removeEventListener("focus", loadAnnouncement);
+    };
   }, [accessToken]);
   const [authRestoring, setAuthRestoring] = useState(false);
   const [refreshInterval, setRefreshInterval] = useState("off");
