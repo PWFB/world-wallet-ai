@@ -651,7 +651,9 @@ function App() {
   const [showLogin, setShowLogin] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.has("token") || params.has("password_reset") || params.has("error")) return true;
-    try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
+    try {
+      return localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1" || sessionStorage.getItem("world_wallet_show_login") === "1";
+    } catch { return false; }
   });
   const [loginError, setLoginError] = useState("");
   const [authMethod, setAuthMethod] = useState("email");
