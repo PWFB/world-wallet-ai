@@ -7351,10 +7351,46 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     if not addresses:
         raise HTTPException(status_code=503, detail="Connect at least one public wallet address to inspect on-chain reserves")
 
+    # Read the authenticated wallet's internal ledger liabilities separately
+    # from external on-chain balances. These rows are NOT platform-wide totals.
+    wallet_liabilities = []
+    liability_ledger_available = False
+    try:
+        with db() as conn:
+            liability_rows = conn.execute(
+                "SELECT symbol,name,balance,reserved_balance FROM assets "
+                "WHERE wallet_id=%s ORDER BY symbol",
+                (user["wallet_id"],),
+            ).fetchall()
+        for row in liability_rows:
+            if len(row) < 4:
+                continue
+            symbol, name, balance, reserved_balance = row[:4]
+            try:
+                total = Decimal(str(balance or 0))
+                reserved = Decimal(str(reserved_balance or 0))
+                if not total.is_finite() or not reserved.is_finite() or total < 0 or reserved < 0 or reserved > total:
+                    raise ValueError("Invalid wallet ledger liability values")
+            except Exception:
+                warnings.append("wallet ledger contains an invalid liability row")
+                continue
+            wallet_liabilities.append({
+                "asset": str(symbol or "").upper(),
+                "name": str(name or symbol or "Asset"),
+                "total_balance": str(total),
+                "reserved_balance": str(reserved),
+                "available_balance": str(total - reserved),
+                "source": "World Wallet AI wallet asset ledger",
+            })
+        liability_ledger_available = True
+    except Exception as exc:
+        logger.warning("Proof-of-reserves wallet liability lookup failed: error_type=%s", type(exc).__name__)
+        warnings.append("wallet ledger liabilities unavailable")
+
     verified_addresses = []
     unverified_addresses = []
     registry = []
-    warnings = []
+    warnings = list(warnings)
     for item in addresses:
         network = str(item["network"]).strip().lower().replace("-", "_")
         address = str(item["address"]).strip()
@@ -7639,6 +7675,11 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
         "scope": "All attached addresses and registered token contracts for this authenticated wallet; only ownership-verified addresses contribute to reserves.",
         "as_of": datetime.now(timezone.utc).isoformat(),
         "reserves": reserves,
+        "wallet_liabilities": wallet_liabilities,
+        "wallet_liabilities_included": liability_ledger_available,
+        "liability_scope": "Authenticated wallet ledger only; this is not a platform-wide customer-liability total.",
+        "platform_wide_liabilities_included": False,
+        "platform_reserve_coverage_ratio": None,
         "catalog_assets": catalog_assets,
         "smart_contracts": smart_contracts,
         "address_inventory": verified_addresses + unverified_addresses,
