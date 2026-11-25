@@ -1898,6 +1898,19 @@ function App() {
     setMobileMenuOpen(false);
   }
 
+  if (authRestoring && !accessToken && !pinGateOpen) {
+    return (
+      <div className="ww-auth-shell ww-auth-restoring">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <div className="ww-auth-restoring-card">
+          <img src="/world-wallet-ai-logo.svg" alt="" />
+          <b>WORLD WALLET <em>AI</em></b>
+          <span>Restoring secure wallet session…</span>
+        </div>
+      </div>
+    );
+  }
+
   if (pinGateOpen) {
     return (
       <div className="ww-auth-shell">
@@ -2162,19 +2175,6 @@ function App() {
     : walletUnpricedSentAssets.length
       ? "Excludes unpriced sends: " + walletUnpricedSentAssets.join(", ")
       : "Current quotes applied to recorded wallet sends";
-
-  if (authRestoring && !accessToken && !pinGateOpen) {
-    return (
-      <div className="ww-auth-shell ww-auth-restoring">
-        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
-        <div className="ww-auth-restoring-card">
-          <img src="/world-wallet-ai-logo.svg" alt="" />
-          <b>WORLD WALLET <em>AI</em></b>
-          <span>Restoring secure wallet session…</span>
-        </div>
-      </div>
-    );
-  }
 
   if (!accessToken && showLogin) {
     return (<div className="ww-auth-shell"><div className="ww-auth-glow ww-auth-glow-a"/><div className="ww-auth-glow ww-auth-glow-b"/>
