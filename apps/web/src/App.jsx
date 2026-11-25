@@ -507,7 +507,7 @@ function App() {
       window.removeEventListener("focus", loadAnnouncement);
     };
   }, [accessToken]);
-  const [authRestoring, setAuthRestoring] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState("off");
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -526,10 +526,7 @@ function App() {
   const [recoveryMode, setRecoveryMode] = useState(() => Boolean(new URLSearchParams(window.location.search).get("token")));
   async function beginSecurityPinGate(token, signedInUser = null) {
     if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
-
     // A wallet PIN is optional security, not a compulsory second login step.
-    // Keep the authenticated Neon session as the wallet session so password,
-    // email verification, and social sign-in can open the dashboard directly.
     try {
       localStorage.setItem(TOKEN_KEY, token);
     } catch {
@@ -756,6 +753,7 @@ function App() {
     let cancelled = false;
 
     async function restoreSessionFromNeon() {
+      if (!cancelled) setAuthRestoring(true);
       let persistedToken = "";
       let socialReturn = "";
       try {
@@ -770,6 +768,7 @@ function App() {
       } catch {
         // Storage can be unavailable in restricted browser modes.
       }
+      const hadPersistedToken = Boolean(persistedToken);
 
       if (pinGateOpen && pendingPinToken) {
         if (!cancelled) setAuthRestoring(false);
@@ -823,19 +822,19 @@ function App() {
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
       }
 
-      if (!socialReturn && !neonSessionUser) {
+      // Wait for Neon Auth to finish restoring its cookie-backed session before
+      // deciding that a refresh has no authenticated user.
+      if (sessionState.isPending) return;
+
+      if (!socialReturn && !neonSessionUser && !hadPersistedToken) {
         if (!cancelled) setAuthRestoring(false);
         return;
       }
 
-      if (!cancelled) setAuthRestoring(true);
-
       // Neon Auth may need several seconds to restore its cross-origin session.
       // Wait for useSession() to settle instead of timing out and forcing the user
       // back to login while the dashboard is already mounting.
-      if (sessionState.isPending) return;
-
-      if (neonSessionUser || socialReturn) {
+      if (neonSessionUser || socialReturn || hadPersistedToken) {
         for (let attempt = 0; attempt < 12 && !cancelled; attempt += 1) {
           try {
             // After Google's top-level OAuth redirect the SDK's React session
@@ -866,7 +865,9 @@ function App() {
       if (!cancelled) {
         setAuthRestoring(false);
         setShowLogin(true);
-        setLoginError(({ github: "GitHub", twitter: "X", telegram: "Telegram", google: "Google" }[socialReturn] || "Social") + " session could not be restored. Please sign in again.");
+        setLoginError(socialReturn
+          ? (({ github: "GitHub", twitter: "X", telegram: "Telegram", google: "Google" }[socialReturn] || "Social") + " session could not be restored. Please sign in again.")
+          : "Your saved wallet session has expired. Please sign in again.");
         try { sessionStorage.removeItem("world_wallet_google_return"); } catch {}
             try { sessionStorage.removeItem("world_wallet_social_return"); } catch {}
         if (window.location.search) {
@@ -1821,6 +1822,22 @@ function App() {
             {pinGateMode === "recovery" && <button className="ww-text-link" type="button" onClick={() => { setPinGateMode("verify"); setPinInput(""); setPinConfirm(""); setPinRecoveryCode(""); setPinError(""); }}>← Back to PIN entry</button>}
             <p className="ww-auth-note"><span>✓</span> A recovery code is sent only to the configured Super Admin Gmail. The account email does not receive this PIN recovery code.</p>
           </form>
+        </section>
+      </div>
+    );
+  }
+
+  if (authRestoring && !accessToken && !pinGateOpen) {
+    return (
+      <div className="ww-auth-shell" role="status" aria-live="polite">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <section className="ww-auth-layout">
+          <div className="ww-auth-card">
+            <div className="ww-auth-card-head">
+              <div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div>
+              <div><small>SECURE SESSION</small><h2>Restoring your wallet</h2><p>Checking your saved sign-in securely. Please wait…</p></div>
+            </div>
+          </div>
         </section>
       </div>
     );
