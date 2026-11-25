@@ -19,7 +19,7 @@ from threading import Lock
 from anyio import to_thread
 
 import psycopg
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import Response, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from google.auth.transport import requests as google_requests
@@ -63,6 +63,8 @@ def aptido_wallet_bridge():
     )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
+PIN_DEVICE_COOKIE = "ww_pin_device"
+PIN_DEVICE_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 SESSION_TOKEN = os.getenv("WORLD_WALLET_SESSION_TOKEN", "")
 # One explicit administrator identity takes precedence over legacy per-feature/demo email settings.
 WORLD_WALLET_ADMIN_EMAIL = os.getenv("WORLD_WALLET_ADMIN_EMAIL", "").strip().lower()
@@ -556,10 +558,15 @@ def init_db():
           token_hash TEXT NOT NULL UNIQUE,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           expires_at TIMESTAMPTZ NOT NULL,
-          revoked_at TIMESTAMPTZ
+          revoked_at TIMESTAMPTZ,
+          session_type TEXT NOT NULL DEFAULT 'pin'
         );
+        ALTER TABLE wallet_security_pin_sessions_v2
+          ADD COLUMN IF NOT EXISTS session_type TEXT NOT NULL DEFAULT 'pin';
         CREATE INDEX IF NOT EXISTS wallet_security_pin_sessions_v2_user_idx
           ON wallet_security_pin_sessions_v2(user_id,expires_at DESC);
+        CREATE INDEX IF NOT EXISTS wallet_security_pin_sessions_v2_type_user_idx
+          ON wallet_security_pin_sessions_v2(session_type,user_id,expires_at DESC);
         CREATE TABLE IF NOT EXISTS wallet_security_pin_recovery(
           id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -1066,11 +1073,80 @@ def _create_pin_session(conn, user_id: str):
     # digest; PIN verification on one device never overwrites another device.
     session_token = "wwpin_" + secrets.token_urlsafe(32)
     conn.execute(
-        "INSERT INTO wallet_security_pin_sessions_v2(id,user_id,token_hash,expires_at) "
-        "VALUES(%s,%s,%s,NOW()+INTERVAL '12 hours')",
+        "INSERT INTO wallet_security_pin_sessions_v2(id,user_id,token_hash,expires_at,session_type) "
+        "VALUES(%s,%s,%s,NOW()+INTERVAL '12 hours','pin')",
         ("wwpins_" + secrets.token_urlsafe(18), user_id, sha(session_token)),
     )
     return session_token
+
+
+def _create_pin_device_session(conn, user_id: str):
+    # This cookie proves the device has completed the first identity check. It
+    # cannot access wallet APIs; every wallet request still requires a PIN session.
+    device_token = "wwpd_" + secrets.token_urlsafe(32)
+    conn.execute(
+        "INSERT INTO wallet_security_pin_sessions_v2(id,user_id,token_hash,expires_at,session_type) "
+        "VALUES(%s,%s,%s,NOW()+INTERVAL '30 days','device')",
+        ("wwdev_" + secrets.token_urlsafe(18), user_id, sha(device_token)),
+    )
+    return device_token
+
+
+def _pin_device_user(device_token: str):
+    if not device_token or not DATABASE_URL:
+        raise HTTPException(status_code=401, detail="This device is not registered. Sign in with Google or your email first.")
+    try:
+        with db() as conn:
+            row = conn.execute(
+                """
+                SELECT u.id,u.email,u.name,u.active_wallet_id,u.phone_number,u.phone_verified_at,w.wallet_number
+                FROM wallet_security_pin_sessions_v2 s
+                JOIN users u ON u.id=s.user_id
+                LEFT JOIN wallets w ON w.id=u.active_wallet_id
+                WHERE s.token_hash=%s AND s.session_type='device'
+                  AND s.expires_at>NOW() AND s.revoked_at IS NULL
+                """,
+                (sha(device_token),),
+            ).fetchone()
+        if not row:
+            raise HTTPException(status_code=401, detail="This device session has expired. Sign in again to register this device.")
+        return {
+            "id": row[0], "email": row[1], "name": row[2], "wallet_id": row[3],
+            "phone_number": row[4], "phone_verified": bool(row[5]),
+            "wallet_number": str(row[6]) if row[6] is not None else None,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("PIN device session lookup failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Saved device verification is temporarily unavailable") from exc
+
+
+def current_user_for_pin_device_enrollment(authorization: str | None = Header(default=None)):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization[7:].strip()
+    if token.startswith("wwpin_"):
+        return current_user(authorization)
+    return _security_user_without_pin(authorization)
+
+
+def current_user_for_pin(
+    authorization: str | None = Header(default=None),
+    device_token: str | None = Cookie(default=None, alias=PIN_DEVICE_COOKIE),
+):
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization[7:].strip()
+        if token.startswith("wwpin_"):
+            return current_user(authorization)
+        return _security_user_without_pin(authorization)
+    return _pin_device_user(device_token or "")
+
+
+def current_pin_device_user(
+    device_token: str | None = Cookie(default=None, alias=PIN_DEVICE_COOKIE),
+):
+    return _pin_device_user(device_token or "")
 
 
 def _send_pin_recovery_to_super_admin(code: str, account_name: str):
@@ -1154,7 +1230,8 @@ def current_user(authorization: str | None = Header(default=None)):
                 FROM wallet_security_pin_sessions_v2 s
                 JOIN users u ON u.id=s.user_id
                 LEFT JOIN wallets w ON w.id=u.active_wallet_id
-                WHERE s.token_hash=%s AND s.expires_at>NOW() AND s.revoked_at IS NULL
+                WHERE s.token_hash=%s AND s.session_type='pin'
+                  AND s.expires_at>NOW() AND s.revoked_at IS NULL
                 """,
                 (sha(token),),
             ).fetchone()
@@ -1190,10 +1267,114 @@ def wallet_security_pin_session(user: dict = Depends(current_user)):
     }
 
 
+@app.post("/api/v1/security/pin/device")
+def wallet_security_pin_device_register(
+    response: Response,
+    request: Request,
+    authorization: str | None = Header(default=None),
+    existing_device_token: str | None = Cookie(default=None, alias=PIN_DEVICE_COOKIE),
+    user: dict = Depends(current_user_for_pin_device_enrollment),
+):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Saved PIN login requires the configured database")
+    token = "Bearer " + authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
+    if not token:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    try:
+        with db() as conn:
+            if existing_device_token:
+                conn.execute(
+                    "UPDATE wallet_security_pin_sessions_v2 SET revoked_at=NOW() "
+                    "WHERE token_hash=%s AND session_type='device' AND revoked_at IS NULL",
+                    (sha(existing_device_token),),
+                )
+            device_token = _create_pin_device_session(conn, user["id"])
+            pin_row = conn.execute(
+                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
+                (user["id"],),
+            ).fetchone()
+            conn.commit()
+        secure_cookie = request.url.scheme == "https"
+        response.set_cookie(
+            key=PIN_DEVICE_COOKIE,
+            value=device_token,
+            max_age=PIN_DEVICE_MAX_AGE_SECONDS,
+            httponly=True,
+            secure=secure_cookie,
+            samesite="none" if secure_cookie else "lax",
+            path="/",
+        )
+        return {
+            "active": True,
+            "pin_configured": bool(pin_row),
+            "device_expires_in_seconds": PIN_DEVICE_MAX_AGE_SECONDS,
+            "user": {
+                "id": user.get("id"), "email": user.get("email"), "name": user.get("name"),
+                "wallet_id": user.get("wallet_id"), "wallet_number": user.get("wallet_number"),
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("PIN device registration failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="This device could not be registered for PIN login") from exc
+
+
+@app.get("/api/v1/security/pin/device")
+def wallet_security_pin_device_status(user: dict = Depends(current_pin_device_user)):
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Saved PIN login requires the configured database")
+    try:
+        with db() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM wallet_security_pins WHERE user_id=%s",
+                (user["id"],),
+            ).fetchone()
+        return {
+            "active": True,
+            "pin_configured": bool(row),
+            "user": {
+                "id": user.get("id"), "email": user.get("email"), "name": user.get("name"),
+                "wallet_id": user.get("wallet_id"), "wallet_number": user.get("wallet_number"),
+            },
+        }
+    except Exception as exc:
+        logger.warning("PIN device status lookup failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Saved PIN login status is unavailable") from exc
+
+
+@app.delete("/api/v1/security/pin/device")
+def wallet_security_pin_device_revoke(
+    response: Response,
+    request: Request,
+    device_token: str | None = Cookie(default=None, alias=PIN_DEVICE_COOKIE),
+):
+    try:
+        if device_token and DATABASE_URL:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE wallet_security_pin_sessions_v2 SET revoked_at=NOW() "
+                    "WHERE token_hash=%s AND session_type='device' AND revoked_at IS NULL",
+                    (sha(device_token),),
+                )
+                conn.commit()
+        response.delete_cookie(
+            key=PIN_DEVICE_COOKIE,
+            path="/",
+            secure=request.url.scheme == "https",
+            httponly=True,
+            samesite="none" if request.url.scheme == "https" else "lax",
+        )
+        return {"ok": True, "device_session_revoked": bool(device_token)}
+    except Exception as exc:
+        logger.warning("PIN device revocation failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Saved device sign-out could not be completed") from exc
+
+
 @app.get("/api/v1/security/pin/status")
 def wallet_security_pin_status(
     authorization: str | None = Header(default=None),
-    user: dict = Depends(current_user_without_pin),
+    user: dict = Depends(current_user_for_pin),
 ):
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
@@ -1282,7 +1463,7 @@ def wallet_security_pin_enroll(
 def wallet_security_pin_verify(
     request: SecurityPinRequest,
     authorization: str | None = Header(default=None),
-    user: dict = Depends(current_user_without_pin),
+    user: dict = Depends(current_user_for_pin),
 ):
     pin = _validate_six_digit_pin(request.pin)
     try:
@@ -1328,7 +1509,7 @@ def wallet_security_pin_verify(
 @app.post("/api/v1/security/pin/recovery/request")
 def wallet_security_pin_recovery_request(
     authorization: str | None = Header(default=None),
-    user: dict = Depends(current_user_without_pin),
+    user: dict = Depends(current_user_for_pin),
 ):
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Wallet PIN recovery requires the configured database")
@@ -1368,7 +1549,7 @@ def wallet_security_pin_recovery_request(
 def wallet_security_pin_recovery_complete(
     request: SecurityPinRecoveryCompleteRequest,
     authorization: str | None = Header(default=None),
-    user: dict = Depends(current_user_without_pin),
+    user: dict = Depends(current_user_for_pin),
 ):
     new_pin = _validate_six_digit_pin(request.new_pin)
     code = str(request.code).strip()
