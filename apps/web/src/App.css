@@ -1919,3 +1919,13 @@
   .app-shell .mobile-root-logout:active{background:rgba(127,29,29,.28)}
   .app-shell .mobile-root-logout span{font-size:17px;line-height:1}
 }
+
+/* Stable authentication restore and six-digit wallet PIN lock screen. */
+.ww-auth-restoring{min-height:100vh;display:grid;place-items:center;padding:24px}
+.ww-auth-restoring-card{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:12px;min-width:min(280px,100%);padding:30px 26px;border:1px solid #1d3554;border-radius:16px;background:linear-gradient(155deg,#0c1d34,#071326);box-shadow:0 20px 60px rgba(0,0,0,.35)}
+.ww-auth-restoring-card img{width:48px;height:48px;object-fit:contain}
+.ww-auth-restoring-card b{font:700 12px Orbitron,sans-serif;letter-spacing:1.4px;color:#fff}
+.ww-auth-restoring-card em{font-style:normal;color:#ff6b00}
+.ww-auth-restoring-card span{font-size:12px;color:#7185a2;text-align:center}
+.ww-auth-card input[inputmode="numeric"]{font-variant-numeric:tabular-nums;letter-spacing:.16em}
+@media(max-width:760px){.ww-auth-restoring{min-height:calc(100dvh - 24px)}.ww-auth-layout{padding-top:24px;padding-bottom:34px}.ww-auth-card{width:100%;max-width:100%}}

@@ -508,7 +508,7 @@ function App() {
       window.removeEventListener("focus", loadAnnouncement);
     };
   }, [accessToken]);
-  const [authRestoring, setAuthRestoring] = useState(false);
+  const [authRestoring, setAuthRestoring] = useState(true);
   const [refreshInterval, setRefreshInterval] = useState("off");
   const [showRefreshMenu, setShowRefreshMenu] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -528,20 +528,32 @@ function App() {
   async function beginSecurityPinGate(token, signedInUser = null) {
     if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
 
-    // A wallet PIN is optional security, not a compulsory second login step.
-    // Keep the authenticated Neon session as the wallet session so password,
-    // email verification, and social sign-in can open the dashboard directly.
+    // Register this browser with a revocable HttpOnly device cookie. The cookie
+    // can only identify the account for PIN verification; it cannot call wallet APIs.
+    const response = await fetch(API_BASE_URL + "/api/v1/security/pin/device", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + token },
+      credentials: "include",
+      cache: "no-store",
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.active) {
+      throw new Error(data.detail || "This device could not be prepared for secure PIN login.");
+    }
+
+    const authenticatedUser = data.user || signedInUser || user || null;
     try {
       localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
-      localStorage.setItem(TOKEN_KEY, token);
+      localStorage.removeItem(TOKEN_KEY);
     } catch {
       throw new Error("Secure session storage is unavailable on this device.");
     }
-    setUser(signedInUser || user || null);
-    setAccessToken(token);
-    setPinGateOpen(false);
+    setUser(authenticatedUser);
+    setAccessToken("");
+    setPinGateMode(data.pin_configured ? "verify" : "setup");
+    setPinGateOpen(true);
     setPendingPinToken("");
-    setPendingPinUser(null);
+    setPendingPinUser(authenticatedUser);
     setPinInput("");
     setPinConfirm("");
     setPinRecoveryCode("");
@@ -591,7 +603,8 @@ function App() {
         : { pin: pinInput };
       const response = await fetch(API_BASE_URL + endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + pendingPinToken },
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify(body),
         cache: "no-store",
       });
@@ -613,7 +626,7 @@ function App() {
     try {
       const response = await fetch(API_BASE_URL + "/api/v1/security/pin/recovery/request", {
         method: "POST",
-        headers: { Authorization: "Bearer " + pendingPinToken },
+        credentials: "include",
         cache: "no-store",
       });
       const data = await response.json().catch(() => ({}));
@@ -631,6 +644,13 @@ function App() {
   }
 
   async function cancelSecurityPinGate() {
+    try {
+      await fetch(API_BASE_URL + "/api/v1/security/pin/device", {
+        method: "DELETE",
+        credentials: "include",
+        cache: "no-store",
+      });
+    } catch {}
     try { await authClient.signOut(); } catch {}
     try {
       localStorage.removeItem(TOKEN_KEY);
@@ -638,6 +658,8 @@ function App() {
       sessionStorage.removeItem("world_wallet_google_return");
       sessionStorage.removeItem("world_wallet_social_return");
     } catch {}
+    setAccessToken("");
+    setUser(null);
     setPendingPinToken("");
     setPendingPinUser(null);
     setPinGateOpen(false);
@@ -646,6 +668,7 @@ function App() {
     setPinRecoveryCode("");
     setPinError("");
     setShowLogin(true);
+    setAuthRestoring(false);
   }
 
   const [showLogin, setShowLogin] = useState(() => {
@@ -773,16 +796,16 @@ function App() {
         const callbackProvider = new URLSearchParams(window.location.search).get("auth_callback") || "";
         explicitlyLoggedOut = localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1";
         const storedProvider = sessionStorage.getItem("world_wallet_social_return") || "";
-        socialReturn = ["google", "github", "twitter", "telegram"].includes(callbackProvider)
-          ? callbackProvider
-          : (["google", "github", "twitter", "telegram"].includes(storedProvider)
-            ? storedProvider
+        socialReturn = callbackProvider === "google"
+          ? "google"
+          : (storedProvider === "google"
+            ? "google"
             : (sessionStorage.getItem("world_wallet_google_return") === "1" ? "google" : ""));
       } catch {
         // Storage can be unavailable in restricted browser modes.
       }
 
-      if (pinGateOpen && pendingPinToken) {
+      if (pinGateOpen) {
         if (!cancelled) setAuthRestoring(false);
         return;
       }
@@ -834,10 +857,51 @@ function App() {
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
       }
 
-      // An explicit logout must win over a still-cached Neon SDK session. Only
-      // a deliberate sign-in action or a verified OAuth callback may restore it.
+      // Full account sign-out revokes the device cookie. A normal wallet lock
+      // keeps it so this same browser can return directly to the six-digit PIN.
       if (explicitlyLoggedOut && !socialReturn) {
         if (!cancelled) setAuthRestoring(false);
+        return;
+      }
+
+      // This is the returning-device path: no Gmail/password prompt is needed,
+      // but the PIN is still required before the wallet receives an API session.
+      if (!socialReturn) {
+        try {
+          const deviceResponse = await fetch(API_BASE_URL + "/api/v1/security/pin/device", {
+            credentials: "include",
+            headers: { Accept: "application/json" },
+            cache: "no-store",
+          });
+          const deviceData = await deviceResponse.json().catch(() => ({}));
+          if (deviceResponse.ok && deviceData.active) {
+            if (!cancelled) {
+              const deviceUser = deviceData.user || null;
+              setUser(deviceUser);
+              setPendingPinUser(deviceUser);
+              setPendingPinToken("");
+              setPinGateMode(deviceData.pin_configured ? "verify" : "setup");
+              setPinInput("");
+              setPinConfirm("");
+              setPinRecoveryCode("");
+              setPinError("");
+              setPinGateOpen(true);
+              setAccessToken("");
+              setShowLogin(false);
+              setAuthRestoring(false);
+            }
+            return;
+          }
+        } catch {
+          // Continue to the normal Neon Auth restoration path below.
+        }
+      }
+
+      // Wait until Neon Auth has finished restoring its browser session before
+      // falling back to the public landing page. The device-cookie path above
+      // can complete without waiting for Neon Auth.
+      if (sessionState.isPending && !socialReturn) {
+        if (!cancelled) setAuthRestoring(true);
         return;
       }
 
@@ -1713,15 +1777,12 @@ function App() {
   }
 
   async function handleSocialSignIn(provider) {
-    const providerName = ({ github: "GitHub", twitter: "X", telegram: "Telegram", google: "Google" }[provider] || provider);
-    setLoginError("");
-    if (provider === "twitter" || provider === "telegram") {
-      setLoginError(provider === "twitter"
-        ? "X sign-in UI is ready, but authentication is not configured on the server yet. X OAuth 2.0 Client ID/Secret and a verified callback flow must be configured before this can sign you in."
-        : "Telegram sign-in UI is ready, but authentication is not configured on the server yet. It requires a Telegram bot token, verified Telegram login data, and a secure server-side session exchange.");
-      setAuthBusy(false);
+    if (provider !== "google") {
+      setLoginError("Google is the only supported social sign-in method.");
       return;
     }
+    const providerName = "Google";
+    setLoginError("");
     setAuthBusy(true);
     try {
       localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
@@ -1761,34 +1822,62 @@ function App() {
   }
 
   async function handleLogout() {
+    setPinError("");
     try {
-      if (accessToken) {
-        await fetch(API_BASE_URL + "/api/v1/security/pin/lock", {
+      if (!accessToken || !accessToken.startsWith("wwpin_")) {
+        throw new Error("The active wallet PIN session is missing. Refresh the page and sign in again.");
+      }
+
+      // Ensure older sessions created before device cookies were introduced
+      // are upgraded before revoking the active wallet session.
+      let deviceResponse = await fetch(API_BASE_URL + "/api/v1/security/pin/device", {
+        credentials: "include",
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!deviceResponse.ok) {
+        deviceResponse = await fetch(API_BASE_URL + "/api/v1/security/pin/device", {
           method: "POST",
           headers: { Authorization: "Bearer " + accessToken },
+          credentials: "include",
           cache: "no-store",
         });
       }
-    } catch {}
-    try {
-      await authClient.signOut();
-    } catch {
-      // Clear the local application session even if the remote sign-out request fails.
+      const deviceData = await deviceResponse.json().catch(() => ({}));
+      if (!deviceResponse.ok || !deviceData.active) {
+        throw new Error(deviceData.detail || "Could not prepare this device for PIN-only return. Your wallet is still unlocked.");
+      }
+
+      const lockResponse = await fetch(API_BASE_URL + "/api/v1/security/pin/lock", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + accessToken },
+        cache: "no-store",
+      });
+      const lockData = await lockResponse.json().catch(() => ({}));
+      if (!lockResponse.ok || !lockData.locked) {
+        throw new Error(lockData.detail || "The wallet could not be locked. Please try again.");
+      }
+
+      try {
+        localStorage.removeItem(TOKEN_KEY);
+        localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
+      } catch {}
+      setAccessToken("");
+      setPinGateMode(deviceData.pin_configured ? "verify" : "setup");
+      setPinGateOpen(true);
+      setPendingPinToken("");
+      setPendingPinUser(user || deviceData.user || null);
+      setPinInput("");
+      setPinConfirm("");
+      setPinRecoveryCode("");
+      setPinError("");
+      setShowLogin(false);
+      setAuthRestoring(false);
+      setLoginError("");
+      setAuthMessage("");
+    } catch (error) {
+      setSyncMessage(error.message || "Wallet could not be locked. Please retry.");
     }
-    try {
-      localStorage.removeItem(TOKEN_KEY);
-      localStorage.setItem(EXPLICIT_LOGOUT_KEY, "1");
-      sessionStorage.removeItem("world_wallet_google_return");
-      sessionStorage.removeItem("world_wallet_social_return");
-    } catch {}
-    setAccessToken("");
-    setUser(null);
-    setPinGateOpen(false);
-    setPendingPinToken("");
-    setPendingPinUser(null);
-    setShowLogin(true);
-    setLoginError("");
-    setAuthMessage("");
   }
 
   const nav = WALLET_NAVIGATION;
@@ -1809,6 +1898,19 @@ function App() {
     setMobileMenuOpen(false);
   }
 
+  if (authRestoring && !accessToken && !pinGateOpen) {
+    return (
+      <div className="ww-auth-shell ww-auth-restoring">
+        <div className="ww-auth-glow ww-auth-glow-a" /><div className="ww-auth-glow ww-auth-glow-b" />
+        <div className="ww-auth-restoring-card">
+          <img src="/world-wallet-ai-logo.svg" alt="" />
+          <b>WORLD WALLET <em>AI</em></b>
+          <span>Restoring secure wallet session…</span>
+        </div>
+      </div>
+    );
+  }
+
   if (pinGateOpen) {
     return (
       <div className="ww-auth-shell">
@@ -1821,7 +1923,7 @@ function App() {
           <div className="ww-auth-copy">
             <span className="ww-live-badge"><i /> WALLET SECURITY</span>
             <h1>Your wallet.<br /><em>Your PIN.</em></h1>
-            <p>Your account password or approved sign-in is the first identity check. This six-digit PIN is the additional wallet unlock required before balances, reserves and transfers are available.</p>
+            <p>{pinGateMode === "setup" ? "Your first identity check is complete. Create a six-digit PIN now; this device will ask for it whenever you return to your wallet." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin, then choose a new six-digit wallet PIN." : "Your wallet is locked on this device. Enter your six-digit PIN to unlock balances, reserves and transfers."}</p>
             <div className="ww-auth-points">
               <div><b>01</b><span><strong>Six-digit PIN</strong><small>Stored as a salted server-side hash.</small></span></div>
               <div><b>02</b><span><strong>Attempt protection</strong><small>Five failed attempts trigger a 15-minute lock.</small></span></div>
@@ -1832,8 +1934,8 @@ function App() {
             <div className="ww-auth-card-head">
               <div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div>
               <div>
-                <small>SECOND FACTOR</small>
-                <h2>{pinGateMode === "setup" ? "Create login PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Unlock your wallet"}</h2>
+                <small>{pinGateMode === "setup" ? "FIRST-TIME WALLET SETUP" : pinGateMode === "recovery" ? "SECURE PIN RECOVERY" : "WALLET UNLOCK"}</small>
+                <h2>{pinGateMode === "setup" ? "Create your six-digit PIN" : pinGateMode === "recovery" ? "Recover wallet PIN" : "Enter your six-digit PIN"}</h2>
                 <p>{pinGateMode === "setup" ? "The first PIN you choose becomes this account’s six-digit wallet login PIN." : pinGateMode === "recovery" ? "Enter the one-time code approved by the Super Admin and choose a new PIN." : "Enter your six-digit PIN to unlock the authenticated wallet session."}</p>
               </div>
             </div>
@@ -2079,8 +2181,8 @@ function App() {
       <header className="ww-auth-top ww-auth-top-compact"><div className="ww-auth-brand"><img className="ww-shield-logo" src="/world-wallet-ai-logo.svg" alt="" /><b>WORLD WALLET <em>AI</em></b></div><button className="ww-auth-home" type="button" onClick={() => { setShowLogin(false); setLoginError(""); setAuthMessage(""); }}>← Back to home</button></header>
       <section className="ww-auth-layout"><div className="ww-auth-copy"><span className="ww-live-badge"><i/> THE INTELLIGENT DIGITAL WALLET</span><h1>Your Crypto.<br/><em>Your Freedom.</em></h1><p>Securely manage your available balance, digital assets and wallet activity from one intelligent dashboard, powered by BALMZ AI.</p><div className="ww-auth-points"><div><b>◈</b><span><strong>Multi-Chain Support</strong><small>Supported assets and networks in one workspace.</small></span></div><div><b>◇</b><span><strong>Secure &amp; Private</strong><small>Authenticated access with non-custodial wallet architecture.</small></span></div><div><b>✦</b><span><strong>AI-Powered Insights</strong><small>BALMZ AI helps interpret live wallet information.</small></span></div></div><div className="ww-auth-status"><i/> World Wallet AI • Production authentication</div></div>
       <form className="ww-auth-card" onSubmit={e => {e.preventDefault();if(registerMode)handleRegister();else if(passwordMode)handlePasswordSignIn();else requestEmailOtp()}}><div className="ww-auth-card-head"><div className="ww-auth-card-icon"><img src="/world-wallet-ai-logo.svg" alt="" /></div><div><small>{registerMode?"CREATE ACCOUNT":recoveryMode?"ACCOUNT RECOVERY":"SECURE ACCESS"}</small><h2>{registerMode?"Create your account":recoveryMode?"Recover access":"Welcome Back"}</h2><p>{registerMode?"Register for your World Wallet AI wallet.":recoveryMode?"Use the secure link sent to your registered Gmail account to set or reset your password.":"Sign in to your World Wallet AI account."}</p></div></div>
-      {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("");setAuthMessage("")}}>Password</button><button type="button" className={!passwordMode&&authMethod==="email"?"active":""} onClick={() => {setPasswordMode(false);setAuthMethod("email");setOtpRequested(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Email OTP</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button><button type="button" className={authMethod==="github"?"active google-tab":""} onClick={() => {setAuthMethod("github");setPasswordMode(false);setLoginError("")}}>GitHub</button><button type="button" className={authMethod==="twitter"?"active google-tab":""} onClick={() => {setAuthMethod("twitter");setPasswordMode(false);setLoginError("")}}>𝕏&nbsp; X</button><button type="button" className={authMethod==="telegram"?"active google-tab":""} onClick={() => {setAuthMethod("telegram");setPasswordMode(false);setLoginError("")}}>✈ Telegram</button></div>}
-      {registerMode?(registrationVerificationPending?<div className="ww-auth-form"><label><span>Email verification code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" maxLength="12" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,12))} placeholder="Enter the code sent to your email" autoComplete="one-time-code" required/></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Verification failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="button" onClick={verifyRegistrationEmail} disabled={authBusy||otpCode.trim().length<4}>{authBusy?"Verifying…":"Verify email & continue"} <b>→</b></button><button className="ww-text-link" type="button" onClick={resendRegistrationVerification} disabled={authBusy}>Resend verification code</button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Back to registration</button></div>:<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Registration failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(true);setOtpCode("");setAuthMessage("Enter the verification code already sent to your email, or resend a new one.");setLoginError("")}} disabled={!loginEmail.trim()}>Already signed up? Verify email</button><div className="ww-register-social"><span>Or create your account with</span><button type="button" onClick={()=>handleSocialSignIn("twitter")} disabled={authBusy}>𝕏&nbsp; Continue with X</button><button type="button" onClick={()=>handleSocialSignIn("telegram")} disabled={authBusy}>✈ Continue with Telegram</button><button type="button" onClick={()=>handleSocialSignIn("google")} disabled={authBusy}>G&nbsp; Continue with Google</button></div><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>):!recoveryMode&&["google","github","twitter","telegram"].includes(authMethod)?<div className="ww-auth-form"><button className={"ww-auth-submit ww-google-button ww-social-"+authMethod} type="button" onClick={() => handleSocialSignIn(authMethod)} disabled={authBusy}>{authBusy?"Connecting…":({github:"Continue with GitHub",twitter:"Continue with X",telegram:"Continue with Telegram",google:"Continue with Google"}[authMethod])}</button><p className="ww-auth-note"><span>✓</span> {({github:"GitHub sign-in requires GitHub to be enabled in Neon Auth.",twitter:"X sign-in requires the Twitter/X OAuth provider and credentials to be enabled in Neon Auth.",telegram:"Telegram sign-in requires a configured Telegram authentication provider and verified bot/domain integration.",google:"Google authentication is handled by Neon Auth."}[authMethod])}</p></div>:
+      {!registerMode&&!recoveryMode&&<div className="ww-auth-switch"><button type="button" className={passwordMode?"active":""} onClick={() => {setPasswordMode(true);setAuthMethod("email");setOtpRequested(false);setLoginError("");setAuthMessage("")}}>Password</button><button type="button" className={!passwordMode&&authMethod==="email"?"active":""} onClick={() => {setPasswordMode(false);setAuthMethod("email");setOtpRequested(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Email OTP</button><button type="button" className={authMethod==="google"?"active google-tab":""} onClick={() => {setAuthMethod("google");setPasswordMode(false);setLoginError("")}}>G&nbsp;&nbsp;Google</button></div>}
+      {registerMode?(registrationVerificationPending?<div className="ww-auth-form"><label><span>Email verification code</span><div className="ww-field"><i>⌗</i><input inputMode="numeric" maxLength="12" value={otpCode} onChange={e=>setOtpCode(e.target.value.replace(/\D/g,"").slice(0,12))} placeholder="Enter the code sent to your email" autoComplete="one-time-code" required/></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Verification failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="button" onClick={verifyRegistrationEmail} disabled={authBusy||otpCode.trim().length<4}>{authBusy?"Verifying…":"Verify email & continue"} <b>→</b></button><button className="ww-text-link" type="button" onClick={resendRegistrationVerification} disabled={authBusy}>Resend verification code</button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(false);setOtpCode("");setLoginError("");setAuthMessage("")}}>Back to registration</button></div>:<div className="ww-auth-form"><label><span>Your name</span><div className="ww-field"><i>◉</i><input value={registerName} onChange={e=>setRegisterName(e.target.value)} placeholder="Full name" autoComplete="name" maxLength={100} required/></div></label><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label><label><span>Password (at least 8 characters)</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Create a password" autoComplete="new-password" minLength={8} required/><button type="button" className="ww-password-toggle" onClick={()=>setShowPassword(v=>!v)} aria-label={showPassword?"Hide password":"Show password"}>{showPassword?"◉":"◌"}</button></div></label>{authMessage&&<div className="ww-auth-message">{authMessage}</div>}{loginError&&<div className="ww-auth-error"><b>!</b><span><strong>Registration failed</strong><small>{loginError}</small></span></div>}<button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Creating account…":"Create account"} <b>→</b></button><button className="ww-text-link" type="button" onClick={()=>{setRegistrationVerificationPending(true);setOtpCode("");setAuthMessage("Enter the verification code already sent to your email, or resend a new one.");setLoginError("")}} disabled={!loginEmail.trim()}>Already signed up? Verify email</button><div className="ww-register-social"><span>Or create your account with</span><button type="button" onClick={()=>handleSocialSignIn("google")} disabled={authBusy}>G&nbsp; Continue with Google</button></div><button className="ww-text-link" type="button" onClick={()=>{setRegisterMode(false);setLoginError("");setAuthMessage("");setPasswordMode(true)}}>Already have an account? Sign in</button></div>):!recoveryMode&&authMethod==="google"?<div className="ww-auth-form"><button className="ww-auth-submit ww-google-button ww-social-google" type="button" onClick={() => handleSocialSignIn("google")} disabled={authBusy}>{authBusy?"Connecting…":"Continue with Google"}</button><p className="ww-auth-note"><span>✓</span> Google authentication is handled by Neon Auth.</p></div>:
       <div className="ww-auth-form"><label><span>Email address</span><div className="ww-field"><i>✉</i><input type="email" value={loginEmail} onChange={e=>setLoginEmail(e.target.value)} placeholder="Email address" autoComplete="email" required/></div></label>
       {recoveryMode?(passwordResetToken?<><label><span>New password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword?"text":"password"} value={resetPassword} onChange={e=>setResetPassword(e.target.value)} placeholder="At least 8 characters" autoComplete="new-password" minLength={8} required/></div></label><label><span>Confirm new password</span><div className="ww-field"><i>⌑</i><input type="password" value={resetPasswordConfirm} onChange={e=>setResetPasswordConfirm(e.target.value)} placeholder="Confirm new password" autoComplete="new-password" minLength={8} required/></div></label><button className="ww-auth-submit" type="button" onClick={completePasswordReset} disabled={authBusy}>{authBusy?"Updating password…":"Set password & enter wallet"} <b>→</b></button></>:<><p className="ww-auth-note">We will send a one-time password setup link to the Gmail address registered to this account. You must open that email to choose a new password.</p><button className="ww-auth-submit" type="button" onClick={requestPasswordReset} disabled={authBusy}>{authBusy?"Sending setup link…":"Send password setup / reset link"} <b>→</b></button></>):
       passwordMode?<><label><span>Password</span><div className="ww-field ww-password-field"><i>⌑</i><input type={showPassword ? "text" : "password"} value={loginPassword} onChange={e=>setLoginPassword(e.target.value)} placeholder="Password" autoComplete="current-password" required/><button type="button" className="ww-password-toggle" onClick={() => setShowPassword(v => !v)} aria-label={showPassword ? "Hide password" : "Show password"} title={showPassword ? "Hide password" : "Show password"}>{showPassword ? "◉" : "◌"}</button></div></label><div className="ww-auth-options"><span>☑ Remember me</span><button type="button" onClick={() => {setRecoveryMode(true);setOtpRequested(false);setOtpCode("");setLoginError("")}}>Forgot password?</button></div><button className="ww-auth-submit" type="submit" disabled={authBusy}>{authBusy?"Signing in…":"Sign In"} <b>→</b></button><button className="ww-text-link" type="button" onClick={() => {setPasswordMode(false);setOtpRequested(false);setLoginError("")}}>Use email OTP instead</button></>:
