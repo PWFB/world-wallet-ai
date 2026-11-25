@@ -22,9 +22,9 @@ The same Etherscan V2 key is used across supported chains. The backend adds the 
 
 ## Verify the configured provider
 
-Sign in to the World Wallet AI owner account and open **Admin → System Settings**.
+Sign in to the World Wallet AI owner account and open **Admin → Etherscan API Test**. The same test is also available inside **Admin → System Settings**.
 
-The configuration list reports only whether the Etherscan key is present. Use **Test Etherscan API** to run read-only account-balance probes on Ethereum Mainnet, BNB Smart Chain, Sepolia and Polygon PoS against a fixed public address. The response reports each chain's result without returning the key or customer wallet data.
+Use **Test Etherscan API** to run read-only account-balance probes on Ethereum Mainnet, BNB Smart Chain, Sepolia and Polygon PoS against a fixed public address. The response reports each chain's result without returning the key or customer wallet data. The dedicated Admin page exists to make the provider test directly discoverable; it does not add a second backend integration.
 
 ## Read-only address data endpoint
 
