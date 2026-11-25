@@ -1911,3 +1911,11 @@
 .dashboard-action-card:focus-visible,.market-price-action:focus-visible,.activity-row-action:focus-visible{outline:2px solid #ff7a18;outline-offset:3px}
 .market-price-action,.activity-row-action{cursor:pointer;transition:background .14s ease}
 .market-price-action:hover,.activity-row-action:hover{background:rgba(255,122,24,.07)}
+
+/* Keep sign-out reachable on mobile, where the compact topbar action is intentionally hidden. */
+.mobile-root-logout{display:none}
+@media(max-width:760px){
+  .app-shell .mobile-root-logout{display:flex;align-items:center;justify-content:center;gap:9px;width:100%;min-height:44px;margin:12px 0 8px;padding:10px 14px;border:1px solid rgba(248,113,113,.38);border-radius:10px;background:rgba(127,29,29,.14);color:#fca5a5;font:600 12px Inter, sans-serif;cursor:pointer}
+  .app-shell .mobile-root-logout:active{background:rgba(127,29,29,.28)}
+  .app-shell .mobile-root-logout span{font-size:17px;line-height:1}
+}
