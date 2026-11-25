@@ -552,7 +552,7 @@ function App() {
     setAccessToken("");
     setPinGateMode(data.pin_configured ? "verify" : "setup");
     setPinGateOpen(true);
-    setPendingPinToken(token);
+    setPendingPinToken("");
     setPendingPinUser(authenticatedUser);
     setPinInput("");
     setPinConfirm("");
@@ -603,10 +603,7 @@ function App() {
         : { pin: pinInput };
       const response = await fetch(API_BASE_URL + endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(pendingPinToken ? { Authorization: "Bearer " + pendingPinToken } : {}),
-        },
+        headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify(body),
         cache: "no-store",
@@ -629,7 +626,6 @@ function App() {
     try {
       const response = await fetch(API_BASE_URL + "/api/v1/security/pin/recovery/request", {
         method: "POST",
-        headers: pendingPinToken ? { Authorization: "Bearer " + pendingPinToken } : {},
         credentials: "include",
         cache: "no-store",
       });
@@ -1867,7 +1863,7 @@ function App() {
         localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
       } catch {}
       setAccessToken("");
-      setPinGateMode("verify");
+      setPinGateMode(deviceData.pin_configured ? "verify" : "setup");
       setPinGateOpen(true);
       setPendingPinToken("");
       setPendingPinUser(user || deviceData.user || null);
