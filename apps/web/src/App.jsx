@@ -526,20 +526,25 @@ function App() {
   const [recoveryMode, setRecoveryMode] = useState(() => Boolean(new URLSearchParams(window.location.search).get("token")));
   async function beginSecurityPinGate(token, signedInUser = null) {
     if (typeof token !== "string" || !token.trim()) throw new Error("Secure account session is invalid.");
-    const response = await fetch(API_BASE_URL + "/api/v1/security/pin/status", {
-      headers: { Authorization: "Bearer " + token, Accept: "application/json" },
-      cache: "no-store",
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.detail || "Wallet PIN security could not be checked.");
-    setPendingPinToken(token);
-    setPendingPinUser(signedInUser);
-    setPinGateMode(data.pin_configured ? "verify" : "setup");
+
+    // A wallet PIN is optional security, not a compulsory second login step.
+    // Keep the authenticated Neon session as the wallet session so password,
+    // email verification, and social sign-in can open the dashboard directly.
+    try {
+      localStorage.setItem(TOKEN_KEY, token);
+    } catch {
+      throw new Error("Secure session storage is unavailable on this device.");
+    }
+    setUser(signedInUser || user || null);
+    setAccessToken(token);
+    setPinGateOpen(false);
+    setPendingPinToken("");
+    setPendingPinUser(null);
     setPinInput("");
     setPinConfirm("");
     setPinRecoveryCode("");
     setPinError("");
-    setPinGateOpen(true);
+    setActive("Dashboard");
     setShowLogin(false);
     setAuthRestoring(false);
   }
