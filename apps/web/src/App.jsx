@@ -2087,6 +2087,7 @@ function App() {
               <span>{NAVIGATION_ICONS[page] || "•"}</span><small>{page === "Transactions" ? "Activity" : page}</small>
             </button>)}
           </div>}
+          <button type="button" className="mobile-root-logout" onClick={() => { setMobileMenuOpen(false); void handleLogout(); }} aria-label="Log out of World Wallet AI"><span aria-hidden="true">↪</span> Log out</button>
         </section>
         <nav aria-label="Primary wallet navigation">
           {rootSearch.trim() && filteredNav.length === 0 && <p className="mobile-root-no-results">No wallet page matches “{rootSearch}”.</p>}
