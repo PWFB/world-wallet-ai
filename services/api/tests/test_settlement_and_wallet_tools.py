@@ -118,6 +118,25 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         self.assertIn("sepolia", result["excluded_networks"])
         self.assertEqual(result["warnings"], [])
 
+    def test_wallet_liability_snapshot_keeps_reserved_balance_inside_total(self):
+        rows = [
+            ("USDT", "Tether USD", "125.500000", "25.500000"),
+            ("BTC", "Bitcoin", "0.25", "0"),
+        ]
+        liabilities, invalid = main._build_wallet_liability_snapshot(rows)
+        self.assertEqual(invalid, 0)
+        self.assertEqual(liabilities[0]["total_balance"], "125.500000")
+        self.assertEqual(liabilities[0]["reserved_balance"], "25.500000")
+        self.assertEqual(liabilities[0]["available_balance"], "100.000000")
+        self.assertEqual(liabilities[1]["available_balance"], "0.25")
+
+    def test_wallet_liability_snapshot_rejects_reserved_above_total(self):
+        liabilities, invalid = main._build_wallet_liability_snapshot([
+            ("USDT", "Tether USD", "10", "11")
+        ])
+        self.assertEqual(liabilities, [])
+        self.assertEqual(invalid, 1)
+
     def test_ethereum_mainnet_rpc_requires_chain_id_one(self):
         with patch.object(main, "evm_chain_id", return_value=1):
             self.assertEqual(main.require_ethereum_mainnet_rpc("https://rpc.example"), 1)
