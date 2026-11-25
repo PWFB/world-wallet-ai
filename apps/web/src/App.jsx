@@ -38,6 +38,7 @@ function WorldGlobeLogo({ compact = false }) {
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "https://world-wallet-ai-backend.onrender.com").replace(/\/$/, "");
 const TOKEN_KEY = "world_wallet_access_token";
+const EXPLICIT_LOGOUT_KEY = "world_wallet_explicit_logout";
 
 const fallbackAssets = [];
 const fallbackWallet = { available_balance_usd: null, actual_balance_usd: null, reserved_balance_usd: null, total_received_usd: null, total_sent_usd: null, profit_usd: null, change_24h: null, valuation_complete: false };
@@ -531,6 +532,7 @@ function App() {
     // Keep the authenticated Neon session as the wallet session so password,
     // email verification, and social sign-in can open the dashboard directly.
     try {
+      localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
       localStorage.setItem(TOKEN_KEY, token);
     } catch {
       throw new Error("Secure session storage is unavailable on this device.");
@@ -630,7 +632,12 @@ function App() {
 
   async function cancelSecurityPinGate() {
     try { await authClient.signOut(); } catch {}
-    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.setItem(EXPLICIT_LOGOUT_KEY, "1");
+      sessionStorage.removeItem("world_wallet_google_return");
+      sessionStorage.removeItem("world_wallet_social_return");
+    } catch {}
     setPendingPinToken("");
     setPendingPinUser(null);
     setPinGateOpen(false);
@@ -644,7 +651,9 @@ function App() {
   const [showLogin, setShowLogin] = useState(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.has("token") || params.has("password_reset") || params.has("error")) return true;
-    try { return sessionStorage.getItem("world_wallet_show_login") === "1"; } catch { return false; }
+    try {
+      return localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1" || sessionStorage.getItem("world_wallet_show_login") === "1";
+    } catch { return false; }
   });
   const [loginError, setLoginError] = useState("");
   const [authMethod, setAuthMethod] = useState("email");
@@ -758,9 +767,11 @@ function App() {
     async function restoreSessionFromNeon() {
       let persistedToken = "";
       let socialReturn = "";
+      let explicitlyLoggedOut = false;
       try {
         persistedToken = localStorage.getItem(TOKEN_KEY) || "";
         const callbackProvider = new URLSearchParams(window.location.search).get("auth_callback") || "";
+        explicitlyLoggedOut = localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1";
         const storedProvider = sessionStorage.getItem("world_wallet_social_return") || "";
         socialReturn = ["google", "github", "twitter", "telegram"].includes(callbackProvider)
           ? callbackProvider
@@ -821,6 +832,13 @@ function App() {
       // whenever a Neon session exists, even without an OAuth callback marker.
       if (persistedToken) {
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
+      }
+
+      // An explicit logout must win over a still-cached Neon SDK session. Only
+      // a deliberate sign-in action or a verified OAuth callback may restore it.
+      if (explicitlyLoggedOut && !socialReturn) {
+        if (!cancelled) setAuthRestoring(false);
+        return;
       }
 
       if (!socialReturn && !neonSessionUser) {
@@ -1706,6 +1724,7 @@ function App() {
     }
     setAuthBusy(true);
     try {
+      localStorage.removeItem(EXPLICIT_LOGOUT_KEY);
       sessionStorage.setItem("world_wallet_social_return", provider);
       if (provider === "google") sessionStorage.setItem("world_wallet_google_return", "1");
       // Production Neon Auth currently trusts the Render frontend origin.
@@ -1717,6 +1736,7 @@ function App() {
       const result = await authClient.signIn.social({
         provider,
         callbackURL: callbackOrigin + "/?auth_callback=" + encodeURIComponent(provider),
+        ...(provider === "google" ? { additionalParams: { prompt: "select_account" } } : {}),
       });
       if (result?.error) throw new Error(authErrorMessage(result.error, providerName + " Sign-In failed."));
     } catch (error) {
@@ -1755,9 +1775,20 @@ function App() {
     } catch {
       // Clear the local application session even if the remote sign-out request fails.
     }
-    localStorage.removeItem(TOKEN_KEY);
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.setItem(EXPLICIT_LOGOUT_KEY, "1");
+      sessionStorage.removeItem("world_wallet_google_return");
+      sessionStorage.removeItem("world_wallet_social_return");
+    } catch {}
     setAccessToken("");
     setUser(null);
+    setPinGateOpen(false);
+    setPendingPinToken("");
+    setPendingPinUser(null);
+    setShowLogin(true);
+    setLoginError("");
+    setAuthMessage("");
   }
 
   const nav = WALLET_NAVIGATION;
