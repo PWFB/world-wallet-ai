@@ -1428,14 +1428,11 @@ def wallet_security_pin_lock(
 def wallet_security_pin_enroll(
     request: SecurityPinRequest,
     authorization: str | None = Header(default=None),
-    user: dict = Depends(current_user_without_pin),
+    user: dict = Depends(current_user_for_pin),
 ):
     pin = _validate_six_digit_pin(request.pin)
     if not DATABASE_URL:
         raise HTTPException(status_code=503, detail="Wallet PIN security requires the configured database")
-    token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
-    if not token:
-        raise HTTPException(status_code=401, detail="Authentication required")
     salt, pin_hash = _new_pin_hash(pin)
     try:
         with db() as conn:
