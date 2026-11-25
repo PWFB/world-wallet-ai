@@ -632,7 +632,12 @@ function App() {
 
   async function cancelSecurityPinGate() {
     try { await authClient.signOut(); } catch {}
-    try { localStorage.removeItem(TOKEN_KEY); } catch {}
+    try {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.setItem(EXPLICIT_LOGOUT_KEY, "1");
+      sessionStorage.removeItem("world_wallet_google_return");
+      sessionStorage.removeItem("world_wallet_social_return");
+    } catch {}
     setPendingPinToken("");
     setPendingPinUser(null);
     setPinGateOpen(false);
@@ -760,10 +765,11 @@ function App() {
     async function restoreSessionFromNeon() {
       let persistedToken = "";
       let socialReturn = "";
+      let explicitlyLoggedOut = false;
       try {
         persistedToken = localStorage.getItem(TOKEN_KEY) || "";
         const callbackProvider = new URLSearchParams(window.location.search).get("auth_callback") || "";
-      const explicitlyLoggedOut = localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1";
+        explicitlyLoggedOut = localStorage.getItem(EXPLICIT_LOGOUT_KEY) === "1";
         const storedProvider = sessionStorage.getItem("world_wallet_social_return") || "";
         socialReturn = ["google", "github", "twitter", "telegram"].includes(callbackProvider)
           ? callbackProvider
