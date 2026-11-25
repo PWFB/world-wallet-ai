@@ -81,7 +81,7 @@ class EtherscanProviderTests(unittest.TestCase):
                 result = main.etherscan_contract_source(1, "0x" + "a" * 40)
         self.assertFalse(result["source_verified"])
 
-    def test_admin_probe_checks_ethereum_bnb_and_sepolia_without_exposing_key(self):
+    def test_admin_probe_checks_ethereum_bnb_sepolia_and_polygon_without_exposing_key(self):
         response = {"status": "1", "message": "OK", "result": "0"}
         user = {"id": "owner", "email": "owner@example.com"}
         with patch.object(main, "require_world_wallet_admin"):
@@ -90,10 +90,39 @@ class EtherscanProviderTests(unittest.TestCase):
                     with patch.object(main, "etherscan_v2_request", return_value=response) as request:
                         result = main.admin_test_etherscan_provider(user)
         self.assertTrue(result["success"])
-        self.assertEqual([item["chain_id"] for item in result["results"]], [1, 56, 11155111])
-        self.assertEqual(request.call_count, 3)
+        self.assertEqual([item["chain_id"] for item in result["results"]], [1, 56, 11155111, 137])
+        self.assertEqual(request.call_count, 4)
         self.assertNotIn("private-test-key", str(result))
         self.assertFalse(result["secrets_exposed"])
+
+    def test_address_data_returns_read_only_native_and_activity_data_for_polygon(self):
+        user = {"id": "user", "email": "user@example.com"}
+        address = "0x" + "1" * 40
+        def fake_request(chain_id, module, action, params=None):
+            self.assertEqual(chain_id, 137)
+            if action == "balance":
+                return {"status": "1", "result": "1230000000000000000"}
+            return {"status": "1", "result": [{"hash": action}]}
+        request = main.EtherscanAddressDataRequest(address=address, network="polygon", page=1, offset=10)
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main, "etherscan_v2_request", side_effect=fake_request) as call:
+                result = main.etherscan_address_data(request, user)
+        self.assertEqual(result["native_asset"], "POL")
+        self.assertEqual(result["native_balance_base_units"], "1230000000000000000")
+        self.assertEqual(result["transactions"], [{"hash": "txlist"}])
+        self.assertEqual(result["token_transfers"], [{"hash": "tokentx"}])
+        self.assertEqual(result["internal_transactions"], [{"hash": "txlistinternal"}])
+        self.assertEqual(call.call_count, 4)
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["secrets_exposed"])
+        self.assertNotIn("private-test-key", str(result))
+
+    def test_address_data_rejects_unsupported_network(self):
+        request = main.EtherscanAddressDataRequest(address="0x" + "1" * 40, network="sepolia")
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with self.assertRaises(main.HTTPException) as error:
+                main.etherscan_address_data(request, {"id": "user"})
+        self.assertEqual(error.exception.status_code, 400)
 
     def test_admin_settings_reports_only_etherscan_key_presence(self):
         user = {"id": "owner", "email": "owner@example.com"}

@@ -81,7 +81,7 @@ COINGECKO_API_KEY = os.getenv("COINGECKO_API_KEY", "").strip()
 # Etherscan V2 key is backend-only; never expose it through frontend build variables or API responses.
 ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "").strip()
 ETHERSCAN_V2_API_URL = "https://api.etherscan.io/v2/api"
-ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111}
+ETHERSCAN_CHAIN_IDS = {"ethereum": 1, "bnb": 56, "sepolia": 11155111, "polygon": 137}
 COINGECKO_API_BASE_URL = os.getenv("COINGECKO_API_BASE_URL", "https://api.coingecko.com/api/v3").strip().rstrip("/")
 COINGECKO_ADMIN_EMAIL = (WORLD_WALLET_ADMIN_EMAIL or os.getenv("WORLD_WALLET_COINGECKO_ADMIN_EMAIL") or GEMINI_ADMIN_EMAIL).strip().lower()
 WORLD_WALLET_SECRET_ENCRYPTION_KEY = os.getenv("WORLD_WALLET_SECRET_ENCRYPTION_KEY", "").strip()
@@ -98,6 +98,7 @@ WORLD_WALLET_ADMIN_EVM_ADDRESS = os.getenv("WORLD_WALLET_ADMIN_EVM_ADDRESS", "0x
 ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
 ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+POLYGON_RPC_URL = os.getenv("WORLD_WALLET_POLYGON_RPC_URL", "https://polygon-rpc.com").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
@@ -345,6 +346,13 @@ class AddressBookDelete(BaseModel):
 class ContractVerifyRequest(BaseModel):
     address: str = Field(min_length=42, max_length=42)
     network: str = Field(min_length=2, max_length=16)
+
+
+class EtherscanAddressDataRequest(BaseModel):
+    address: str = Field(min_length=42, max_length=42)
+    network: str = Field(min_length=2, max_length=16)
+    page: int = Field(default=1, ge=1, le=100000)
+    offset: int = Field(default=25, ge=1, le=100)
 
 
 class AddressInspectRequest(BaseModel):
@@ -1903,6 +1911,17 @@ def require_sepolia_rpc(url: str):
     chain_id = int(raw, 16)
     if chain_id != 11155111:
         raise ValueError("Configured Sepolia RPC returned chain ID %s, expected 11155111" % chain_id)
+    return chain_id
+
+
+def require_polygon_rpc(url: str):
+    """Fail closed if the configured Polygon RPC points at a different EVM chain."""
+    raw = rpc_call(url, "eth_chainId", [])
+    if not raw:
+        raise ValueError("Polygon RPC did not return a chain ID")
+    chain_id = int(raw, 16)
+    if chain_id != 137:
+        raise ValueError("Configured Polygon RPC returned chain ID %s, expected 137" % chain_id)
     return chain_id
 
 
@@ -5459,6 +5478,7 @@ def admin_settings(user: dict = Depends(current_user)):
         {"key": "Neon Auth JWKS", "configured": bool(NEON_JWKS_CLIENT)},
         {"key": "Ethereum Mainnet RPC", "configured": bool(ETH_RPC_URL)},
         {"key": "BNB Chain Mainnet RPC", "configured": bool(BSC_RPC_URL)},
+        {"key": "Polygon PoS Mainnet RPC", "configured": bool(POLYGON_RPC_URL)},
         {"key": "Bitcoin address", "configured": bool(BTC_ADDRESS)},
         {"key": "Solana Mainnet RPC", "configured": bool(SOLANA_MAINNET_RPC_URL)},
         {"key": "Solana Devnet RPC", "configured": bool(SOLANA_DEVNET_RPC_URL)},
@@ -6757,9 +6777,10 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
         "ethereum": ETH_RPC_URL,
         "bnb": BSC_RPC_URL,
         "sepolia": SEPOLIA_RPC_URL,
+        "polygon": POLYGON_RPC_URL,
     }
     if network not in rpc_by_network:
-        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, or sepolia.")
+        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, sepolia, or polygon.")
     rpc = rpc_by_network[network]
     if not rpc:
         raise HTTPException(status_code=503, detail=f"{network.title()} RPC is not configured")
@@ -6770,6 +6791,8 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
             require_bnb_rpc(rpc)
         elif network == "sepolia":
             require_sepolia_rpc(rpc)
+        elif network == "polygon":
+            require_polygon_rpc(rpc)
         code = rpc_call(rpc, "eth_getCode", [address, "latest"])
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Blockchain RPC unavailable or chain identity mismatch") from exc
@@ -6793,6 +6816,68 @@ def verify_contract(request: ContractVerifyRequest, user: dict = Depends(current
         "explorer_source": source_check,
         "note": "Deployed bytecode and explorer source verification are separate checks. Etherscan source verification does not prove contract safety, ownership, reserves, or audit status.",
     }
+
+@app.post("/api/v1/explorer/address")
+def etherscan_address_data(request: EtherscanAddressDataRequest, user: dict = Depends(current_user)):
+    """Return read-only Etherscan V2 address data for supported World Wallet AI EVM mainnets."""
+    if not ETHERSCAN_API_KEY:
+        raise HTTPException(status_code=503, detail="Etherscan API key is not configured on the backend")
+    address = request.address.strip()
+    network = request.network.strip().lower()
+    chain_ids = {"ethereum": 1, "bnb": 56, "polygon": 137}
+    native_symbols = {"ethereum": "ETH", "bnb": "BNB", "polygon": "POL"}
+    if not valid_evm_address(address):
+        raise HTTPException(status_code=400, detail="Invalid EVM wallet address")
+    if network not in chain_ids:
+        raise HTTPException(status_code=400, detail="Unsupported network. Choose ethereum, bnb, or polygon.")
+
+    chain_id = chain_ids[network]
+    common = {"address": address, "page": request.page, "offset": request.offset, "sort": "desc"}
+
+    def read_list(action):
+        payload = etherscan_v2_request(chain_id, "account", action, common)
+        result = payload.get("result")
+        if str(payload.get("status")) == "1" and isinstance(result, list):
+            return result
+        message = str(result or payload.get("message") or "").lower()
+        if "no transactions found" in message or "no records found" in message:
+            return []
+        raise HTTPException(status_code=502, detail="Etherscan could not retrieve address activity for this network")
+
+    try:
+        balance_payload = etherscan_v2_request(
+            chain_id, "account", "balance", {"address": address, "tag": "latest"}
+        )
+        balance_raw = balance_payload.get("result")
+        if str(balance_payload.get("status")) != "1" or not str(balance_raw).isdigit():
+            raise HTTPException(status_code=502, detail="Etherscan could not retrieve the native balance")
+        transactions = read_list("txlist")
+        token_transfers = read_list("tokentx")
+        internal_transactions = read_list("txlistinternal")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.warning("Etherscan address lookup failed: network=%s error_type=%s", network, type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Etherscan address lookup failed; check provider availability and plan limits") from exc
+
+    return {
+        "success": True,
+        "provider": "Etherscan API V2",
+        "network": network,
+        "chain_id": chain_id,
+        "address": address,
+        "native_asset": native_symbols[network],
+        "native_balance_base_units": str(balance_raw),
+        "transactions": transactions,
+        "token_transfers": token_transfers,
+        "internal_transactions": internal_transactions,
+        "page": request.page,
+        "offset": request.offset,
+        "read_only": True,
+        "secrets_exposed": False,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+    }
+
 
 def _abi_text_value(raw):
     if not isinstance(raw, str) or not raw.startswith("0x"):
