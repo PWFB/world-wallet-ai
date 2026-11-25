@@ -7355,6 +7355,7 @@ def wallet_proof_of_reserves(user: dict = Depends(current_user)):
     # from external on-chain balances. These rows are NOT platform-wide totals.
     wallet_liabilities = []
     liability_ledger_available = False
+    warnings = []
     try:
         with db() as conn:
             liability_rows = conn.execute(
