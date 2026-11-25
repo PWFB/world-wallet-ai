@@ -3113,6 +3113,46 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     </section>;
   }
 
+  if (active === "Etherscan API Test") {
+    const runEtherscanProviderTest = async () => {
+      setEtherscanProviderTestBusy(true);
+      setEtherscanProviderTest(null);
+      setEtherscanProviderTestError("");
+      try {
+        const response = await fetch(apiBaseUrl + "/api/v1/admin/etherscan-provider/test", {
+          method: "POST",
+          headers: { Authorization: "Bearer " + accessToken },
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Etherscan API connectivity test failed.");
+        setEtherscanProviderTest(data);
+      } catch (error) {
+        setEtherscanProviderTestError(error.message || "Etherscan API connectivity test failed.");
+      } finally {
+        setEtherscanProviderTestBusy(false);
+      }
+    };
+    const networkNames = {
+      ethereum: "Ethereum Mainnet",
+      bnb: "BNB Chain Mainnet",
+      sepolia: "Ethereum Sepolia",
+      polygon: "Polygon PoS Mainnet",
+    };
+    return <section className="content feature-content">
+      <div className="page-heading"><div><p className="eyebrow">RESTRICTED ADMINISTRATION / PROVIDER HEALTH</p><h1>Etherscan API Test</h1><p className="muted">Verify backend Etherscan API V2 access across supported EVM networks.</p></div><button className="secondary" onClick={() => setActive("System Settings")}>← System Settings</button></div>
+      <article className="panel action-panel">
+        <div className="panel-head"><div><h2>Etherscan API V2 connectivity</h2><span>Owner-only, read-only provider checks · no customer wallet is queried</span></div><button className="secondary" disabled={etherscanProviderTestBusy} onClick={runEtherscanProviderTest}>{etherscanProviderTestBusy ? "Testing…" : "Test Etherscan API"}</button></div>
+        {etherscanProviderTestError && <div className="feature-error" role="alert">{etherscanProviderTestError}</div>}
+        {etherscanProviderTest && <>
+          <div className={etherscanProviderTest.success ? "feature-success" : "feature-error"} role="status">{etherscanProviderTest.success ? "Etherscan API V2 is responding on all tested networks." : "One or more Etherscan API V2 checks did not pass."}</div>
+          <div className="tool-list">{etherscanProviderTest.results?.map(item => <div className="tool-row" key={item.network}><div><b>{networkNames[item.network] || item.network}</b><small>Chain ID {item.chain_id} · {item.message}</small></div><strong className={item.ok ? "positive" : "neutral"}>{item.ok ? "Connected" : "Check needed"}</strong></div>)}</div>
+          <small className="muted">Tested {etherscanProviderTest.tested_at ? new Date(etherscanProviderTest.tested_at).toLocaleString() : "just now"} · {etherscanProviderTest.notice}</small>
+        </>}
+        <div className="security-note">The API key stays on the backend and is never returned to the browser. This check uses a fixed public probe address; it does not read customer wallets, sign messages, broadcast transactions, deploy contracts or change balances.</div>
+      </article>
+    </section>;
+  }
+
   if (["Admin Editor","User Management","System Settings","Logs & Activity","Role Management"].includes(active)) {
     const reloadUsers = async () => {
       setAdminBusy(true);setAdminError("");
@@ -3345,7 +3385,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const moduleGuidance = {
     "Admin Editor":"Editing tools are not connected to a verified backend workflow yet.",
     "User Management":"Account changes require administrator-authorized server endpoints.",
-    "System Settings":"System settings are not editable until an authorized, audited backend API is available.",
+    "System Settings":"Owner-only backend configuration health and read-only provider checks are available here; secret values remain backend-only.",
     "Logs & Activity":"A verified administrative audit-log endpoint is not connected yet. User transaction history is under Transactions.",
     "Role Management":"Role changes require server-side authorization and audit logging.",
     "Staking":"Staking is not enabled until supported contracts and transaction verification are configured.",
