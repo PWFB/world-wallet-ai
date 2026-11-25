@@ -771,6 +771,7 @@ function App() {
       } catch {
         // Storage can be unavailable in restricted browser modes.
       }
+      const hadPersistedToken = Boolean(persistedToken);
 
       if (pinGateOpen && pendingPinToken) {
         if (!cancelled) setAuthRestoring(false);
@@ -823,8 +824,6 @@ function App() {
       if (persistedToken) {
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
       }
-
-      const hadPersistedToken = Boolean(persistedToken);
 
       // Wait for Neon Auth to finish restoring its cookie-backed session before
       // deciding that a refresh has no authenticated user.
