@@ -8,6 +8,10 @@
 - Presale payment acceptance remains disabled until the production mint, receiver ownership, supply policy, finalized-payment verification, replay protection, token allocation, and launch/liquidity controls are reviewed.
 - Approved supply policy: **31,000,000,000 BALMZ global maximum**; **10,000,000,000 BALMZ Solana Mainnet allocation**; **1,000,000,000 BALMZ initial presale tranche included within that Solana allocation**; the remaining **9,000,000,000 BALMZ** remains allocated to Solana but outside the initial tranche. Do not add the 1-billion tranche on top of the 10-billion allocation.
 
+## Read-only allocation reconciliation
+
+The administrator-only `GET /api/v1/admin/balmz/presale/allocation-reconciliation` endpoint compares allocation-state counters with settled allocation-ledger entries and currently unexpired pending payment intents. It reports drift, reservation mismatches, invalid numeric metadata, and cap overruns. This is a consistency report only: it does not repair database values, settle payments, distribute tokens, or change any presale release gate.
+
 ## Administrator-bound treasury ownership proof
 
 The ownership status is time-bounded: a successful message-signature proof is treated as current for 30 days only. After expiry, the administrator must request and sign a new challenge for the exact configured treasury address. Future-dated or timezone-naive proof timestamps are rejected. This freshness check is evidence hygiene only; it does not change any presale release flag or authorize payments.
