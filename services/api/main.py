@@ -13,6 +13,7 @@ import secrets
 import time
 import uuid
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal, ROUND_CEILING
 from threading import Lock
@@ -1988,9 +1989,19 @@ def rpc_call(url: str, method: str, params: list):
 
 
 def require_solana_rpc_cluster(url: str, expected_genesis_hash: str, cluster_name: str):
-    """Fail closed when a Solana RPC URL points at the wrong cluster."""
+    """Fail closed on insecure Mainnet RPC URLs and unexpected Solana clusters."""
     if not url:
         raise ValueError(f"{cluster_name} RPC is not configured")
+    if cluster_name == "Solana Mainnet":
+        parsed = urlparse(url) if isinstance(url, str) else None
+        if (
+            not parsed
+            or parsed.scheme.lower() != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise ValueError("Solana Mainnet RPC requires a valid HTTPS endpoint without embedded credentials")
     actual_genesis_hash = rpc_call(url, "getGenesisHash", [])
     if actual_genesis_hash != expected_genesis_hash:
         raise ValueError(f"Configured {cluster_name} RPC returned an unexpected Solana cluster genesis hash")
