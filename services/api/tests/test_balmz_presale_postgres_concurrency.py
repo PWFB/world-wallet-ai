@@ -223,8 +223,8 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
         self.assertEqual(intents[0][1], "settled")
 
     def test_same_finalized_signature_cannot_be_reused_for_two_intents(self):
-        self._add_intent("bpi_reuse_a", Decimal("5"))
-        self._add_intent("bpi_reuse_b", Decimal("5"))
+        self._add_intent("bpi_reuse_intent_a", Decimal("5"))
+        self._add_intent("bpi_reuse_intent_b", Decimal("5"))
         barrier = Barrier(2)
 
         def verify(*args):
@@ -239,8 +239,8 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
             futures = [
-                pool.submit(self._settle, "bpi_reuse_a", signature),
-                pool.submit(self._settle, "bpi_reuse_b", signature),
+                pool.submit(self._settle, "bpi_reuse_intent_a", signature),
+                pool.submit(self._settle, "bpi_reuse_intent_b", signature),
             ]
             outcomes = []
             for future in futures:
@@ -261,8 +261,8 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
 
     def test_two_distinct_finalized_payments_cannot_exceed_reserved_cap(self):
         self._set_cap(Decimal("10"))
-        self._add_intent("bpi_cap_a", Decimal("5"))
-        self._add_intent("bpi_cap_b", Decimal("5"))
+        self._add_intent("bpi_cap_intent_a", Decimal("5"))
+        self._add_intent("bpi_cap_intent_b", Decimal("5"))
         barrier = Barrier(2)
 
         def verify(*args):
@@ -276,8 +276,8 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
             ThreadPoolExecutor(max_workers=2) as pool,
         ):
             futures = [
-                pool.submit(self._settle, "bpi_cap_a", "CAP_SIGNATURE_A_" + "a" * 70),
-                pool.submit(self._settle, "bpi_cap_b", "CAP_SIGNATURE_B_" + "b" * 70),
+                pool.submit(self._settle, "bpi_cap_intent_a", "CAP_SIGNATURE_A_" + "a" * 70),
+                pool.submit(self._settle, "bpi_cap_intent_b", "CAP_SIGNATURE_B_" + "b" * 70),
             ]
             results = [future.result(timeout=20) for future in futures]
 
