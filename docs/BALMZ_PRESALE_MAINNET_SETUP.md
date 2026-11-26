@@ -10,6 +10,8 @@
 
 ## Administrator-bound treasury ownership proof
 
+The ownership status is time-bounded: a successful message-signature proof is treated as current for 30 days only. After expiry, the administrator must request and sign a new challenge for the exact configured treasury address. Future-dated or timezone-naive proof timestamps are rejected. This freshness check is evidence hygiene only; it does not change any presale release flag or authorize payments.
+
 The backend provides a separate, read-only ownership proof for the exact configured
 `WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS`. It is separate from ordinary wallet
 attachment verification and is restricted to the account matching
