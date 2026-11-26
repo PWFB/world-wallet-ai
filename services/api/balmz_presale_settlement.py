@@ -64,7 +64,16 @@ def verify_solana_mainnet_sol_payment(
                 raise HTTPException(status_code=503, detail="Malformed Solana signature status")
             if status["err"] is not None:
                 raise ValueError("Solana payment transaction failed on-chain")
-            return {"state": "pending", "finality": status.get("confirmationStatus"), "slot": status.get("slot")}
+            status_slot = status.get("slot")
+            confirmation_status = status.get("confirmationStatus")
+            if (
+                isinstance(status_slot, bool)
+                or not isinstance(status_slot, int)
+                or status_slot < 0
+                or confirmation_status not in (None, "processed", "confirmed", "finalized")
+            ):
+                raise HTTPException(status_code=503, detail="Malformed Solana signature-status metadata")
+            return {"state": "pending", "finality": confirmation_status, "slot": status_slot}
 
         if not isinstance(result, dict):
             raise HTTPException(status_code=503, detail="Malformed Solana transaction response")
