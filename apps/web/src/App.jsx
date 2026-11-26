@@ -270,6 +270,7 @@ function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [rootSearch, setRootSearch] = useState("");
   const [active, setActive] = useState(() => {
+    if (new URLSearchParams(window.location.search).get("balmz_bank_return") === "1") return "BALMZ AI";
     try {
       const saved = localStorage.getItem("ww_active_page");
       return saved || "Dashboard";
@@ -455,6 +456,12 @@ function App() {
     ? String(entry.ownerUserId) === accountUserId
     : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
   const [accessToken, setAccessToken] = useState("");
+  useEffect(() => {
+    if (!accessToken) return;
+    if (new URLSearchParams(window.location.search).get("balmz_bank_return") === "1") {
+      setActive("BALMZ AI");
+    }
+  }, [accessToken]);
   const [pinGateOpen, setPinGateOpen] = useState(false);
   const [pendingPinToken, setPendingPinToken] = useState("");
   const [pendingPinUser, setPendingPinUser] = useState(null);
@@ -2271,7 +2278,7 @@ function App() {
 
         {active === "Dashboard" && !selectedCoin && <div className="dashboard-performance-logo" aria-label="World Wallet AI dashboard performance branding"><span className="dashboard-performance-orbit"><WorldGlobeLogo compact /></span><span className="dashboard-performance-copy"><strong>WORLD WALLET <em>AI</em></strong><small>WALLET PERFORMANCE</small></span></div>}
 
-        {active === "BALMZ AI" ? <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
+        {active === "BALMZ AI" ? <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} accountEmail={user?.email || ""} onLogout={handleLogout} setActive={setActive} /> : active === "Gemini Integration" ? <GeminiIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : active === "GitHub Integration" ? <GitHubIntegration accessToken={accessToken} apiBaseUrl={API_BASE_URL} /> : selectedCoin ? (() => {
           const coin = walletCoinCatalogWithRegistry.find(c => c.symbol === selectedCoin);
           const live = assets.find(a => a.symbol === selectedCoin);
           const contractBasedBalmz = selectedCoin === "BALMZ" || selectedCoin === "BALMZ-BNB" || selectedCoin === "BALMZ-SEP" || selectedCoin === "BALMZ-SOL";
@@ -2608,7 +2615,7 @@ function App() {
             tx_hash: tx.tx_hash,
             confirmations: Number(tx.confirmations || 0),
             block_height: tx.block_height,
-          }))) } />
+          }))) } onLogout={handleLogout} />
           </Suspense>
         }
 

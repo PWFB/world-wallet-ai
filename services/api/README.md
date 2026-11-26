@@ -143,3 +143,46 @@ Existing user-authenticated routes:
 - `DELETE /api/v1/bankconnect/connections/{connection_id}` — removes that user's bank connection.
 
 The Android APT no longer ships Plaid Link or calls these legacy routes for its current Private Services flows. The web frontend also does not currently expose a Plaid Link screen. These routes are not part of crypto purchase or US bank payout processing. Never collect bank login credentials or bank-issued OTPs in BALMZ.
+
+
+## BALMZ AI alternate-Gmail account password change
+
+The signed-in account can register one separate receiver Gmail from **Profile → Account security & password**. BALMZ AI sends two distinct server-generated six-digit codes to that same receiver mailbox:
+
+1. The first code verifies the alternate receiver Gmail.
+2. After the user enters their current BALMZ AI password and a matching new password, the second code authorizes the change.
+
+Both codes expire after five minutes, are single-use, are stored only as keyed hashes, allow at most five verification attempts, and are rate-limited to three requests per purpose per 15 minutes. A verified receiver mailbox cannot be silently replaced from the normal account screen; account recovery is required.
+
+The backend uses the existing server-side `BANKCONNECT_SMTP_HOST`, `BANKCONNECT_SMTP_PORT`, `BANKCONNECT_SMTP_USERNAME`, `BANKCONNECT_SMTP_APP_PASSWORD`, `BANKCONNECT_SMTP_FROM_EMAIL`, and optional `BANKCONNECT_SMTP_FROM_NAME` settings, plus the existing `WORLD_WALLET_SECRET_ENCRYPTION_KEY`. No customer password is stored in the application database. After both codes are verified, the browser re-authenticates the account through Neon Auth and calls its authenticated password-change API with session revocation enabled. The final result is recorded with a short-lived single-use grant.
+
+This changes the **BALMZ AI / World Wallet AI account password**, not the user's Google/Gmail password. Google account passwords, bank passwords, and bank-issued OTPs are never collected by this feature. It currently supports accounts that use an email/password credential; social-only accounts need a separate password-setup flow.
+
+
+## BALMZ AI — Nigerian bank directory and hosted authentication
+
+BALMZ AI's **Banking** tab uses Mono's live Nigerian institution directory. This is separate from the legacy Plaid BankConnect integration, which is currently configured for US institutions only.
+
+Configure the following on the World Wallet AI backend service in Render; never put them in the browser or Git:
+
+- `MONO_SECRET_KEY` — Mono Connect app secret key.
+- `MONO_WEBHOOK_SECRET` — the webhook verification secret generated for the Mono app after registering the callback.
+- `BALMZ_AI_PUBLIC_URL` — optional trusted public frontend origin for the return URL. Defaults to `https://world-wallet-ai-frontend.onrender.com`.
+
+Register this backend webhook URL in the Mono Dashboard:
+
+`https://world-wallet-ai-backend.onrender.com/api/v1/mono-bankconnect/webhook`
+
+The user flow is provider-hosted: BALMZ AI fetches `GET /v3/institutions?scope=financial_data`, filters for Nigerian (`ng`) institutions, and presents the returned names and supported authentication methods. When the customer selects a bank, the backend validates that the bank and auth method still exist in Mono's live directory, then calls `POST /v2/accounts/initiate` with `scope: auth` and redirects the browser to the returned `https://link.mono.co` hosted URL. Mono/the selected institution handles the login and any bank-issued OTP. BALMZ AI does not collect, proxy, or persist bank passwords or bank-issued OTPs.
+
+The backend stores only the account owner, selected institution, authentication method, a random link reference, provider connection state, and the provider account identifier from signed Mono webhooks. It does not save internet-banking credentials. The UI marks a link as complete only after Mono's signed `mono.events.account_connected` webhook is accepted; an `account_updated` event with `available` or `partial` status advances the record to `data_available`.
+
+Endpoints (signed-in BALMZ AI account required except webhook):
+
+- `GET /api/v1/mono-bankconnect/status` — reports whether the Mono secret is configured.
+- `GET /api/v1/mono-bankconnect/institutions` — live Nigerian institutions and available authentication methods.
+- `POST /api/v1/mono-bankconnect/initiate` — validates the selected provider institution/method and returns the hosted Mono redirect URL.
+- `GET /api/v1/mono-bankconnect/link-status/{reference}` — owner-scoped connection status.
+- `POST /api/v1/mono-bankconnect/webhook` — verifies the `mono-webhook-secret` header before processing provider events.
+
+This feature verifies the institution login through Mono's hosted authentication, but it does not itself grant balance/transaction access, initiate payments, or move money. Those capabilities require separate product scopes and approvals. A missing `MONO_SECRET_KEY` or `MONO_WEBHOOK_SECRET` fails closed; no demo bank list or fake successful connection is shown.

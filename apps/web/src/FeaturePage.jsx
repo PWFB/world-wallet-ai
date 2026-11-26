@@ -171,7 +171,7 @@ function getLocalReceiveAddresses(walletId = "", userId = "") {
     ) === index);
 }
 
-function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId, accountUserId = "" }) {
+function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, externalProvider, externalAccount, externalChainId, accountUserId = "", onLogout = null }) {
   const [wallets, setWallets] = useState([]);
   const [walletName, setWalletName] = useState("");
   const [walletId, setWalletId] = useState("");
@@ -1156,6 +1156,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
+
 export default function FeaturePage({ accountName = "", accountEmail = "", selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
   const activeWalletId = String(wallet?.wallet_id || wallet?.id || wallet?.walletId || "");
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
@@ -1965,7 +1966,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     }}
   />;
 
-  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
+  if (active === "BALMZ AI") return <BalmzAI wallet={wallet} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={apiBaseUrl} accountEmail={accountEmail} onLogout={onLogout} setActive={setActive} />;
   if (active === "Activity Trace") return <ActivityTrace accessToken={accessToken} apiBaseUrl={apiBaseUrl} setActive={setActive} />;
   if (active === "WizzU Helper") return <WalletWizard accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} assets={assets} setActive={setActive} />;
   if (active === "Receipts & Issues") return <ReceiptCenter accessToken={accessToken} apiBaseUrl={apiBaseUrl} wallet={wallet} setActive={setActive} />;
@@ -3105,18 +3106,17 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
   if (active === "Profile") {
-    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Profile</h1><p className="muted">Your authenticated World Wallet AI account and active wallet identity.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallets →</button></div>
+    return <section className="content feature-content"><div className="page-heading"><div><p className="eyebrow">ACCOUNT</p><h1>Profile</h1><p className="muted">Your authenticated BALMZ AI account and active wallet identity.</p></div><button className="secondary" onClick={()=>setActive("Wallets")}>Manage wallets →</button></div>
       <article className="panel action-panel"><div className="panel-head"><div><h2>Account details</h2><span>Read-only identity sourced from the signed-in session</span></div></div>
         <div className="tool-list">
           <div className="tool-row"><div><b>Display name</b><small>Account profile</small></div><strong>{accountName||"Not provided"}</strong></div>
-          <div className="tool-row"><div><b>Email address</b><small>Authenticated identity</small></div><strong>{accountEmail||"Unavailable"}</strong></div>
+          <div className="tool-row"><div><b>Login Gmail</b><small>Authenticated account identity</small></div><strong>{accountEmail||"Unavailable"}</strong></div>
           <div className="tool-row"><div><b>Account ID</b><small>Internal identifier · do not share publicly</small></div><code>{accountUserId||"Unavailable"}</code></div>
           <div className="tool-row"><div><b>Active wallet ID</b><small>11-digit public wallet reference</small></div><strong>{wallet?.wallet_number||"Not assigned"}</strong></div>
           <div className="tool-row"><div><b>Wallet name</b><small>Currently selected wallet</small></div><strong>{wallet?.name||"Primary wallet"}</strong></div>
         </div>
-        <div className="security-note">Profile values are read-only here. Recovery phrases, private keys, passwords and one-time codes are never displayed on this page.</div>
       </article>
-      <article className="panel action-panel"><h2>Account tools</h2><div className="page-actions"><button className="secondary" onClick={()=>setActive("API Keys")}>API keys</button><button className="secondary" onClick={()=>setActive("Wallet Safety")}>Wallet safety</button><button className="secondary" onClick={()=>setActive("Support Center")}>Contact support</button></div></article>
+      <article className="panel action-panel"><h2>Account tools</h2><p className="muted">Alternate Gmail verification and account password changes are managed inside BALMZ AI → Secret Room.</p><div className="page-actions"><button className="primary" onClick={()=>setActive("BALMZ AI")}>Open BALMZ AI →</button><button className="secondary" onClick={()=>setActive("API Keys")}>API keys</button><button className="secondary" onClick={()=>setActive("Wallet Safety")}>Wallet safety</button><button className="secondary" onClick={()=>setActive("Support Center")}>Contact support</button></div></article>
     </section>;
   }
 
