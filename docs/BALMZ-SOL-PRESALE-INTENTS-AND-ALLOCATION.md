@@ -18,6 +18,7 @@ All flags default to false and must remain unset until the release has been inde
 - `WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED`
 - `WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED`
 - `WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED`
+- `WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED`
 
 Both endpoints fail closed unless their relevant feature flag, explicit release approval, and treasury ownership verification are true. Intent creation additionally checks the production mint, exact 10B supply, revoked mint/freeze authorities, Mainnet treasury account, and a fresh SOL/USD quote. The status endpoint reports payment acceptance enabled only when all required flags and the observable mint/treasury checks pass.
 
