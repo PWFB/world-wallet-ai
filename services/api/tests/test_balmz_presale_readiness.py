@@ -298,5 +298,30 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(result["payment_acceptance_enabled"])
 
 
+    def test_treasury_balance_rejects_malformed_lamport_metadata(self):
+        invalid_balances = (True, -1, 1.5, "2500000000", None)
+        for invalid_balance in invalid_balances:
+            def rpc_invalid_balance(_url, method, _params):
+                if method == "getGenesisHash":
+                    return main.SOLANA_MAINNET_GENESIS_HASH
+                if method == "getBalance":
+                    return {"value": invalid_balance}
+                raise AssertionError("Treasury account lookup must not run after invalid balance metadata")
+
+            with (
+                self.subTest(balance=invalid_balance),
+                patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""),
+                patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+                patch.object(main, "rpc_call", side_effect=rpc_invalid_balance),
+            ):
+                result = main.balmz_presale_status({"id": "test-user"})
+
+            self.assertFalse(result["presale_receiving_address_mainnet_verified"])
+            self.assertIsNone(result["presale_receiving_balance_sol"])
+            self.assertFalse(result["presale_receiving_address_has_positive_sol_balance"])
+            self.assertFalse(result["payment_acceptance_enabled"])
+            self.assertTrue(any("balance could not be verified" in warning for warning in result["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()
