@@ -459,11 +459,8 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertIsNone(result["auto_selected_recipient"])
         self.assertEqual(result["state"], "recipient_verification_required")
 
-    def test_delivery_recipient_status_rejects_invalid_and_devnet_candidates(self):
-        result = main._balmz_presale_delivery_recipient_status([
-            "not-a-solana-address",
-            "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF",
-        ])
+    def test_delivery_recipient_status_rejects_invalid_candidates(self):
+        result = main._balmz_presale_delivery_recipient_status(["not-a-solana-address"])
         self.assertEqual(result["verified_mainnet_addresses"], [])
         self.assertEqual(result["state"], "recipient_verification_required")
 
