@@ -76,9 +76,36 @@ The API reads these **server-side Render environment variables**:
 
 Set them only after checking the address and production mint. Do not put these values or any secret keys in frontend variables, source control, or chat. The current backend endpoint is read-only: it reports readiness and observed balance but does not move funds or enable payments.
 
-## Release gate
+## Release gate and implementation status
 
-Before opening the presale, add and independently test settlement that verifies a finalized Mainnet payment, expected receiver, expected amount and supported asset, unique transaction signature/idempotency key, order allocation, and failure/refund handling. Confirm the deployed mint supply/decimals and verify that the Solana Mainnet mint's total supply is exactly 10 billion BALMZ (9 decimals), then revoke mint authority if the allocation is fixed; the initial 1 billion presale tranche is an allocation within that 10 billion, not a separate mint or extra supply. Keep Devnet activity separate from Mainnet history and Proof of Reserves.
+The backend now contains read-only Mainnet readiness checks, finalized native-SOL payment verification, short-lived server-priced payment intents, replay protection, and an atomic database allocation ledger. These are implemented software controls, **not evidence that a production mint or treasury has been deployed or that presale payments are safe to accept**.
+
+Important limits:
+
+- Settlement verifies the finalized payment and records a database allocation. It does **not** transfer BALMZ-SOL to a buyer's wallet.
+- A recorded allocation is not token delivery, and there is no automatic refund transaction. Any refund requires a separately reviewed and explicitly approved outbound SOL transaction.
+- The configured treasury must be independently proven to be controlled by the authorized project owner. A positive balance, System Program ownership, or an ordinary user's verified wallet address is not proof of founder/treasury control.
+- The generic wallet-address message-signing challenge is scoped to an account's attached wallet. Do not treat that flag as treasury-owner approval unless a separate, audited control binds the exact configured treasury address to the designated project administrator.
+- The current five server-side release flags must remain false until the evidence below is complete:
+  - `WORLD_WALLET_BALMZ_PRESALE_INTENTS_ENABLED`
+  - `WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED`
+  - `WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED`
+  - `WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED`
+  - `WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED`
+
+Do not change these flags as part of routine deployment or testing. The API fails closed while required flags or readiness checks are false.
+
+### Remaining production evidence before launch
+
+1. Deploy a dedicated Solana Mainnet mint; never reuse the Devnet mint. Independently verify the mint address, SPL Token Program owner, initialized state, 9 decimals, exact 10,000,000,000-token supply, and both authority states.
+2. Confirm the configured treasury address on Solana Mainnet and complete an independently reviewed, harmless signed-message ownership proof that explicitly binds that exact address to the authorized project administrator. Do not send a test payment or transaction as an ownership test.
+3. Verify the 31-billion global allocation ledger and confirm the 1-billion initial presale tranche is included within the 10-billion Solana allocation.
+4. Run the full regression suite against the release candidate, including finalized payment, exact receiver/amount, duplicate signature, concurrent allocation, expiry, malformed RPC response, and failure handling.
+5. Complete a separately reviewed token-delivery design and tested delivery/reconciliation process. Settlement currently records allocations only.
+6. Publish clear buyer disclosures for the $7 USD target, the non-guaranteed 1 BALMZ-SOL = 1 SOL launch target, liquidity/market risks, settlement timing, and the refund/support process.
+7. Obtain explicit project-owner release approval only after independent review of the evidence. Keep presale payment acceptance disabled until then.
+
+Never paste private keys, seed phrases, wallet PINs, or OTPs into chat or source control. No readiness check or documentation change authorizes minting, authority revocation, transfers, or presale activation.
 
 ## Approved freeze-authority policy
 
