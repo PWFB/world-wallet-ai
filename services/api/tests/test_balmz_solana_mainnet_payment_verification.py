@@ -17,7 +17,7 @@ EXPECTED = 250_000_000
 def transaction():
     return {
         "slot": 987654,
-        "transaction": {"message": {
+        "transaction": {"signatures": [SIGNATURE], "message": {
             "accountKeys": [
                 {"pubkey": SENDER, "signer": True},
                 {"pubkey": RECIPIENT, "signer": False},
@@ -56,6 +56,27 @@ class BalmzSolanaMainnetPaymentVerificationTests(unittest.TestCase):
         self.assertEqual(result["paid_lamports"], EXPECTED)
         self.assertEqual(rpc.call_args_list[1].args[1], "getTransaction")
         self.assertEqual(rpc.call_args_list[1].args[2][1]["commitment"], "finalized")
+
+    def test_rpc_response_must_contain_the_requested_signature(self):
+        tx = transaction()
+        tx["transaction"]["signatures"] = ["4" * 64]
+        with self.assertRaises(main.HTTPException) as caught:
+            self.verify(tx)
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("signature does not match", caught.exception.detail)
+
+    def test_multiple_matching_transfers_are_rejected(self):
+        tx = transaction()
+        first = tx["transaction"]["message"]["instructions"][0]
+        second = {
+            "program": "system",
+            "parsed": {"type": "transfer", "info": {
+                "source": SENDER, "destination": RECIPIENT, "lamports": 1
+            }},
+        }
+        tx["transaction"]["message"]["instructions"].append(second)
+        with self.assertRaisesRegex(ValueError, "exactly one matching SOL transfer"):
+            self.verify(tx)
 
     def test_wrong_cluster_fails_closed_before_transaction_lookup(self):
         with patch.object(main, "rpc_call", return_value=main.SOLANA_DEVNET_GENESIS_HASH) as rpc:
