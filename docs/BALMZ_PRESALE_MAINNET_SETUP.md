@@ -8,6 +8,32 @@
 - Presale payment acceptance remains disabled until the production mint, receiver ownership, supply policy, finalized-payment verification, replay protection, token allocation, and launch/liquidity controls are reviewed.
 - Approved supply policy: **31,000,000,000 BALMZ global maximum**; **10,000,000,000 BALMZ Solana Mainnet allocation**; **1,000,000,000 BALMZ initial presale tranche included within that Solana allocation**; the remaining **9,000,000,000 BALMZ** remains allocated to Solana but outside the initial tranche. Do not add the 1-billion tranche on top of the 10-billion allocation.
 
+## Administrator-bound treasury ownership proof
+
+The backend provides a separate, read-only ownership proof for the exact configured
+`WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS`. It is separate from ordinary wallet
+attachment verification and is restricted to the account matching
+`WORLD_WALLET_ADMIN_EMAIL`.
+
+1. Authenticate as the configured World Wallet AI administrator.
+2. Call `POST /api/v1/admin/balmz/treasury-ownership/challenge`. The response contains
+   the exact treasury address, a one-time message, and a 10-minute expiry.
+3. In the wallet that controls that exact Solana address, sign the returned message
+   using the wallet's **message-signing** function. Do not approve a transaction.
+4. Base64-encode the raw 64-byte Ed25519 signature and submit it with the returned
+   `challenge_id` to `POST /api/v1/admin/balmz/treasury-ownership/verify`.
+5. Read `GET /api/v1/admin/balmz/treasury-ownership/status` to confirm the stored
+   proof is bound to the currently configured treasury and administrator.
+
+The server verifies the signature against the public key encoded by the exact treasury
+address, consumes the challenge once, stores only a SHA-256 digest of the signature,
+and records an administrator audit event. A changed treasury address requires a new
+proof. Never send a private key, seed phrase, or wallet PIN to the API or chat.
+
+This proof does **not** send a transaction, deploy a mint, revoke authorities, or
+change any of the five presale release environment flags. It is evidence for
+independent review; it does not itself authorize presale launch.
+
 ## Reuse an existing Mainnet address
 
 Reuse a Mainnet address only if the founder controls it, can sign from the wallet that owns it, and understands that its balance is public. A positive SOL balance can pay network fees; it does **not** prove the address is controlled by the project or safe to use as a treasury.
