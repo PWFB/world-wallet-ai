@@ -323,5 +323,37 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             self.assertTrue(any("balance could not be verified" in warning for warning in result["warnings"]))
 
 
+    def test_treasury_requires_exact_non_executable_system_account_metadata(self):
+        invalid_accounts = (
+            {"executable": False},
+            {"owner": "11111111111111111111111111111111"},
+            {"owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False},
+            {"owner": "11111111111111111111111111111111", "executable": 0},
+            {"owner": "11111111111111111111111111111111", "executable": None},
+        )
+        for account_metadata in invalid_accounts:
+            def rpc_invalid_account(_url, method, params):
+                if method == "getGenesisHash":
+                    return main.SOLANA_MAINNET_GENESIS_HASH
+                if method == "getBalance":
+                    return {"value": 2_500_000_000}
+                if method == "getAccountInfo" and params and params[0] == VALID_RECEIVER:
+                    return {"value": {**account_metadata, "data": ["", "base64"]}}
+                return mainnet_rpc(_url, method, params)
+
+            with (
+                self.subTest(account=account_metadata),
+                patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""),
+                patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+                patch.object(main, "rpc_call", side_effect=rpc_invalid_account),
+            ):
+                result = main.balmz_presale_status({"id": "test-user"})
+
+            self.assertTrue(result["presale_receiving_address_account_exists"])
+            self.assertFalse(result["readiness"]["receiving_address_system_account_verified"])
+            self.assertFalse(result["payment_acceptance_enabled"])
+            self.assertTrue(any("not verified as a non-executable System Program wallet" in warning for warning in result["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()
