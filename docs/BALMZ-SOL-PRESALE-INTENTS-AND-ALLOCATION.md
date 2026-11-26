@@ -37,6 +37,12 @@ Both endpoints fail closed unless their relevant feature flag, explicit release 
 - A database ledger is not proof of reserves and is not a token custody system.
 - The $7 USD presale quote is separate from the planned 1 BALMZ-SOL = 1 SOL launch target; that target is not a guaranteed market price or liquidity mechanism.
 
+## Concurrency tests and operational reconciliation
+
+The API CI job provisions a disposable PostgreSQL 16 service and runs `test_balmz_presale_postgres_concurrency.py` against an isolated schema. It exercises concurrent retries of one intent, replay of one transaction signature across two intents, and concurrent distinct settlements at the tranche cap. The test suite never uses production `DATABASE_URL` and mocks the chain verifier, so it is a database-atomicity test rather than a live Solana RPC test.
+
+Refund and exception handling are operator-controlled procedures documented in [the BALMZ-SOL reconciliation and refund runbook](BALMZ-SOL-REFUND-RECONCILIATION-RUNBOOK.md). There is no automatic refund endpoint or token-delivery operation. Every refund requires a separate, approved outbound transaction and independent finality verification.
+
 ## Validation still required before release
 
-Run the complete API test suite, database-backed concurrency tests against PostgreSQL, production RPC integration tests, security review, and reconciliation/refund workflow review. The feature must remain disabled until those checks pass and the project owner approves the release.
+Run and review the complete API test suite and PostgreSQL integration tests, production RPC integration tests, security review, legal/customer disclosure review, independent treasury ownership proof, and production deployment verification. The feature must remain disabled until those checks pass and the project owner explicitly approves the release.
