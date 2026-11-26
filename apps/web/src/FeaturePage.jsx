@@ -46,6 +46,15 @@ function AssetIcon({ symbol, fallback = "•" }) {
 const money = value => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "Unavailable" : `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+function formatTokenAmountExact(value) {
+  const raw = String(value ?? "").trim();
+  if (!/^\\d+(?:\\.\\d{1,9})?$/.test(raw)) return "Unavailable";
+  const [whole, fraction = ""] = raw.split(".");
+  const groupedWhole = whole.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
+  const trimmedFraction = fraction.replace(/0+$/, "");
+  return groupedWhole + (trimmedFraction ? "." + trimmedFraction : "");
+}
+
 async function walletAuthHeaders(accessToken, extra = {}) {
   // A PIN-session token is already the app's second-factor bearer. Never
   // replace it with a first-factor Neon token during refresh.
@@ -2101,7 +2110,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <button type="button" className="secondary" disabled={presaleDeliveryBusy} onClick={async () => {
             setPresaleDeliveryBusy(true); setPresaleDeliveryError("");
             try {
-              const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/delivery-status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } });
+              const headers = await walletAuthHeaders(accessToken);
+              const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/delivery-status", { cache: "no-store", headers });
               const data = await response.json();
               if (!response.ok) throw new Error(data.detail || "Could not load your BALMZ-SOL delivery status.");
               setPresaleDelivery(data);
@@ -2115,7 +2125,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         {presaleDelivery && <>
           <div className="presale-estimate-result"><span>Recorded allocations</span><strong>{Number(presaleDelivery.allocation_count || 0).toLocaleString("en-US")}</strong></div>
           {presaleDelivery.allocations?.length ? <div className="tool-list">{presaleDelivery.allocations.map(item => <div className="tool-row" key={item.allocation_id}>
-            <div><b>{Number(item.token_amount).toLocaleString("en-US", { maximumFractionDigits: 9 })} BALMZ-SOL</b><small>Allocation recorded {item.allocated_at ? new Date(item.allocated_at).toLocaleString() : "—"}</small><small>Payment signature: {item.payment_signature ? item.payment_signature.slice(0, 10) + "…" + item.payment_signature.slice(-8) : "Unavailable"}</small></div>
+            <div><b>{formatTokenAmountExact(item.token_amount)} BALMZ-SOL</b><small>Allocation recorded {item.allocated_at ? new Date(item.allocated_at).toLocaleString() : "—"}</small><small>Payment signature: {item.payment_signature ? item.payment_signature.slice(0, 10) + "…" + item.payment_signature.slice(-8) : "Unavailable"}</small></div>
             <strong>Token delivery pending</strong>
           </div>)}</div> : <div className="live-chart-empty">No settled BALMZ-SOL allocations are recorded for this wallet.</div>}
           <div className="security-note"><b>Recipient wallet:</b> {presaleDelivery.recipient?.verified_mainnet_addresses?.length ? presaleDelivery.recipient.verified_mainnet_addresses.join(" · ") : "No fresh, verified Solana Mainnet recipient address is available."}</div>
