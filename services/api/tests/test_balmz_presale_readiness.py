@@ -60,8 +60,8 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         while number:
             number, remainder = divmod(number, 58)
             encoded = alphabet[remainder] + encoded
-        address = ("1" * (len(public_key) - len(public_key.lstrip(b"\\x00")))) + (encoded or "1")
-        message = "World Wallet AI treasury proof\\nTreasury: " + address
+        address = ("1" * (len(public_key) - len(public_key.lstrip(b"\x00")))) + (encoded or "1")
+        message = "World Wallet AI treasury proof\nTreasury: " + address
         signature = base64.b64encode(private_key.sign(message.encode("utf-8"))).decode("ascii")
 
         self.assertTrue(main._verify_balmz_treasury_ownership_signature(address, message, signature))
