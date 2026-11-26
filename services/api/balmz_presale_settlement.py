@@ -71,7 +71,13 @@ def verify_solana_mainnet_sol_payment(
         meta = result.get("meta")
         transaction = result.get("transaction")
         slot = result.get("slot")
-        if not isinstance(meta, dict) or not isinstance(transaction, dict) or not isinstance(slot, int):
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(transaction, dict)
+            or isinstance(slot, bool)
+            or not isinstance(slot, int)
+            or slot < 0
+        ):
             raise HTTPException(status_code=503, detail="Malformed finalized Solana transaction metadata")
         if meta.get("err") is not None:
             raise ValueError("Solana payment transaction failed on-chain")
