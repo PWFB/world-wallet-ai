@@ -1,5 +1,6 @@
 import sys
 import unittest
+import base64
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,6 +45,30 @@ def mainnet_rpc(_url, method, _params):
 
 
 class BalmzPresaleReadinessTests(unittest.TestCase):
+    def test_treasury_ownership_signature_binds_exact_solana_address_and_message(self):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives import serialization
+
+        private_key = Ed25519PrivateKey.generate()
+        public_key = private_key.public_key().public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw,
+        )
+        alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+        number = int.from_bytes(public_key, "big")
+        encoded = ""
+        while number:
+            number, remainder = divmod(number, 58)
+            encoded = alphabet[remainder] + encoded
+        address = ("1" * (len(public_key) - len(public_key.lstrip(b"\x00")))) + (encoded or "1")
+        message = "World Wallet AI treasury proof\nTreasury: " + address
+        signature = base64.b64encode(private_key.sign(message.encode("utf-8"))).decode("ascii")
+
+        self.assertTrue(main._verify_balmz_treasury_ownership_signature(address, message, signature))
+        self.assertFalse(main._verify_balmz_treasury_ownership_signature(address, message + " changed", signature))
+        self.assertFalse(main._verify_balmz_treasury_ownership_signature(VALID_RECEIVER, message, signature))
+        self.assertFalse(main._verify_balmz_treasury_ownership_signature(address, message, "not-base64"))
+
     def test_unconfigured_presale_is_planning_only_and_payments_stay_disabled(self):
         with patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""), patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""):
             result = main.balmz_presale_status({"id": "test-user"})
