@@ -447,3 +447,26 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_delivery_recipient_status_never_auto_selects_verified_address(self):
+        result = main._balmz_presale_delivery_recipient_status([VALID_RECEIVER, VALID_RECEIVER])
+        self.assertEqual(result["verified_mainnet_addresses"], [VALID_RECEIVER])
+        self.assertTrue(result["recipient_selection_required"])
+        self.assertIsNone(result["auto_selected_recipient"])
+        self.assertEqual(result["state"], "buyer_confirmation_required")
+
+    def test_delivery_recipient_status_requires_verified_mainnet_address(self):
+        result = main._balmz_presale_delivery_recipient_status([])
+        self.assertEqual(result["verified_mainnet_addresses"], [])
+        self.assertTrue(result["recipient_selection_required"])
+        self.assertIsNone(result["auto_selected_recipient"])
+        self.assertEqual(result["state"], "recipient_verification_required")
+
+    def test_delivery_recipient_status_rejects_invalid_and_devnet_candidates(self):
+        result = main._balmz_presale_delivery_recipient_status([
+            "not-a-solana-address",
+            "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF",
+        ])
+        self.assertEqual(result["verified_mainnet_addresses"], [])
+        self.assertEqual(result["state"], "recipient_verification_required")
