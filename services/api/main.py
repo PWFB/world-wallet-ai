@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from decimal import Decimal
+from decimal import Decimal, ROUND_CEILING
 from threading import Lock
 from anyio import to_thread
 
@@ -117,6 +117,8 @@ BALMZ_SOLANA_DEVNET_DECIMALS = 9
 BALMZ_SOLANA_MAINNET_MINT = os.getenv("WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT", "").strip()
 BALMZ_PRESALE_RECEIVING_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS", "").strip()
 BALMZ_PRESALE_PRICE_USD = Decimal("7.00")
+BALMZ_PRESALE_INTENTS_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_INTENTS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BALMZ_PRESALE_SETTLEMENT_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
@@ -286,6 +288,16 @@ class SecurityPinRecoveryCompleteRequest(BaseModel):
     new_pin: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
 
 
+
+
+class BalmzPresaleIntentRequest(BaseModel):
+    payer_address: str = Field(min_length=32, max_length=44)
+    token_amount: Decimal = Field(gt=0, max_digits=36, decimal_places=9)
+
+
+class BalmzPresaleSettlementRequest(BaseModel):
+    intent_id: str = Field(min_length=12, max_length=80)
+    tx_signature: str = Field(min_length=64, max_length=100)
 
 
 class TransferRequest(BaseModel):
@@ -823,6 +835,54 @@ def init_db():
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,source)
         );
+        CREATE TABLE IF NOT EXISTS balmz_presale_allocation_state(
+          id SMALLINT PRIMARY KEY CHECK(id=1),
+          cap_tokens NUMERIC(36,9) NOT NULL CHECK(cap_tokens > 0),
+          allocated_tokens NUMERIC(36,9) NOT NULL DEFAULT 0 CHECK(allocated_tokens >= 0),
+          reserved_tokens NUMERIC(36,9) NOT NULL DEFAULT 0 CHECK(reserved_tokens >= 0),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK(allocated_tokens + reserved_tokens <= cap_tokens)
+        );
+        INSERT INTO balmz_presale_allocation_state(id,cap_tokens,allocated_tokens,reserved_tokens)
+        VALUES(1,1000000000,0,0) ON CONFLICT(id) DO NOTHING;
+        CREATE TABLE IF NOT EXISTS balmz_presale_payment_intents(
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          payer_address TEXT NOT NULL,
+          treasury_address TEXT NOT NULL,
+          token_amount NUMERIC(36,9) NOT NULL CHECK(token_amount > 0),
+          token_base_units BIGINT NOT NULL CHECK(token_base_units > 0),
+          token_price_usd NUMERIC(24,8) NOT NULL CHECK(token_price_usd > 0),
+          sol_usd_quote NUMERIC(24,10) NOT NULL CHECK(sol_usd_quote > 0),
+          expected_lamports BIGINT NOT NULL CHECK(expected_lamports > 0),
+          quote_source TEXT NOT NULL,
+          quoted_at TIMESTAMPTZ NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','settled','expired')),
+          tx_signature TEXT UNIQUE,
+          settled_slot BIGINT,
+          settled_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          CHECK(expires_at > created_at)
+        );
+        CREATE INDEX IF NOT EXISTS balmz_presale_intents_owner_created_idx
+          ON balmz_presale_payment_intents(owner_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS balmz_presale_intents_expiry_idx
+          ON balmz_presale_payment_intents(status,expires_at);
+        CREATE TABLE IF NOT EXISTS balmz_presale_allocation_ledger(
+          id TEXT PRIMARY KEY,
+          intent_id TEXT NOT NULL UNIQUE REFERENCES balmz_presale_payment_intents(id),
+          owner_id TEXT NOT NULL REFERENCES users(id),
+          payer_address TEXT NOT NULL,
+          tx_signature TEXT NOT NULL UNIQUE,
+          token_amount NUMERIC(36,9) NOT NULL CHECK(token_amount > 0),
+          token_base_units BIGINT NOT NULL CHECK(token_base_units > 0),
+          paid_lamports BIGINT NOT NULL CHECK(paid_lamports > 0),
+          finalized_slot BIGINT NOT NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS balmz_presale_allocation_owner_created_idx
+          ON balmz_presale_allocation_ledger(owner_id,created_at DESC);
         CREATE TABLE IF NOT EXISTS solana_devnet_deposits(
           tx_signature TEXT PRIMARY KEY,
           wallet_id TEXT NOT NULL REFERENCES wallets(id),
@@ -5289,6 +5349,174 @@ def verify_balmz_presale_mainnet_payment(tx_signature: str, sender_address: str,
     )
 
 
+def balmz_presale_expected_lamports(token_amount: Decimal, sol_usd_price: Decimal) -> tuple[int, int]:
+    """Calculate an immutable SOL quote from the server's USD token price and SOL/USD spot."""
+    try:
+        amount, sol_price = Decimal(str(token_amount)), Decimal(str(sol_usd_price))
+    except Exception as exc:
+        raise ValueError("Invalid presale amount or SOL/USD quote") from exc
+    if not amount.is_finite() or amount <= 0 or not sol_price.is_finite() or sol_price <= 0:
+        raise ValueError("Presale amount and SOL/USD quote must be finite positive values")
+    base_units = amount * (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
+    if base_units != base_units.to_integral_value() or base_units > Decimal(2**63 - 1):
+        raise ValueError("BALMZ-SOL amount must fit the 9-decimal base-unit range")
+    lamports = (amount * BALMZ_PRESALE_PRICE_USD / sol_price * Decimal(1_000_000_000)).to_integral_value(rounding=ROUND_CEILING)
+    if lamports <= 0 or lamports > Decimal(2**63 - 1):
+        raise ValueError("Calculated SOL payment is outside the supported range")
+    return int(lamports), int(base_units)
+
+
+def _balmz_presale_sol_usd_quote():
+    """Fetch a fresh SOL/USD quote; never fall back to stale or client-supplied pricing."""
+    try:
+        api_key, base_url = _active_coingecko_config()
+        response = httpx.get(
+            f"{base_url}/simple/price",
+            params={"ids":"solana","vs_currencies":"usd"},
+            headers=coingecko_headers(api_key,base_url),
+            timeout=httpx.Timeout(8.0,connect=3.0),
+        )
+        response.raise_for_status()
+        price = Decimal(str(response.json().get("solana",{}).get("usd")))
+        if not price.is_finite() or price <= 0:
+            raise ValueError("Invalid SOL/USD quote")
+        return price
+    except Exception as exc:
+        logger.warning("BALMZ presale SOL/USD quote unavailable: error_type=%s",type(exc).__name__)
+        raise HTTPException(status_code=503,detail="A fresh SOL/USD quote is unavailable; no payment intent was created") from exc
+
+
+@app.post("/api/v1/balmz/presale/intents")
+def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depends(current_user)):
+    """Create a server-priced, short-lived payment intent; disabled unless explicitly configured."""
+    if not BALMZ_PRESALE_INTENTS_ENABLED:
+        raise HTTPException(status_code=503,detail="BALMZ presale payment intents are not enabled")
+    if not DATABASE_URL or not user.get("id"):
+        raise HTTPException(status_code=503,detail="Presale payment intents require the configured account database")
+    if not valid_solana_address(body.payer_address):
+        raise HTTPException(status_code=400,detail="Enter a valid Solana Mainnet payer address")
+    if not valid_solana_address(BALMZ_SOLANA_MAINNET_MINT) or not valid_solana_address(BALMZ_PRESALE_RECEIVING_ADDRESS):
+        raise HTTPException(status_code=503,detail="Verified production mint and presale treasury must be configured")
+    mint=_verify_balmz_solana_mainnet_mint(BALMZ_SOLANA_MAINNET_MINT)
+    treasury=_verify_balmz_presale_receiver(BALMZ_PRESALE_RECEIVING_ADDRESS)
+    if not (mint["production_mint_verified"] and mint["supply_matches_target"] and mint["mint_authority_revoked"]
+            and mint["freeze_authority_revoked"] and treasury["mainnet_rpc_verified"] and treasury["account_exists"]):
+        raise HTTPException(status_code=503,detail="Production mint and treasury readiness checks have not passed")
+    sol_usd=_balmz_presale_sol_usd_quote()
+    try:
+        lamports,base_units=balmz_presale_expected_lamports(body.token_amount,sol_usd)
+    except ValueError as exc:
+        raise HTTPException(status_code=400,detail=str(exc)) from exc
+    intent_id="bpi_"+secrets.token_urlsafe(24)
+    quoted_at=datetime.now(timezone.utc)
+    expires_at=quoted_at+timedelta(minutes=20)
+    with db() as conn:
+        state=conn.execute("SELECT cap_tokens,allocated_tokens,reserved_tokens FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE").fetchone()
+        if not state:
+            raise HTTPException(status_code=503,detail="Presale allocation ledger is not initialized")
+        expired=conn.execute("UPDATE balmz_presale_payment_intents SET status='expired' WHERE status='pending' AND expires_at<=NOW() RETURNING token_amount").fetchall()
+        expired_tokens=sum((Decimal(str(row[0])) for row in expired),Decimal("0"))
+        if expired_tokens:
+            conn.execute("UPDATE balmz_presale_allocation_state SET reserved_tokens=GREATEST(0,reserved_tokens-%s),updated_at=NOW() WHERE id=1",(expired_tokens,))
+        cap,allocated,reserved=(Decimal(str(v)) for v in state)
+        if allocated+reserved-expired_tokens+body.token_amount>cap:
+            raise HTTPException(status_code=409,detail="The 1,000,000,000 BALMZ-SOL presale tranche has no remaining allocation")
+        conn.execute("""INSERT INTO balmz_presale_payment_intents
+          (id,owner_id,payer_address,treasury_address,token_amount,token_base_units,token_price_usd,
+           sol_usd_quote,expected_lamports,quote_source,quoted_at,expires_at)
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,'CoinGecko SOL/USD',%s,%s)""",
+          (intent_id,user["id"],body.payer_address,BALMZ_PRESALE_RECEIVING_ADDRESS,body.token_amount,
+           base_units,BALMZ_PRESALE_PRICE_USD,sol_usd,lamports,quoted_at,expires_at))
+        conn.execute("UPDATE balmz_presale_allocation_state SET reserved_tokens=reserved_tokens+%s,updated_at=NOW() WHERE id=1",(body.token_amount,))
+        conn.commit()
+    return {"intent_id":intent_id,"status":"pending","token":"BALMZ-SOL","token_amount":str(body.token_amount),
+      "token_base_units":base_units,"token_price_usd":str(BALMZ_PRESALE_PRICE_USD),"sol_usd_quote":str(sol_usd),
+      "expected_lamports":lamports,"expected_sol":str(Decimal(lamports)/Decimal(1_000_000_000)),
+      "payer_address":body.payer_address,"treasury_address":BALMZ_PRESALE_RECEIVING_ADDRESS,
+      "quote_source":"CoinGecko SOL/USD","quoted_at":quoted_at.isoformat(),"expires_at":expires_at.isoformat(),
+      "notice":"Quote only. Do not send funds unless the app explicitly enables payment instructions."}
+
+
+@app.post("/api/v1/balmz/presale/settle")
+def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Depends(current_user)):
+    """Verify and atomically record a finalized payment once; this does not transfer tokens."""
+    if not BALMZ_PRESALE_SETTLEMENT_ENABLED:
+        raise HTTPException(status_code=503,detail="BALMZ presale settlement is not enabled")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503,detail="Presale settlement requires the configured account database")
+    with db() as conn:
+        snapshot=conn.execute("""SELECT payer_address,treasury_address,expected_lamports,status,tx_signature,expires_at
+          FROM balmz_presale_payment_intents WHERE id=%s AND owner_id=%s""",(body.intent_id,user["id"])).fetchone()
+    if not snapshot:
+        raise HTTPException(status_code=404,detail="Presale payment intent was not found")
+    payer,treasury,expected,status,prior_signature,expiry=snapshot
+    if status=="settled":
+        if prior_signature==body.tx_signature:
+            return {"state":"settled","idempotent":True,"intent_id":body.intent_id}
+        raise HTTPException(status_code=409,detail="This payment intent has already been settled")
+    if status!="pending":
+        raise HTTPException(status_code=409,detail="This payment intent is no longer pending")
+    if expiry<=datetime.now(timezone.utc):
+        with db() as conn:
+            row=conn.execute("SELECT token_amount FROM balmz_presale_payment_intents WHERE id=%s AND owner_id=%s AND status='pending' FOR UPDATE",(body.intent_id,user["id"])).fetchone()
+            if row:
+                conn.execute("UPDATE balmz_presale_payment_intents SET status='expired' WHERE id=%s",(body.intent_id,))
+                conn.execute("UPDATE balmz_presale_allocation_state SET reserved_tokens=GREATEST(0,reserved_tokens-%s),updated_at=NOW() WHERE id=1",(row[0],))
+                conn.commit()
+        raise HTTPException(status_code=409,detail="This payment intent has expired")
+    evidence=verify_balmz_presale_mainnet_payment(body.tx_signature,payer,expected)
+    if evidence.get("state")!="confirmed" or evidence.get("finality")!="finalized":
+        return {"state":evidence.get("state","pending"),"finality":evidence.get("finality"),"intent_id":body.intent_id}
+    expired_during=False
+    try:
+        with db() as conn:
+            row=conn.execute("""SELECT owner_id,payer_address,token_amount,token_base_units,status,tx_signature,expires_at
+              FROM balmz_presale_payment_intents WHERE id=%s FOR UPDATE""",(body.intent_id,)).fetchone()
+            if not row or row[0]!=user["id"]:
+                raise HTTPException(status_code=404,detail="Presale payment intent was not found")
+            owner,payer_address,token_amount,base_units,current_status,current_sig,current_expiry=row
+            if current_status=="settled":
+                if current_sig==body.tx_signature:
+                    return {"state":"settled","idempotent":True,"intent_id":body.intent_id}
+                raise HTTPException(status_code=409,detail="This payment intent has already been settled")
+            if current_status!="pending":
+                raise HTTPException(status_code=409,detail="This payment intent is no longer pending")
+            allocation=conn.execute("SELECT cap_tokens,allocated_tokens,reserved_tokens FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE").fetchone()
+            if not allocation:
+                raise HTTPException(status_code=503,detail="Presale allocation ledger is not initialized")
+            if current_expiry<=datetime.now(timezone.utc):
+                conn.execute("UPDATE balmz_presale_payment_intents SET status='expired' WHERE id=%s",(body.intent_id,))
+                conn.execute("UPDATE balmz_presale_allocation_state SET reserved_tokens=GREATEST(0,reserved_tokens-%s),updated_at=NOW() WHERE id=1",(token_amount,))
+                conn.commit()
+                expired_during=True
+            else:
+                cap,allocated,reserved=(Decimal(str(v)) for v in allocation)
+                if allocated+Decimal(str(token_amount))>cap:
+                    raise HTTPException(status_code=409,detail="Presale allocation cap would be exceeded")
+                conn.execute("""INSERT INTO balmz_presale_allocation_ledger
+                  (id,intent_id,owner_id,payer_address,tx_signature,token_amount,token_base_units,paid_lamports,finalized_slot)
+                  VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                  ("bpal_"+secrets.token_urlsafe(18),body.intent_id,owner,payer_address,body.tx_signature,
+                   token_amount,base_units,evidence["paid_lamports"],evidence["slot"]))
+                updated=conn.execute("""UPDATE balmz_presale_allocation_state
+                  SET allocated_tokens=allocated_tokens+%s,reserved_tokens=GREATEST(0,reserved_tokens-%s),updated_at=NOW()
+                  WHERE id=1 AND allocated_tokens+%s<=cap_tokens""",(token_amount,token_amount,token_amount))
+                if updated.rowcount!=1:
+                    raise HTTPException(status_code=409,detail="Presale allocation cap would be exceeded")
+                conn.execute("""UPDATE balmz_presale_payment_intents
+                  SET status='settled',tx_signature=%s,settled_slot=%s,settled_at=NOW()
+                  WHERE id=%s AND status='pending'""",(body.tx_signature,evidence["slot"],body.intent_id))
+                conn.commit()
+    except psycopg.errors.UniqueViolation as exc:
+        raise HTTPException(status_code=409,detail="This Solana transaction signature or intent has already been used") from exc
+    if expired_during:
+        raise HTTPException(status_code=409,detail="This payment intent expired before settlement completed")
+    return {"state":"settled","intent_id":body.intent_id,"tx_signature":body.tx_signature,"finality":"finalized",
+      "slot":evidence["slot"],"paid_lamports":evidence["paid_lamports"],"allocated_tokens":str(token_amount),
+      "token_delivery":"not_performed",
+      "notice":"Allocation is recorded in the database only; on-chain token delivery requires a separate approved distribution process."}
+
+
 @app.get("/api/v1/balmz/presale/status")
 def balmz_presale_status(user: dict = Depends(current_user)):
     """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
@@ -5306,7 +5534,10 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "receiving_address_account_exists": receiver_status["account_exists"],
         "receiving_address_has_positive_sol_balance": receiver_status["has_positive_sol_balance"],
         # Intentionally false: an authenticated, replay-protected settlement endpoint is not implemented.
-        "payment_verification_implemented": False,
+        "payment_verification_implemented": True,
+        "payment_intents_implemented": True,
+        "atomic_settlement_implemented": True,
+        "presale_allocation_ledger_implemented": True,
         # A token price target alone is not a liquidity or market-making mechanism.
         "liquidity_mechanism_configured": False,
         # CI status is not inferred from runtime settings.
@@ -5316,7 +5547,8 @@ def balmz_presale_status(user: dict = Depends(current_user)):
     if recipient_is_valid:
         warnings.append("On-chain balance checks do not prove that the founder controls the receiving wallet; verify ownership before accepting funds.")
     warnings.extend([
-        "Presale payment acceptance remains disabled; confirmed, replay-protected settlement is not implemented.",
+        "Presale payment acceptance remains disabled unless both server-side intent and settlement feature flags are explicitly enabled.",
+        "Settlement records database allocation only; it does not deliver BALMZ-SOL on-chain.",
         "The launch target of 1 BALMZ-SOL = 1 SOL is not a guaranteed market price and needs a disclosed liquidity mechanism.",
         "Complete production readiness checks and regression tests before opening the presale.",
     ])
@@ -5335,7 +5567,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": False,
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED),
         "production_network": "solana_mainnet",
         "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
