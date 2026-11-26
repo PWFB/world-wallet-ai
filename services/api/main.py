@@ -119,6 +119,8 @@ BALMZ_PRESALE_RECEIVING_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RECEIVIN
 BALMZ_PRESALE_PRICE_USD = Decimal("7.00")
 BALMZ_PRESALE_INTENTS_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_INTENTS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_PRESALE_SETTLEMENT_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BALMZ_PRESALE_RELEASE_APPROVED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
@@ -5389,8 +5391,8 @@ def _balmz_presale_sol_usd_quote():
 @app.post("/api/v1/balmz/presale/intents")
 def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depends(current_user)):
     """Create a server-priced, short-lived payment intent; disabled unless explicitly configured."""
-    if not BALMZ_PRESALE_INTENTS_ENABLED:
-        raise HTTPException(status_code=503,detail="BALMZ presale payment intents are not enabled")
+    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED):
+        raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and intent gates are not approved")
     if not DATABASE_URL or not user.get("id"):
         raise HTTPException(status_code=503,detail="Presale payment intents require the configured account database")
     if not valid_solana_address(body.payer_address):
@@ -5440,8 +5442,8 @@ def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depen
 @app.post("/api/v1/balmz/presale/settle")
 def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Depends(current_user)):
     """Verify and atomically record a finalized payment once; this does not transfer tokens."""
-    if not BALMZ_PRESALE_SETTLEMENT_ENABLED:
-        raise HTTPException(status_code=503,detail="BALMZ presale settlement is not enabled")
+    if not (BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED):
+        raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and settlement gates are not approved")
     if not DATABASE_URL:
         raise HTTPException(status_code=503,detail="Presale settlement requires the configured account database")
     with db() as conn:
@@ -5450,6 +5452,8 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
     if not snapshot:
         raise HTTPException(status_code=404,detail="Presale payment intent was not found")
     payer,treasury,expected,status,prior_signature,expiry=snapshot
+    if treasury != BALMZ_PRESALE_RECEIVING_ADDRESS:
+        raise HTTPException(status_code=409,detail="Presale treasury configuration changed after this intent was created")
     if status=="settled":
         if prior_signature==body.tx_signature:
             return {"state":"settled","idempotent":True,"intent_id":body.intent_id}
@@ -5567,7 +5571,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED),
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"]),
         "production_network": "solana_mainnet",
         "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
