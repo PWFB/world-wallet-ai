@@ -5259,7 +5259,11 @@ def _verify_balmz_solana_mainnet_mint(mint_address: str | None) -> dict:
             and isinstance(parsed, dict)
             and parsed.get("type") == "mint"
             and isinstance(info, dict)
+            and account.get("executable") is False
+            and info.get("isInitialized") is True
             and info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS
+            and isinstance(info.get("supply"), str)
+            and info["supply"].isdigit()
         )
         if not valid_spl_mint:
             result["warnings"].append("Production BALMZ-SOL mint could not be verified as a 9-decimal SPL Token mint on Solana Mainnet.")
@@ -5278,10 +5282,18 @@ def _verify_balmz_solana_mainnet_mint(mint_address: str | None) -> dict:
         )
         supply_info = supply_response.get("value", {}) if isinstance(supply_response, dict) else {}
         raw_amount = supply_info.get("amount")
-        if isinstance(raw_amount, str) and raw_amount.isdigit() and supply_info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS:
+        parsed_raw_supply = info.get("supply")
+        if (
+            isinstance(raw_amount, str)
+            and raw_amount.isdigit()
+            and supply_info.get("decimals") == BALMZ_SOLANA_DEVNET_DECIMALS
+            and raw_amount == parsed_raw_supply
+        ):
             observed = Decimal(raw_amount) / (Decimal(10) ** BALMZ_SOLANA_DEVNET_DECIMALS)
             result["observed_supply"] = int(observed) if observed == observed.to_integral_value() else float(observed)
             result["supply_matches_target"] = raw_amount == str(BALMZ_TARGET_SUPPLY * (10 ** BALMZ_SOLANA_DEVNET_DECIMALS))
+        else:
+            result["warnings"].append("Solana Mainnet mint-account supply and token-supply RPC metadata are missing or inconsistent.")
 
         if not result["supply_matches_target"]:
             result["warnings"].append("Observed Mainnet token supply does not match the approved 10,000,000,000-token Solana allocation.")

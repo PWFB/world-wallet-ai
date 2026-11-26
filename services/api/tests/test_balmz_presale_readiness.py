@@ -22,12 +22,15 @@ def mainnet_rpc(_url, method, _params):
         return {
             "value": {
                 "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                "executable": False,
                 "data": {
                     "program": "spl-token",
                     "parsed": {
                         "type": "mint",
                         "info": {
                             "decimals": 9,
+                            "isInitialized": True,
+                            "supply": str(10_000_000_000 * (10 ** 9)),
                             "mintAuthority": None,
                             "freezeAuthority": None,
                         },
@@ -175,6 +178,50 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
 
         self.assertFalse(result["readiness"]["receiving_address_system_account_verified"])
         self.assertFalse(result["payment_acceptance_enabled"])
+
+
+    def test_mint_account_must_be_initialized_and_non_executable(self):
+        for metadata in (
+            {"executable": True, "isInitialized": True},
+            {"executable": False, "isInitialized": False},
+        ):
+            def rpc_invalid_metadata(_url, method, params):
+                response = mainnet_rpc(_url, method, params)
+                if method == "getAccountInfo" and params and params[0] != VALID_RECEIVER:
+                    response["value"]["executable"] = metadata["executable"]
+                    response["value"]["data"]["parsed"]["info"]["isInitialized"] = metadata["isInitialized"]
+                return response
+
+            with (
+                self.subTest(metadata=metadata),
+                patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", VALID_MINT),
+                patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""),
+                patch.object(main, "rpc_call", side_effect=rpc_invalid_metadata),
+            ):
+                result = main.balmz_presale_status({"id": "test-user"})
+
+            self.assertFalse(result["readiness"]["production_mint_verified"])
+            self.assertFalse(result["payment_acceptance_enabled"])
+
+    def test_mint_parsed_and_token_supply_rpc_amounts_must_match(self):
+        def rpc_inconsistent_supply(_url, method, params):
+            response = mainnet_rpc(_url, method, params)
+            if method == "getAccountInfo" and params and params[0] != VALID_RECEIVER:
+                response["value"]["data"]["parsed"]["info"]["supply"] = "1"
+            return response
+
+        with (
+            patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", VALID_MINT),
+            patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""),
+            patch.object(main, "rpc_call", side_effect=rpc_inconsistent_supply),
+        ):
+            result = main.balmz_presale_status({"id": "test-user"})
+
+        self.assertTrue(result["readiness"]["production_mint_verified"])
+        self.assertFalse(result["readiness"]["supply_matches_target"])
+        self.assertIsNone(result["observed_supply"])
+        self.assertFalse(result["payment_acceptance_enabled"])
+        self.assertTrue(any("missing or inconsistent" in warning for warning in result["warnings"]))
 
     def test_mint_authority_still_enabled_is_not_fixed_supply(self):
         def rpc_with_authority(_url, method, params):
