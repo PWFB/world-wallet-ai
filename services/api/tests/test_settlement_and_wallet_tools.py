@@ -110,7 +110,14 @@ class SettlementAndWalletToolTests(unittest.TestCase):
 
     def test_sepolia_is_excluded_from_production_reserve_snapshot(self):
         address = "0x" + "1" * 40
-        with patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": address, "label": "testnet"}]):
+        # Keep this test focused on Sepolia exclusion: provide a healthy empty
+        # wallet-liability ledger and token registry so unrelated database
+        # availability warnings do not affect the assertion.
+        connection = Mock()
+        connection.execute.return_value.fetchall.return_value = []
+        with patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": address, "label": "testnet"}]), \
+             patch.object(main, "db") as database:
+            database.return_value.__enter__.return_value = connection
             result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
         self.assertEqual(result["reserves"], [])
         self.assertFalse(result["audited"])
