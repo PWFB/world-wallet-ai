@@ -5584,6 +5584,56 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
       "notice":"Allocation is recorded in the database only; on-chain token delivery requires a separate approved distribution process."}
 
 
+def _balmz_presale_allocation_reconciliation(cap, allocated, reserved, ledger_total, pending_total):
+    """Compare allocation counters with their authoritative ledger and live reservations."""
+    try:
+        values = [Decimal(str(value)) for value in (cap, allocated, reserved, ledger_total, pending_total)]
+        if any(not value.is_finite() for value in values):
+            raise ValueError("non-finite allocation value")
+        cap_value, allocated_value, reserved_value, ledger_value, pending_value = values
+        if any(value < 0 for value in values) or cap_value <= 0:
+            raise ValueError("negative or zero allocation value")
+        checks = {
+            "allocated_matches_ledger": allocated_value == ledger_value,
+            "reserved_matches_pending_intents": reserved_value == pending_value,
+            "within_cap": allocated_value + reserved_value <= cap_value,
+        }
+        return {"reconciled": all(checks.values()), "checks": checks,
+                "cap_tokens": str(cap_value), "allocated_tokens": str(allocated_value),
+                "reserved_tokens": str(reserved_value), "ledger_tokens": str(ledger_value),
+                "pending_intent_tokens": str(pending_value), "warnings": [] if all(checks.values()) else [
+                    name for name, passed in checks.items() if not passed
+                ]}
+    except (ValueError, TypeError, ArithmeticError):
+        return {"reconciled": False, "checks": {"valid_numeric_metadata": False},
+                "warnings": ["invalid_allocation_metadata"]}
+
+
+@app.get("/api/v1/admin/balmz/presale/allocation-reconciliation")
+def balmz_presale_allocation_reconciliation(user: dict = Depends(current_user)):
+    """Admin-only read-only comparison of allocation counters, ledger, and active reservations."""
+    require_world_wallet_admin(user)
+    with db() as conn:
+        state = conn.execute(
+            "SELECT cap_tokens,allocated_tokens,reserved_tokens "
+            "FROM balmz_presale_allocation_state WHERE id=1"
+        ).fetchone()
+        ledger = conn.execute(
+            "SELECT COALESCE(SUM(token_amount),0),COUNT(*) FROM balmz_presale_allocation_ledger"
+        ).fetchone()
+        pending = conn.execute(
+            "SELECT COALESCE(SUM(token_amount),0),COUNT(*) "
+            "FROM balmz_presale_payment_intents WHERE status='pending' AND expires_at>NOW()"
+        ).fetchone()
+    if not state or not ledger or not pending:
+        return {"reconciled": False, "warnings": ["allocation_state_or_ledger_missing"],
+                "presale_release_gate_changed": False}
+    result = _balmz_presale_allocation_reconciliation(*state, ledger[0], pending[0])
+    result.update({"ledger_entry_count": int(ledger[1]), "active_pending_intent_count": int(pending[1]),
+                   "presale_release_gate_changed": False, "transaction_authorized": False})
+    return result
+
+
 @app.get("/api/v1/balmz/presale/status")
 def balmz_presale_status(user: dict = Depends(current_user)):
     """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
