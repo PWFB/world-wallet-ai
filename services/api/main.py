@@ -5553,7 +5553,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
     if recipient_is_valid:
         warnings.append("On-chain balance checks do not prove that the founder controls the receiving wallet; verify ownership before accepting funds.")
     warnings.extend([
-        "Presale payment acceptance remains disabled unless both server-side intent and settlement feature flags are explicitly enabled.",
+        "Presale payment acceptance remains disabled until all five server-side release, treasury ownership, regression, intent, and settlement gates are approved.",
         "Settlement records database allocation only; it does not deliver BALMZ-SOL on-chain.",
         "The launch target of 1 BALMZ-SOL = 1 SOL is not a guaranteed market price and needs a disclosed liquidity mechanism.",
         "Complete production readiness checks and regression tests before opening the presale.",
