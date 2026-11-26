@@ -169,7 +169,8 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             "not-a-url",
             "https://user:password@solana-mainnet.example",
         ):
-            with self.subTest(rpc_url=rpc_url), (
+            with (
+                self.subTest(rpc_url=rpc_url),
                 patch.object(main, "SOLANA_MAINNET_RPC_URL", rpc_url),
                 patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", VALID_MINT),
                 patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
