@@ -86,3 +86,7 @@ The presale must remain unavailable until all of these are independently confirm
 - Mainnet transaction history proves activity only; it does not by itself prove reserves, ownership, or token value.
 - Never reuse an address solely because it appears to have a balance. Verify network, exact address, wallet control, and intended role first.
 - The backend currently keeps presale payment acceptance disabled. Do not change this to enabled until the settlement path is implemented and tested end-to-end.
+
+## Approved freeze-authority policy
+
+The approved BALMZ-SOL policy is a fixed-supply token: after the intended 10,000,000,000-token Solana Mainnet allocation has been minted and independently verified, the freeze authority is intended to be permanently revoked. This decision does not authorize an immediate on-chain transaction. Before revocation, verify the exact production mint, token program, decimals, total supply, mint authority state, and the authorized wallet in a wallet-native transaction review. The revocation transaction must be explicitly approved by the project owner, confirmed at finalized Solana Mainnet commitment, and its signature retained in the release evidence. Never revoke the authority on the Devnet test mint or on an unverified mint. If the freeze authority cannot be safely revoked after independent review, stop the launch and disclose the retained authority rather than silently changing policy.
