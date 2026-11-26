@@ -53,7 +53,10 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertIsNone(result["production_mint"])
         self.assertEqual(result["devnet_mint"], main.BALMZ_SOLANA_DEVNET_MINT)
         self.assertFalse(result["readiness"]["production_mint_verified"])
-        self.assertFalse(result["readiness"]["payment_verification_implemented"])
+        self.assertTrue(result["readiness"]["payment_verification_implemented"])
+        self.assertTrue(result["readiness"]["payment_intents_implemented"])
+        self.assertTrue(result["readiness"]["atomic_settlement_implemented"])
+        self.assertTrue(result["readiness"]["presale_allocation_ledger_implemented"])
         self.assertTrue(result["warnings"])
 
     def test_verified_ten_billion_solana_allocation_does_not_enable_presale(self):
