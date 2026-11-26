@@ -138,7 +138,7 @@ def verify_solana_mainnet_sol_payment(
             paid_lamports += int(lamports)
 
         if matching_transfer_count != 1:
-            raise ValueError("Finalized Solana transaction must contain exactly one matching SOL transfer")
+            raise ValueError("Finalized Solana transaction must contain exactly one matching SOL transfer for the exact expected SOL payment")
         if paid_lamports != expected_lamports:
             raise ValueError("Finalized Solana transaction does not contain the exact expected SOL payment")
 
