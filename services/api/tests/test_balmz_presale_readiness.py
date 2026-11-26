@@ -1,6 +1,7 @@
 import sys
 import unittest
 import base64
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -68,6 +69,18 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(main._verify_balmz_treasury_ownership_signature(address, message + " changed", signature))
         self.assertFalse(main._verify_balmz_treasury_ownership_signature(VALID_RECEIVER, message, signature))
         self.assertFalse(main._verify_balmz_treasury_ownership_signature(address, message, "not-base64"))
+
+    def test_treasury_ownership_proof_expires_after_thirty_days(self):
+        now = datetime(2026, 11, 27, 12, 0, tzinfo=timezone.utc)
+        self.assertTrue(main._balmz_treasury_proof_is_current(now - timedelta(days=29), now))
+        self.assertTrue(main._balmz_treasury_proof_is_current(now - timedelta(days=30), now))
+        self.assertFalse(main._balmz_treasury_proof_is_current(now - timedelta(days=30, seconds=1), now))
+
+    def test_treasury_ownership_proof_rejects_future_and_naive_timestamps(self):
+        now = datetime(2026, 11, 27, 12, 0, tzinfo=timezone.utc)
+        self.assertFalse(main._balmz_treasury_proof_is_current(now + timedelta(seconds=1), now))
+        self.assertFalse(main._balmz_treasury_proof_is_current(datetime(2026, 11, 27, 11, 0), now))
+        self.assertFalse(main._balmz_treasury_proof_is_current(None, now))
 
     def test_unconfigured_presale_is_planning_only_and_payments_stay_disabled(self):
         with patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""), patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""):
