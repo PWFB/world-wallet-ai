@@ -5301,6 +5301,7 @@ def _verify_balmz_presale_receiver(address: str | None) -> dict:
         "address_format_valid": bool(address and valid_solana_address(address)),
         "mainnet_rpc_verified": False,
         "account_exists": False,
+        "system_account_verified": False,
         "balance_sol": None,
         "has_positive_sol_balance": False,
         "warnings": [],
@@ -5335,6 +5336,15 @@ def _verify_balmz_presale_receiver(address: str | None) -> dict:
         result["account_exists"] = isinstance(account, dict)
         if not result["account_exists"]:
             result["warnings"].append("The configured receiving address has no on-chain account at the time of this check.")
+        else:
+            # A treasury destination must be a non-executable System Program wallet,
+            # not a token account, program account, or arbitrary program-owned account.
+            result["system_account_verified"] = (
+                account.get("owner") == "11111111111111111111111111111111"
+                and account.get("executable") is False
+            )
+            if not result["system_account_verified"]:
+                result["warnings"].append("The configured receiving address is not verified as a non-executable System Program wallet account.")
         if not result["has_positive_sol_balance"]:
             result["warnings"].append("The configured receiving address has no positive SOL balance; verify the intended treasury address before using it.")
     except Exception as exc:
@@ -5549,6 +5559,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "receiving_address_configured": recipient_is_valid,
         "receiving_address_mainnet_verified": receiver_status["mainnet_rpc_verified"],
         "receiving_address_account_exists": receiver_status["account_exists"],
+        "receiving_address_system_account_verified": receiver_status["system_account_verified"],
         "receiving_address_has_positive_sol_balance": receiver_status["has_positive_sol_balance"],
         # Implemented in code; release and runtime gates remain independently controlled below.
         "payment_verification_implemented": True,
@@ -5584,7 +5595,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"]),
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"] and readiness["receiving_address_system_account_verified"]),
         "production_network": "solana_mainnet",
         "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
