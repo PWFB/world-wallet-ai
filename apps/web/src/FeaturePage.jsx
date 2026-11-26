@@ -1164,6 +1164,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [presaleStatusError, setPresaleStatusError] = useState("");
   const [presaleStatusBusy, setPresaleStatusBusy] = useState(false);
   const [presaleStatusCheckedAt, setPresaleStatusCheckedAt] = useState(null);
+  const [presaleDelivery, setPresaleDelivery] = useState(null);
+  const [presaleDeliveryBusy, setPresaleDeliveryBusy] = useState(false);
+  const [presaleDeliveryError, setPresaleDeliveryError] = useState("");
   const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
   const [presaleInterest, setPresaleInterest] = useState(null);
   const [presaleInterestBusy, setPresaleInterestBusy] = useState(false);
@@ -2090,6 +2093,35 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         </div>
         {presaleStatus?.warnings?.map((warning, index) => <div className="security-note" key={index}>Readiness warning: {warning}</div>)}
         <div className="presale-warning"><b>Do not send funds.</b> {presaleStatus?.notice || "Presale payments are disabled until production checks and settlement are complete."}</div>
+      </article>
+
+      <article className="panel action-panel presale-delivery-panel">
+        <div className="panel-head">
+          <div><h2>Your BALMZ-SOL allocation and delivery</h2><span>Private to your signed-in wallet · read-only account status</span></div>
+          <button type="button" className="secondary" disabled={presaleDeliveryBusy} onClick={async () => {
+            setPresaleDeliveryBusy(true); setPresaleDeliveryError("");
+            try {
+              const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/delivery-status", { cache: "no-store", headers: { Authorization: "Bearer " + accessToken } });
+              const data = await response.json();
+              if (!response.ok) throw new Error(data.detail || "Could not load your BALMZ-SOL delivery status.");
+              setPresaleDelivery(data);
+            } catch (error) {
+              setPresaleDeliveryError(error.message || "Could not load your BALMZ-SOL delivery status.");
+            } finally { setPresaleDeliveryBusy(false); }
+          }}>{presaleDeliveryBusy ? "Loading…" : "↻ Refresh my allocation"}</button>
+        </div>
+        {presaleDeliveryError && <div className="feature-error" role="alert">{presaleDeliveryError}</div>}
+        {!presaleDelivery && !presaleDeliveryBusy && !presaleDeliveryError && <div className="live-chart-empty">Refresh to check whether this wallet has any settled BALMZ-SOL allocations. No payment or token transaction is started.</div>}
+        {presaleDelivery && <>
+          <div className="presale-estimate-result"><span>Recorded allocations</span><strong>{Number(presaleDelivery.allocation_count || 0).toLocaleString("en-US")}</strong></div>
+          {presaleDelivery.allocations?.length ? <div className="tool-list">{presaleDelivery.allocations.map(item => <div className="tool-row" key={item.allocation_id}>
+            <div><b>{Number(item.token_amount).toLocaleString("en-US", { maximumFractionDigits: 9 })} BALMZ-SOL</b><small>Allocation recorded {item.allocated_at ? new Date(item.allocated_at).toLocaleString() : "—"}</small><small>Payment signature: {item.payment_signature ? item.payment_signature.slice(0, 10) + "…" + item.payment_signature.slice(-8) : "Unavailable"}</small></div>
+            <strong>Token delivery pending</strong>
+          </div>)}</div> : <div className="live-chart-empty">No settled BALMZ-SOL allocations are recorded for this wallet.</div>}
+          <div className="security-note"><b>Recipient wallet:</b> {presaleDelivery.recipient?.verified_mainnet_addresses?.length ? presaleDelivery.recipient.verified_mainnet_addresses.join(" · ") : "No fresh, verified Solana Mainnet recipient address is available."}</div>
+          <div className="security-note">Recipient selection is always required; no address is automatically selected. Ownership proof freshness: {presaleDelivery.recipient_ownership_proof_freshness_days || 30} days.</div>
+          <div className="presale-warning">A database allocation is not an on-chain token balance. Token delivery is disabled; this page does not prepare, sign, broadcast, or transfer tokens.</div>
+        </>}
       </article>
 
       <article className="panel presale-scope-panel">
