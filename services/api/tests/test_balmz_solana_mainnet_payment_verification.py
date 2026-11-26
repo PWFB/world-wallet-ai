@@ -173,6 +173,25 @@ class BalmzSolanaMainnetPaymentVerificationTests(unittest.TestCase):
                 self.assertEqual(caught.exception.status_code, 503)
                 self.assertIn("signature-status metadata", caught.exception.detail)
 
+    def test_mainnet_payment_verifier_requires_https_rpc_endpoint(self):
+        for rpc_url in (
+            "http://solana-mainnet.example",
+            "not-a-url",
+            "https://user:password@solana-mainnet.example",
+        ):
+            with self.subTest(rpc_url=rpc_url):
+                with patch.object(main, "rpc_call") as rpc:
+                    with self.assertRaises(main.HTTPException) as caught:
+                        verify_solana_mainnet_sol_payment(
+                            SIGNATURE, SENDER, RECIPIENT, EXPECTED, main.rpc_call,
+                            expected_genesis_hash=main.SOLANA_MAINNET_GENESIS_HASH,
+                            rpc_url=rpc_url,
+                            valid_address=main.valid_solana_address,
+                        )
+                self.assertEqual(caught.exception.status_code, 503)
+                self.assertIn("HTTPS RPC endpoint", caught.exception.detail)
+                rpc.assert_not_called()
+
     def test_invalid_signature_is_rejected_before_rpc(self):
         with patch.object(main, "rpc_call") as rpc:
             with self.assertRaisesRegex(ValueError, "Invalid Solana transaction signature"):

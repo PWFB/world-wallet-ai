@@ -5,6 +5,7 @@ allocate tokens, sign transactions, or move funds. Callers must enforce a unique
 signature constraint and atomically settle an existing server-created payment intent.
 """
 import re
+from urllib.parse import urlparse
 from fastapi import HTTPException
 
 
@@ -33,8 +34,16 @@ def verify_solana_mainnet_sol_payment(
         raise ValueError("Payment sender and treasury destination must be different")
     if isinstance(expected_lamports, bool) or not isinstance(expected_lamports, int) or expected_lamports <= 0:
         raise ValueError("Expected payment must be a positive integer lamport amount")
-    if not rpc_url or not expected_genesis_hash:
-        raise HTTPException(status_code=503, detail="Solana Mainnet payment verification is not configured")
+    parsed_rpc_url = urlparse(rpc_url) if isinstance(rpc_url, str) else None
+    if (
+        not parsed_rpc_url
+        or parsed_rpc_url.scheme.lower() != "https"
+        or not parsed_rpc_url.hostname
+        or parsed_rpc_url.username is not None
+        or parsed_rpc_url.password is not None
+        or not expected_genesis_hash
+    ):
+        raise HTTPException(status_code=503, detail="Solana Mainnet payment verification requires a valid HTTPS RPC endpoint")
 
     try:
         genesis = rpc_call(rpc_url, "getGenesisHash", [])
