@@ -5463,6 +5463,7 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
         raise HTTPException(status_code=409,detail="This payment intent is no longer pending")
     if expiry<=datetime.now(timezone.utc):
         with db() as conn:
+            conn.execute("SELECT id FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE")
             row=conn.execute("SELECT token_amount FROM balmz_presale_payment_intents WHERE id=%s AND owner_id=%s AND status='pending' FOR UPDATE",(body.intent_id,user["id"])).fetchone()
             if row:
                 conn.execute("UPDATE balmz_presale_payment_intents SET status='expired' WHERE id=%s",(body.intent_id,))
@@ -5475,6 +5476,9 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
     expired_during=False
     try:
         with db() as conn:
+            allocation=conn.execute("SELECT cap_tokens,allocated_tokens,reserved_tokens FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE").fetchone()
+            if not allocation:
+                raise HTTPException(status_code=503,detail="Presale allocation ledger is not initialized")
             row=conn.execute("""SELECT owner_id,payer_address,token_amount,token_base_units,status,tx_signature,expires_at
               FROM balmz_presale_payment_intents WHERE id=%s FOR UPDATE""",(body.intent_id,)).fetchone()
             if not row or row[0]!=user["id"]:
@@ -5486,9 +5490,6 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
                 raise HTTPException(status_code=409,detail="This payment intent has already been settled")
             if current_status!="pending":
                 raise HTTPException(status_code=409,detail="This payment intent is no longer pending")
-            allocation=conn.execute("SELECT cap_tokens,allocated_tokens,reserved_tokens FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE").fetchone()
-            if not allocation:
-                raise HTTPException(status_code=503,detail="Presale allocation ledger is not initialized")
             if current_expiry<=datetime.now(timezone.utc):
                 conn.execute("UPDATE balmz_presale_payment_intents SET status='expired' WHERE id=%s",(body.intent_id,))
                 conn.execute("UPDATE balmz_presale_allocation_state SET reserved_tokens=GREATEST(0,reserved_tokens-%s),updated_at=NOW() WHERE id=1",(token_amount,))
