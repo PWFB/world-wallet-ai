@@ -82,6 +82,32 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(main._balmz_treasury_proof_is_current(datetime(2026, 11, 27, 11, 0), now))
         self.assertFalse(main._balmz_treasury_proof_is_current(None, now))
 
+    def test_presale_allocation_reconciliation_accepts_matching_ledger_and_reservations(self):
+        result = main._balmz_presale_allocation_reconciliation(
+            "1000000000", "125.5", "25", "125.5", "25"
+        )
+        self.assertTrue(result["reconciled"])
+        self.assertTrue(all(result["checks"].values()))
+
+    def test_presale_allocation_reconciliation_detects_counter_drift_and_cap_overrun(self):
+        drift = main._balmz_presale_allocation_reconciliation(1000, 100, 50, 99, 50)
+        self.assertFalse(drift["reconciled"])
+        self.assertFalse(drift["checks"]["allocated_matches_ledger"])
+        over_cap = main._balmz_presale_allocation_reconciliation(100, 80, 30, 80, 30)
+        self.assertFalse(over_cap["reconciled"])
+        self.assertFalse(over_cap["checks"]["within_cap"])
+
+    def test_presale_allocation_reconciliation_rejects_invalid_numeric_metadata(self):
+        for values in (
+            (100, -1, 0, -1, 0),
+            (100, 1, 0, float("nan"), 0),
+            (0, 0, 0, 0, 0),
+        ):
+            with self.subTest(values=values):
+                result = main._balmz_presale_allocation_reconciliation(*values)
+                self.assertFalse(result["reconciled"])
+                self.assertIn("valid_numeric_metadata", result["checks"])
+
     def test_unconfigured_presale_is_planning_only_and_payments_stay_disabled(self):
         with patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""), patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", ""):
             result = main.balmz_presale_status({"id": "test-user"})
