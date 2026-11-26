@@ -5887,7 +5887,7 @@ def _verify_balmz_treasury_ownership_signature(address: str, message: str, signa
                 return False
             decoded = decoded * 58 + digit
         public_key = decoded.to_bytes((decoded.bit_length() + 7) // 8, "big") if decoded else b""
-        public_key = (b"\\x00" * (len(address) - len(address.lstrip("1")))) + public_key
+        public_key = (b"\x00" * (len(address) - len(address.lstrip("1")))) + public_key
         signature_bytes = base64.b64decode(signature, validate=True)
         if len(public_key) != 32 or len(signature_bytes) != 64:
             return False
@@ -5907,13 +5907,13 @@ def create_balmz_treasury_ownership_challenge(user: dict = Depends(current_user)
     challenge_id = "bto_" + secrets.token_urlsafe(24)
     issued_at = int(datetime.now(timezone.utc).timestamp())
     message = (
-        "World Wallet AI BALMZ-SOL treasury ownership proof\\n"
-        "Network: Solana Mainnet\\n"
-        f"Administrator: {admin_email}\\n"
-        f"Treasury: {treasury_address}\\n"
-        f"Challenge: {challenge_id}\\n"
-        f"Issued: {issued_at}\\n"
-        "Purpose: prove control of this exact treasury address for the configured administrator.\\n"
+        "World Wallet AI BALMZ-SOL treasury ownership proof\n"
+        "Network: Solana Mainnet\n"
+        f"Administrator: {admin_email}\n"
+        f"Treasury: {treasury_address}\n"
+        f"Challenge: {challenge_id}\n"
+        f"Issued: {issued_at}\n"
+        "Purpose: prove control of this exact treasury address for the configured administrator.\n"
         "This message does not authorize a transaction, transfer, mint, or token authority change."
     )
     with db() as conn:
