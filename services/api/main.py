@@ -5634,6 +5634,74 @@ def balmz_presale_allocation_reconciliation(user: dict = Depends(current_user)):
     return result
 
 
+def _balmz_delivery_recipient_proof_is_current(verified_at, now=None):
+    """Accept only timezone-aware Solana recipient proofs no older than 30 days."""
+    if not isinstance(verified_at, datetime) or verified_at.tzinfo is None:
+        return False
+    checked_at = now or datetime.now(timezone.utc)
+    if not isinstance(checked_at, datetime) or checked_at.tzinfo is None:
+        return False
+    age = checked_at - verified_at
+    return timedelta(0) <= age <= timedelta(days=30)
+
+
+def _balmz_presale_delivery_recipient_status(addresses):
+    """Return fresh, verified Mainnet recipient candidates without silently selecting one."""
+    candidates = sorted({address for address in addresses if isinstance(address, str) and valid_solana_address(address)})
+    return {
+        "verified_mainnet_addresses": candidates,
+        "recipient_selection_required": True,
+        "auto_selected_recipient": None,
+        "state": "recipient_verification_required" if not candidates else "buyer_confirmation_required",
+    }
+
+
+@app.get("/api/v1/balmz/presale/delivery-status")
+def balmz_presale_delivery_status(user: dict = Depends(current_user)):
+    """List the caller's settled allocations and verified recipient candidates; never sends tokens."""
+    with db() as conn:
+        allocations = conn.execute(
+            "SELECT id,token_amount,token_base_units,tx_signature,finalized_slot,created_at "
+            "FROM balmz_presale_allocation_ledger WHERE owner_id=%s ORDER BY created_at DESC",
+            (user["id"],),
+        ).fetchall()
+        addresses = conn.execute(
+            "SELECT wa.address,MAX(wac.used_at) AS ownership_verified_at "
+            "FROM wallet_addresses wa JOIN wallets w ON w.id=wa.wallet_id "
+            "LEFT JOIN wallet_address_challenges wac ON wac.wallet_id=wa.wallet_id "
+            "AND wac.owner_id=w.owner_id AND wac.network=wa.network AND wac.address=wa.address "
+            "AND wac.used_at IS NOT NULL "
+            "WHERE w.owner_id=%s AND wa.network='solana_mainnet' AND wa.ownership_verified=TRUE "
+            "GROUP BY wa.address ORDER BY wa.address",
+            (user["id"],),
+        ).fetchall()
+    recipient = _balmz_presale_delivery_recipient_status(
+        [row[0] for row in addresses if _balmz_delivery_recipient_proof_is_current(row[1])]
+    )
+    return {
+        "allocations": [
+            {
+                "allocation_id": row[0],
+                "token_amount": str(row[1]),
+                "token_base_units": str(row[2]),
+                "payment_signature": row[3],
+                "payment_finalized_slot": int(row[4]),
+                "allocated_at": row[5].isoformat() if row[5] else None,
+                "delivery_state": "allocated_delivery_pending",
+                "token_delivery_signature": None,
+            }
+            for row in allocations
+        ],
+        "allocation_count": len(allocations),
+        "recipient": recipient,
+        "recipient_ownership_proof_freshness_days": 30,
+        "delivery_enabled": False,
+        "transaction_authorized": False,
+        "presale_release_gate_changed": False,
+        "notice": "This endpoint reports database allocations and verified recipient candidates only. It does not prepare, sign, broadcast, or deliver tokens.",
+    }
+
+
 @app.get("/api/v1/balmz/presale/status")
 def balmz_presale_status(user: dict = Depends(current_user)):
     """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
