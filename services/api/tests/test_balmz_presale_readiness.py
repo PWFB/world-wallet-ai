@@ -445,10 +445,6 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             self.assertTrue(any("no on-chain account" in warning for warning in result["warnings"]))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_delivery_recipient_status_never_auto_selects_verified_address(self):
         result = main._balmz_presale_delivery_recipient_status([VALID_RECEIVER, VALID_RECEIVER])
         self.assertEqual(result["verified_mainnet_addresses"], [VALID_RECEIVER])
@@ -470,3 +466,7 @@ if __name__ == "__main__":
         ])
         self.assertEqual(result["verified_mainnet_addresses"], [])
         self.assertEqual(result["state"], "recipient_verification_required")
+
+
+if __name__ == "__main__":
+    unittest.main()
