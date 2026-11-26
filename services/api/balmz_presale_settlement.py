@@ -76,6 +76,15 @@ def verify_solana_mainnet_sol_payment(
         if meta.get("err") is not None:
             raise ValueError("Solana payment transaction failed on-chain")
 
+        signatures = transaction.get("signatures")
+        if (
+            not isinstance(signatures, list)
+            or not signatures
+            or any(not isinstance(item, str) for item in signatures)
+            or tx_signature not in signatures
+        ):
+            raise HTTPException(status_code=503, detail="Solana RPC transaction signature does not match the requested payment")
+
         message = transaction.get("message")
         if not isinstance(message, dict):
             raise HTTPException(status_code=503, detail="Malformed Solana transaction message")
@@ -106,6 +115,7 @@ def verify_solana_mainnet_sol_payment(
             instructions.extend(group.get("instructions") or [])
 
         paid_lamports = 0
+        matching_transfer_count = 0
         for instruction in instructions:
             if not isinstance(instruction, dict):
                 raise HTTPException(status_code=503, detail="Malformed Solana instruction")
@@ -124,8 +134,11 @@ def verify_solana_mainnet_sol_payment(
             lamports = info.get("lamports")
             if isinstance(lamports, bool) or not isinstance(lamports, (int, str)) or not str(lamports).isdigit():
                 raise HTTPException(status_code=503, detail="Malformed SOL transfer amount")
+            matching_transfer_count += 1
             paid_lamports += int(lamports)
 
+        if matching_transfer_count != 1:
+            raise ValueError("Finalized Solana transaction must contain exactly one matching SOL transfer for the exact expected SOL payment")
         if paid_lamports != expected_lamports:
             raise ValueError("Finalized Solana transaction does not contain the exact expected SOL payment")
 
