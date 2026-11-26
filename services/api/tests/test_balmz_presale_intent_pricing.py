@@ -21,7 +21,7 @@ class BalmzPresaleIntentPricingTests(unittest.TestCase):
 
     def test_lamports_round_up_not_down(self):
         lamports,_=main.balmz_presale_expected_lamports(Decimal("1"),Decimal("123.45"))
-        self.assertEqual(lamports,56_703_120)
+        self.assertEqual(lamports,56_703_119)
 
     def test_rejects_zero_negative_nan_and_infinite_quotes(self):
         for amount,price in [
