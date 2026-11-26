@@ -51,7 +51,7 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
     def _connect(cls):
         return psycopg.connect(
             TEST_DATABASE_URL,
-            options=f"-csearch_path={cls.schema}",
+            options=f"-c search_path={cls.schema}",
             application_name="balmz-presale-postgres-tests",
         )
 
