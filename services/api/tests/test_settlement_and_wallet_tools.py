@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from contextlib import nullcontext
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -116,8 +117,7 @@ class SettlementAndWalletToolTests(unittest.TestCase):
         connection = Mock()
         connection.execute.return_value.fetchall.return_value = []
         with patch.object(main, "configured_addresses", return_value=[{"network": "sepolia", "address": address, "label": "testnet"}]), \
-             patch.object(main, "db") as database:
-            database.return_value.__enter__.return_value = connection
+             patch.object(main, "db", side_effect=lambda: nullcontext(connection)):
             result = main.wallet_proof_of_reserves({"wallet_id": "wallet_test"})
         self.assertEqual(result["reserves"], [])
         self.assertFalse(result["audited"])
