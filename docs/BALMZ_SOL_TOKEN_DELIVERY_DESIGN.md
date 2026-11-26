@@ -100,3 +100,8 @@ The production release review must include independent review of the mint and au
 ## Explicit non-goals
 
 This specification does not deploy the Mainnet mint, mint tokens, revoke mint/freeze authorities, create or fund token accounts, sign or broadcast transactions, enable presale payment acceptance, repair allocation records, or authorize refunds. The five WORLD_WALLET_BALMZ_PRESALE_* release flags must remain unchanged and disabled until all evidence is independently reviewed and the project owner explicitly approves release.
+
+
+## Recipient proof freshness gate
+
+The read-only delivery-readiness endpoint may list a buyer's Solana Mainnet address as a candidate only when the address is attached to a wallet owned by that buyer, the address is marked ownership-verified, and a successfully consumed wallet-address signature challenge for that exact wallet, owner, network, and address is no older than 30 days. Missing, expired, future-dated, or timezone-naive proof timestamps fail closed. A stale proof must be renewed through the existing wallet-address challenge and verification flow before the address can be considered for delivery. This freshness filter does not select a recipient or authorize a transaction; the buyer must still explicitly select and confirm the exact recipient for the allocation.

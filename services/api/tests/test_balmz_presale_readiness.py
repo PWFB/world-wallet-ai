@@ -445,6 +445,18 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             self.assertTrue(any("no on-chain account" in warning for warning in result["warnings"]))
 
 
+    def test_delivery_recipient_proof_freshness_accepts_thirty_days_and_rejects_older(self):
+        now = datetime(2026, 11, 27, 12, 0, tzinfo=timezone.utc)
+        self.assertTrue(main._balmz_delivery_recipient_proof_is_current(now - timedelta(days=29), now))
+        self.assertTrue(main._balmz_delivery_recipient_proof_is_current(now - timedelta(days=30), now))
+        self.assertFalse(main._balmz_delivery_recipient_proof_is_current(now - timedelta(days=30, seconds=1), now))
+
+    def test_delivery_recipient_proof_freshness_rejects_future_naive_and_missing(self):
+        now = datetime(2026, 11, 27, 12, 0, tzinfo=timezone.utc)
+        self.assertFalse(main._balmz_delivery_recipient_proof_is_current(now + timedelta(seconds=1), now))
+        self.assertFalse(main._balmz_delivery_recipient_proof_is_current(datetime(2026, 11, 27, 11, 0), now))
+        self.assertFalse(main._balmz_delivery_recipient_proof_is_current(None, now))
+
     def test_delivery_recipient_status_never_auto_selects_verified_address(self):
         result = main._balmz_presale_delivery_recipient_status([VALID_RECEIVER, VALID_RECEIVER])
         self.assertEqual(result["verified_mainnet_addresses"], [VALID_RECEIVER])

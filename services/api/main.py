@@ -5634,8 +5634,19 @@ def balmz_presale_allocation_reconciliation(user: dict = Depends(current_user)):
     return result
 
 
+def _balmz_delivery_recipient_proof_is_current(verified_at, now=None):
+    """Accept only timezone-aware Solana recipient proofs no older than 30 days."""
+    if not isinstance(verified_at, datetime) or verified_at.tzinfo is None:
+        return False
+    checked_at = now or datetime.now(timezone.utc)
+    if not isinstance(checked_at, datetime) or checked_at.tzinfo is None:
+        return False
+    age = checked_at - verified_at
+    return timedelta(0) <= age <= timedelta(days=30)
+
+
 def _balmz_presale_delivery_recipient_status(addresses):
-    """Return verified Mainnet recipient candidates without silently selecting one."""
+    """Return fresh, verified Mainnet recipient candidates without silently selecting one."""
     candidates = sorted({address for address in addresses if isinstance(address, str) and valid_solana_address(address)})
     return {
         "verified_mainnet_addresses": candidates,
@@ -5655,13 +5666,18 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
             (user["id"],),
         ).fetchall()
         addresses = conn.execute(
-            "SELECT wa.address FROM wallet_addresses wa "
-            "JOIN wallets w ON w.id=wa.wallet_id "
+            "SELECT wa.address,MAX(wac.used_at) AS ownership_verified_at "
+            "FROM wallet_addresses wa JOIN wallets w ON w.id=wa.wallet_id "
+            "LEFT JOIN wallet_address_challenges wac ON wac.wallet_id=wa.wallet_id "
+            "AND wac.owner_id=w.owner_id AND wac.network=wa.network AND wac.address=wa.address "
+            "AND wac.used_at IS NOT NULL "
             "WHERE w.owner_id=%s AND wa.network='solana_mainnet' AND wa.ownership_verified=TRUE "
-            "ORDER BY wa.created_at,wa.address",
+            "GROUP BY wa.address ORDER BY wa.address",
             (user["id"],),
         ).fetchall()
-    recipient = _balmz_presale_delivery_recipient_status([row[0] for row in addresses])
+    recipient = _balmz_presale_delivery_recipient_status(
+        [row[0] for row in addresses if _balmz_delivery_recipient_proof_is_current(row[1])]
+    )
     return {
         "allocations": [
             {
@@ -5678,6 +5694,7 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
         ],
         "allocation_count": len(allocations),
         "recipient": recipient,
+        "recipient_ownership_proof_freshness_days": 30,
         "delivery_enabled": False,
         "transaction_authorized": False,
         "presale_release_gate_changed": False,
