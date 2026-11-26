@@ -121,6 +121,7 @@ BALMZ_PRESALE_INTENTS_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_INTENTS_EN
 BALMZ_PRESALE_SETTLEMENT_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_PRESALE_RELEASE_APPROVED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
@@ -5391,7 +5392,7 @@ def _balmz_presale_sol_usd_quote():
 @app.post("/api/v1/balmz/presale/intents")
 def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depends(current_user)):
     """Create a server-priced, short-lived payment intent; disabled unless explicitly configured."""
-    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED):
+    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and intent gates are not approved")
     if not DATABASE_URL or not user.get("id"):
         raise HTTPException(status_code=503,detail="Presale payment intents require the configured account database")
@@ -5442,7 +5443,7 @@ def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depen
 @app.post("/api/v1/balmz/presale/settle")
 def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Depends(current_user)):
     """Verify and atomically record a finalized payment once; this does not transfer tokens."""
-    if not (BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED):
+    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and settlement gates are not approved")
     if not DATABASE_URL:
         raise HTTPException(status_code=503,detail="Presale settlement requires the configured account database")
@@ -5537,7 +5538,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "receiving_address_mainnet_verified": receiver_status["mainnet_rpc_verified"],
         "receiving_address_account_exists": receiver_status["account_exists"],
         "receiving_address_has_positive_sol_balance": receiver_status["has_positive_sol_balance"],
-        # Intentionally false: an authenticated, replay-protected settlement endpoint is not implemented.
+        # Implemented in code; release and runtime gates remain independently controlled below.
         "payment_verification_implemented": True,
         "payment_intents_implemented": True,
         "atomic_settlement_implemented": True,
@@ -5545,7 +5546,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         # A token price target alone is not a liquidity or market-making mechanism.
         "liquidity_mechanism_configured": False,
         # CI status is not inferred from runtime settings.
-        "regression_suite_verified": False,
+        "regression_suite_verified": BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED,
     }
     warnings = list(mint_status["warnings"]) + list(receiver_status["warnings"])
     if recipient_is_valid:
@@ -5571,7 +5572,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"]),
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"]),
         "production_network": "solana_mainnet",
         "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
