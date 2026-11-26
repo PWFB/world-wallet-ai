@@ -36,6 +36,11 @@ except ModuleNotFoundError:
     from wallet_workflows import generate_transaction_reference, record_wallet_audit_event
 
 try:
+    from services.api.balmz_presale_settlement import verify_solana_mainnet_sol_payment
+except ModuleNotFoundError:
+    from balmz_presale_settlement import verify_solana_mainnet_sol_payment
+
+try:
     from services.api.market_price_cache import MarketPriceCache
 except ModuleNotFoundError:
     # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
@@ -5262,6 +5267,26 @@ def _verify_balmz_presale_receiver(address: str | None) -> dict:
         logger.warning("BALMZ Mainnet treasury check unavailable: error_type=%s", type(exc).__name__)
         result["warnings"].append("The presale receiving address balance could not be verified against Solana Mainnet.")
     return result
+
+
+def verify_balmz_presale_mainnet_payment(tx_signature: str, sender_address: str, expected_lamports: int):
+    """Verify finalized native SOL payment evidence against the configured Mainnet treasury.
+
+    This helper is deliberately not a settlement endpoint: it never creates an order,
+    credits tokens, consumes a signature, or changes payment-acceptance configuration.
+    """
+    if not valid_solana_address(BALMZ_PRESALE_RECEIVING_ADDRESS):
+        raise HTTPException(status_code=503, detail="A valid Solana Mainnet presale treasury is not configured")
+    return verify_solana_mainnet_sol_payment(
+        tx_signature,
+        sender_address,
+        BALMZ_PRESALE_RECEIVING_ADDRESS,
+        expected_lamports,
+        rpc_call,
+        expected_genesis_hash=SOLANA_MAINNET_GENESIS_HASH,
+        rpc_url=SOLANA_MAINNET_RPC_URL,
+        valid_address=valid_solana_address,
+    )
 
 
 @app.get("/api/v1/balmz/presale/status")
