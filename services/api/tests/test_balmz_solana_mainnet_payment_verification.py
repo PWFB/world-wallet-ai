@@ -65,9 +65,24 @@ class BalmzSolanaMainnetPaymentVerificationTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 503)
         self.assertIn("signature does not match", caught.exception.detail)
 
+    def test_boolean_slot_is_rejected_as_malformed_metadata(self):
+        tx = transaction()
+        tx["slot"] = True
+        with self.assertRaises(main.HTTPException) as caught:
+            self.verify(tx)
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("transaction metadata", caught.exception.detail)
+
+    def test_negative_slot_is_rejected_as_malformed_metadata(self):
+        tx = transaction()
+        tx["slot"] = -1
+        with self.assertRaises(main.HTTPException) as caught:
+            self.verify(tx)
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("transaction metadata", caught.exception.detail)
+
     def test_multiple_matching_transfers_are_rejected(self):
         tx = transaction()
-        first = tx["transaction"]["message"]["instructions"][0]
         second = {
             "program": "system",
             "parsed": {"type": "transfer", "info": {
