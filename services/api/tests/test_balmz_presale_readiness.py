@@ -17,7 +17,7 @@ def mainnet_rpc(_url, method, _params):
     if method == "getBalance":
         return {"value": 2_500_000_000}
     if method == "getAccountInfo" and _params and _params[0] == VALID_RECEIVER:
-        return {"value": {"owner": "11111111111111111111111111111111", "data": ["", "base64"]}}
+        return {"value": {"owner": "11111111111111111111111111111111", "executable": False, "data": ["", "base64"]}}
     if method == "getAccountInfo":
         return {
             "value": {
@@ -80,6 +80,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertTrue(result["receiving_address_configured"])
         self.assertTrue(result["presale_receiving_address_mainnet_verified"])
         self.assertTrue(result["presale_receiving_address_account_exists"])
+        self.assertTrue(result["readiness"]["receiving_address_system_account_verified"])
         self.assertTrue(result["presale_receiving_address_has_positive_sol_balance"])
         self.assertEqual(result["presale_receiving_balance_sol"], 2.5)
         self.assertFalse(result["payment_acceptance_enabled"])
@@ -92,7 +93,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             if method == "getBalance":
                 return {"value": 0}
             if method == "getAccountInfo" and params and params[0] == VALID_RECEIVER:
-                return {"value": {"owner": "11111111111111111111111111111111", "data": ["", "base64"]}}
+                return {"value": {"owner": "11111111111111111111111111111111", "executable": False, "data": ["", "base64"]}}
             return mainnet_rpc(_url, method, params)
 
         with (
@@ -131,6 +132,49 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(result["presale_receiving_address_has_positive_sol_balance"])
         self.assertFalse(result["payment_acceptance_enabled"])
         self.assertTrue(any("no on-chain account" in warning for warning in result["warnings"]))
+
+
+    def test_receiver_owned_by_non_system_program_is_not_accepted_as_treasury_wallet(self):
+        def rpc_non_system_owner(_url, method, params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 2_500_000_000}
+            if method == "getAccountInfo" and params and params[0] == VALID_RECEIVER:
+                return {"value": {"owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False, "data": ["", "base64"]}}
+            return mainnet_rpc(_url, method, params)
+
+        with (
+            patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""),
+            patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+            patch.object(main, "rpc_call", side_effect=rpc_non_system_owner),
+        ):
+            result = main.balmz_presale_status({"id": "test-user"})
+
+        self.assertTrue(result["presale_receiving_address_account_exists"])
+        self.assertFalse(result["readiness"]["receiving_address_system_account_verified"])
+        self.assertFalse(result["payment_acceptance_enabled"])
+        self.assertTrue(any("not verified as a non-executable System Program wallet" in warning for warning in result["warnings"]))
+
+    def test_executable_system_program_account_is_not_accepted_as_treasury_wallet(self):
+        def rpc_executable(_url, method, params):
+            if method == "getGenesisHash":
+                return main.SOLANA_MAINNET_GENESIS_HASH
+            if method == "getBalance":
+                return {"value": 2_500_000_000}
+            if method == "getAccountInfo" and params and params[0] == VALID_RECEIVER:
+                return {"value": {"owner": "11111111111111111111111111111111", "executable": True, "data": ["", "base64"]}}
+            return mainnet_rpc(_url, method, params)
+
+        with (
+            patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", ""),
+            patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+            patch.object(main, "rpc_call", side_effect=rpc_executable),
+        ):
+            result = main.balmz_presale_status({"id": "test-user"})
+
+        self.assertFalse(result["readiness"]["receiving_address_system_account_verified"])
+        self.assertFalse(result["payment_acceptance_enabled"])
 
     def test_mint_authority_still_enabled_is_not_fixed_supply(self):
         def rpc_with_authority(_url, method, params):
