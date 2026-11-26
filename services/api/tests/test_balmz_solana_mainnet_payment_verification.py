@@ -152,6 +152,27 @@ class BalmzSolanaMainnetPaymentVerificationTests(unittest.TestCase):
         )
         self.assertEqual(result["state"], "not_found")
 
+    def test_malformed_pending_signature_status_metadata_fails_closed(self):
+        malformed_statuses = [
+            {"err": None, "confirmationStatus": "confirmed", "slot": True},
+            {"err": None, "confirmationStatus": "confirmed", "slot": -1},
+            {"err": None, "confirmationStatus": "unknown", "slot": 99},
+            {"err": None, "confirmationStatus": "confirmed"},
+        ]
+        for status in malformed_statuses:
+            with self.subTest(status=status):
+                with self.assertRaises(main.HTTPException) as caught:
+                    self.verify(
+                        tx=None,
+                        rpc_side_effect=[
+                            main.SOLANA_MAINNET_GENESIS_HASH,
+                            None,
+                            {"value": [status]},
+                        ],
+                    )
+                self.assertEqual(caught.exception.status_code, 503)
+                self.assertIn("signature-status metadata", caught.exception.detail)
+
     def test_invalid_signature_is_rejected_before_rpc(self):
         with patch.object(main, "rpc_call") as rpc:
             with self.assertRaisesRegex(ValueError, "Invalid Solana transaction signature"):
