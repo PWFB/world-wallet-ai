@@ -163,6 +163,36 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
         self.assertFalse(result["payment_acceptance_enabled"])
         self.assertTrue(any("could not be verified" in warning for warning in result["warnings"]))
 
+    def test_mainnet_read_only_verifiers_reject_insecure_rpc_urls_before_rpc(self):
+        for rpc_url in (
+            "http://solana-mainnet.example",
+            "not-a-url",
+            "https://user:password@solana-mainnet.example",
+        ):
+            with (
+                self.subTest(rpc_url=rpc_url),
+                patch.object(main, "SOLANA_MAINNET_RPC_URL", rpc_url),
+                patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", VALID_MINT),
+                patch.object(main, "BALMZ_PRESALE_RECEIVING_ADDRESS", VALID_RECEIVER),
+                patch.object(main, "rpc_call") as rpc,
+            ):
+                result = main.balmz_presale_status({"id": "test-user"})
+            rpc.assert_not_called()
+            self.assertFalse(result["readiness"]["production_mint_verified"])
+            self.assertFalse(result["readiness"]["receiving_address_mainnet_verified"])
+            self.assertFalse(result["payment_acceptance_enabled"])
+            self.assertTrue(any("could not be verified" in warning for warning in result["warnings"]))
+
+    def test_devnet_rpc_cluster_validation_remains_separate(self):
+        with patch.object(main, "rpc_call", return_value=main.SOLANA_DEVNET_GENESIS_HASH) as rpc:
+            result = main.require_solana_rpc_cluster(
+                "https://api.devnet.solana.com",
+                main.SOLANA_DEVNET_GENESIS_HASH,
+                "Solana Devnet",
+            )
+        self.assertEqual(result, main.SOLANA_DEVNET_GENESIS_HASH)
+        rpc.assert_called_once()
+
     def test_invalid_mint_address_is_not_queried(self):
         with (
             patch.object(main, "BALMZ_SOLANA_MAINNET_MINT", "not-a-solana-address"),
