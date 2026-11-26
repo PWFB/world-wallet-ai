@@ -5658,6 +5658,10 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
             "SELECT wa.address FROM wallet_addresses wa "
             "JOIN wallets w ON w.id=wa.wallet_id "
             "WHERE w.owner_id=%s AND wa.network='solana_mainnet' AND wa.ownership_verified=TRUE "
+            "AND EXISTS (SELECT 1 FROM wallet_address_challenges wac "
+            "WHERE wac.wallet_id=wa.wallet_id AND wac.owner_id=w.owner_id "
+            "AND wac.network=wa.network AND wac.address=wa.address "
+            "AND wac.used_at IS NOT NULL AND wac.used_at >= NOW()-INTERVAL '30 days') "
             "ORDER BY wa.created_at,wa.address",
             (user["id"],),
         ).fetchall()
@@ -5678,6 +5682,7 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
         ],
         "allocation_count": len(allocations),
         "recipient": recipient,
+        "recipient_ownership_proof_freshness_days": 30,
         "delivery_enabled": False,
         "transaction_authorized": False,
         "presale_release_gate_changed": False,
