@@ -5974,12 +5974,24 @@ def verify_balmz_treasury_ownership(request: BalmzTreasuryOwnershipVerifyRequest
             "transaction_authorized": False, "presale_release_gate_changed": False}
 
 
+def _balmz_treasury_proof_is_current(verified_at: datetime, now: datetime | None = None) -> bool:
+    """Accept only timezone-aware treasury proofs no older than 30 days."""
+    if not isinstance(verified_at, datetime) or verified_at.tzinfo is None:
+        return False
+    checked_at = now or datetime.now(timezone.utc)
+    if not isinstance(checked_at, datetime) or checked_at.tzinfo is None:
+        return False
+    age = checked_at - verified_at
+    return timedelta(0) <= age <= timedelta(days=30)
+
+
 @app.get("/api/v1/admin/balmz/treasury-ownership/status")
 def balmz_treasury_ownership_status(user: dict = Depends(current_user)):
     admin_email = require_world_wallet_admin(user)
     treasury_address = BALMZ_PRESALE_RECEIVING_ADDRESS
     if not treasury_address:
-        return {"verified": False, "treasury_address_configured": False, "presale_release_gate_changed": False}
+        return {"verified": False, "treasury_address_configured": False,
+                "proof_freshness_days": 30, "presale_release_gate_changed": False}
     with db() as conn:
         proof = conn.execute(
             "SELECT verified_at FROM balmz_treasury_ownership_proofs "
@@ -5987,9 +5999,15 @@ def balmz_treasury_ownership_status(user: dict = Depends(current_user)):
             "ORDER BY verified_at DESC LIMIT 1",
             (user["id"], admin_email, treasury_address),
         ).fetchone()
-    return {"verified": bool(proof), "treasury_address_configured": True,
+    verified_at = proof[0] if proof else None
+    proof_current = _balmz_treasury_proof_is_current(verified_at) if verified_at else False
+    expires_at = verified_at + timedelta(days=30) if proof_current else None
+    return {"verified": proof_current, "treasury_address_configured": True,
             "treasury_address": treasury_address,
-            "verified_at": proof[0].isoformat() if proof else None,
+            "verified_at": verified_at.isoformat() if verified_at else None,
+            "proof_expires_at": expires_at.isoformat() if expires_at else None,
+            "proof_freshness_days": 30,
+            "proof_stale": bool(verified_at and not proof_current),
             "presale_release_gate_changed": False}
 
 
