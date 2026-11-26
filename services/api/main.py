@@ -423,6 +423,11 @@ class WalletAddressVerifyRequest(BaseModel):
     signature: str = Field(min_length=20, max_length=8192)
 
 
+class BalmzTreasuryOwnershipVerifyRequest(BaseModel):
+    challenge_id: str = Field(min_length=12, max_length=100)
+    signature: str = Field(min_length=80, max_length=100)
+
+
 class WalletActivateRequest(BaseModel):
     wallet_id: str = Field(min_length=4, max_length=80)
 
@@ -839,6 +844,29 @@ def init_db():
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY(wallet_id,source)
         );
+        CREATE TABLE IF NOT EXISTS balmz_treasury_ownership_challenges(
+          id TEXT PRIMARY KEY,
+          owner_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          admin_email TEXT NOT NULL,
+          treasury_address TEXT NOT NULL,
+          message TEXT NOT NULL,
+          expires_at TIMESTAMPTZ NOT NULL,
+          used_at TIMESTAMPTZ,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS balmz_treasury_ownership_challenges_owner_idx
+          ON balmz_treasury_ownership_challenges(owner_user_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS balmz_treasury_ownership_proofs(
+          id TEXT PRIMARY KEY,
+          challenge_id TEXT NOT NULL UNIQUE REFERENCES balmz_treasury_ownership_challenges(id),
+          owner_user_id TEXT NOT NULL REFERENCES users(id),
+          admin_email TEXT NOT NULL,
+          treasury_address TEXT NOT NULL,
+          signature_sha256 TEXT NOT NULL,
+          verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE INDEX IF NOT EXISTS balmz_treasury_ownership_proofs_address_idx
+          ON balmz_treasury_ownership_proofs(treasury_address,verified_at DESC);
         CREATE TABLE IF NOT EXISTS balmz_presale_allocation_state(
           id SMALLINT PRIMARY KEY CHECK(id=1),
           cap_tokens NUMERIC(36,9) NOT NULL CHECK(cap_tokens > 0),
@@ -5846,6 +5874,123 @@ def system_status(user: dict = Depends(current_user)):
         "transaction_broadcast_mode": "external_wallet_signed_by_client",
     }
 
+
+
+def _verify_balmz_treasury_ownership_signature(address: str, message: str, signature: str) -> bool:
+    """Verify a base64 Ed25519 signature against the exact Solana address."""
+    try:
+        alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+        decoded = 0
+        for character in address:
+            digit = alphabet.find(character)
+            if digit < 0:
+                return False
+            decoded = decoded * 58 + digit
+        public_key = decoded.to_bytes((decoded.bit_length() + 7) // 8, "big") if decoded else b""
+        public_key = (b"\\x00" * (len(address) - len(address.lstrip("1")))) + public_key
+        signature_bytes = base64.b64decode(signature, validate=True)
+        if len(public_key) != 32 or len(signature_bytes) != 64:
+            return False
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        Ed25519PublicKey.from_public_bytes(public_key).verify(signature_bytes, message.encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+
+@app.post("/api/v1/admin/balmz/treasury-ownership/challenge")
+def create_balmz_treasury_ownership_challenge(user: dict = Depends(current_user)):
+    admin_email = require_world_wallet_admin(user)
+    treasury_address = BALMZ_PRESALE_RECEIVING_ADDRESS
+    if not treasury_address or not valid_solana_address(treasury_address):
+        raise HTTPException(status_code=503, detail="Configure a valid Solana Mainnet treasury address before requesting ownership proof")
+    challenge_id = "bto_" + secrets.token_urlsafe(24)
+    issued_at = int(datetime.now(timezone.utc).timestamp())
+    message = (
+        "World Wallet AI BALMZ-SOL treasury ownership proof\\n"
+        "Network: Solana Mainnet\\n"
+        f"Administrator: {admin_email}\\n"
+        f"Treasury: {treasury_address}\\n"
+        f"Challenge: {challenge_id}\\n"
+        f"Issued: {issued_at}\\n"
+        "Purpose: prove control of this exact treasury address for the configured administrator.\\n"
+        "This message does not authorize a transaction, transfer, mint, or token authority change."
+    )
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO balmz_treasury_ownership_challenges(id,owner_user_id,admin_email,treasury_address,message,expires_at) "
+            "VALUES(%s,%s,%s,%s,%s,NOW()+INTERVAL '10 minutes')",
+            (challenge_id, user["id"], admin_email, treasury_address, message),
+        )
+        conn.execute(
+            "INSERT INTO admin_audit_events(id,actor_user_id,actor_email,action,details) VALUES(%s,%s,%s,%s,%s)",
+            ("adm_" + secrets.token_urlsafe(18), user["id"], admin_email,
+             "balmz_treasury_challenge_issued", "Solana Mainnet treasury ownership challenge issued; no transaction authorized."),
+        )
+        conn.commit()
+    return {"challenge_id": challenge_id, "network": "solana_mainnet", "treasury_address": treasury_address,
+            "message": message, "expires_in_seconds": 600, "transaction_authorized": False}
+
+
+@app.post("/api/v1/admin/balmz/treasury-ownership/verify")
+def verify_balmz_treasury_ownership(request: BalmzTreasuryOwnershipVerifyRequest, user: dict = Depends(current_user)):
+    admin_email = require_world_wallet_admin(user)
+    with db() as conn:
+        challenge = conn.execute(
+            "SELECT treasury_address,message,expires_at,used_at,admin_email FROM balmz_treasury_ownership_challenges "
+            "WHERE id=%s AND owner_user_id=%s FOR UPDATE",
+            (request.challenge_id, user["id"]),
+        ).fetchone()
+        if not challenge:
+            raise HTTPException(status_code=404, detail="Treasury ownership challenge not found")
+        treasury_address, message, expires_at, used_at, challenge_admin_email = challenge
+        if used_at is not None:
+            raise HTTPException(status_code=409, detail="Treasury ownership challenge already used")
+        if expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=410, detail="Treasury ownership challenge expired")
+        if (challenge_admin_email != admin_email or treasury_address != BALMZ_PRESALE_RECEIVING_ADDRESS
+                or not valid_solana_address(treasury_address)):
+            raise HTTPException(status_code=409, detail="The configured administrator or treasury address changed; request a new challenge")
+        if not _verify_balmz_treasury_ownership_signature(treasury_address, message, request.signature):
+            raise HTTPException(status_code=400, detail="Signature does not prove control of the configured Solana Mainnet treasury address")
+        signature_bytes = base64.b64decode(request.signature, validate=True)
+        conn.execute(
+            "UPDATE balmz_treasury_ownership_challenges SET used_at=NOW() WHERE id=%s AND used_at IS NULL",
+            (request.challenge_id,),
+        )
+        conn.execute(
+            "INSERT INTO balmz_treasury_ownership_proofs(id,challenge_id,owner_user_id,admin_email,treasury_address,signature_sha256) "
+            "VALUES(%s,%s,%s,%s,%s,%s)",
+            ("btp_" + secrets.token_urlsafe(18), request.challenge_id, user["id"], admin_email,
+             treasury_address, hashlib.sha256(signature_bytes).hexdigest()),
+        )
+        conn.execute(
+            "INSERT INTO admin_audit_events(id,actor_user_id,actor_email,action,details) VALUES(%s,%s,%s,%s,%s)",
+            ("adm_" + secrets.token_urlsafe(18), user["id"], admin_email,
+             "balmz_treasury_ownership_verified", "Exact configured Solana Mainnet treasury address signed by configured administrator; signature bytes not retained."),
+        )
+        conn.commit()
+    return {"verified": True, "network": "solana_mainnet", "treasury_address": treasury_address,
+            "transaction_authorized": False, "presale_release_gate_changed": False}
+
+
+@app.get("/api/v1/admin/balmz/treasury-ownership/status")
+def balmz_treasury_ownership_status(user: dict = Depends(current_user)):
+    admin_email = require_world_wallet_admin(user)
+    treasury_address = BALMZ_PRESALE_RECEIVING_ADDRESS
+    if not treasury_address:
+        return {"verified": False, "treasury_address_configured": False, "presale_release_gate_changed": False}
+    with db() as conn:
+        proof = conn.execute(
+            "SELECT verified_at FROM balmz_treasury_ownership_proofs "
+            "WHERE owner_user_id=%s AND admin_email=%s AND treasury_address=%s "
+            "ORDER BY verified_at DESC LIMIT 1",
+            (user["id"], admin_email, treasury_address),
+        ).fetchone()
+    return {"verified": bool(proof), "treasury_address_configured": True,
+            "treasury_address": treasury_address,
+            "verified_at": proof[0].isoformat() if proof else None,
+            "presale_release_gate_changed": False}
 
 
 def require_world_wallet_admin(user):
