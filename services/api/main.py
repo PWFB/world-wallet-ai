@@ -5866,7 +5866,7 @@ def prepare_balmz_presale_delivery(
             raise HTTPException(status_code=409, detail="This allocation already has an active delivery attempt")
         daily = conn.execute(
             "SELECT COALESCE(SUM(amount_base_units),0) FROM balmz_presale_delivery_attempts "
-            "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','submitted','finalized')"
+            "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','submitted','finalized','reconciliation_required')"
         ).fetchone()
         daily_total = int(daily[0]) if daily else 0
         if daily_total + amount > BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS:
@@ -6037,9 +6037,9 @@ def submit_wallet_signed_balmz_delivery(
         except Exception as exc:
             # A network timeout after submission is ambiguous. Never automatically resend.
             conn.execute(
-                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',tx_signature=%s,"
                 "failure_code='broadcast_result_unknown',updated_at=NOW() WHERE id=%s AND status='approved'",
-                (delivery_id,),
+                (signed["signature"], delivery_id),
             )
             conn.commit()
             logger.warning("BALMZ signed delivery submission outcome unknown; delivery_id=%s", delivery_id)
@@ -6072,7 +6072,6 @@ def submit_wallet_signed_balmz_delivery(
 @app.get("/api/v1/balmz/presale/delivery/{delivery_id}")
 def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(current_user)):
     """Reconcile a submitted delivery against finalized Solana Mainnet transaction metadata."""
-    require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
     with db() as conn:
         row = conn.execute(
             "SELECT id,owner_id,status,recipient_address,mint_address,source_token_account,"
@@ -6085,8 +6084,10 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
     if row[1] != user["id"]:
         require_world_wallet_admin(user)
     status = row[2]
-    if status == "submitted" and row[10]:
+    finalized_slot = row[11]
+    if status in {"submitted", "reconciliation_required"} and row[10]:
         try:
+            require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
             observed = rpc_call(
                 SOLANA_MAINNET_RPC_URL,
                 "getTransaction",
@@ -6107,10 +6108,11 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
                     expected_token_program=SOLANA_SPL_TOKEN_PROGRAM_ID,
                 )
                 status = "finalized"
+                finalized_slot = int(proof["slot"])
                 with db() as conn:
                     conn.execute(
                         "UPDATE balmz_presale_delivery_attempts SET status='finalized',finalized_slot=%s,updated_at=NOW() "
-                        "WHERE id=%s AND status='submitted'",
+                        "WHERE id=%s AND status IN ('submitted','reconciliation_required')",
                         (proof["slot"], delivery_id),
                     )
                     conn.commit()
@@ -6119,7 +6121,7 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
             with db() as conn:
                 conn.execute(
                     "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
-                    "failure_code=%s,updated_at=NOW() WHERE id=%s AND status='submitted'",
+                    "failure_code=%s,updated_at=NOW() WHERE id=%s AND status IN ('submitted','reconciliation_required')",
                     (str(exc)[:100], delivery_id),
                 )
                 conn.commit()
@@ -6134,7 +6136,7 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
         "amount_base_units": str(row[8]),
         "decimals": int(row[9]),
         "tx_signature": row[10],
-        "finalized_slot": row[11] if status != "finalized" else row[11],
+        "finalized_slot": finalized_slot,
         "message_sha256": row[12],
         "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
         "transaction_authorized": False,
