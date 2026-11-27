@@ -155,10 +155,57 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_solana_supply(mint)
         self.assertEqual(result["status"], "VERIFIED")
+        self.assertIsNone(result["mint_authority"])
+        self.assertIsNone(result["freeze_authority"])
+        self.assertFalse(result["mint_authority_configured"])
+        self.assertFalse(result["freeze_authority_configured"])
         self.assertEqual(result["observed_supply"], str(main.BALMZ_SOLANA_MAINNET_ALLOCATION))
         self.assertEqual(result["context_slot"], 777)
         self.assertEqual(result["commitment"], "finalized")
         self.assertEqual([call[0] for call in calls], ["getAccountInfo", "getTokenSupply"])
+
+    def test_solana_supply_preserves_configured_authorities_as_public_evidence(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        account = {
+            "context": {"slot": 777},
+            "value": {"owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": "11111111111111111111111111111111",
+                    "freezeAuthority": "Vote111111111111111111111111111111111111111"
+                }}}}
+        }
+        def fake_rpc(_url, method, params):
+            if method == "getAccountInfo":
+                return account
+            if method == "getTokenSupply":
+                return {"context": {"slot": 777}, "value": {"amount": raw_supply, "decimals": 9}}
+            raise AssertionError(method)
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_reconcile_solana_supply(mint)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["mint_authority"], "11111111111111111111111111111111")
+        self.assertEqual(result["freeze_authority"], "Vote111111111111111111111111111111111111111")
+        self.assertTrue(result["mint_authority_configured"])
+        self.assertTrue(result["freeze_authority_configured"])
+
+    def test_solana_supply_rejects_non_string_authority_metadata(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        account = {
+            "context": {"slot": 777},
+            "value": {"owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": False, "freezeAuthority": None
+                }}}}
+        }
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", return_value=account):
+            result = main._balmz_reconcile_solana_supply(mint)
+        self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+        self.assertEqual(result["reason"], "mint_authority_metadata_invalid")
+        self.assertIsNone(result["observed_supply"])
 
     def test_solana_supply_rejects_different_finalized_rpc_slots(self):
         mint = "So11111111111111111111111111111111111111112"
