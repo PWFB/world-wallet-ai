@@ -111,6 +111,33 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["observed_supply"], "11000000000")
         self.assertEqual(result["raw_supply"], str(raw_supply))
 
+    def test_evm_mainnet_supply_requires_https_rpc_without_credentials(self):
+        contract = "0x" + "1" * 40
+        invalid_urls = (
+            "http://rpc.example",
+            "https://user:secret@rpc.example",
+            "https:///missing-host",
+            "https://rpc.example:99999",
+            "https://rpc.example/path#fragment",
+        )
+        for rpc_url in invalid_urls:
+            with self.subTest(rpc_url=rpc_url), patch.object(main, "evm_chain_id") as chain_id, patch.object(main, "rpc_call") as rpc:
+                result = main._balmz_reconcile_evm_supply("ethereum", rpc_url, contract, 1, 11_000_000_000)
+            self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+            self.assertEqual(result["reason"], "insecure_mainnet_rpc_url")
+            self.assertIsNone(result["observed_supply"])
+            chain_id.assert_not_called()
+            rpc.assert_not_called()
+
+    def test_ethereum_reserve_rejects_insecure_rpc_before_contract_reads(self):
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call") as rpc:
+            result = main._balmz_reconcile_ethereum_reserve(
+                "http://rpc.example", "0x" + "1" * 40, "0x" + "2" * 40, "0x" + "3" * 40
+            )
+        self.assertEqual(result["status"], "CONTRACT_INVALID")
+        self.assertEqual(result["reason"], "insecure_mainnet_rpc_url")
+        rpc.assert_not_called()
+
     def test_evm_wrong_chain_fails_closed_before_contract_reads(self):
         with patch.object(main, "evm_chain_id", return_value=56), patch.object(main, "rpc_call") as rpc:
             result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", "0x" + "1" * 40, 1, 11_000_000_000)

@@ -10067,6 +10067,21 @@ def _balmz_eth_call_address(rpc_url, contract, signature):
         raise ValueError("reserve_address_abi_invalid")
     return "0x" + format(raw, "040x")
 
+def _balmz_require_secure_evm_mainnet_rpc_url(rpc_url):
+    """Require an explicit HTTPS Mainnet RPC URL without embedded credentials."""
+    try:
+        parsed = urlparse(rpc_url) if isinstance(rpc_url, str) else None
+        # Access .port so malformed port values fail closed as well.
+        port = parsed.port if parsed else None
+        if (not parsed or parsed.scheme.lower() != "https" or not parsed.hostname
+                or parsed.username is not None or parsed.password is not None
+                or parsed.fragment or (port is not None and not 1 <= port <= 65535)):
+            raise ValueError("insecure_mainnet_rpc_url")
+        return parsed
+    except (TypeError, ValueError):
+        raise ValueError("insecure_mainnet_rpc_url")
+
+
 def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract, expected_beneficiary):
     """Read immutable reserve vesting fields and escrow balance; never mutates chain state."""
     if not vesting_contract or not expected_beneficiary:
@@ -10079,6 +10094,7 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
         return {"status": "CONTRACT_INVALID", "reason": "vesting_contract_must_be_distinct_from_token",
                 "allocation_matches": False, "read_only": True}
     try:
+        _balmz_require_secure_evm_mainnet_rpc_url(rpc_url)
         code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, "latest"])
         if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("vesting_bytecode_missing")
@@ -10105,7 +10121,7 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
                 "released_raw": str(released), "reserve_balance_raw": str(reserve_balance),
                 "allocation_matches": True, "read_only": True}
     except Exception as exc:
-        allowed = {"vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
+        allowed = {"insecure_mainnet_rpc_url", "vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
                    "vesting_allocation_mismatch", "vesting_reserve_balance_insufficient"}
         reason = str(exc) if str(exc) in allowed else "vesting_rpc_or_metadata_verification_failed"
         return {"status": "CONTRACT_INVALID", "reason": reason, "allocation_matches": False, "read_only": True}
@@ -10143,6 +10159,7 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": "invalid_contract_address"}
     try:
+        _balmz_require_secure_evm_mainnet_rpc_url(rpc_url)
         if evm_chain_id(rpc_url) != chain_id:
             raise ValueError("wrong_chain_id")
         code = rpc_call(rpc_url, "eth_getCode", [contract, "latest"])
@@ -10163,7 +10180,7 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
                 "raw_supply": str(raw), "contract_address": contract,
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
-        allowed = {"wrong_chain_id", "contract_bytecode_missing", "unexpected_token_decimals", "supply_not_whole_token_aligned"}
+        allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "contract_bytecode_missing", "unexpected_token_decimals", "supply_not_whole_token_aligned"}
         reason = str(exc) if str(exc) in allowed else "rpc_or_metadata_verification_failed"
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
