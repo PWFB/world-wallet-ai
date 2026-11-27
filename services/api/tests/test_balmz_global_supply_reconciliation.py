@@ -584,3 +584,59 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_evm_secondary_rpc_corroborates_same_finalized_snapshot_and_token_state(self):
+        contract = "0x" + "1" * 40
+        block_tag = "0x1234"
+        block_hash = "0x" + "a" * 64
+        raw_supply = 11_000_000_000 * (10 ** 18)
+        code = "0x60016000"
+        def fake_rpc(url, method, params):
+            if method == "eth_getBlockByNumber":
+                return {"number": block_tag, "hash": block_hash}
+            if method == "eth_getCode":
+                return code
+            if method == "eth_call":
+                selector = params[0]["data"]
+                if selector == "0x06fdde03":
+                    return _abi_string("BALMZ Token")
+                if selector == "0x95d89b41":
+                    return _abi_string("BALMZ")
+                if selector == "0x18160ddd":
+                    return "0x" + format(raw_supply, "064x")
+                if selector == "0x313ce567":
+                    return "0x" + format(18, "064x")
+            raise AssertionError((url, method, params))
+        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_evm_independent_rpc_corroboration(
+                "https://primary.example", "https://secondary.example", contract, 1,
+                block_tag, block_hash, code, raw_supply, 18, "BALMZ Token", "BALMZ"
+            )
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["provider_host"], "secondary.example")
+        self.assertEqual(result["block_hash"], block_hash)
+
+    def test_evm_secondary_rpc_fails_closed_on_same_provider_or_snapshot_mismatch(self):
+        contract = "0x" + "1" * 40
+        args = ("0x1234", "0x" + "a" * 64, "0x60016000", 123, 18, "BALMZ Token", "BALMZ")
+        with patch.object(main, "evm_chain_id", return_value=1):
+            same = main._balmz_evm_independent_rpc_corroboration(
+                "https://primary.example", "https://primary.example", contract, 1, *args
+            )
+        self.assertEqual(same, {"status": "FAILED", "reason": "secondary_rpc_provider_not_independent"})
+        def mismatch_rpc(_url, method, _params):
+            if method == "eth_getBlockByNumber":
+                return {"number": "0x1234", "hash": "0x" + "b" * 64}
+            raise AssertionError("state reads must stop after block mismatch")
+        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=mismatch_rpc):
+            mismatch = main._balmz_evm_independent_rpc_corroboration(
+                "https://primary.example", "https://secondary.example", contract, 1, *args
+            )
+        self.assertEqual(mismatch, {"status": "FAILED", "reason": "secondary_rpc_finalized_block_mismatch"})
+
+    def test_evm_secondary_rpc_not_configured_is_explicit(self):
+        result = main._balmz_evm_independent_rpc_corroboration(
+            "https://primary.example", "", "0x" + "1" * 40, 1,
+            "0x1", "0x" + "a" * 64, "0x6000", 1, 18, "BALMZ Token", "BALMZ"
+        )
+        self.assertEqual(result, {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"})
