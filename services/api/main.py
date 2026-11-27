@@ -10111,17 +10111,26 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
         return {"status": "CONTRACT_INVALID", "reason": reason, "allocation_matches": False, "read_only": True}
 
 def _balmz_global_supply_summary(chains):
+    """Summarize only structurally valid, exact decimal supply observations."""
     required = ("ethereum", "bnb", "solana")
-    if any(chains.get(name, {}).get("status") == "NOT_CONFIGURED" for name in required):
+    records = {name: chains.get(name) if isinstance(chains, dict) else None for name in required}
+    if any(isinstance(records[name], dict) and records[name].get("status") == "NOT_CONFIGURED" for name in required):
         status = "NOT_CONFIGURED"
-    elif any(chains.get(name, {}).get("status") != "VERIFIED" for name in required):
+    elif any(not isinstance(records[name], dict) or records[name].get("status") != "VERIFIED" for name in required):
         status = "PARTIAL_DEPLOYMENT"
     else:
-        total = sum(int(chains[name]["observed_supply"]) for name in required)
-        status = "RECONCILED" if total == BALMZ_GLOBAL_MAX_SUPPLY else ("GLOBAL_CAP_EXCEEDED" if total > BALMZ_GLOBAL_MAX_SUPPLY else "PARTIAL_DEPLOYMENT")
+        raw_values = [records[name].get("observed_supply") for name in required]
+        if not all(isinstance(value, str) and re.fullmatch(r"(0|[1-9][0-9]*)", value) for value in raw_values):
+            status = "PARTIAL_DEPLOYMENT"
+        else:
+            total = sum(int(value) for value in raw_values)
+            status = "RECONCILED" if total == BALMZ_GLOBAL_MAX_SUPPLY else (
+                "GLOBAL_CAP_EXCEEDED" if total > BALMZ_GLOBAL_MAX_SUPPLY else "PARTIAL_DEPLOYMENT"
+            )
     total_observed = None
-    if all(isinstance(chains.get(name, {}).get("observed_supply"), str) and chains[name]["observed_supply"].isdigit() for name in required):
-        total_observed = str(sum(int(chains[name]["observed_supply"]) for name in required))
+    raw_values = [records[name].get("observed_supply") if isinstance(records[name], dict) else None for name in required]
+    if all(isinstance(value, str) and re.fullmatch(r"(0|[1-9][0-9]*)", value) for value in raw_values):
+        total_observed = str(sum(int(value) for value in raw_values))
     return {"status": status, "global_max_supply": str(BALMZ_GLOBAL_MAX_SUPPLY),
             "observed_global_supply": total_observed, "read_only": True,
             "transaction_authorized": False, "presale_release_gate_changed": False}
