@@ -4,6 +4,7 @@ import { isUsableNeonAccessToken } from "./neon-token.js";
 import { isTestnetNetwork } from "./network-selection.js";
 import { discoverEip6963Providers, networkForEvmChain, withProviderTimeout } from "./eip6963-wallets.js";
 import { collectWalletConnectAccounts, mergeWalletConnectConnections } from "./walletconnect-evm.js";
+import { formatTokenAmountExact } from "./token-amount.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -46,14 +47,7 @@ function AssetIcon({ symbol, fallback = "•" }) {
 const money = value => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "Unavailable" : `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
-function formatTokenAmountExact(value) {
-  const raw = String(value ?? "").trim();
-  if (!/^\d+(?:\.\d{1,9})?$/.test(raw)) return "Unavailable";
-  const [whole, fraction = ""] = raw.split(".");
-  const groupedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-  const trimmedFraction = fraction.replace(/0+$/, "");
-  return groupedWhole + (trimmedFraction ? "." + trimmedFraction : "");
-}
+
 
 async function walletAuthHeaders(accessToken, extra = {}) {
   // A PIN-session token is already the app's second-factor bearer. Never
