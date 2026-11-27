@@ -38,6 +38,28 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         chains["solana"]["status"] = "SUPPLY_MISMATCH"
         self.assertEqual(main._balmz_global_supply_summary(chains)["status"], "PARTIAL_DEPLOYMENT")
 
+    def test_verified_chain_records_with_malformed_supply_fail_closed(self):
+        invalid_values = (None, True, 1, -1, "1.5", "1e10", "", "031000000000")
+        for invalid in invalid_values:
+            with self.subTest(invalid=invalid):
+                chains = {
+                    "ethereum": {"status": "VERIFIED", "observed_supply": "11000000000"},
+                    "bnb": {"status": "VERIFIED", "observed_supply": "10000000000"},
+                    "solana": {"status": "VERIFIED", "observed_supply": invalid},
+                }
+                result = main._balmz_global_supply_summary(chains)
+                self.assertEqual(result["status"], "PARTIAL_DEPLOYMENT")
+                self.assertIsNone(result["observed_global_supply"])
+                self.assertFalse(result["transaction_authorized"])
+                self.assertFalse(result["presale_release_gate_changed"])
+
+    def test_missing_or_non_object_chain_record_fails_closed(self):
+        for chains in (None, {}, {"ethereum": None, "bnb": {}, "solana": []}):
+            with self.subTest(chains=chains):
+                result = main._balmz_global_supply_summary(chains)
+                self.assertEqual(result["status"], "PARTIAL_DEPLOYMENT")
+                self.assertIsNone(result["observed_global_supply"])
+
     def test_evm_supply_reads_chain_bytecode_supply_and_decimals(self):
         contract = "0x" + "1" * 40
         raw_supply = 11_000_000_000 * (10 ** 18)
