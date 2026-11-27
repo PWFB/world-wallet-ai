@@ -125,6 +125,8 @@ WORLD_WALLET_ADMIN_EVM_ADDRESS = os.getenv("WORLD_WALLET_ADMIN_EVM_ADDRESS", "0x
 ETH_PUBLIC_RPC_URL = os.getenv("WORLD_WALLET_ETH_PUBLIC_RPC_URL", "https://ethereum-rpc.publicnode.com").strip()
 ETH_RPC_URL = (os.getenv("WORLD_WALLET_ETH_RPC_URL") or (f"https://eth-mainnet.g.alchemy.com/v2/{ALCHEMY_API_KEY}" if ALCHEMY_API_KEY else "") or ETH_PUBLIC_RPC_URL).strip()
 BSC_RPC_URL = os.getenv("WORLD_WALLET_BSC_RPC_URL", "").strip()
+ETH_SECONDARY_RPC_URL = os.getenv("WORLD_WALLET_ETH_SECONDARY_RPC_URL", "").strip()
+BSC_SECONDARY_RPC_URL = os.getenv("WORLD_WALLET_BSC_SECONDARY_RPC_URL", "").strip()
 POLYGON_RPC_URL = os.getenv("WORLD_WALLET_POLYGON_RPC_URL", "https://polygon-rpc.com").strip()
 # Sepolia RPC is separate from CoinGecko market pricing. Override with a dedicated provider in production.
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
@@ -10735,6 +10737,45 @@ def _balmz_evm_finalized_snapshot(rpc_url):
     return number, block_hash
 
 
+def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url, contract, chain_id,
+                                               block_tag, block_hash, primary_code, primary_raw_supply,
+                                               primary_decimals, primary_name, primary_symbol):
+    """Compare a second independent provider against the primary finalized EVM snapshot."""
+    if not secondary_rpc_url:
+        return {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"}
+    try:
+        secondary = _balmz_require_secure_evm_mainnet_rpc_url(secondary_rpc_url)
+        primary = urlparse(primary_rpc_url)
+        if secondary.hostname.lower() == primary.hostname.lower():
+            raise ValueError("secondary_rpc_provider_not_independent")
+        if evm_chain_id(secondary_rpc_url) != chain_id:
+            raise ValueError("secondary_rpc_wrong_chain_id")
+        block = rpc_call(secondary_rpc_url, "eth_getBlockByNumber", [block_tag, False])
+        secondary_number = block.get("number") if isinstance(block, dict) else None
+        secondary_hash = block.get("hash") if isinstance(block, dict) else None
+        if (secondary_number != block_tag or not isinstance(secondary_hash, str)
+                or secondary_hash.lower() != block_hash.lower()):
+            raise ValueError("secondary_rpc_finalized_block_mismatch")
+        code = rpc_call(secondary_rpc_url, "eth_getCode", [contract, block_tag])
+        if not isinstance(code, str) or code.lower() != primary_code.lower():
+            raise ValueError("secondary_rpc_bytecode_mismatch")
+        name = _balmz_decode_abi_string_rpc(rpc_call(secondary_rpc_url, "eth_call", [{"to": contract, "data": "0x06fdde03"}, block_tag]))
+        symbol = _balmz_decode_abi_string_rpc(rpc_call(secondary_rpc_url, "eth_call", [{"to": contract, "data": "0x95d89b41"}, block_tag]))
+        raw_supply = _balmz_decode_uint256_rpc(rpc_call(secondary_rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, block_tag]))
+        decimals = _balmz_decode_uint256_rpc(rpc_call(secondary_rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, block_tag]))
+        if name != primary_name or symbol != primary_symbol or raw_supply != primary_raw_supply or decimals != primary_decimals:
+            raise ValueError("secondary_rpc_token_state_mismatch")
+        return {"status": "VERIFIED", "reason": None, "provider_host": secondary.hostname,
+                "block_number": str(int(block_tag, 16)), "block_hash": block_hash,
+                "commitment": "same_finalized_block"}
+    except Exception as exc:
+        allowed = {"insecure_mainnet_rpc_url", "secondary_rpc_provider_not_independent",
+                   "secondary_rpc_wrong_chain_id", "secondary_rpc_finalized_block_mismatch",
+                   "secondary_rpc_bytecode_mismatch", "secondary_rpc_token_state_mismatch"}
+        reason = str(exc) if str(exc) in allowed else "secondary_rpc_verification_failed"
+        return {"status": "FAILED", "reason": reason}
+
+
 def _balmz_eth_call_address(rpc_url, contract, signature, block_tag="latest"):
     digest = keccak.new(digest_bits=256)
     digest.update(signature.encode("ascii"))
@@ -10869,12 +10910,17 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
             raise ValueError("supply_not_whole_token_aligned")
         observed = raw // scale
         matched = observed == expected_supply
+        secondary_rpc_url = ETH_SECONDARY_RPC_URL if network == "ethereum" else BSC_SECONDARY_RPC_URL
+        independent_rpc = _balmz_evm_independent_rpc_corroboration(
+            rpc_url, secondary_rpc_url, contract, chain_id, block_tag, block_hash, code,
+            raw, decimals, name, symbol
+        )
         return {"network": network, "status": "VERIFIED" if matched else "SUPPLY_MISMATCH",
                 "expected_allocation": str(expected_supply), "observed_supply": str(observed),
                 "allocation_matches": matched, "chain_id": chain_id, "decimals": decimals,
                 "raw_supply": str(raw), "contract_address": contract,
                 "block_number": str(int(block_tag, 16)), "block_hash": block_hash,
-                "commitment": "finalized",
+                "commitment": "finalized", "independent_rpc": independent_rpc,
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
         allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "contract_bytecode_missing",
