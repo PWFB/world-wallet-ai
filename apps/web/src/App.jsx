@@ -837,13 +837,14 @@ function App() {
       }
 
       if (persistedToken.startsWith("wwpin_")) {
+        let pinSessionResponse = null;
         try {
-          const response = await fetch(API_BASE_URL + "/api/v1/security/pin/session", {
+          pinSessionResponse = await fetch(API_BASE_URL + "/api/v1/security/pin/session", {
             headers: { Authorization: "Bearer " + persistedToken, Accept: "application/json" },
             cache: "no-store",
           });
-          const data = await response.json().catch(() => ({}));
-          if (response.ok && data.active) {
+          const data = await pinSessionResponse.json().catch(() => ({}));
+          if (pinSessionResponse.ok && data.active) {
             if (!cancelled) {
               setAccessToken(persistedToken);
               if (data.user) setUser(data.user);
@@ -852,7 +853,30 @@ function App() {
             }
             return;
           }
-        } catch {}
+          // Only an explicit authentication rejection (or a successful response
+          // that says the session is inactive) proves this PIN token is invalid.
+          if (!pinSessionResponse.ok && pinSessionResponse.status !== 401 && pinSessionResponse.status !== 403) {
+            if (!cancelled) {
+              setAuthRestoring(false);
+              if (accessToken !== persistedToken) {
+                setShowLogin(true);
+                setLoginError("The wallet service could not verify your saved PIN session. Your session has been kept; please retry shortly.");
+              }
+            }
+            return;
+          }
+        } catch {
+          // Network failures and timeouts are not proof that a saved PIN session
+          // is invalid. Keep the token so a temporary outage cannot sign the user out.
+          if (!cancelled) {
+            setAuthRestoring(false);
+            if (accessToken !== persistedToken) {
+              setShowLogin(true);
+              setLoginError("The wallet service is temporarily unavailable. Your saved PIN session has been kept; please retry shortly.");
+            }
+          }
+          return;
+        }
         try { localStorage.removeItem(TOKEN_KEY); } catch {}
         persistedToken = "";
       }
