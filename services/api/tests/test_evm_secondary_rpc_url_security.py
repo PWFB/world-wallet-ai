@@ -50,6 +50,23 @@ class EvmSecondaryRpcUrlSecurityTests(unittest.TestCase):
                 chain_id.assert_not_called()
                 rpc.assert_not_called()
 
+    def test_rejects_dns_equivalent_trailing_dot_provider_before_rpc(self):
+        args = ("0x1234", "0x" + "a" * 64, "0x60016000", 123, 18, "BALMZ Token", "BALMZ")
+        with patch.object(main, "evm_chain_id") as chain_id, patch.object(main, "rpc_call") as rpc:
+            result = main._balmz_evm_independent_rpc_corroboration(
+                "https://primary.example",
+                "https://primary.example.",
+                self.CONTRACT,
+                1,
+                *args,
+            )
+        self.assertEqual(
+            result,
+            {"status": "FAILED", "reason": "secondary_rpc_provider_not_independent"},
+        )
+        chain_id.assert_not_called()
+        rpc.assert_not_called()
+
     def test_accepts_secure_secondary_url_for_chain_verification(self):
         block_tag, block_hash, code, raw_supply, decimals, name, symbol = self.PRIMARY_ARGS
 
