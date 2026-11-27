@@ -201,7 +201,7 @@ def parse_spl_token_account(
         raise BalmzDeliveryValidationError("token_account_amount_invalid")
     if int(raw_amount) > _U64_MAX:
         raise BalmzDeliveryValidationError("token_account_amount_out_of_range")
-    if isinstance(decimals, bool) or decimals != 9:
+    if isinstance(decimals, bool) or not isinstance(decimals, int) or decimals != 9:
         raise BalmzDeliveryValidationError("token_account_decimals_invalid")
     return {"amount_base_units": raw_amount, "context_slot": str(slot), "state": "initialized"}
 
@@ -220,6 +220,8 @@ def verify_finalized_delivery_observation(
 ) -> dict[str, int | str]:
     """Verify one exact TransferChecked instruction in finalized transaction metadata."""
     amount = canonical_base_units(expected_amount_base_units)
+    if isinstance(expected_decimals, bool) or not isinstance(expected_decimals, int) or expected_decimals != 9:
+        raise BalmzDeliveryValidationError("delivery_expected_decimals_invalid")
     if not isinstance(response, dict):
         raise BalmzDeliveryValidationError("finalized_transaction_missing")
     slot = response.get("slot")
