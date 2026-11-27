@@ -176,6 +176,7 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
             BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED=True,
             BALMZ_PRESALE_DELIVERY_ENABLED=True,
             BALMZ_PRESALE_RECEIVING_ADDRESS=TREASURY,
+            _balmz_global_supply_is_verified_for_delivery=lambda: True,
         )
 
     @staticmethod
