@@ -64,6 +64,16 @@ class WalletPublicIdTests(unittest.TestCase):
         insert = next(sql for sql, _ in self.connection.statements if "INSERT INTO wallets" in sql)
         self.assertIn("RETURNING WALLET_NUMBER", insert.upper())
 
+    def test_wallet_list_query_is_scoped_to_authenticated_owner(self):
+        with patch.object(main, "db", return_value=self.database):
+            main.list_wallets({"id": "user_test", "wallet_id": "wallet_test"})
+        lookup = next(
+            (sql, params) for sql, params in self.connection.statements
+            if "SELECT id,name,created_at,wallet_number FROM wallets" in sql
+        )
+        self.assertIn("WHERE owner_id=%s", lookup[0])
+        self.assertEqual(lookup[1], ("user_test",))
+
     def test_wallet_list_returns_stable_11_digit_id(self):
         with patch.object(main, "db", return_value=self.database):
             result = main.list_wallets({"id": "user_test", "wallet_id": "wallet_test"})
