@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const appCssSource = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
 const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
 const returnCenterSource = readFileSync(new URL("./MainnetReturnCenter.jsx", import.meta.url), "utf8");
@@ -308,4 +309,18 @@ test("Binance-linked ownership stays Binance-only while OKX accepts matching Wal
   assert.match(verifyFlow, /Open World Wallet AI inside Binance Wallet's DApp browser/);
   assert.match(verifyFlow, /WalletConnect QR or OKX Wallet's DApp browser/);
   assert.match(verifyFlow, /ownership_verified !== true/);
+});
+
+
+test("mobile network selectors use aligned label-and-select columns", () => {
+  assert.match(appCssSource, /grid-template-areas:[\\s\\S]*"environment-label network-label \\."[\\s\\S]*"environment-select network-select refresh"/);
+  assert.match(appSource, /id="mobile-environment-select"/);
+  assert.match(appSource, /id="mobile-network-select"/);
+});
+
+test("verified portfolio balance loading is time-bounded and reports unavailable data", () => {
+  assert.match(appSource, /async function fetchWithTimeout/);
+  assert.match(appSource, /timeoutMs = 30000/);
+  assert.match(appSource, /Verified balance request timed out after 30 seconds/);
+  assert.match(appSource, /fetchWithTimeout\\(API_BASE_URL \\+ "\\/api\\/v1\\/wallet\\/balance-verification"/);
 });
