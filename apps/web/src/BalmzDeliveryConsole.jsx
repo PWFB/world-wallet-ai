@@ -79,6 +79,13 @@ export default function BalmzDeliveryConsole({
       const signed = await signPreparedSolanaDelivery({
         unsignedTransactionBase64: delivery.unsigned_transaction_base64,
         expectedAuthority: delivery.authority_address,
+        expectedTransfer: {
+          sourceTokenAccount: delivery.source_token_account,
+          mintAddress: delivery.mint_address,
+          destinationTokenAccount: delivery.destination_token_account,
+          amountBaseUnits: delivery.amount_base_units,
+          decimals: delivery.decimals,
+        },
       });
       const result = await request(
         "/api/v1/admin/balmz/presale/delivery/" + encodeURIComponent(delivery.delivery_id) + "/submit",
