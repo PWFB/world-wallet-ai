@@ -269,3 +269,13 @@ test("transaction explorer links require a hash valid for the recorded network",
   assert.match(source, /return evmHash \? "https:\/\/etherscan\.io\/tx\//);
   assert.match(source, /return solanaSignature \? "https:\/\/solscan\.io\/tx\//);
 });
+
+
+test("portfolio balances are scoped to a network and never coerce missing values to zero", () => {
+  assert.match(featureSource, /syncedBalanceNetworks = \[\]/);
+  assert.match(featureSource, /portfolioNetworkKey = item =>/);
+  assert.match(featureSource, /hasNumericBalance = value => value !== null && value !== undefined && value !== ""/);
+  assert.match(featureSource, /USD value unavailable/);
+  assert.match(appSource, /setSyncedBalanceNetworks/);
+  assert.match(appSource, /network \+ ":" \+ symbol/);
+});
