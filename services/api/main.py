@@ -6134,7 +6134,7 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
         require_world_wallet_admin(user)
     status = row[2]
     finalized_slot = row[11]
-    if status in {"submitted", "reconciliation_required"} and row[10]:
+    if status in {"broadcasting", "submitted", "reconciliation_required"} and row[10]:
         try:
             require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
             observed = rpc_call(
@@ -6143,7 +6143,15 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
                 [row[10], {"encoding": "jsonParsed", "commitment": "finalized", "maxSupportedTransactionVersion": 0}],
             )
             if observed is None:
-                status = "submitted"
+                if status == "broadcasting":
+                    status = "reconciliation_required"
+                    with db() as conn:
+                        conn.execute(
+                            "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                            "failure_code='broadcast_not_yet_observed',updated_at=NOW() WHERE id=%s AND status='broadcasting'",
+                            (delivery_id,),
+                        )
+                        conn.commit()
             else:
                 proof = verify_finalized_delivery_observation(
                     observed,
@@ -6161,17 +6169,19 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
                 with db() as conn:
                     conn.execute(
                         "UPDATE balmz_presale_delivery_attempts SET status='finalized',finalized_slot=%s,updated_at=NOW() "
-                        "WHERE id=%s AND status IN ('submitted','reconciliation_required')",
+                        "WHERE id=%s AND status IN ('broadcasting','submitted','reconciliation_required')",
                         (proof["slot"], delivery_id),
                     )
                     conn.commit()
         except BalmzDeliveryValidationError as exc:
-            status = "reconciliation_required"
+            # A finalized failed transaction cannot have transferred the buyer tokens;
+            # every other mismatch requires a human-led chain reconciliation.
+            status = "failed" if str(exc) == "delivery_transaction_failed" else "reconciliation_required"
             with db() as conn:
                 conn.execute(
-                    "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
-                    "failure_code=%s,updated_at=NOW() WHERE id=%s AND status IN ('submitted','reconciliation_required')",
-                    (str(exc)[:100], delivery_id),
+                    "UPDATE balmz_presale_delivery_attempts SET status=%s,failure_code=%s,updated_at=NOW() "
+                    "WHERE id=%s AND status IN ('broadcasting','submitted','reconciliation_required')",
+                    (status, str(exc)[:100], delivery_id),
                 )
                 conn.commit()
         except Exception as exc:
