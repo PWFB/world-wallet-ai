@@ -10754,6 +10754,28 @@ def _balmz_evm_finalized_snapshot(rpc_url):
     return number, block_hash
 
 
+def _balmz_canonical_rpc_provider_host(host):
+    """Canonicalize IP/IDN provider names and reject resolver-dependent numeric hosts."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            ascii_host = host.encode("idna").decode("ascii").rstrip(".").lower()
+        except (UnicodeError, AttributeError):
+            raise ValueError("invalid_rpc_provider_hostname")
+        if not ascii_host:
+            raise ValueError("invalid_rpc_provider_hostname")
+        # Avoid resolver-specific legacy IPv4 forms (127.1, 0177.0.0.1,
+        # 0x7f000001, or a single integer) being mistaken for DNS providers.
+        final_label = ascii_host.rsplit(".", 1)[-1]
+        if final_label.isdecimal() or re.fullmatch(r"0x[0-9a-f]+", final_label):
+            raise ValueError("invalid_rpc_provider_hostname")
+        return ascii_host
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        return str(address.ipv4_mapped)
+    return address.compressed.lower()
+
+
 def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url, contract, chain_id,
                                                block_tag, block_hash, primary_code, primary_raw_supply,
                                                primary_decimals, primary_name, primary_symbol):
@@ -10763,26 +10785,8 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
     try:
         secondary = _balmz_require_secure_evm_mainnet_rpc_url(secondary_rpc_url)
         primary = urlparse(primary_rpc_url)
-        def canonical_host(host):
-            try:
-                address = ipaddress.ip_address(host)
-                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-                    return str(address.ipv4_mapped)
-                return address.compressed.lower()
-            except ValueError:
-                try:
-                    ascii_host = host.encode("idna").decode("ascii").rstrip(".").lower()
-                    # Some URL resolvers accept legacy IPv4 forms such as 127.1,
-                    # 0177.0.0.1, 0x7f000001, or a single 32-bit integer. Do not
-                    # treat these resolver-dependent numeric hosts as DNS names.
-                    final_label = ascii_host.rsplit(".", 1)[-1]
-                    if (final_label.isdecimal()
-                            or re.fullmatch(r"0x[0-9a-f]+", final_label)):
-                        raise ValueError("invalid_rpc_provider_hostname")
-                    return ascii_host
-                except (UnicodeError, AttributeError):
-                    raise ValueError("invalid_rpc_provider_hostname")
-        if canonical_host(secondary.hostname) == canonical_host(primary.hostname or ""):
+        if (_balmz_canonical_rpc_provider_host(secondary.hostname)
+                == _balmz_canonical_rpc_provider_host(primary.hostname or "")):
             raise ValueError("secondary_rpc_provider_not_independent")
         if evm_chain_id(secondary_rpc_url) != chain_id:
             raise ValueError("secondary_rpc_wrong_chain_id")
@@ -11012,7 +11016,8 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
     try:
         secondary = _balmz_require_secure_solana_mainnet_rpc_url(secondary_rpc_url)
         primary = _balmz_require_secure_solana_mainnet_rpc_url(primary_rpc_url)
-        if secondary.hostname.lower() == (primary.hostname or "").lower():
+        if (_balmz_canonical_rpc_provider_host(secondary.hostname)
+                == _balmz_canonical_rpc_provider_host(primary.hostname or "")):
             raise ValueError("secondary_rpc_provider_not_independent")
         require_solana_rpc_cluster(secondary_rpc_url, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
         account = rpc_call(
@@ -11050,7 +11055,8 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
                 "same_finalized_slot": slot == primary_slot and supply_slot == primary_slot}
     except Exception as exc:
         allowed = {"solana_mainnet_rpc_url_invalid", "secondary_rpc_provider_not_independent",
-                   "secondary_rpc_mint_state_mismatch", "secondary_rpc_supply_mismatch"}
+                   "secondary_rpc_mint_state_mismatch", "secondary_rpc_supply_mismatch",
+                   "invalid_rpc_provider_hostname"}
         reason = str(exc) if str(exc) in allowed else "secondary_rpc_verification_failed"
         return {"status": "FAILED", "reason": reason}
 
