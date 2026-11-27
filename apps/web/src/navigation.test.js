@@ -322,5 +322,5 @@ test("verified portfolio balance loading is time-bounded and reports unavailable
   assert.match(appSource, /async function fetchWithTimeout/);
   assert.match(appSource, /timeoutMs = 30000/);
   assert.match(appSource, /Verified balance request timed out after 30 seconds/);
-  assert.match(appSource, /fetchWithTimeout\\(API_BASE_URL \\+ "\\/api\\/v1\\/wallet\\/balance-verification"/);
+  assert.ok(appSource.includes('fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification"'));
 });
