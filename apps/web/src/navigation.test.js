@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const appCssSource = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
 const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
 const returnCenterSource = readFileSync(new URL("./MainnetReturnCenter.jsx", import.meta.url), "utf8");
@@ -331,4 +332,20 @@ test("Transactions rejects incomplete transaction arrays and inconsistent paging
   assert.match(historyLoader, /Number\.isSafeInteger\(rawPagination\.offset\)/);
   assert.match(historyLoader, /rawPagination\.has_more === \(offset \+ data\.transactions\.length < rawPagination\.total\)/);
   assert.match(historyLoader, /malformed record/);
+});
+
+
+test("mobile network selectors use aligned label-and-select columns", () => {
+  assert.ok(appCssSource.includes('grid-template-areas:'));
+  assert.ok(appCssSource.includes('"environment-label network-label ."'));
+  assert.ok(appCssSource.includes('"environment-select network-select refresh"'));
+  assert.match(appSource, /id="mobile-environment-select"/);
+  assert.match(appSource, /id="mobile-network-select"/);
+});
+
+test("verified portfolio balance loading is time-bounded and reports unavailable data", () => {
+  assert.match(appSource, /async function fetchWithTimeout/);
+  assert.match(appSource, /timeoutMs = 30000/);
+  assert.match(appSource, /Verified balance request timed out after 30 seconds/);
+  assert.ok(appSource.includes('fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification"'));
 });
