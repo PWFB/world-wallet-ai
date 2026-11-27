@@ -132,6 +132,7 @@ POLYGON_RPC_URL = os.getenv("WORLD_WALLET_POLYGON_RPC_URL", "https://polygon-rpc
 SEPOLIA_RPC_URL = (os.getenv("WORLD_WALLET_SEPOLIA_RPC_URL") or os.getenv("SEPOLIA_RPC_URL") or "https://rpc.sepolia.dev").strip()
 SOLANA_DEVNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_DEVNET_RPC_URL") or "https://api.devnet.solana.com").strip()
 SOLANA_MAINNET_RPC_URL = (os.getenv("WORLD_WALLET_SOLANA_MAINNET_RPC_URL") or "https://api.mainnet-beta.solana.com").strip()
+SOLANA_MAINNET_SECONDARY_RPC_URL = os.getenv("WORLD_WALLET_SOLANA_MAINNET_SECONDARY_RPC_URL", "").strip()
 SOLANA_DEVNET_GENESIS_HASH = "EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG"
 SOLANA_MAINNET_GENESIS_HASH = "5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d"
 BALMZ_SOLANA_DEVNET_MINT = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
@@ -10966,6 +10967,52 @@ def _balmz_solana_context_slot(response):
     return slot
 
 
+def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url, mint, primary_slot,
+                                                  primary_raw_supply, primary_decimals, primary_owner,
+                                                  primary_mint_authority, primary_freeze_authority):
+    """Compare a second Solana provider's finalized mint state at the same context slot."""
+    if not secondary_rpc_url:
+        return {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"}
+    try:
+        secondary = urlparse(secondary_rpc_url)
+        primary = urlparse(primary_rpc_url)
+        if secondary.scheme != "https" or not secondary.hostname:
+            raise ValueError("secondary_rpc_url_invalid")
+        if secondary.hostname.lower() == (primary.hostname or "").lower():
+            raise ValueError("secondary_rpc_provider_not_independent")
+        require_solana_rpc_cluster(secondary_rpc_url, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        account = rpc_call(secondary_rpc_url, "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "finalized"}])
+        slot = _balmz_solana_context_slot(account)
+        value = account.get("value") if isinstance(account, dict) else None
+        data = value.get("data") if isinstance(value, dict) else None
+        parsed = data.get("parsed") if isinstance(data, dict) else None
+        info = parsed.get("info") if isinstance(parsed, dict) else None
+        if (slot != primary_slot or not isinstance(value, dict)
+                or value.get("owner") != primary_owner or value.get("executable") is not False
+                or not isinstance(parsed, dict) or parsed.get("type") != "mint"
+                or not isinstance(info, dict) or info.get("isInitialized") is not True
+                or info.get("decimals") != primary_decimals
+                or info.get("supply") != primary_raw_supply
+                or info.get("mintAuthority") != primary_mint_authority
+                or info.get("freezeAuthority") != primary_freeze_authority):
+            raise ValueError("secondary_rpc_mint_state_mismatch")
+        supply = rpc_call(secondary_rpc_url, "getTokenSupply", [mint, {"commitment": "finalized"}])
+        supply_slot = _balmz_solana_context_slot(supply)
+        token_value = supply.get("value") if isinstance(supply, dict) else None
+        if (supply_slot != primary_slot or not isinstance(token_value, dict)
+                or token_value.get("amount") != primary_raw_supply
+                or token_value.get("decimals") != primary_decimals):
+            raise ValueError("secondary_rpc_supply_mismatch")
+        return {"status": "VERIFIED", "reason": None, "provider_host": secondary.hostname,
+                "context_slot": primary_slot, "commitment": "finalized",
+                "same_finalized_slot": True}
+    except Exception as exc:
+        allowed = {"secondary_rpc_url_invalid", "secondary_rpc_provider_not_independent",
+                   "secondary_rpc_mint_state_mismatch", "secondary_rpc_supply_mismatch"}
+        reason = str(exc) if str(exc) in allowed else "secondary_rpc_verification_failed"
+        return {"status": "FAILED", "reason": reason}
+
+
 def _balmz_reconcile_solana_supply(mint):
     if not mint:
         return {"network": "solana", "status": "NOT_CONFIGURED", "observed_supply": None,
@@ -11014,6 +11061,10 @@ def _balmz_reconcile_solana_supply(mint):
             raise ValueError("supply_not_whole_token_aligned")
         observed = raw_int // (10 ** 9)
         matched = observed == BALMZ_SOLANA_MAINNET_ALLOCATION
+        independent_rpc = _balmz_solana_independent_rpc_corroboration(
+            SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_SECONDARY_RPC_URL, mint, account_slot,
+            raw, 9, SOLANA_SPL_TOKEN_PROGRAM_ID, mint_authority, freeze_authority
+        )
         return {"network": "solana", "status": "VERIFIED" if matched else "SUPPLY_MISMATCH",
                 "expected_allocation": str(BALMZ_SOLANA_MAINNET_ALLOCATION), "observed_supply": str(observed),
                 "allocation_matches": matched, "cluster": "mainnet-beta", "decimals": 9,
@@ -11021,7 +11072,7 @@ def _balmz_reconcile_solana_supply(mint):
                 "mint_authority": mint_authority, "freeze_authority": freeze_authority,
                 "mint_authority_configured": mint_authority is not None,
                 "freeze_authority_configured": freeze_authority is not None,
-                "context_slot": account_slot, "commitment": "finalized",
+                "context_slot": account_slot, "commitment": "finalized", "independent_rpc": independent_rpc,
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
         allowed = {"mint_account_owner_or_executable_invalid", "mint_metadata_invalid", "mint_supply_invalid",
