@@ -259,3 +259,13 @@ test("wallet balance UI never converts missing provider data into a zero balance
   assert.match(featureSource, /Number\.isFinite\(parsedBalance\)/);
   assert.match(featureSource, /no zero balance was assumed/);
 });
+
+
+test("transaction explorer links require a hash valid for the recorded network", () => {
+  const source = readFileSync(new URL("./ActivityTrace.jsx", import.meta.url), "utf8");
+  assert.match(source, /const evmHash = \/\^0x\[a-f0-9\]\{64\}\$\/i/);
+  assert.match(source, /const bitcoinHash = \/\^\[a-f0-9\]\{64\}\$\/i/);
+  assert.match(source, /const solanaSignature = \/\^\[1-9A-HJ-NP-Za-km-z\]\{64,88\}\$\//);
+  assert.match(source, /return evmHash \? "https:\/\/etherscan\.io\/tx\//);
+  assert.match(source, /return solanaSignature \? "https:\/\/solscan\.io\/tx\//);
+});
