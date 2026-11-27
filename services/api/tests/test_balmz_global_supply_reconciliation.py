@@ -101,6 +101,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         mint = "So11111111111111111111111111111111111111112"
         raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
         account = {
+            "context": {"slot": 777},
             "value": {
                 "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
                 "executable": False,
@@ -114,13 +115,86 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             if method == "getAccountInfo":
                 return account
             if method == "getTokenSupply":
-                return {"value": {"amount": str(int(raw_supply) + 1), "decimals": 9}}
+                return {"context": {"slot": 777}, "value": {"amount": str(int(raw_supply) + 1), "decimals": 9}}
             raise AssertionError(method)
         with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_solana_supply(mint)
         self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
         self.assertEqual(result["reason"], "mint_supply_rpc_mismatch")
         self.assertIsNone(result["observed_supply"])
+
+    def test_solana_supply_verifies_both_rpc_reads_at_the_same_finalized_slot(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        account = {
+            "context": {"slot": 777},
+            "value": {
+                "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": None, "freezeAuthority": None
+                }}}
+            }
+        }
+        calls = []
+        def fake_rpc(_url, method, params):
+            calls.append((method, params))
+            if method == "getAccountInfo":
+                return account
+            if method == "getTokenSupply":
+                self.assertEqual(params[1], {"commitment": "finalized"})
+                return {"context": {"slot": 777}, "value": {"amount": raw_supply, "decimals": 9}}
+            raise AssertionError(method)
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_reconcile_solana_supply(mint)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["observed_supply"], str(main.BALMZ_SOLANA_MAINNET_ALLOCATION))
+        self.assertEqual(result["context_slot"], 777)
+        self.assertEqual(result["commitment"], "finalized")
+        self.assertEqual([call[0] for call in calls], ["getAccountInfo", "getTokenSupply"])
+
+    def test_solana_supply_rejects_different_finalized_rpc_slots(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        account = {
+            "context": {"slot": 777},
+            "value": {
+                "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": None, "freezeAuthority": None
+                }}}
+            }
+        }
+        def fake_rpc(_url, method, params):
+            if method == "getAccountInfo":
+                return account
+            if method == "getTokenSupply":
+                self.assertEqual(params[1], {"commitment": "finalized"})
+                return {"context": {"slot": 778}, "value": {"amount": raw_supply, "decimals": 9}}
+            raise AssertionError(method)
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_reconcile_solana_supply(mint)
+        self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+        self.assertEqual(result["reason"], "mint_snapshot_slot_mismatch")
+        self.assertIsNone(result["observed_supply"])
+
+    def test_solana_supply_requires_valid_context_slot_metadata(self):
+        mint = "So11111111111111111111111111111111111111112"
+        invalid_contexts = (None, {}, {"slot": True}, {"slot": "777"}, {"slot": -1})
+        for context in invalid_contexts:
+            with self.subTest(context=context):
+                def fake_rpc(_url, method, _params):
+                    if method == "getAccountInfo":
+                        return {"context": context, "value": None}
+                    raise AssertionError("token supply read must not follow invalid account context")
+                with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+                    result = main._balmz_reconcile_solana_supply(mint)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "mint_context_slot_invalid")
+                self.assertIsNone(result["observed_supply"])
 
     def test_evm_supply_reads_all_contract_data_at_one_finalized_block(self):
         contract = "0x" + "1" * 40
@@ -212,6 +286,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         for invalid in invalid_amounts:
             with self.subTest(invalid=invalid):
                 account = {
+                    "context": {"slot": 777},
                     "value": {
                         "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
                         "executable": False,
@@ -229,6 +304,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
                 self.assertEqual(rpc.call_count, 1)
 
         account = {
+            "context": {"slot": 777},
             "value": {
                 "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
                 "executable": False,
@@ -244,7 +320,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
                     if method == "getAccountInfo":
                         return account
                     if method == "getTokenSupply":
-                        return {"value": {"amount": invalid, "decimals": 9}}
+                        return {"context": {"slot": 777}, "value": {"amount": invalid, "decimals": 9}}
                     raise AssertionError(method)
                 with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
                     result = main._balmz_reconcile_solana_supply(mint)
