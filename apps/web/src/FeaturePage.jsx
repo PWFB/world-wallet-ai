@@ -5,6 +5,7 @@ import { isTestnetNetwork } from "./network-selection.js";
 import { discoverEip6963Providers, networkForEvmChain, withProviderTimeout } from "./eip6963-wallets.js";
 import { collectWalletConnectAccounts, mergeWalletConnectConnections } from "./walletconnect-evm.js";
 import { formatTokenAmountExact } from "./token-amount.js";
+import { signPreparedSolanaDelivery } from "./solana-delivery-wallet.js";
 
 const WalletVault = lazy(() => import("./WalletVault.jsx"));
 const ContractTools = lazy(() => import("./ContractTools.jsx"));
@@ -1159,6 +1160,97 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
+function BalmzDeliveryAdminPanel({ accessToken, apiBaseUrl }) {
+  const [deliveries, setDeliveries] = useState([]);
+  const [busyId, setBusyId] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+
+  const refresh = async () => {
+    setLoading(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/admin/balmz/presale/deliveries?state=active", {
+        cache: "no-store", headers: await walletAuthHeaders(accessToken),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Admin access is required to view delivery attempts.");
+      setDeliveries(Array.isArray(data.deliveries) ? data.deliveries : []);
+    } catch (cause) {
+      setError(cause.message || "Could not load the delivery queue.");
+    } finally { setLoading(false); }
+  };
+
+  const approve = async delivery => {
+    setBusyId(delivery.delivery_id); setError(""); setNotice("");
+    try {
+      const response = await fetch(apiBaseUrl + "/api/v1/admin/balmz/presale/delivery/" + encodeURIComponent(delivery.delivery_id) + "/approve", {
+        method: "POST", headers: await walletAuthHeaders(accessToken),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "The exact delivery message could not be approved.");
+      setNotice("Exact message approved until " + new Date(data.approval_expires_at).toLocaleTimeString() + ". It is not signed or broadcast yet.");
+      await refresh();
+    } catch (cause) {
+      setError(cause.message || "Could not approve the delivery.");
+    } finally { setBusyId(""); }
+  };
+
+  const signAndSubmit = async delivery => {
+    setBusyId(delivery.delivery_id); setError(""); setNotice("");
+    try {
+      const signed = await signPreparedSolanaDelivery({
+        unsignedTransactionBase64: delivery.unsigned_transaction_base64,
+        expectedAuthority: delivery.authority_address,
+        expectedTransfer: {
+          sourceTokenAccount: delivery.source_token_account,
+          mintAddress: delivery.mint_address,
+          destinationTokenAccount: delivery.destination_token_account,
+          amountBaseUnits: delivery.amount_base_units,
+          decimals: delivery.decimals,
+        },
+      });
+      const response = await fetch(apiBaseUrl + "/api/v1/admin/balmz/presale/delivery/" + encodeURIComponent(delivery.delivery_id) + "/submit", {
+        method: "POST",
+        headers: await walletAuthHeaders(accessToken, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ signed_transaction_base64: signed.signedTransactionBase64 }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "The signed transaction was not accepted.");
+      setNotice("Signed transaction submitted once. Awaiting finalized on-chain reconciliation; signature: " + (data.tx_signature || "pending"));
+      await refresh();
+    } catch (cause) {
+      setError(cause.message || "Wallet signing or submission failed. Do not retry an ambiguous transaction; refresh its state first.");
+    } finally { setBusyId(""); }
+  };
+
+  return <article className="panel presale-delivery-admin-panel">
+    <div className="panel-head">
+      <div><h2>Admin token-delivery signing</h2><span>Restricted by the backend admin role and all six delivery release gates.</span></div>
+      <button type="button" className="secondary" disabled={loading || Boolean(busyId)} onClick={refresh}>{loading ? "Loading…" : "Refresh admin queue"}</button>
+    </div>
+    {error && <div className="feature-error" role="alert">{error}</div>}
+    {notice && <div className="security-note" role="status">{notice}</div>}
+    {deliveries.length === 0 ? <div className="live-chart-empty">No active delivery previews loaded. Admin refresh is read-only.</div> : <div className="tool-list">
+      {deliveries.map(delivery => <div className="tool-row" key={delivery.delivery_id}>
+        <div>
+          <b>{formatTokenAmountExact(Number(delivery.amount_base_units) / (10 ** Number(delivery.decimals)))} BALMZ-SOL · {delivery.state}</b>
+          <small>Recipient: {delivery.recipient_address}</small>
+          <small>Mint: {delivery.mint_address}</small>
+          <small>Message SHA-256: {delivery.message_sha256}</small>
+          {delivery.tx_signature && <small>Transaction: {delivery.tx_signature}</small>}
+          {delivery.failure_code && <small>Review required: {delivery.failure_code}</small>}
+        </div>
+        <div className="presale-treasury-actions">
+          {delivery.state === "prepared" && <button type="button" className="secondary" disabled={Boolean(busyId)} onClick={() => approve(delivery)}>{busyId === delivery.delivery_id ? "Approving…" : "Approve exact message"}</button>}
+          {delivery.state === "approved" && delivery.unsigned_transaction_base64 && <button type="button" className="primary" disabled={Boolean(busyId)} onClick={() => signAndSubmit(delivery)}>{busyId === delivery.delivery_id ? "Waiting for wallet…" : "Review, sign & submit"}</button>}
+        </div>
+      </div>)}
+    </div>}
+    <div className="security-note">The connected Solana wallet must be the configured source-account authority and fee payer. The wallet reviews and signs locally; the API never receives private keys. A broadcast timeout is not retried automatically.</div>
+  </article>;
+}
+
 export default function FeaturePage({ accountName = "", accountEmail = "", selectedAsset, selectedCoin, setSelectedCoin, walletCoinCatalog, marketPrices = {}, marketPricesUpdatedAt, marketPricesError, marketPricesLoading = false, refreshMarketPrices, focusedTransaction, setFocusedTransaction, active, wallet, walletBalanceText = null, walletBalanceCaption = "", unpricedAssets = [], walletRefreshMessage = "", syncedBalanceAssets = [], assets, activity, accessToken, apiBaseUrl, setActive, onTransactionsUpdated, onWalletUpdated, accountUserId = "" }) {
   const activeWalletId = String(wallet?.wallet_id || wallet?.id || wallet?.walletId || "");
   const [asset, setAsset] = useState(selectedAsset || assets[0]?.symbol || "BALMZ");
@@ -2127,6 +2219,8 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="presale-warning">A database allocation is not an on-chain token balance. Token delivery is disabled; this page does not prepare, sign, broadcast, or transfer tokens.</div>
         </>}
       </article>
+
+      <BalmzDeliveryAdminPanel accessToken={accessToken} apiBaseUrl={apiBaseUrl} />
 
       <article className="panel presale-scope-panel">
         <div className="panel-head"><div><h2>Network and transaction scope</h2><span>Production activity and test evidence remain isolated.</span></div></div>
