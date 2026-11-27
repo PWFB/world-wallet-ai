@@ -452,6 +452,16 @@ function App() {
   const [user, setUser] = useState(null);
   const accountUserId = String(user?.id || user?.userId || user?.user_id || user?.sub || "");
   const activeWalletServerId = String(wallet?.wallet_id || wallet?.id || "");
+  const balanceSyncContextRef = useRef("");
+  useEffect(() => {
+    const nextContext = accountUserId + ":" + activeWalletServerId;
+    if (balanceSyncContextRef.current && balanceSyncContextRef.current !== nextContext) {
+      setSyncedBalanceAssets([]);
+      setSyncedBalanceNetworks([]);
+      setHasVerifiedMainnetBalance(false);
+    }
+    balanceSyncContextRef.current = nextContext;
+  }, [accountUserId, activeWalletServerId]);
   const visibleLocalWalletEntries = accountUserId ? localWalletEntries.filter(entry => entry.ownerUserId
     ? String(entry.ownerUserId) === accountUserId
     : String(entry.serverWalletId || entry.walletId || "") === activeWalletServerId && Boolean(activeWalletServerId)) : [];
