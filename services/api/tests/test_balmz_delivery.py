@@ -124,6 +124,29 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
         )
         self.assertEqual(result["amount_base_units"], "2000000000")
         self.assertEqual(result["context_slot"], "123")
+        for invalid_decimals in (True, 9.0, "9"):
+            invalid_precision = {
+                "context": {"slot": 123},
+                "value": {
+                    "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    "executable": False,
+                    "data": {"parsed": {"type": "account", "info": {
+                        "mint": self.mint,
+                        "owner": str(self.authority.pubkey()),
+                        "state": "initialized",
+                        "tokenAmount": {"amount": "2000000000", "decimals": invalid_decimals},
+                    }}},
+                },
+            }
+            with self.subTest(invalid_decimals=invalid_decimals), self.assertRaisesRegex(
+                delivery.BalmzDeliveryValidationError, "token_account_decimals_invalid"
+            ):
+                delivery.parse_spl_token_account(
+                    invalid_precision,
+                    expected_mint=self.mint,
+                    expected_owner=str(self.authority.pubkey()),
+                    expected_token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                )
         for field, value in (("mint", str(Pubkey.new_unique())), ("owner", str(Keypair().pubkey()))):
             invalid = {
                 "context": {"slot": 123},
