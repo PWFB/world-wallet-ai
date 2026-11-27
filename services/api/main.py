@@ -1,4 +1,5 @@
 import os
+import ipaddress
 import math
 import logging
 import base64
@@ -10762,7 +10763,15 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
     try:
         secondary = _balmz_require_secure_evm_mainnet_rpc_url(secondary_rpc_url)
         primary = urlparse(primary_rpc_url)
-        if secondary.hostname.rstrip(".").lower() == (primary.hostname or "").rstrip(".").lower():
+        def canonical_host(host):
+            try:
+                return ipaddress.ip_address(host).compressed.lower()
+            except ValueError:
+                try:
+                    return host.encode("idna").decode("ascii").rstrip(".").lower()
+                except (UnicodeError, AttributeError):
+                    raise ValueError("invalid_rpc_provider_hostname")
+        if canonical_host(secondary.hostname) == canonical_host(primary.hostname or ""):
             raise ValueError("secondary_rpc_provider_not_independent")
         if evm_chain_id(secondary_rpc_url) != chain_id:
             raise ValueError("secondary_rpc_wrong_chain_id")
