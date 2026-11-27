@@ -10927,6 +10927,11 @@ def _balmz_reconcile_solana_supply(mint):
                 or token_amount != raw
                 or token_value.get("decimals") != 9):
             raise ValueError("mint_supply_rpc_mismatch")
+        mint_authority = info.get("mintAuthority")
+        freeze_authority = info.get("freezeAuthority")
+        if ((mint_authority is not None and not isinstance(mint_authority, str))
+                or (freeze_authority is not None and not isinstance(freeze_authority, str))):
+            raise ValueError("mint_authority_metadata_invalid")
         raw_int = int(raw)
         if raw_int % (10 ** 9):
             raise ValueError("supply_not_whole_token_aligned")
@@ -10936,14 +10941,15 @@ def _balmz_reconcile_solana_supply(mint):
                 "expected_allocation": str(BALMZ_SOLANA_MAINNET_ALLOCATION), "observed_supply": str(observed),
                 "allocation_matches": matched, "cluster": "mainnet-beta", "decimals": 9,
                 "raw_supply": raw, "mint_address": mint,
-                "mint_authority_configured": info.get("mintAuthority") is not None,
-                "freeze_authority_configured": info.get("freezeAuthority") is not None,
+                "mint_authority": mint_authority, "freeze_authority": freeze_authority,
+                "mint_authority_configured": mint_authority is not None,
+                "freeze_authority_configured": freeze_authority is not None,
                 "context_slot": account_slot, "commitment": "finalized",
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
         allowed = {"mint_account_owner_or_executable_invalid", "mint_metadata_invalid", "mint_supply_invalid",
                    "mint_supply_rpc_mismatch", "mint_context_slot_invalid", "mint_snapshot_slot_mismatch",
-                   "supply_not_whole_token_aligned"}
+                   "supply_not_whole_token_aligned", "mint_authority_metadata_invalid"}
         reason = str(exc) if str(exc) in allowed else "mainnet_rpc_or_mint_verification_failed"
         return {"network": "solana", "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
