@@ -6645,6 +6645,9 @@ def system_status(user: dict = Depends(current_user)):
 def _verify_balmz_treasury_ownership_signature(address: str, message: str, signature: str) -> bool:
     """Verify a base64 Ed25519 signature against the exact Solana address."""
     try:
+        # Reject non-canonical Base58 encodings before interpreting the key.
+        if not _balmz_is_canonical_solana_pubkey(address):
+            return False
         alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
         decoded = 0
         for character in address:
