@@ -2068,9 +2068,11 @@ def solana_spl_token_balance(owner_address: str, mint_address: str = BALMZ_SOLAN
 
 
 def evm_chain_id(url: str):
-    """Return the connected EVM RPC chain ID as an integer."""
+    """Return a canonical JSON-RPC EVM chain ID, rejecting malformed quantities."""
     raw = rpc_call(url, "eth_chainId", [])
-    return int(raw, 16) if raw else None
+    if not isinstance(raw, str) or not re.fullmatch(r"0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)", raw):
+        raise ValueError("invalid_chain_id")
+    return int(raw[2:], 16)
 
 
 def require_ethereum_mainnet_rpc(url: str):
