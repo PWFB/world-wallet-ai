@@ -117,6 +117,40 @@ class EtherscanProviderTests(unittest.TestCase):
         self.assertFalse(result["secrets_exposed"])
         self.assertNotIn("private-test-key", str(result))
 
+    def test_address_data_normalizes_empty_history_responses_for_all_activity_types(self):
+        user = {"id": "user"}
+        address = "0x" + "1" * 40
+        empty_messages = {
+            "txlist": "No transactions found",
+            "tokentx": "No records found",
+            "txlistinternal": "No logs found",
+        }
+        def fake_request(chain_id, module, action, params=None):
+            if action == "balance":
+                return {"status": "1", "result": "0"}
+            return {"status": "0", "message": "No transactions", "result": empty_messages[action]}
+        request = main.EtherscanAddressDataRequest(address=address, network="ethereum")
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main, "etherscan_v2_request", side_effect=fake_request):
+                result = main.etherscan_address_data(request, user)
+        self.assertEqual(result["transactions"], [])
+        self.assertEqual(result["token_transfers"], [])
+        self.assertEqual(result["internal_transactions"], [])
+
+    def test_address_data_rejects_malformed_activity_payload(self):
+        user = {"id": "user"}
+        address = "0x" + "1" * 40
+        def fake_request(chain_id, module, action, params=None):
+            if action == "balance":
+                return {"status": "1", "result": "0"}
+            return {"status": "1", "message": "OK", "result": {"unexpected": "object"}}
+        request = main.EtherscanAddressDataRequest(address=address, network="ethereum")
+        with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
+            with patch.object(main, "etherscan_v2_request", side_effect=fake_request):
+                with self.assertRaises(main.HTTPException) as error:
+                    main.etherscan_address_data(request, user)
+        self.assertEqual(error.exception.status_code, 502)
+
     def test_address_data_rejects_unsupported_network(self):
         request = main.EtherscanAddressDataRequest(address="0x" + "1" * 40, network="sepolia")
         with patch.object(main, "ETHERSCAN_API_KEY", "private-test-key"):
