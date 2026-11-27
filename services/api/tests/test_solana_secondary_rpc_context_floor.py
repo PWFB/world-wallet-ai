@@ -50,6 +50,55 @@ class SolanaSecondaryRpcContextFloorTests(unittest.TestCase):
             )
         return result, rpc
 
+    def assert_provider_rejected_before_rpc(self, primary_url, secondary_url, expected_reason):
+        with patch.object(main, "require_solana_rpc_cluster") as cluster, patch.object(
+            main, "rpc_call"
+        ) as rpc:
+            result = main._balmz_solana_independent_rpc_corroboration(
+                primary_url,
+                secondary_url,
+                self.MINT,
+                987,
+                self.RAW_SUPPLY,
+                9,
+                main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                None,
+                None,
+            )
+        self.assertEqual(result, {"status": "FAILED", "reason": expected_reason})
+        cluster.assert_not_called()
+        rpc.assert_not_called()
+
+    def test_rejects_trailing_dot_dns_alias_before_rpc(self):
+        self.assert_provider_rejected_before_rpc(
+            "https://primary.example", "https://primary.example.",
+            "secondary_rpc_provider_not_independent",
+        )
+
+    def test_rejects_idn_and_punycode_alias_before_rpc(self):
+        self.assert_provider_rejected_before_rpc(
+            "https://xn--bcher-kva.example", "https://bücher.example",
+            "secondary_rpc_provider_not_independent",
+        )
+
+    def test_rejects_equivalent_ipv6_spellings_before_rpc(self):
+        self.assert_provider_rejected_before_rpc(
+            "https://[2001:db8::1]", "https://[2001:0db8:0:0:0:0:0:1]",
+            "secondary_rpc_provider_not_independent",
+        )
+
+    def test_rejects_ipv4_mapped_ipv6_alias_before_rpc(self):
+        self.assert_provider_rejected_before_rpc(
+            "https://192.0.2.1", "https://[::ffff:192.0.2.1]",
+            "secondary_rpc_provider_not_independent",
+        )
+
+    def test_rejects_ambiguous_legacy_numeric_host_before_rpc(self):
+        self.assert_provider_rejected_before_rpc(
+            "https://127.0.0.1", "https://127.1",
+            "invalid_rpc_provider_hostname",
+        )
+
     def test_rejects_secondary_account_older_than_primary_context_floor(self):
         result, rpc = self.reconcile([self.account(986)])
         self.assertEqual(result["status"], "FAILED")
