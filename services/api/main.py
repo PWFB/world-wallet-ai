@@ -10252,7 +10252,7 @@ def _balmz_reconcile_solana_supply(mint):
         token_result = rpc_call(
             SOLANA_MAINNET_RPC_URL,
             "getTokenSupply",
-            [mint, {"commitment": "finalized", "minContextSlot": account_slot}],
+            [mint, {"commitment": "finalized"}],
         )
         token_slot = _balmz_solana_context_slot(token_result)
         if token_slot != account_slot:
