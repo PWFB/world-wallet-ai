@@ -5782,27 +5782,34 @@ def _balmz_presale_delivery_release_gates_pass() -> bool:
 
 
 def _balmz_global_supply_is_verified_for_delivery() -> bool:
-    """Require all three production chain supplies and the Ethereum reserve proof."""
-    chains = {
-        "ethereum": _balmz_reconcile_evm_supply("ethereum", ETH_RPC_URL, BALMZ_ETH_CONTRACT, 1, 11_000_000_000),
-        "bnb": _balmz_reconcile_evm_supply("bnb", BSC_RPC_URL, BALMZ_BNB_CONTRACT, 56, 10_000_000_000),
-        "solana": _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT),
-    }
-    reserve = _balmz_reconcile_ethereum_reserve(
-        ETH_RPC_URL, BALMZ_ETH_CONTRACT, BALMZ_ETH_VESTING_CONTRACT, BALMZ_ETH_RESERVE_BENEFICIARY
-    )
-    summary = _balmz_global_supply_summary(chains)
-    independent_rpc_verified = all(
-        isinstance(chains.get(network), dict)
-        and isinstance(chains[network].get("independent_rpc"), dict)
-        and chains[network]["independent_rpc"].get("status") == "VERIFIED"
-        for network in ("ethereum", "bnb", "solana")
-    )
-    return bool(
-        summary.get("status") == "RECONCILED"
-        and reserve.get("status") == "VERIFIED"
-        and independent_rpc_verified
-    )
+    """Require reconciled supplies, independent RPC proof on every chain, and ETH reserve proof."""
+    try:
+        chains = {
+            "ethereum": _balmz_reconcile_evm_supply("ethereum", ETH_RPC_URL, BALMZ_ETH_CONTRACT, 1, 11_000_000_000),
+            "bnb": _balmz_reconcile_evm_supply("bnb", BSC_RPC_URL, BALMZ_BNB_CONTRACT, 56, 10_000_000_000),
+            "solana": _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT),
+        }
+        reserve = _balmz_reconcile_ethereum_reserve(
+            ETH_RPC_URL, BALMZ_ETH_CONTRACT, BALMZ_ETH_VESTING_CONTRACT, BALMZ_ETH_RESERVE_BENEFICIARY
+        )
+        summary = _balmz_global_supply_summary(chains)
+        independent_rpc_verified = all(
+            isinstance(chains.get(network), dict)
+            and isinstance(chains[network].get("independent_rpc"), dict)
+            and chains[network]["independent_rpc"].get("status") == "VERIFIED"
+            for network in ("ethereum", "bnb", "solana")
+        )
+        return bool(
+            summary.get("status") == "RECONCILED"
+            and reserve.get("status") == "VERIFIED"
+            and independent_rpc_verified
+        )
+    except Exception as exc:
+        logger.warning(
+            "BALMZ global supply release proof unavailable: error_type=%s",
+            type(exc).__name__,
+        )
+        return False
 
 
 def _balmz_delivery_read_token_account(address: str, mint: str, owner: str):
