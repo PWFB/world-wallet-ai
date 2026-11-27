@@ -75,6 +75,35 @@ class WalletPublicIdTests(unittest.TestCase):
             result = main.activate_wallet(request, {"id": "user_test", "wallet_id": "wallet_old"})
         self.assertEqual(result["wallet"]["wallet_number"], "12345678901")
 
+    def test_activation_rejects_wallet_owned_by_another_user_without_changing_active_wallet(self):
+        from fastapi import HTTPException
+
+        class ForeignWalletConnection(FakeConnection):
+            def execute(self, sql, params=None):
+                self.statements.append((sql, params))
+                normalized = " ".join(sql.split()).lower()
+                if normalized.startswith("select id,name,wallet_number from wallets"):
+                    return Result(row=None)
+                return Result()
+
+        connection = ForeignWalletConnection()
+        database = FakeDatabaseContext(connection)
+        request = main.WalletActivateRequest(wallet_id="wallet_someone_else")
+        with patch.object(main, "db", return_value=database):
+            with self.assertRaises(HTTPException) as error:
+                main.activate_wallet(request, {"id": "user_test", "wallet_id": "wallet_current"})
+        self.assertEqual(error.exception.status_code, 404)
+        self.assertFalse(any("UPDATE users SET active_wallet_id" in sql for sql, _ in connection.statements))
+
+    def test_activation_lookup_is_scoped_to_authenticated_owner(self):
+        request = main.WalletActivateRequest(wallet_id="wallet_test")
+        with patch.object(main, "db", return_value=self.database):
+            main.activate_wallet(request, {"id": "user_test", "wallet_id": "wallet_old"})
+        lookup = next((sql, params) for sql, params in self.connection.statements
+                      if "SELECT id,name,wallet_number FROM wallets" in sql)
+        self.assertIn("owner_id=%s", lookup[0])
+        self.assertEqual(lookup[1], ("wallet_test", "user_test"))
+
     def test_schema_adds_unique_range_checked_number_without_replacing_wallet_rows(self):
         with patch.object(main, "DATABASE_URL", "postgresql://test"), patch.object(main, "db", return_value=self.database):
             main.init_db()
