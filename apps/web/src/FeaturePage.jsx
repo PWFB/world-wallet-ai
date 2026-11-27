@@ -500,9 +500,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         String(connection.address || "").toLowerCase() === String(item.address || "").toLowerCase()
       );
       const expectedProviderId = String(savedExternalConnection?.providerId || savedExternalConnection?.provider || "").toLowerCase();
-      // A Binance-linked address must be proved through Binance's injected provider.
-      // Do not open or silently use a WalletConnect/OKX session for that record.
-      const useWalletConnect = !["binance", "okx"].includes(expectedProviderId);
+      // Binance-linked addresses must be proved through Binance's own injected provider.
+      // For OKX-linked addresses, WalletConnect is also valid when its approved account
+      // exactly matches this saved address; the backend still verifies the personal_sign proof.
+      const useWalletConnect = expectedProviderId !== "binance";
       const walletConnectProjectId = useWalletConnect
         ? String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim()
         : "";
@@ -568,7 +569,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         expectedProviderId === "binance"
           ? [window.binancew3w?.ethereum]
           : expectedProviderId === "okx"
-            ? [window.okxwallet, externalProvider?.isOKXWallet || externalProvider?.isOkxWallet ? externalProvider : null]
+            ? [window.okxwallet, externalProvider?.isOKXWallet || externalProvider?.isOkxWallet ? externalProvider : null, walletConnectProviderRef.current]
             : expectedProviderId === "walletconnect"
               ? [walletConnectProviderRef.current]
               : [
@@ -611,7 +612,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const providerHint = expectedProviderId === "binance"
           ? "Open World Wallet AI inside Binance Wallet's DApp browser and connect the same Binance account."
           : expectedProviderId === "okx"
-            ? "Open World Wallet AI inside OKX Wallet's DApp browser and connect the same OKX account."
+            ? "Connect the same OKX account through WalletConnect QR or OKX Wallet's DApp browser, and approve this exact address."
             : "Connect the wallet that owns this exact address.";
         throw new Error(providerHint + " No recovery phrase or private key is needed.");
       }
