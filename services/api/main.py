@@ -3924,7 +3924,7 @@ def _read_verified_solana_spl_balance(owner_address: str, mint_address: str, *, 
     """Read an SPL balance only after validating the selected Solana cluster and mint precision."""
     if not valid_solana_address(owner_address) or not valid_solana_address(mint_address):
         raise ValueError("Invalid Solana owner or mint address")
-    if not isinstance(decimals, int) or decimals < 0 or decimals > 18:
+    if isinstance(decimals, bool) or not isinstance(decimals, int) or decimals < 0 or decimals > 18:
         raise ValueError("Invalid SPL token decimals")
     require_solana_rpc_cluster(rpc_url, expected_genesis_hash, cluster_name)
     response = rpc_call(
@@ -3939,12 +3939,21 @@ def _read_verified_solana_spl_balance(owner_address: str, mint_address: str, *, 
         try:
             info = item["account"]["data"]["parsed"]["info"]
             token_amount = info["tokenAmount"]
-            if info.get("mint") != mint_address or int(token_amount.get("decimals")) != decimals:
+            observed_decimals = token_amount.get("decimals")
+            if (
+                info.get("mint") != mint_address
+                or isinstance(observed_decimals, bool)
+                or not isinstance(observed_decimals, int)
+                or observed_decimals != decimals
+            ):
                 raise ValueError("SPL token account mint or decimals mismatch")
             raw_amount = token_amount.get("amount")
-            if not isinstance(raw_amount, str) or not raw_amount.isdigit():
+            if not isinstance(raw_amount, str) or not re.fullmatch(r"(0|[1-9][0-9]*)", raw_amount):
                 raise ValueError("SPL token account returned an invalid raw amount")
-            raw_total += int(raw_amount)
+            raw_units = int(raw_amount)
+            if raw_units > (1 << 64) - 1:
+                raise ValueError("SPL token account amount exceeds the unsigned 64-bit limit")
+            raw_total += raw_units
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError("Solana returned malformed SPL token-account data") from exc
     return Decimal(raw_total) / (Decimal(10) ** decimals)
