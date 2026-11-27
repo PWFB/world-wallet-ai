@@ -10049,12 +10049,66 @@ app.include_router(build_bankconnect_router(db, current_user))
 
 # Read-only cross-chain BALMZ production supply reconciliation.
 BALMZ_ETH_VESTING_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_VESTING_CONTRACT", "").strip()
+BALMZ_ETH_RESERVE_BENEFICIARY = os.getenv("WORLD_WALLET_BALMZ_ETH_RESERVE_BENEFICIARY", "").strip()
+BALMZ_ETH_RESERVE_ALLOCATION_RAW = 1_000_000_000 * (10 ** 18)
 
 def _balmz_decode_uint256_rpc(value):
     """Decode a strict 32-byte ABI uint256 result without float conversion."""
     if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
         raise ValueError("Malformed ABI uint256 response")
     return int(value[2:], 16)
+
+def _balmz_eth_call_address(rpc_url, contract, signature):
+    digest = keccak.new(digest_bits=256)
+    digest.update(signature.encode("ascii"))
+    encoded = rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x" + digest.hexdigest()[:8]}, "latest"])
+    raw = _balmz_decode_uint256_rpc(encoded)
+    if raw >> 160:
+        raise ValueError("reserve_address_abi_invalid")
+    return "0x" + format(raw, "040x")
+
+def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract, expected_beneficiary):
+    """Read immutable reserve vesting fields and escrow balance; never mutates chain state."""
+    if not vesting_contract or not expected_beneficiary:
+        return {"status": "NOT_CONFIGURED", "reason": "vesting_contract_or_beneficiary_not_configured",
+                "allocation_matches": False, "read_only": True}
+    if not valid_evm_address(vesting_contract) or not valid_evm_address(expected_beneficiary):
+        return {"status": "CONTRACT_INVALID", "reason": "invalid_vesting_or_beneficiary_address",
+                "allocation_matches": False, "read_only": True}
+    if not token_contract or vesting_contract.lower() == token_contract.lower():
+        return {"status": "CONTRACT_INVALID", "reason": "vesting_contract_must_be_distinct_from_token",
+                "allocation_matches": False, "read_only": True}
+    try:
+        code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, "latest"])
+        if not isinstance(code, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", code) or code.lower() == "0x":
+            raise ValueError("vesting_bytecode_missing")
+        observed_token = _balmz_eth_call_address(rpc_url, vesting_contract, "token()")
+        beneficiary = _balmz_eth_call_address(rpc_url, vesting_contract, "beneficiary()")
+        allocation = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"totalAllocation()").hexdigest()[:8]}, "latest"]))
+        released = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"released()").hexdigest()[:8]}, "latest"]))
+        balance_data = keccak.new(digest_bits=256)
+        balance_data.update(b"balanceOf(address)")
+        balance_selector = balance_data.hexdigest()[:8]
+        balance_arg = vesting_contract.lower().removeprefix("0x").rjust(64, "0")
+        reserve_balance = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": token_contract, "data": "0x" + balance_selector + balance_arg}, "latest"]))
+        if observed_token.lower() != token_contract.lower():
+            raise ValueError("vesting_token_mismatch")
+        if beneficiary.lower() != expected_beneficiary.lower():
+            raise ValueError("vesting_beneficiary_mismatch")
+        if allocation != BALMZ_ETH_RESERVE_ALLOCATION_RAW:
+            raise ValueError("vesting_allocation_mismatch")
+        if released > allocation or reserve_balance < allocation - released:
+            raise ValueError("vesting_reserve_balance_insufficient")
+        return {"status": "VERIFIED", "reason": None, "vesting_contract": vesting_contract,
+                "token_contract": observed_token, "beneficiary": beneficiary,
+                "expected_beneficiary": expected_beneficiary, "allocation_raw": str(allocation),
+                "released_raw": str(released), "reserve_balance_raw": str(reserve_balance),
+                "allocation_matches": True, "read_only": True}
+    except Exception as exc:
+        allowed = {"vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
+                   "vesting_allocation_mismatch", "vesting_reserve_balance_insufficient"}
+        reason = str(exc) if str(exc) in allowed else "vesting_rpc_or_metadata_verification_failed"
+        return {"status": "CONTRACT_INVALID", "reason": reason, "allocation_matches": False, "read_only": True}
 
 def _balmz_global_supply_summary(chains):
     required = ("ethereum", "bnb", "solana")
@@ -10158,9 +10212,12 @@ def balmz_global_supply_reconciliation(user: dict = Depends(current_user)):
         "bnb": _balmz_reconcile_evm_supply("bnb", BSC_RPC_URL, BALMZ_BNB_CONTRACT, 56, 10_000_000_000),
         "solana": _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT),
     }
+    reserve = _balmz_reconcile_ethereum_reserve(
+        ETH_RPC_URL, BALMZ_ETH_CONTRACT, BALMZ_ETH_VESTING_CONTRACT, BALMZ_ETH_RESERVE_BENEFICIARY
+    )
     summary = _balmz_global_supply_summary(chains)
-    if summary["status"] == "RECONCILED" and not BALMZ_ETH_VESTING_CONTRACT:
+    if summary["status"] == "RECONCILED" and reserve["status"] != "VERIFIED":
         summary["status"] = "PARTIAL_DEPLOYMENT"
-    summary["ethereum_reserve_evidence"] = "CONFIGURED_REQUIRES_INDEPENDENT_REVIEW" if BALMZ_ETH_VESTING_CONTRACT else "NOT_CONFIGURED"
+    summary["ethereum_reserve_evidence"] = reserve
     record_admin_event(user, "balmz_global_supply_reconciliation", "read_only")
     return {**summary, "chains": chains}
