@@ -281,3 +281,14 @@ test("portfolio balances are scoped to a network and never coerce missing values
   assert.match(appSource, /balanceSyncContextRef\.current !== nextContext/);
   assert.match(appSource, /setHasVerifiedMainnetBalance\(false\)/);
 });
+
+
+test("transaction detail explorer links require a network-specific valid transaction hash", () => {
+  assert.match(featureSource, /const evmHash = \/\^0x\[a-f0-9\]\{64\}\$\/i/);
+  assert.match(featureSource, /const hexHash = \/\^\[a-f0-9\]\{64\}\$\/i/);
+  assert.match(featureSource, /const solanaSignature = \/\^\[1-9A-HJ-NP-Za-km-z\]\{64,88\}\$\//);
+  assert.match(featureSource, /if \(network === "ethereum" \|\| network === "bnb" \|\| network === "sepolia" \|\| network === "polygon"\)/);
+  assert.match(featureSource, /if \(network === "solana_mainnet" \|\| network === "solana_devnet"\)/);
+  assert.match(featureSource, /if \(network === "bitcoin" \|\| network === "litecoin" \|\| network === "dogecoin"\)/);
+  assert.match(featureSource, /return "";/);
+});
