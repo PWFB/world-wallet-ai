@@ -7,14 +7,17 @@ function short(value) {
 
 function explorerUrl(event) {
   const hash = String(event?.tx_hash || "").trim();
-  if (!hash || !/^[A-Za-z0-9]+$/.test(hash)) return "";
+  if (!hash) return "";
   const network = String(event?.network || "").toLowerCase().replace(/[\s-]+/g, "_");
-  if (network === "bitcoin") return "https://blockstream.info/tx/" + encodeURIComponent(hash);
-  if (network === "bnb") return "https://bscscan.com/tx/" + encodeURIComponent(hash);
-  if (network === "sepolia") return "https://sepolia.etherscan.io/tx/" + encodeURIComponent(hash);
-  if (network === "ethereum") return "https://etherscan.io/tx/" + encodeURIComponent(hash);
-  if (network === "solana_mainnet" || network === "solana") return "https://solscan.io/tx/" + encodeURIComponent(hash);
-  if (network === "solana_devnet") return "https://explorer.solana.com/tx/" + encodeURIComponent(hash) + "?cluster=devnet";
+  const evmHash = /^0x[a-f0-9]{64}$/i.test(hash);
+  const bitcoinHash = /^[a-f0-9]{64}$/i.test(hash);
+  const solanaSignature = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(hash);
+  if (network === "bitcoin") return bitcoinHash ? "https://blockstream.info/tx/" + hash : "";
+  if (network === "bnb") return evmHash ? "https://bscscan.com/tx/" + hash : "";
+  if (network === "sepolia") return evmHash ? "https://sepolia.etherscan.io/tx/" + hash : "";
+  if (network === "ethereum") return evmHash ? "https://etherscan.io/tx/" + hash : "";
+  if (network === "solana_mainnet" || network === "solana") return solanaSignature ? "https://solscan.io/tx/" + hash : "";
+  if (network === "solana_devnet") return solanaSignature ? "https://explorer.solana.com/tx/" + hash + "?cluster=devnet" : "";
   return "";
 }
 
