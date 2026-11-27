@@ -338,3 +338,88 @@ class WalletAddressOwnershipTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WalletAddressAttachConnection:
+    def __init__(self, owner=True, existing=None):
+        self.owner = owner
+        self.existing = existing
+        self.inserted = False
+        self.statements = []
+        self.params = []
+
+    def execute(self, sql, params=None):
+        normalized = " ".join(sql.split()).lower()
+        self.statements.append(normalized)
+        self.params.append(params)
+        if normalized.startswith("select id from wallets where id=%s and owner_id=%s"):
+            return Result(("wallet_test",) if self.owner else None)
+        if normalized.startswith("select ownership_verified from wallet_addresses"):
+            if self.existing is not None:
+                return Result((self.existing,))
+            return Result((False,) if self.inserted else None)
+        if normalized.startswith("update wallet_addresses set label=%s"):
+            return Result(rowcount=1)
+        if normalized.startswith("insert into wallet_addresses"):
+            self.inserted = True
+            return Result()
+        if normalized.startswith("insert into wallet_audit_events"):
+            return Result()
+        raise AssertionError("Unexpected SQL: " + normalized)
+
+    def commit(self):
+        pass
+
+
+class WalletAddressAttachTests(unittest.TestCase):
+    def setUp(self):
+        self.address = "0x1111111111111111111111111111111111111111"
+        self.request = main.WalletAddressRequest(
+            network="ethereum", address=self.address, label="primary"
+        )
+        self.user = {"id": "user_test", "email": "member@example.com"}
+
+    def test_new_address_is_saved_unverified_until_signature_proof(self):
+        connection = WalletAddressAttachConnection()
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "valid_evm_address", return_value=True),
+        ):
+            result = main.add_wallet_address("wallet_test", self.request, self.user)
+
+        self.assertEqual(result["status"], "connected")
+        self.assertFalse(result["address"]["ownership_verified"])
+        self.assertTrue(connection.inserted)
+        insert = next(sql for sql in connection.statements if sql.startswith("insert into wallet_addresses"))
+        self.assertIn("ownership_verified) values(%s,%s,%s,%s,false)", insert)
+
+    def test_duplicate_address_preserves_existing_verified_state(self):
+        connection = WalletAddressAttachConnection(existing=True)
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "valid_evm_address", return_value=True),
+        ):
+            result = main.add_wallet_address("wallet_test", self.request, self.user)
+
+        self.assertTrue(result["address"]["ownership_verified"])
+        self.assertFalse(connection.inserted)
+        self.assertTrue(any(sql.startswith("update wallet_addresses set label=%s") for sql in connection.statements))
+
+    def test_address_attach_rejects_wallet_owned_by_another_user(self):
+        from fastapi import HTTPException
+
+        connection = WalletAddressAttachConnection(owner=False)
+        with (
+            patch.object(main, "db", return_value=FakeDatabaseContext(connection)),
+            patch.object(main, "valid_evm_address", return_value=True),
+        ):
+            with self.assertRaises(HTTPException) as caught:
+                main.add_wallet_address("wallet_foreign", self.request, self.user)
+
+        self.assertEqual(caught.exception.status_code, 404)
+        self.assertFalse(connection.inserted)
+        owner_lookup = next(
+            params for sql, params in zip(connection.statements, connection.params)
+            if sql.startswith("select id from wallets where id=%s and owner_id=%s")
+        )
+        self.assertEqual(owner_lookup, ("wallet_foreign", "user_test"))
