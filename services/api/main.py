@@ -11014,11 +11014,11 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
             raise ValueError("secondary_rpc_mint_state_mismatch")
         supply = rpc_call(
             secondary_rpc_url, "getTokenSupply",
-            [mint, {"commitment": "finalized", "minContextSlot": primary_slot}],
+            [mint, {"commitment": "finalized", "minContextSlot": slot}],
         )
         supply_slot = _balmz_solana_context_slot(supply)
         token_value = supply.get("value") if isinstance(supply, dict) else None
-        if (supply_slot < primary_slot or not isinstance(token_value, dict)
+        if (supply_slot < slot or not isinstance(token_value, dict)
                 or token_value.get("amount") != primary_raw_supply
                 or token_value.get("decimals") != primary_decimals):
             raise ValueError("secondary_rpc_supply_mismatch")
