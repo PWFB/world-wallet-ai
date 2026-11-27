@@ -39,7 +39,7 @@ A partial unique index allows at most one active attempt per allocation. Success
 ## Explicit remaining limitations
 
 - This is a wallet-controlled signing boundary, not a deployed remote KMS/HSM signer service. A separate hardware-backed signer would require separate provisioning and review.
-- Frontend wallet-signing UX must be wired to the prepare/approval/submit endpoints before buyers can complete delivery inside the app.
+- The buyer allocation panel now requires an explicit verified Solana Mainnet recipient and creates an unsigned preview only. The admin signing console lists pending attempts, requires a separate exact-message approval, and opens the connected authority wallet for local signing and one-time submission. The UI does not enable any release flag.
 - Buyer destination ATAs must exist before preparation. No rent funding or account creation is included.
 - Production source account, authority address, mint address, and limits are not supplied by this code change. They require owner-verified backend configuration.
 - The global supply endpoint remains read-only and still needs actual Ethereum/BNB contract addresses, the Solana Mainnet mint, and the Ethereum reserve vesting configuration.
