@@ -10771,7 +10771,15 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
                 return address.compressed.lower()
             except ValueError:
                 try:
-                    return host.encode("idna").decode("ascii").rstrip(".").lower()
+                    ascii_host = host.encode("idna").decode("ascii").rstrip(".").lower()
+                    # Some URL resolvers accept legacy IPv4 forms such as 127.1,
+                    # 0177.0.0.1, 0x7f000001, or a single 32-bit integer. Do not
+                    # treat these resolver-dependent numeric hosts as DNS names.
+                    final_label = ascii_host.rsplit(".", 1)[-1]
+                    if (final_label.isdecimal()
+                            or re.fullmatch(r"0x[0-9a-f]+", final_label)):
+                        raise ValueError("invalid_rpc_provider_hostname")
+                    return ascii_host
                 except (UnicodeError, AttributeError):
                     raise ValueError("invalid_rpc_provider_hostname")
         if canonical_host(secondary.hostname) == canonical_host(primary.hostname or ""):
@@ -10799,7 +10807,8 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
     except Exception as exc:
         allowed = {"insecure_mainnet_rpc_url", "secondary_rpc_provider_not_independent",
                    "secondary_rpc_wrong_chain_id", "secondary_rpc_finalized_block_mismatch",
-                   "secondary_rpc_bytecode_mismatch", "secondary_rpc_token_state_mismatch"}
+                   "secondary_rpc_bytecode_mismatch", "secondary_rpc_token_state_mismatch",
+                   "invalid_rpc_provider_hostname"}
         reason = str(exc) if str(exc) in allowed else "secondary_rpc_verification_failed"
         return {"status": "FAILED", "reason": reason}
 
