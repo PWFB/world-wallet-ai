@@ -45,8 +45,8 @@ function prepared(authority, recipient) {
 test("prepared delivery decoding requires the expected authority as fee payer and signer", () => {
   const authority = Keypair.generate();
   const recipient = Keypair.generate();
-  const encoded = prepared(authority, recipient);
-  const decoded = decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58());
+  const { encoded, expectedTransfer } = prepared(authority, recipient);
+  const decoded = decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58(), expectedTransfer);
   assert.equal(decoded.feePayer.toBase58(), authority.publicKey.toBase58());
   assert.throws(() => decodePreparedSolanaDelivery(encoded, recipient.publicKey.toBase58(), expectedTransfer), /configured delivery authority/);
 });
@@ -54,7 +54,7 @@ test("prepared delivery decoding requires the expected authority as fee payer an
 test("wallet helper signs only the exact prepared message", async () => {
   const authority = Keypair.generate();
   const recipient = Keypair.generate();
-  const encoded = prepared(authority, recipient);
+  const { encoded, expectedTransfer } = prepared(authority, recipient);
   const provider = {
     publicKey: authority.publicKey,
     async signTransaction(transaction) {
@@ -65,6 +65,7 @@ test("wallet helper signs only the exact prepared message", async () => {
   const result = await signPreparedSolanaDelivery({
     unsignedTransactionBase64: encoded,
     expectedAuthority: authority.publicKey.toBase58(),
+    expectedTransfer,
     provider,
   });
   assert.equal(result.signerAddress, authority.publicKey.toBase58());
@@ -76,6 +77,7 @@ test("wallet helper rejects the wrong connected signer before asking for a signa
   const authority = Keypair.generate();
   const other = Keypair.generate();
   const recipient = Keypair.generate();
+  const { encoded, expectedTransfer } = prepared(authority, recipient);
   const provider = {
     publicKey: other.publicKey,
     async signTransaction() {
@@ -84,8 +86,9 @@ test("wallet helper rejects the wrong connected signer before asking for a signa
   };
   await assert.rejects(
     signPreparedSolanaDelivery({
-      unsignedTransactionBase64: prepared(authority, recipient),
+      unsignedTransactionBase64: encoded,
       expectedAuthority: authority.publicKey.toBase58(),
+      expectedTransfer,
       provider,
     }),
     /controls the configured BALMZ distribution account/,
