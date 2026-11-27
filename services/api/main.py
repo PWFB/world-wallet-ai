@@ -10146,7 +10146,7 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         if evm_chain_id(rpc_url) != chain_id:
             raise ValueError("wrong_chain_id")
         code = rpc_call(rpc_url, "eth_getCode", [contract, "latest"])
-        if not isinstance(code, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", code) or code.lower() == "0x":
+        if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("contract_bytecode_missing")
         raw = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, "latest"]))
         decimals = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, "latest"]))
