@@ -3193,7 +3193,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
     const classifiedSymbols = new Set([...mainnetAssets, ...testnetAssets].map(item => item.symbol));
     const unclassifiedAssets = assets.filter(item => !classifiedSymbols.has(item.symbol));
     const portfolioNetworkKey = item => {
-      const network = String(item?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+      const network = String(item?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
       const symbol = String(item?.symbol || "").trim().toUpperCase();
       return network && symbol ? network + ":" + symbol : "";
     };
