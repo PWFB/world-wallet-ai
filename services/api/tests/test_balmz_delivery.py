@@ -93,7 +93,7 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
     def test_signed_transaction_with_wrong_authority_is_rejected(self):
         unsigned = self.build()
         signed_base64 = self.sign(unsigned["unsigned_transaction_base64"])
-        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "authority_not_a_signer"):
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "authority_not_fee_payer"):
             delivery.validate_wallet_signed_transaction(
                 unsigned_transaction_base64=unsigned["unsigned_transaction_base64"],
                 signed_transaction_base64=signed_base64,
@@ -143,6 +143,21 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
                     expected_owner=str(self.authority.pubkey()),
                     expected_token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                 )
+
+
+    def test_delivery_release_gates_default_closed_before_database_or_chain_work(self):
+        import main
+        request = main.BalmzPresaleDeliveryPrepareRequest(
+            allocation_id="bpal_test_allocation_123",
+            recipient_address=str(Pubkey.new_unique()),
+        )
+        with (
+            unittest.mock.patch.object(main, "BALMZ_PRESALE_DELIVERY_ENABLED", False),
+            unittest.mock.patch.object(main, "DATABASE_URL", ""),
+        ):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.prepare_balmz_presale_delivery(request, {"id": "buyer-1"})
+        self.assertEqual(caught.exception.status_code, 503)
 
     def test_finalized_observation_requires_exact_transferchecked_metadata(self):
         signature = "5" * 64
