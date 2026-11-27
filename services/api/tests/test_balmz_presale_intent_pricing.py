@@ -50,6 +50,50 @@ class BalmzPresaleIntentPricingTests(unittest.TestCase):
                 )
         self.assertEqual(caught.exception.status_code,503)
 
+    def test_quote_creation_requires_independent_global_supply_proof(self):
+        flags = (
+            "BALMZ_PRESALE_INTENTS_ENABLED",
+            "BALMZ_PRESALE_RELEASE_APPROVED",
+            "BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED",
+            "BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED",
+            "BALMZ_PRESALE_DELIVERY_ENABLED",
+        )
+        with (
+            patch.multiple(main, **{name: True for name in flags}),
+            patch.object(main, "_balmz_global_supply_is_verified_for_delivery", return_value=False),
+        ):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.create_balmz_presale_intent(
+                    main.BalmzPresaleIntentRequest(
+                        payer_address="7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN",
+                        token_amount=Decimal("1"),
+                    ),
+                    {"id": "test-user"},
+                )
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("Independent Ethereum, BNB and Solana", caught.exception.detail)
+
+    def test_settlement_requires_independent_global_supply_proof(self):
+        flags = (
+            "BALMZ_PRESALE_INTENTS_ENABLED",
+            "BALMZ_PRESALE_SETTLEMENT_ENABLED",
+            "BALMZ_PRESALE_RELEASE_APPROVED",
+            "BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED",
+            "BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED",
+            "BALMZ_PRESALE_DELIVERY_ENABLED",
+        )
+        with (
+            patch.multiple(main, **{name: True for name in flags}),
+            patch.object(main, "_balmz_global_supply_is_verified_for_delivery", return_value=False),
+        ):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.settle_balmz_presale_intent(
+                    main.BalmzPresaleSettlementRequest(intent_id="bpi_test_intent_123", tx_signature="5" * 64),
+                    {"id": "test-user"},
+                )
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("Independent Ethereum, BNB and Solana", caught.exception.detail)
+
     def test_settlement_is_closed_by_default(self):
         with patch.object(main,"BALMZ_PRESALE_SETTLEMENT_ENABLED",False):
             with self.assertRaises(main.HTTPException) as caught:
