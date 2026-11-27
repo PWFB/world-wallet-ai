@@ -8287,13 +8287,13 @@ def etherscan_address_data(request: EtherscanAddressDataRequest, user: dict = De
 
     def read_list(action):
         payload = etherscan_v2_request(chain_id, "account", action, common)
-        result = payload.get("result")
-        if str(payload.get("status")) == "1" and isinstance(result, list):
-            return result
-        message = str(result or payload.get("message") or "").lower()
-        if "no transactions found" in message or "no records found" in message:
-            return []
-        raise HTTPException(status_code=502, detail="Etherscan could not retrieve address activity for this network")
+        try:
+            return _etherscan_result_list(payload, action)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail="Etherscan could not retrieve address activity for this network",
+            ) from exc
 
     try:
         balance_payload = etherscan_v2_request(
