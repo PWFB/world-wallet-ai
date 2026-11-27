@@ -42,6 +42,25 @@ except ModuleNotFoundError:
     from balmz_presale_settlement import verify_solana_mainnet_sol_payment
 
 try:
+    from services.api.balmz_delivery import (
+        BalmzDeliveryValidationError,
+        build_unsigned_transfer_checked,
+        derive_associated_token_address,
+        parse_spl_token_account,
+        validate_wallet_signed_transaction,
+        verify_finalized_delivery_observation,
+    )
+except ModuleNotFoundError:
+    from balmz_delivery import (
+        BalmzDeliveryValidationError,
+        build_unsigned_transfer_checked,
+        derive_associated_token_address,
+        parse_spl_token_account,
+        validate_wallet_signed_transaction,
+        verify_finalized_delivery_observation,
+    )
+
+try:
     from services.api.market_price_cache import MarketPriceCache
 except ModuleNotFoundError:
     # Supports running from services/api (e.g. `uvicorn main:app`) as well as repo root.
@@ -123,6 +142,17 @@ BALMZ_PRESALE_SETTLEMENT_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_SETTLEM
 BALMZ_PRESALE_RELEASE_APPROVED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
 BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED", "false").strip().lower() in {"1", "true", "yes", "on"}
+# Buyer token delivery is a separate release gate. It defaults closed and requires
+# a public source token account/authority; private keys never belong in this process.
+BALMZ_PRESALE_DELIVERY_ENABLED = os.getenv("WORLD_WALLET_BALMZ_PRESALE_DELIVERY_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT = os.getenv("WORLD_WALLET_BALMZ_SOLANA_DELIVERY_SOURCE_TOKEN_ACCOUNT", "").strip()
+BALMZ_DELIVERY_AUTHORITY_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_SOLANA_DELIVERY_AUTHORITY", "").strip()
+try:
+    BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS = int(os.getenv("WORLD_WALLET_BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS", "0"))
+    BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS = int(os.getenv("WORLD_WALLET_BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS", "0"))
+except ValueError:
+    BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS = 0
+    BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS = 0
 BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
@@ -302,6 +332,15 @@ class BalmzPresaleIntentRequest(BaseModel):
 class BalmzPresaleSettlementRequest(BaseModel):
     intent_id: str = Field(min_length=12, max_length=80)
     tx_signature: str = Field(min_length=64, max_length=100)
+
+
+class BalmzPresaleDeliveryPrepareRequest(BaseModel):
+    allocation_id: str = Field(min_length=8, max_length=100)
+    recipient_address: str = Field(min_length=32, max_length=44)
+
+
+class BalmzPresaleDeliverySubmitRequest(BaseModel):
+    signed_transaction_base64: str = Field(min_length=100, max_length=8192)
 
 
 class TransferRequest(BaseModel):
@@ -915,6 +954,43 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS balmz_presale_allocation_owner_created_idx
           ON balmz_presale_allocation_ledger(owner_id,created_at DESC);
+        CREATE TABLE IF NOT EXISTS balmz_presale_delivery_attempts(
+          id TEXT PRIMARY KEY,
+          allocation_id TEXT NOT NULL REFERENCES balmz_presale_allocation_ledger(id),
+          owner_id TEXT NOT NULL REFERENCES users(id),
+          recipient_address TEXT NOT NULL,
+          mint_address TEXT NOT NULL,
+          token_program_id TEXT NOT NULL,
+          source_token_account TEXT NOT NULL,
+          destination_token_account TEXT NOT NULL,
+          authority_address TEXT NOT NULL,
+          amount_base_units BIGINT NOT NULL CHECK(amount_base_units > 0),
+          decimals SMALLINT NOT NULL CHECK(decimals = 9),
+          mint_context_slot BIGINT NOT NULL CHECK(mint_context_slot >= 0),
+          source_context_slot BIGINT NOT NULL CHECK(source_context_slot >= 0),
+          destination_context_slot BIGINT NOT NULL CHECK(destination_context_slot >= 0),
+          recent_blockhash TEXT NOT NULL,
+          last_valid_block_height BIGINT NOT NULL CHECK(last_valid_block_height >= 0),
+          unsigned_transaction_base64 TEXT NOT NULL,
+          message_sha256 CHAR(64) NOT NULL,
+          status TEXT NOT NULL DEFAULT 'prepared'
+            CHECK(status IN ('prepared','approved','submitted','finalized','failed','reconciliation_required','cancelled')),
+          approved_by_user_id TEXT REFERENCES users(id),
+          approved_at TIMESTAMPTZ,
+          approval_expires_at TIMESTAMPTZ,
+          tx_signature TEXT UNIQUE,
+          finalized_slot BIGINT,
+          failure_code TEXT,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS balmz_delivery_one_active_attempt_per_allocation_idx
+          ON balmz_presale_delivery_attempts(allocation_id)
+          WHERE status IN ('prepared','approved','submitted','reconciliation_required');
+        CREATE INDEX IF NOT EXISTS balmz_delivery_owner_created_idx
+          ON balmz_presale_delivery_attempts(owner_id,created_at DESC);
+        CREATE INDEX IF NOT EXISTS balmz_delivery_state_created_idx
+          ON balmz_presale_delivery_attempts(status,created_at);
         CREATE TABLE IF NOT EXISTS solana_devnet_deposits(
           tx_signature TEXT PRIMARY KEY,
           wallet_id TEXT NOT NULL REFERENCES wallets(id),
@@ -5655,6 +5731,414 @@ def _balmz_presale_delivery_recipient_status(addresses):
         "recipient_selection_required": True,
         "auto_selected_recipient": None,
         "state": "recipient_verification_required" if not candidates else "buyer_confirmation_required",
+    }
+
+
+def _balmz_presale_delivery_release_gates_pass() -> bool:
+    return bool(
+        BALMZ_PRESALE_INTENTS_ENABLED
+        and BALMZ_PRESALE_SETTLEMENT_ENABLED
+        and BALMZ_PRESALE_RELEASE_APPROVED
+        and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED
+        and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED
+        and BALMZ_PRESALE_DELIVERY_ENABLED
+    )
+
+
+def _balmz_global_supply_is_verified_for_delivery() -> bool:
+    """Require all three production chain supplies and the Ethereum reserve proof."""
+    chains = {
+        "ethereum": _balmz_reconcile_evm_supply("ethereum", ETH_RPC_URL, BALMZ_ETH_CONTRACT, 1, 11_000_000_000),
+        "bnb": _balmz_reconcile_evm_supply("bnb", BSC_RPC_URL, BALMZ_BNB_CONTRACT, 56, 10_000_000_000),
+        "solana": _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT),
+    }
+    reserve = _balmz_reconcile_ethereum_reserve(
+        ETH_RPC_URL, BALMZ_ETH_CONTRACT, BALMZ_ETH_VESTING_CONTRACT, BALMZ_ETH_RESERVE_BENEFICIARY
+    )
+    summary = _balmz_global_supply_summary(chains)
+    return summary.get("status") == "RECONCILED" and reserve.get("status") == "VERIFIED"
+
+
+def _balmz_delivery_read_token_account(address: str, mint: str, owner: str):
+    response = rpc_call(
+        SOLANA_MAINNET_RPC_URL,
+        "getAccountInfo",
+        [address, {"encoding": "jsonParsed", "commitment": "finalized"}],
+    )
+    return parse_spl_token_account(
+        response,
+        expected_mint=mint,
+        expected_owner=owner,
+        expected_token_program=SOLANA_SPL_TOKEN_PROGRAM_ID,
+    )
+
+
+@app.post("/api/v1/balmz/presale/delivery/prepare")
+def prepare_balmz_presale_delivery(
+    body: BalmzPresaleDeliveryPrepareRequest, user: dict = Depends(current_user)
+):
+    """Create one exact unsigned TransferChecked preview for a buyer allocation."""
+    if not _balmz_presale_delivery_release_gates_pass():
+        raise HTTPException(status_code=503, detail="BALMZ token delivery release gates are not approved")
+    if not DATABASE_URL or not BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT or not BALMZ_DELIVERY_AUTHORITY_ADDRESS:
+        raise HTTPException(status_code=503, detail="The isolated BALMZ delivery source account and authority are not configured")
+    if BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS <= 0 or BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS <= 0:
+        raise HTTPException(status_code=503, detail="BALMZ delivery amount limits are not configured")
+    if not valid_solana_address(body.recipient_address):
+        raise HTTPException(status_code=400, detail="Recipient must be a valid Solana Mainnet address")
+    if not valid_solana_address(BALMZ_DELIVERY_AUTHORITY_ADDRESS) or not valid_solana_address(BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT):
+        raise HTTPException(status_code=503, detail="Delivery authority or source token account address is invalid")
+
+    try:
+        require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        mint_proof = _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT)
+        if (
+            mint_proof.get("status") != "VERIFIED"
+            or mint_proof.get("mint_authority_configured") is not False
+            or mint_proof.get("freeze_authority_configured") is not False
+        ):
+            raise HTTPException(status_code=503, detail="Solana Mainnet mint supply and authority proof is not complete")
+        amount = None
+        recipient_token_account = derive_associated_token_address(body.recipient_address, BALMZ_SOLANA_MAINNET_MINT)
+        source_state = _balmz_delivery_read_token_account(
+            BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT, BALMZ_SOLANA_MAINNET_MINT, BALMZ_DELIVERY_AUTHORITY_ADDRESS
+        )
+        destination_state = _balmz_delivery_read_token_account(
+            recipient_token_account, BALMZ_SOLANA_MAINNET_MINT, body.recipient_address
+        )
+        block = rpc_call(SOLANA_MAINNET_RPC_URL, "getLatestBlockhash", [{"commitment": "finalized"}])
+        block_value = block.get("value") if isinstance(block, dict) else None
+        blockhash = block_value.get("blockhash") if isinstance(block_value, dict) else None
+        last_valid_height = block_value.get("lastValidBlockHeight") if isinstance(block_value, dict) else None
+        block_slot = block.get("context", {}).get("slot") if isinstance(block, dict) and isinstance(block.get("context"), dict) else None
+        if (
+            not isinstance(blockhash, str)
+            or isinstance(last_valid_height, bool)
+            or not isinstance(last_valid_height, int)
+            or last_valid_height < 0
+            or isinstance(block_slot, bool)
+            or not isinstance(block_slot, int)
+            or block_slot < 0
+        ):
+            raise BalmzDeliveryValidationError("finalized_blockhash_metadata_invalid")
+    except HTTPException:
+        raise
+    except BalmzDeliveryValidationError as exc:
+        code = str(exc)
+        status_code = 409 if code in {"token_account_missing", "token_account_mint_or_owner_mismatch", "token_account_program_invalid"} else 503
+        raise HTTPException(status_code=status_code, detail=code) from exc
+    except Exception as exc:
+        logger.warning("BALMZ delivery preview verification failed: error_type=%s", type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Solana Mainnet delivery readiness could not be verified") from exc
+
+    with db() as conn:
+        allocation = conn.execute(
+            "SELECT id,token_base_units,token_amount FROM balmz_presale_allocation_ledger "
+            "WHERE id=%s AND owner_id=%s FOR UPDATE",
+            (body.allocation_id, user["id"]),
+        ).fetchone()
+        if not allocation:
+            raise HTTPException(status_code=404, detail="Settled BALMZ allocation was not found")
+        amount = int(allocation[1])
+        if amount <= 0 or amount > BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS:
+            raise HTTPException(status_code=409, detail="Allocation exceeds the configured per-delivery limit")
+        if int(source_state["amount_base_units"]) < amount:
+            raise HTTPException(status_code=409, detail="The verified distribution token account has insufficient BALMZ-SOL")
+        recipient_proof = conn.execute(
+            "SELECT wa.address,MAX(wac.used_at) AS verified_at "
+            "FROM wallet_addresses wa JOIN wallets w ON w.id=wa.wallet_id "
+            "JOIN wallet_address_challenges wac ON wac.wallet_id=wa.wallet_id "
+            "AND wac.owner_id=w.owner_id AND wac.network=wa.network AND wac.address=wa.address "
+            "AND wac.used_at IS NOT NULL "
+            "WHERE w.owner_id=%s AND wa.network='solana_mainnet' AND wa.address=%s "
+            "AND wa.ownership_verified=TRUE GROUP BY wa.address",
+            (user["id"], body.recipient_address),
+        ).fetchone()
+        if not recipient_proof or not _balmz_delivery_recipient_proof_is_current(recipient_proof[1]):
+            raise HTTPException(status_code=409, detail="Recipient wallet ownership proof is missing or expired")
+        active = conn.execute(
+            "SELECT id,status FROM balmz_presale_delivery_attempts "
+            "WHERE allocation_id=%s AND status IN ('prepared','approved','submitted','reconciliation_required') "
+            "ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+            (body.allocation_id,),
+        ).fetchone()
+        if active:
+            raise HTTPException(status_code=409, detail="This allocation already has an active delivery attempt")
+        daily = conn.execute(
+            "SELECT COALESCE(SUM(amount_base_units),0) FROM balmz_presale_delivery_attempts "
+            "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','submitted','finalized')"
+        ).fetchone()
+        daily_total = int(daily[0]) if daily else 0
+        if daily_total + amount > BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS:
+            raise HTTPException(status_code=409, detail="The configured 24-hour BALMZ delivery limit would be exceeded")
+
+        try:
+            unsigned = build_unsigned_transfer_checked(
+                mint_address=BALMZ_SOLANA_MAINNET_MINT,
+                source_token_account=BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT,
+                destination_token_account=recipient_token_account,
+                authority_address=BALMZ_DELIVERY_AUTHORITY_ADDRESS,
+                fee_payer_address=BALMZ_DELIVERY_AUTHORITY_ADDRESS,
+                amount_base_units=amount,
+                decimals=9,
+                recent_blockhash=blockhash,
+            )
+        except BalmzDeliveryValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        delivery_id = "bdel_" + secrets.token_urlsafe(18)
+        conn.execute(
+            """INSERT INTO balmz_presale_delivery_attempts
+            (id,allocation_id,owner_id,recipient_address,mint_address,token_program_id,
+             source_token_account,destination_token_account,authority_address,amount_base_units,decimals,
+             mint_context_slot,source_context_slot,destination_context_slot,recent_blockhash,
+             last_valid_block_height,unsigned_transaction_base64,message_sha256,status)
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,9,%s,%s,%s,%s,%s,%s,%s,'prepared')""",
+            (
+                delivery_id, body.allocation_id, user["id"], body.recipient_address, BALMZ_SOLANA_MAINNET_MINT,
+                SOLANA_SPL_TOKEN_PROGRAM_ID, BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT, recipient_token_account,
+                BALMZ_DELIVERY_AUTHORITY_ADDRESS, amount, int(mint_proof["context_slot"]),
+                int(source_state["context_slot"]), int(destination_state["context_slot"]), blockhash,
+                last_valid_height, unsigned["unsigned_transaction_base64"], unsigned["message_sha256"],
+            ),
+        )
+        conn.commit()
+
+    return {
+        "delivery_id": delivery_id,
+        "state": "prepared",
+        "network": "solana_mainnet",
+        "mint_address": BALMZ_SOLANA_MAINNET_MINT,
+        "token_program_id": SOLANA_SPL_TOKEN_PROGRAM_ID,
+        "source_token_account": BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT,
+        "destination_token_account": recipient_token_account,
+        "recipient_address": body.recipient_address,
+        "amount_base_units": str(amount),
+        "decimals": 9,
+        "amount_tokens": str(Decimal(amount) / Decimal(10 ** 9)),
+        "authority_address": BALMZ_DELIVERY_AUTHORITY_ADDRESS,
+        "fee_payer_address": BALMZ_DELIVERY_AUTHORITY_ADDRESS,
+        "recent_blockhash": blockhash,
+        "last_valid_block_height": last_valid_height,
+        "finalized_blockhash_context_slot": block_slot,
+        "message_sha256": unsigned["message_sha256"],
+        "unsigned_transaction_base64": unsigned["unsigned_transaction_base64"],
+        "instruction_count": 1,
+        "instruction": "SPL Token TransferChecked",
+        "approval_required": True,
+        "broadcast_performed": False,
+        "signing_boundary": "connected_wallet_only_private_keys_never_enter_api",
+        "notice": "Unsigned review preview only. The API has not signed, broadcast, or delivered tokens.",
+    }
+
+
+@app.post("/api/v1/admin/balmz/presale/delivery/{delivery_id}/approve")
+def approve_balmz_presale_delivery(delivery_id: str, user: dict = Depends(current_user)):
+    """Admin approval binds to the complete prepared message digest and delivery fields."""
+    require_world_wallet_admin(user)
+    if not _balmz_presale_delivery_release_gates_pass():
+        raise HTTPException(status_code=503, detail="BALMZ delivery release gates are not approved")
+    if not _balmz_global_supply_is_verified_for_delivery():
+        raise HTTPException(status_code=503, detail="Ethereum, BNB, Solana and Ethereum reserve supply proofs are not reconciled")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id,status,message_sha256,last_valid_block_height,approval_expires_at,tx_signature "
+            "FROM balmz_presale_delivery_attempts WHERE id=%s FOR UPDATE",
+            (delivery_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="BALMZ delivery preview was not found")
+        if row[1] != "prepared" or row[5] is not None:
+            raise HTTPException(status_code=409, detail="Delivery preview is not awaiting approval")
+        current_height = rpc_call(SOLANA_MAINNET_RPC_URL, "getBlockHeight", [{"commitment": "finalized"}])
+        if isinstance(current_height, bool) or not isinstance(current_height, int) or current_height > int(row[3]):
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='failed',failure_code='blockhash_expired',updated_at=NOW() WHERE id=%s",
+                (delivery_id,),
+            )
+            conn.commit()
+            raise HTTPException(status_code=409, detail="The prepared transaction blockhash expired; prepare a fresh preview")
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=2)
+        conn.execute(
+            "UPDATE balmz_presale_delivery_attempts SET status='approved',approved_by_user_id=%s,approved_at=NOW(),"
+            "approval_expires_at=%s,updated_at=NOW() WHERE id=%s AND status='prepared'",
+            (user["id"], expires_at, delivery_id),
+        )
+        conn.execute(
+            "INSERT INTO admin_audit_events(id,actor_user_id,actor_email,action,details) "
+            "VALUES(%s,%s,%s,%s,%s)",
+            ("adm_" + secrets.token_urlsafe(18), user["id"], user.get("email", ""),
+             "balmz_delivery_message_approved", "Approved exact BALMZ delivery message digest " + str(row[2]) + "; no token transaction signed or broadcast."),
+        )
+        conn.commit()
+    return {
+        "delivery_id": delivery_id,
+        "state": "approved",
+        "approved_message_sha256": row[2],
+        "approval_expires_at": expires_at.isoformat(),
+        "transaction_authorized": False,
+        "wallet_signature_required": True,
+        "notice": "Approval is limited to this exact message digest. It does not sign or broadcast a transaction.",
+    }
+
+
+@app.post("/api/v1/admin/balmz/presale/delivery/{delivery_id}/submit")
+def submit_wallet_signed_balmz_delivery(
+    delivery_id: str, body: BalmzPresaleDeliverySubmitRequest, user: dict = Depends(current_user)
+):
+    """Broadcast only the exact already-approved transaction after the configured wallet signs it."""
+    require_world_wallet_admin(user)
+    if not _balmz_presale_delivery_release_gates_pass():
+        raise HTTPException(status_code=503, detail="BALMZ delivery release gates are not approved")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT status,approval_expires_at,unsigned_transaction_base64,message_sha256,"
+            "authority_address,last_valid_block_height,tx_signature FROM balmz_presale_delivery_attempts "
+            "WHERE id=%s FOR UPDATE",
+            (delivery_id,),
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="BALMZ delivery preview was not found")
+        if row[0] != "approved" or row[6] is not None:
+            raise HTTPException(status_code=409, detail="Delivery must be approved and not previously submitted")
+        if not row[1] or row[1] <= datetime.now(timezone.utc):
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='failed',failure_code='approval_expired',updated_at=NOW() WHERE id=%s",
+                (delivery_id,),
+            )
+            conn.commit()
+            raise HTTPException(status_code=409, detail="Delivery approval expired; prepare and approve a new preview")
+        current_height = rpc_call(SOLANA_MAINNET_RPC_URL, "getBlockHeight", [{"commitment": "finalized"}])
+        if isinstance(current_height, bool) or not isinstance(current_height, int) or current_height > int(row[5]):
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='failed',failure_code='blockhash_expired',updated_at=NOW() WHERE id=%s",
+                (delivery_id,),
+            )
+            conn.commit()
+            raise HTTPException(status_code=409, detail="The prepared transaction blockhash expired; prepare a fresh preview")
+        try:
+            signed = validate_wallet_signed_transaction(
+                unsigned_transaction_base64=row[2],
+                signed_transaction_base64=body.signed_transaction_base64,
+                expected_message_sha256=row[3],
+                required_signer_address=row[4],
+            )
+        except BalmzDeliveryValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        try:
+            rpc_signature = rpc_call(
+                SOLANA_MAINNET_RPC_URL,
+                "sendTransaction",
+                [signed["signed_transaction_base64"], {
+                    "encoding": "base64",
+                    "preflightCommitment": "confirmed",
+                    "maxRetries": 0,
+                }],
+            )
+        except Exception as exc:
+            # A network timeout after submission is ambiguous. Never automatically resend.
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                "failure_code='broadcast_result_unknown',updated_at=NOW() WHERE id=%s AND status='approved'",
+                (delivery_id,),
+            )
+            conn.commit()
+            logger.warning("BALMZ signed delivery submission outcome unknown; delivery_id=%s", delivery_id)
+            raise HTTPException(status_code=503, detail="Transaction submission result is unknown; reconcile the signed transaction before any retry") from exc
+        if rpc_signature != signed["signature"]:
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                "tx_signature=%s,failure_code='rpc_signature_mismatch',updated_at=NOW() WHERE id=%s AND status='approved'",
+                (signed["signature"], delivery_id),
+            )
+            conn.commit()
+            raise HTTPException(status_code=503, detail="RPC returned a different signature; manual reconciliation is required")
+        conn.execute(
+            "UPDATE balmz_presale_delivery_attempts SET status='submitted',tx_signature=%s,updated_at=NOW() "
+            "WHERE id=%s AND status='approved'",
+            (signed["signature"], delivery_id),
+        )
+        conn.commit()
+    return {
+        "delivery_id": delivery_id,
+        "state": "submitted",
+        "tx_signature": signed["signature"],
+        "explorer_url": "https://explorer.solana.com/tx/" + signed["signature"],
+        "automatic_retry": False,
+        "finality": "awaiting_finalized_chain_verification",
+        "notice": "The exact wallet-signed transaction was submitted once. Delivery is not complete until finalized Mainnet evidence is verified.",
+    }
+
+
+@app.get("/api/v1/balmz/presale/delivery/{delivery_id}")
+def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(current_user)):
+    """Reconcile a submitted delivery against finalized Solana Mainnet transaction metadata."""
+    require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+    with db() as conn:
+        row = conn.execute(
+            "SELECT id,owner_id,status,recipient_address,mint_address,source_token_account,"
+            "destination_token_account,authority_address,amount_base_units,decimals,tx_signature,"
+            "finalized_slot,message_sha256 FROM balmz_presale_delivery_attempts WHERE id=%s",
+            (delivery_id,),
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="BALMZ delivery attempt was not found")
+    if row[1] != user["id"]:
+        require_world_wallet_admin(user)
+    status = row[2]
+    if status == "submitted" and row[10]:
+        try:
+            observed = rpc_call(
+                SOLANA_MAINNET_RPC_URL,
+                "getTransaction",
+                [row[10], {"encoding": "jsonParsed", "commitment": "finalized", "maxSupportedTransactionVersion": 0}],
+            )
+            if observed is None:
+                status = "submitted"
+            else:
+                proof = verify_finalized_delivery_observation(
+                    observed,
+                    expected_signature=row[10],
+                    expected_mint=row[4],
+                    expected_source=row[5],
+                    expected_destination=row[6],
+                    expected_authority=row[7],
+                    expected_amount_base_units=int(row[8]),
+                    expected_decimals=int(row[9]),
+                    expected_token_program=SOLANA_SPL_TOKEN_PROGRAM_ID,
+                )
+                status = "finalized"
+                with db() as conn:
+                    conn.execute(
+                        "UPDATE balmz_presale_delivery_attempts SET status='finalized',finalized_slot=%s,updated_at=NOW() "
+                        "WHERE id=%s AND status='submitted'",
+                        (proof["slot"], delivery_id),
+                    )
+                    conn.commit()
+        except BalmzDeliveryValidationError as exc:
+            status = "reconciliation_required"
+            with db() as conn:
+                conn.execute(
+                    "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                    "failure_code=%s,updated_at=NOW() WHERE id=%s AND status='submitted'",
+                    (str(exc)[:100], delivery_id),
+                )
+                conn.commit()
+        except Exception as exc:
+            logger.warning("BALMZ delivery finality check unavailable: delivery_id=%s error_type=%s", delivery_id, type(exc).__name__)
+            raise HTTPException(status_code=503, detail="Finalized delivery evidence is temporarily unavailable") from exc
+    return {
+        "delivery_id": row[0],
+        "state": status,
+        "recipient_address": row[3],
+        "mint_address": row[4],
+        "amount_base_units": str(row[8]),
+        "decimals": int(row[9]),
+        "tx_signature": row[10],
+        "finalized_slot": row[11] if status != "finalized" else row[11],
+        "message_sha256": row[12],
+        "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
+        "transaction_authorized": False,
+        "presale_release_gate_changed": False,
     }
 
 
