@@ -95,6 +95,12 @@ test("Etherscan API Test is directly discoverable in Admin and uses the owner-on
   assert.match(featureSource, /fixed public probe address/);
 });
 
+
+test("admin System Settings labels all four Etherscan V2 networks correctly", () => {
+  assert.match(featureSource, /Read-only API key checks for Ethereum, BNB Chain, Sepolia, and Polygon PoS/);
+  assert.match(featureSource, /item\\.network==="ethereum"\\?"Ethereum Mainnet":item\\.network==="bnb"\\?"BNB Chain Mainnet":item\\.network==="sepolia"\\?"Ethereum Sepolia":item\\.network==="polygon"\\?"Polygon PoS Mainnet":"Unknown network"/);
+});
+
 test("admin System Settings exposes Alchemy runtime verification without client-side secrets", () => {
   assert.match(featureSource, /Alchemy NFT API connectivity/);
   assert.match(featureSource, /Test Alchemy API/);
