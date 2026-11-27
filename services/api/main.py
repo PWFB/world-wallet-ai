@@ -977,7 +977,7 @@ def init_db():
           unsigned_transaction_base64 TEXT NOT NULL,
           message_sha256 CHAR(64) NOT NULL,
           status TEXT NOT NULL DEFAULT 'prepared'
-            CHECK(status IN ('prepared','approved','submitted','finalized','failed','reconciliation_required','cancelled')),
+            CHECK(status IN ('prepared','approved','broadcasting','submitted','finalized','failed','reconciliation_required','cancelled')),
           approved_by_user_id TEXT REFERENCES users(id),
           approved_at TIMESTAMPTZ,
           approval_expires_at TIMESTAMPTZ,
@@ -989,7 +989,7 @@ def init_db():
         );
         CREATE UNIQUE INDEX IF NOT EXISTS balmz_delivery_one_active_attempt_per_allocation_idx
           ON balmz_presale_delivery_attempts(allocation_id)
-          WHERE status IN ('prepared','approved','submitted','reconciliation_required');
+          WHERE status IN ('prepared','approved','broadcasting','submitted','reconciliation_required');
         CREATE INDEX IF NOT EXISTS balmz_delivery_owner_created_idx
           ON balmz_presale_delivery_attempts(owner_id,created_at DESC);
         CREATE INDEX IF NOT EXISTS balmz_delivery_state_created_idx
@@ -5865,7 +5865,7 @@ def prepare_balmz_presale_delivery(
             raise HTTPException(status_code=409, detail="Recipient wallet ownership proof is missing or expired")
         active = conn.execute(
             "SELECT id,status FROM balmz_presale_delivery_attempts "
-            "WHERE allocation_id=%s AND status IN ('prepared','approved','submitted','reconciliation_required') "
+            "WHERE allocation_id=%s AND status IN ('prepared','approved','broadcasting','submitted','reconciliation_required') "
             "ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
             (body.allocation_id,),
         ).fetchone()
@@ -5873,7 +5873,7 @@ def prepare_balmz_presale_delivery(
             raise HTTPException(status_code=409, detail="This allocation already has an active delivery attempt")
         daily = conn.execute(
             "SELECT COALESCE(SUM(amount_base_units),0) FROM balmz_presale_delivery_attempts "
-            "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','submitted','finalized','reconciliation_required')"
+            "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','broadcasting','submitted','finalized','reconciliation_required')"
         ).fetchone()
         daily_total = int(daily[0]) if daily else 0
         if daily_total + amount > BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS:
@@ -6015,10 +6015,12 @@ def approve_balmz_presale_delivery(delivery_id: str, user: dict = Depends(curren
 def submit_wallet_signed_balmz_delivery(
     delivery_id: str, body: BalmzPresaleDeliverySubmitRequest, user: dict = Depends(current_user)
 ):
-    """Broadcast only the exact already-approved transaction after the configured wallet signs it."""
+    """Broadcast only an exact approved transaction after the configured wallet signs it."""
     require_world_wallet_admin(user)
     if not _balmz_presale_delivery_release_gates_pass():
         raise HTTPException(status_code=503, detail="BALMZ delivery release gates are not approved")
+    require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+
     with db() as conn:
         row = conn.execute(
             "SELECT status,approval_expires_at,unsigned_transaction_base64,message_sha256,"
@@ -6054,38 +6056,55 @@ def submit_wallet_signed_balmz_delivery(
             )
         except BalmzDeliveryValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        try:
-            rpc_signature = rpc_call(
-                SOLANA_MAINNET_RPC_URL,
-                "sendTransaction",
-                [signed["signed_transaction_base64"], {
-                    "encoding": "base64",
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 0,
-                }],
-            )
-        except Exception as exc:
-            # A network timeout after submission is ambiguous. Never automatically resend.
-            conn.execute(
-                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',tx_signature=%s,"
-                "failure_code='broadcast_result_unknown',updated_at=NOW() WHERE id=%s AND status='approved'",
-                (signed["signature"], delivery_id),
-            )
-            conn.commit()
-            logger.warning("BALMZ signed delivery submission outcome unknown; delivery_id=%s", delivery_id)
-            raise HTTPException(status_code=503, detail="Transaction submission result is unknown; reconcile the signed transaction before any retry") from exc
-        if rpc_signature != signed["signature"]:
+
+        # Persist the signature and a non-retryable in-flight state BEFORE contacting
+        # the RPC provider. A process crash or timeout must never cause an automatic
+        # second submission of the same allocation.
+        conn.execute(
+            "UPDATE balmz_presale_delivery_attempts SET status='broadcasting',tx_signature=%s,updated_at=NOW() "
+            "WHERE id=%s AND status='approved' AND tx_signature IS NULL",
+            (signed["signature"], delivery_id),
+        )
+        conn.commit()
+
+    try:
+        rpc_signature = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "sendTransaction",
+            [signed["signed_transaction_base64"], {
+                "encoding": "base64",
+                "preflightCommitment": "confirmed",
+                "maxRetries": 0,
+            }],
+        )
+    except Exception as exc:
+        with db() as conn:
             conn.execute(
                 "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
-                "tx_signature=%s,failure_code='rpc_signature_mismatch',updated_at=NOW() WHERE id=%s AND status='approved'",
-                (signed["signature"], delivery_id),
+                "failure_code='broadcast_result_unknown',updated_at=NOW() "
+                "WHERE id=%s AND status='broadcasting'",
+                (delivery_id,),
             )
             conn.commit()
-            raise HTTPException(status_code=503, detail="RPC returned a different signature; manual reconciliation is required")
+        logger.warning("BALMZ signed delivery submission outcome unknown; delivery_id=%s", delivery_id)
+        raise HTTPException(status_code=503, detail="Transaction submission result is unknown; reconcile this signature before any retry") from exc
+
+    if rpc_signature != signed["signature"]:
+        with db() as conn:
+            conn.execute(
+                "UPDATE balmz_presale_delivery_attempts SET status='reconciliation_required',"
+                "failure_code='rpc_signature_mismatch',updated_at=NOW() "
+                "WHERE id=%s AND status='broadcasting'",
+                (delivery_id,),
+            )
+            conn.commit()
+        raise HTTPException(status_code=503, detail="RPC returned a different signature; manual reconciliation is required")
+
+    with db() as conn:
         conn.execute(
-            "UPDATE balmz_presale_delivery_attempts SET status='submitted',tx_signature=%s,updated_at=NOW() "
-            "WHERE id=%s AND status='approved'",
-            (signed["signature"], delivery_id),
+            "UPDATE balmz_presale_delivery_attempts SET status='submitted',updated_at=NOW() "
+            "WHERE id=%s AND status='broadcasting' AND tx_signature=%s",
+            (delivery_id, signed["signature"]),
         )
         conn.commit()
     return {
