@@ -15,6 +15,7 @@ from solders.hash import Hash
 from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
+from solders.signature import Signature
 from spl.token.constants import TOKEN_PROGRAM_ID
 from spl.token.instructions import get_associated_token_address, transfer_checked
 from spl.token.models import TransferCheckedParams
@@ -145,8 +146,8 @@ def validate_wallet_signed_transaction(
 
     required_count = signed_tx.message.header.num_required_signatures
     required_keys = [str(key) for key in signed_tx.message.account_keys[:required_count]]
-    if required_signer_address not in required_keys:
-        raise BalmzDeliveryValidationError("required_delivery_authority_not_a_signer")
+    if not required_keys or required_keys[0] != required_signer_address:
+        raise BalmzDeliveryValidationError("required_delivery_authority_not_fee_payer")
     try:
         verification = signed_tx.verify_with_results()
     except Exception as exc:
@@ -154,7 +155,7 @@ def validate_wallet_signed_transaction(
     if not verification or not all(verification):
         raise BalmzDeliveryValidationError("transaction_signature_invalid")
     signatures = signed_tx.signatures
-    if not signatures or str(signatures[0]) == str(type(signatures[0]).default()):
+    if not signatures or signatures[0] == Signature.default():
         raise BalmzDeliveryValidationError("fee_payer_signature_missing")
     signature = str(signatures[0])
     if not re.fullmatch(r"[1-9A-HJ-NP-Za-km-z]{64,100}", signature):
