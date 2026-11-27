@@ -235,6 +235,19 @@ def verify_finalized_delivery_observation(
     message = transaction.get("message")
     if not isinstance(message, dict):
         raise BalmzDeliveryValidationError("finalized_transaction_message_invalid")
+    account_keys = message.get("accountKeys")
+    if not isinstance(account_keys, list):
+        raise BalmzDeliveryValidationError("finalized_transaction_account_keys_invalid")
+    authority_signed = False
+    for key in account_keys:
+        if isinstance(key, dict):
+            if key.get("pubkey") == expected_authority and key.get("signer") is True:
+                authority_signed = True
+        elif key == expected_authority:
+            # Non-parsed account key encodings don't expose signer metadata.
+            continue
+    if not authority_signed:
+        raise BalmzDeliveryValidationError("delivery_authority_signature_missing")
     instructions = message.get("instructions")
     inner_groups = meta.get("innerInstructions") or []
     if not isinstance(instructions, list) or not isinstance(inner_groups, list):
