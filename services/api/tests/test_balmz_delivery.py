@@ -146,6 +146,36 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
                 )
 
 
+
+    def test_finalized_delivery_requires_authority_signature(self):
+        signature = "5" * 64
+        response = {
+            "slot": 500,
+            "meta": {"err": None, "innerInstructions": []},
+            "transaction": {
+                "signatures": [signature],
+                "message": {"accountKeys": [
+                    {"pubkey": str(self.authority.pubkey()), "signer": False},
+                    {"pubkey": self.source, "signer": False},
+                    {"pubkey": self.mint, "signer": False},
+                    {"pubkey": self.destination, "signer": False},
+                ], "instructions": [{
+                    "program": "spl-token", "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                    "parsed": {"type": "transferChecked", "info": {
+                        "mint": self.mint, "source": self.source, "destination": self.destination,
+                        "authority": str(self.authority.pubkey()),
+                        "tokenAmount": {"amount": "1250000000", "decimals": 9},
+                    }},
+                }]},
+            },
+        }
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "authority_signature_missing"):
+            delivery.verify_finalized_delivery_observation(
+                response, expected_signature=signature, expected_mint=self.mint,
+                expected_source=self.source, expected_destination=self.destination,
+                expected_authority=str(self.authority.pubkey()), expected_amount_base_units="1250000000",
+            )
+
     def test_delivery_release_gates_default_closed_before_database_or_chain_work(self):
         import main
         request = main.BalmzPresaleDeliveryPrepareRequest(
@@ -167,7 +197,12 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
             "meta": {"err": None, "innerInstructions": []},
             "transaction": {
                 "signatures": [signature],
-                "message": {"instructions": [{
+                "message": {"accountKeys": [
+                    {"pubkey": str(self.authority.pubkey()), "signer": True},
+                    {"pubkey": self.source, "signer": False},
+                    {"pubkey": self.mint, "signer": False},
+                    {"pubkey": self.destination, "signer": False},
+                ], "instructions": [{
                     "program": "spl-token",
                     "programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
                     "parsed": {"type": "transferChecked", "info": {
