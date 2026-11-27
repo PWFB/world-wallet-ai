@@ -10699,6 +10699,25 @@ def _balmz_decode_uint256_rpc(value):
         raise ValueError("Malformed ABI uint256 response")
     return int(value[2:], 16)
 
+def _balmz_decode_abi_string_rpc(value):
+    """Decode a canonical ABI dynamic string without accepting malformed offsets or padding."""
+    if not isinstance(value, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", value):
+        raise ValueError("Malformed ABI string response")
+    raw = bytes.fromhex(value[2:])
+    if len(raw) < 64 or int.from_bytes(raw[:32], "big") != 32:
+        raise ValueError("Malformed ABI string response")
+    length = int.from_bytes(raw[32:64], "big")
+    if length > 256:
+        raise ValueError("Malformed ABI string response")
+    padded_length = ((length + 31) // 32) * 32
+    if len(raw) != 64 + padded_length or any(raw[64 + length:]):
+        raise ValueError("Malformed ABI string response")
+    try:
+        return raw[64:64 + length].decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise ValueError("Malformed ABI string response") from exc
+
+
 def _balmz_evm_finalized_snapshot(rpc_url):
     """Return a validated finalized block tag and hash for consistent EVM reads."""
     block = rpc_call(rpc_url, "eth_getBlockByNumber", ["finalized", False])
@@ -10833,6 +10852,10 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         code = rpc_call(rpc_url, "eth_getCode", [contract, block_tag])
         if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("contract_bytecode_missing")
+        name = _balmz_decode_abi_string_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x06fdde03"}, block_tag]))
+        symbol = _balmz_decode_abi_string_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x95d89b41"}, block_tag]))
+        if name != "BALMZ Token" or symbol != "BALMZ":
+            raise ValueError("unexpected_token_identity")
         raw = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, block_tag]))
         decimals = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, block_tag]))
         if decimals != 18:
@@ -10851,7 +10874,7 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
         allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "contract_bytecode_missing",
-                   "unexpected_token_decimals", "supply_not_whole_token_aligned",
+                   "unexpected_token_decimals", "unexpected_token_identity", "supply_not_whole_token_aligned",
                    "finalized_block_metadata_invalid"}
         reason = str(exc) if str(exc) in allowed else "rpc_or_metadata_verification_failed"
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
