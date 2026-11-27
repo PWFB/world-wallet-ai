@@ -118,6 +118,53 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["reason"], "wrong_chain_id")
         rpc.assert_not_called()
 
+    def test_solana_supply_amounts_must_be_canonical_unsigned_integers(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        invalid_amounts = ("", "00", "01", "+1", "-1", " 1", "1 ", "1.0", "1e9", "١")
+        for invalid in invalid_amounts:
+            with self.subTest(invalid=invalid):
+                account = {
+                    "value": {
+                        "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                        "executable": False,
+                        "data": {"parsed": {"type": "mint", "info": {
+                            "isInitialized": True, "decimals": 9, "supply": invalid,
+                            "mintAuthority": None, "freezeAuthority": None
+                        }}}
+                    }
+                }
+                with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", return_value=account) as rpc:
+                    result = main._balmz_reconcile_solana_supply(mint)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "mint_supply_invalid")
+                self.assertIsNone(result["observed_supply"])
+                self.assertEqual(rpc.call_count, 1)
+
+        account = {
+            "value": {
+                "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": None, "freezeAuthority": None
+                }}}
+            }
+        }
+        for invalid in ("00", "01", "+1", "-1", " 1", "1.0", "1e9"):
+            with self.subTest(token_supply_amount=invalid):
+                def fake_rpc(_url, method, _params):
+                    if method == "getAccountInfo":
+                        return account
+                    if method == "getTokenSupply":
+                        return {"value": {"amount": invalid, "decimals": 9}}
+                    raise AssertionError(method)
+                with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+                    result = main._balmz_reconcile_solana_supply(mint)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "mint_supply_rpc_mismatch")
+                self.assertIsNone(result["observed_supply"])
+
     def test_devnet_mint_is_never_accepted_as_production(self):
         with patch.object(main, "rpc_call") as rpc:
             result = main._balmz_reconcile_solana_supply(main.BALMZ_SOLANA_DEVNET_MINT)
