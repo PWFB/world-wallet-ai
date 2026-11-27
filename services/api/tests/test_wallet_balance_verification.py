@@ -216,7 +216,7 @@ class WalletBalanceVerificationTests(unittest.TestCase):
                 "account": {"data": {"parsed": {"info": {
                     "mint": mint,
                     "tokenAmount": {"decimals": decimals, "amount": amount},
-                }}}}
+                }}}}}
             ]}
             with (
                 patch.object(main, "require_solana_rpc_cluster"),
