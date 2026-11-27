@@ -10971,4 +10971,10 @@ def balmz_global_supply_reconciliation(user: dict = Depends(current_user)):
         summary["status"] = "PARTIAL_DEPLOYMENT"
     summary["ethereum_reserve_evidence"] = reserve
     record_admin_event(user, "balmz_global_supply_reconciliation", "read_only")
-    return {**summary, "chains": chains}
+    return {
+        **summary,
+        "chains": chains,
+        "read_only": True,
+        "transaction_authorized": False,
+        "presale_release_gate_changed": False,
+    }
