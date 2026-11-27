@@ -640,5 +640,52 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result, {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"})
 
 
+    def test_solana_secondary_rpc_corroborates_same_finalized_mint_and_supply(self):
+        mint = "So11111111111111111111111111111111111111112"
+        authority = None
+        raw = "10000000000000000000"
+        account = {"context": {"slot": 987}, "value": {
+            "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False,
+            "data": {"parsed": {"type": "mint", "info": {
+                "isInitialized": True, "decimals": 9, "supply": raw,
+                "mintAuthority": authority, "freezeAuthority": authority
+            }}}
+        }}
+        supply = {"context": {"slot": 987}, "value": {"amount": raw, "decimals": 9}}
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(
+            main, "rpc_call", side_effect=[account, supply]
+        ):
+            result = main._balmz_solana_independent_rpc_corroboration(
+                "https://primary.example", "https://secondary.example", mint, 987,
+                raw, 9, main.SOLANA_SPL_TOKEN_PROGRAM_ID, authority, authority
+            )
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertTrue(result["same_finalized_slot"])
+        self.assertEqual(result["context_slot"], 987)
+
+    def test_solana_secondary_rpc_rejects_same_provider_and_slot_mismatch(self):
+        mint = "So11111111111111111111111111111111111111112"
+        args = (mint, 987, "10000000000000000000", 9,
+                main.SOLANA_SPL_TOKEN_PROGRAM_ID, None, None)
+        same = main._balmz_solana_independent_rpc_corroboration(
+            "https://primary.example", "https://primary.example", *args
+        )
+        self.assertEqual(same, {"status": "FAILED", "reason": "secondary_rpc_provider_not_independent"})
+        account = {"context": {"slot": 988}, "value": {}}
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", return_value=account):
+            mismatch = main._balmz_solana_independent_rpc_corroboration(
+                "https://primary.example", "https://secondary.example", *args
+            )
+        self.assertEqual(mismatch, {"status": "FAILED", "reason": "secondary_rpc_mint_state_mismatch"})
+
+    def test_solana_secondary_rpc_not_configured_is_explicit(self):
+        result = main._balmz_solana_independent_rpc_corroboration(
+            "https://primary.example", "", "So11111111111111111111111111111111111111112",
+            1, "1", 9, main.SOLANA_SPL_TOKEN_PROGRAM_ID, None, None
+        )
+        self.assertEqual(result, {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"})
+
+
+
 if __name__ == "__main__":
     unittest.main()
