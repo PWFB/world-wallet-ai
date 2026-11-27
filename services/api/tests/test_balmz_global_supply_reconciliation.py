@@ -8,6 +8,22 @@ import main
 
 
 class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
+    def test_evm_mainnet_rpc_rejects_insecure_fallback_endpoint(self):
+        with (
+            patch.object(main, "ETH_RPC_URL", "https://primary.example"),
+            patch.object(main, "ETH_PUBLIC_RPC_URL", "http://fallback.example"),
+        ):
+            with self.assertRaisesRegex(ValueError, "insecure_mainnet_rpc_url"):
+                main._balmz_require_secure_evm_mainnet_rpc_url("https://primary.example")
+
+    def test_evm_mainnet_rpc_accepts_secure_fallback_endpoint(self):
+        with (
+            patch.object(main, "ETH_RPC_URL", "https://primary.example"),
+            patch.object(main, "ETH_PUBLIC_RPC_URL", "https://fallback.example"),
+        ):
+            parsed = main._balmz_require_secure_evm_mainnet_rpc_url("https://primary.example")
+        self.assertEqual(parsed.hostname, "primary.example")
+
     def test_evm_chain_id_accepts_canonical_json_rpc_quantities(self):
         for raw, expected in (("0x0", 0), ("0x1", 1), ("0x38", 56), ("0xaa36a7", 11155111)):
             with self.subTest(raw=raw), patch.object(main, "rpc_call", return_value=raw):
