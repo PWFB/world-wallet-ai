@@ -661,7 +661,38 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             )
         self.assertEqual(result["status"], "VERIFIED")
         self.assertTrue(result["same_finalized_slot"])
+        self.assertTrue(result["min_context_slot_enforced"])
         self.assertEqual(result["context_slot"], 987)
+        self.assertEqual(result["secondary_account_slot"], 987)
+        self.assertEqual(result["secondary_supply_slot"], 987)
+
+    def test_solana_secondary_rpc_accepts_newer_finalized_slots_with_min_context(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw = "10000000000000000000"
+        account = {"context": {"slot": 990}, "value": {
+            "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID, "executable": False,
+            "data": {"parsed": {"type": "mint", "info": {
+                "isInitialized": True, "decimals": 9, "supply": raw,
+                "mintAuthority": None, "freezeAuthority": None
+            }}}
+        }}
+        supply = {"context": {"slot": 991}, "value": {"amount": raw, "decimals": 9}}
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(
+            main, "rpc_call", side_effect=[account, supply]
+        ) as rpc:
+            result = main._balmz_solana_independent_rpc_corroboration(
+                "https://primary.example", "https://secondary.example", mint, 987,
+                raw, 9, main.SOLANA_SPL_TOKEN_PROGRAM_ID, None, None
+            )
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertFalse(result["same_finalized_slot"])
+        self.assertTrue(result["min_context_slot_enforced"])
+        self.assertEqual(result["secondary_account_slot"], 990)
+        self.assertEqual(result["secondary_supply_slot"], 991)
+        self.assertEqual(rpc.call_args_list[0].args[1], "getAccountInfo")
+        self.assertEqual(rpc.call_args_list[0].args[2][1]["minContextSlot"], 987)
+        self.assertEqual(rpc.call_args_list[1].args[1], "getTokenSupply")
+        self.assertEqual(rpc.call_args_list[1].args[2][1]["minContextSlot"], 990)
 
     def test_solana_secondary_rpc_rejects_same_provider_and_slot_mismatch(self):
         mint = "So11111111111111111111111111111111111111112"
