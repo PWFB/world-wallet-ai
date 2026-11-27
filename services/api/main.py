@@ -10880,6 +10880,33 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
 
+def _balmz_is_canonical_solana_pubkey(value):
+    """Validate a Solana public key as canonical base58 encoding of 32 bytes."""
+    if not isinstance(value, str) or not value:
+        return False
+    alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    indexes = {char: index for index, char in enumerate(alphabet)}
+    number = 0
+    for char in value:
+        digit = indexes.get(char)
+        if digit is None:
+            return False
+        number = number * 58 + digit
+    decoded = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
+    leading_zeroes = len(value) - len(value.lstrip("1"))
+    decoded = (b"\\x00" * leading_zeroes) + decoded
+    if len(decoded) != 32:
+        return False
+    # Re-encode to reject non-canonical base58 representations.
+    remainder = int.from_bytes(decoded, "big")
+    encoded = ""
+    while remainder:
+        remainder, digit = divmod(remainder, 58)
+        encoded = alphabet[digit] + encoded
+    encoded = ("1" * leading_zeroes) + encoded
+    return encoded == value
+
+
 def _balmz_solana_context_slot(response):
     """Read a strict RPC context slot; booleans and stringified slots are invalid."""
     context = response.get("context") if isinstance(response, dict) else None
@@ -10929,8 +10956,8 @@ def _balmz_reconcile_solana_supply(mint):
             raise ValueError("mint_supply_rpc_mismatch")
         mint_authority = info.get("mintAuthority")
         freeze_authority = info.get("freezeAuthority")
-        if ((mint_authority is not None and not isinstance(mint_authority, str))
-                or (freeze_authority is not None and not isinstance(freeze_authority, str))):
+        if ((mint_authority is not None and not _balmz_is_canonical_solana_pubkey(mint_authority))
+                or (freeze_authority is not None and not _balmz_is_canonical_solana_pubkey(freeze_authority))):
             raise ValueError("mint_authority_metadata_invalid")
         raw_int = int(raw)
         if raw_int % (10 ** 9):
