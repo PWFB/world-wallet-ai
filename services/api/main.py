@@ -10060,10 +10060,23 @@ def _balmz_decode_uint256_rpc(value):
         raise ValueError("Malformed ABI uint256 response")
     return int(value[2:], 16)
 
-def _balmz_eth_call_address(rpc_url, contract, signature):
+def _balmz_evm_finalized_snapshot(rpc_url):
+    """Return a validated finalized block tag and hash for consistent EVM reads."""
+    block = rpc_call(rpc_url, "eth_getBlockByNumber", ["finalized", False])
+    number = block.get("number") if isinstance(block, dict) else None
+    block_hash = block.get("hash") if isinstance(block, dict) else None
+    if (not isinstance(number, str)
+            or not re.fullmatch(r"0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)", number)
+            or not isinstance(block_hash, str)
+            or not re.fullmatch(r"0x[0-9a-fA-F]{64}", block_hash)):
+        raise ValueError("finalized_block_metadata_invalid")
+    return number, block_hash
+
+
+def _balmz_eth_call_address(rpc_url, contract, signature, block_tag="latest"):
     digest = keccak.new(digest_bits=256)
     digest.update(signature.encode("ascii"))
-    encoded = rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x" + digest.hexdigest()[:8]}, "latest"])
+    encoded = rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x" + digest.hexdigest()[:8]}, block_tag])
     raw = _balmz_decode_uint256_rpc(encoded)
     if raw >> 160:
         raise ValueError("reserve_address_abi_invalid")
@@ -10107,18 +10120,19 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
         _balmz_require_secure_evm_mainnet_rpc_url(rpc_url)
         if evm_chain_id(rpc_url) != 1:
             raise ValueError("wrong_chain_id")
-        code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, "latest"])
+        block_tag, block_hash = _balmz_evm_finalized_snapshot(rpc_url)
+        code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, block_tag])
         if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("vesting_bytecode_missing")
-        observed_token = _balmz_eth_call_address(rpc_url, vesting_contract, "token()")
-        beneficiary = _balmz_eth_call_address(rpc_url, vesting_contract, "beneficiary()")
-        allocation = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"totalAllocation()").hexdigest()[:8]}, "latest"]))
-        released = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"released()").hexdigest()[:8]}, "latest"]))
+        observed_token = _balmz_eth_call_address(rpc_url, vesting_contract, "token()", block_tag)
+        beneficiary = _balmz_eth_call_address(rpc_url, vesting_contract, "beneficiary()", block_tag)
+        allocation = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"totalAllocation()").hexdigest()[:8]}, block_tag]))
+        released = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": vesting_contract, "data": "0x" + keccak.new(digest_bits=256, data=b"released()").hexdigest()[:8]}, block_tag]))
         balance_data = keccak.new(digest_bits=256)
         balance_data.update(b"balanceOf(address)")
         balance_selector = balance_data.hexdigest()[:8]
         balance_arg = vesting_contract.lower().removeprefix("0x").rjust(64, "0")
-        reserve_balance = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": token_contract, "data": "0x" + balance_selector + balance_arg}, "latest"]))
+        reserve_balance = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": token_contract, "data": "0x" + balance_selector + balance_arg}, block_tag]))
         if observed_token.lower() != token_contract.lower():
             raise ValueError("vesting_token_mismatch")
         if beneficiary.lower() != expected_beneficiary.lower():
@@ -10131,10 +10145,12 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
                 "token_contract": observed_token, "beneficiary": beneficiary,
                 "expected_beneficiary": expected_beneficiary, "allocation_raw": str(allocation),
                 "released_raw": str(released), "reserve_balance_raw": str(reserve_balance),
-                "allocation_matches": True, "read_only": True}
+                "allocation_matches": True, "read_only": True,
+                "block_number": str(int(block_tag, 16)), "block_hash": block_hash, "commitment": "finalized"}
     except Exception as exc:
         allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
-                   "vesting_allocation_mismatch", "vesting_reserve_balance_insufficient"}
+                   "vesting_allocation_mismatch", "vesting_reserve_balance_insufficient",
+                   "finalized_block_metadata_invalid"}
         reason = str(exc) if str(exc) in allowed else "vesting_rpc_or_metadata_verification_failed"
         return {"status": "CONTRACT_INVALID", "reason": reason, "allocation_matches": False, "read_only": True}
 
@@ -10174,11 +10190,12 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         _balmz_require_secure_evm_mainnet_rpc_url(rpc_url)
         if evm_chain_id(rpc_url) != chain_id:
             raise ValueError("wrong_chain_id")
-        code = rpc_call(rpc_url, "eth_getCode", [contract, "latest"])
+        block_tag, block_hash = _balmz_evm_finalized_snapshot(rpc_url)
+        code = rpc_call(rpc_url, "eth_getCode", [contract, block_tag])
         if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("contract_bytecode_missing")
-        raw = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, "latest"]))
-        decimals = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, "latest"]))
+        raw = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, block_tag]))
+        decimals = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, block_tag]))
         if decimals != 18:
             raise ValueError("unexpected_token_decimals")
         scale = 10 ** decimals
@@ -10190,9 +10207,13 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
                 "expected_allocation": str(expected_supply), "observed_supply": str(observed),
                 "allocation_matches": matched, "chain_id": chain_id, "decimals": decimals,
                 "raw_supply": str(raw), "contract_address": contract,
+                "block_number": str(int(block_tag, 16)), "block_hash": block_hash,
+                "commitment": "finalized",
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
-        allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "contract_bytecode_missing", "unexpected_token_decimals", "supply_not_whole_token_aligned"}
+        allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "contract_bytecode_missing",
+                   "unexpected_token_decimals", "supply_not_whole_token_aligned",
+                   "finalized_block_metadata_invalid"}
         reason = str(exc) if str(exc) in allowed else "rpc_or_metadata_verification_failed"
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
