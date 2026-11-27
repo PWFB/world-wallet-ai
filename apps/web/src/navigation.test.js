@@ -278,4 +278,6 @@ test("portfolio balances are scoped to a network and never coerce missing values
   assert.match(featureSource, /USD value unavailable/);
   assert.match(appSource, /setSyncedBalanceNetworks/);
   assert.match(appSource, /network \+ ":" \+ symbol/);
+  assert.match(appSource, /balanceSyncContextRef\.current !== nextContext/);
+  assert.match(appSource, /setHasVerifiedMainnetBalance\(false\)/);
 });
