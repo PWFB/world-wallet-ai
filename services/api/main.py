@@ -6226,7 +6226,7 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
             "FROM balmz_presale_allocation_ledger a LEFT JOIN LATERAL ("
             "SELECT status,tx_signature,id FROM balmz_presale_delivery_attempts "
             "WHERE allocation_id=a.id ORDER BY created_at DESC LIMIT 1"
-            ") d ON TRUE WHERE a.owner_id=%s ORDER BY a.created_at DESC",
+            ") d ON TRUE WHERE owner_id=%s ORDER BY a.created_at DESC",
             (user["id"],),
         ).fetchall()
         addresses = conn.execute(
