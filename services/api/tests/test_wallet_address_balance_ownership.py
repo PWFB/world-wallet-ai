@@ -56,5 +56,23 @@ class WalletAddressBalanceOwnershipTests(unittest.TestCase):
         balance_reader.assert_called_once_with("https://ethereum.example", OWNER)
 
 
+    def test_missing_solana_rpc_balance_is_unavailable_not_zero(self):
+        user = {"id": "user-test", "wallet_id": "wallet-test"}
+        with (
+            patch.object(main, "db", return_value=Database()),
+            patch.object(main, "valid_solana_address", return_value=True),
+            patch.object(main, "SOLANA_MAINNET_RPC_URL", "https://solana.example"),
+            patch.object(main, "require_solana_rpc_cluster", return_value=None),
+            patch.object(main, "rpc_call", return_value={}),
+        ):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.read_wallet_address_balance(
+                    "wallet-test", "solana_mainnet", "11111111111111111111111111111111", user
+                )
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("incomplete or invalid data", caught.exception.detail)
+
+
 if __name__ == "__main__":
     unittest.main()

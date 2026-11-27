@@ -727,8 +727,15 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Unable to check this address balance.");
+      const rawBalance = data?.balance;
+      const parsedBalance = typeof rawBalance === "number" || (typeof rawBalance === "string" && rawBalance.trim() !== "")
+        ? Number(rawBalance)
+        : NaN;
+      if (!Number.isFinite(parsedBalance) || parsedBalance < 0 || typeof data?.asset !== "string" || !data.asset.trim()) {
+        throw new Error("The balance provider returned incomplete or invalid data. Balance remains unavailable; no zero balance was assumed.");
+      }
       if (requestGeneration !== balanceRequestGeneration.current) return;
-      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: Number(data.balance || 0), asset: data.asset || item.network, syncedAt: data.synced_at, error: "" } }));
+      setAddressBalances(previous => ({ ...previous, [key]: { loading: false, balance: parsedBalance, asset: data.asset, syncedAt: data.synced_at, error: "" } }));
     } catch (error) {
       if (requestGeneration !== balanceRequestGeneration.current) return;
       setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: false, error: error.message || "Balance check failed." } }));

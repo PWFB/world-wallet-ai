@@ -7927,7 +7927,10 @@ def read_wallet_address_balance(wallet_id: str, network: str, address: str, user
                 raise HTTPException(status_code=503, detail=f"{cluster_name} RPC is not configured")
             require_solana_rpc_cluster(rpc_url, expected_hash, cluster_name)
             raw = rpc_call(rpc_url, "getBalance", [address, {"commitment": "confirmed"}])
-            balance = int((raw or {}).get("value", 0)) / 1_000_000_000
+            raw_value = raw.get("value") if isinstance(raw, dict) else None
+            if isinstance(raw_value, bool) or not isinstance(raw_value, int) or raw_value < 0:
+                raise HTTPException(status_code=503, detail="Solana balance provider returned incomplete or invalid data")
+            balance = raw_value / 1_000_000_000
         else:
             balance = btc_balance(address)
             asset = "BTC"

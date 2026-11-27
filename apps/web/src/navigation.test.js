@@ -253,3 +253,9 @@ test("injected wallet discovery utilities map supported chains and impose reques
   assert.match(source, /windowRef\.okxwallet/);
   assert.match(source, /60000/); // connection handler's account-request timeout
 });
+
+test("wallet balance UI never converts missing provider data into a zero balance", () => {
+  assert.match(featureSource, /rawBalance = data\?\.balance/);
+  assert.match(featureSource, /Number\.isFinite\(parsedBalance\)/);
+  assert.match(featureSource, /no zero balance was assumed/);
+});
