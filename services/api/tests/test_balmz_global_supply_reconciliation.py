@@ -692,7 +692,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(rpc.call_args_list[0].args[1], "getAccountInfo")
         self.assertEqual(rpc.call_args_list[0].args[2][1]["minContextSlot"], 987)
         self.assertEqual(rpc.call_args_list[1].args[1], "getTokenSupply")
-        self.assertEqual(rpc.call_args_list[1].args[2][1]["minContextSlot"], 987)
+        self.assertEqual(rpc.call_args_list[1].args[2][1]["minContextSlot"], 990)
 
     def test_solana_secondary_rpc_rejects_same_provider_and_slot_mismatch(self):
         mint = "So11111111111111111111111111111111111111112"
