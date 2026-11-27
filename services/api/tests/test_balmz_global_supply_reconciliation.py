@@ -190,6 +190,13 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertTrue(result["mint_authority_configured"])
         self.assertTrue(result["freeze_authority_configured"])
 
+    def test_solana_authority_public_key_requires_canonical_32_byte_base58(self):
+        self.assertTrue(main._balmz_is_canonical_solana_pubkey("11111111111111111111111111111111"))
+        self.assertTrue(main._balmz_is_canonical_solana_pubkey("Vote111111111111111111111111111111111111111"))
+        for invalid in (None, False, "", "0" * 32, "111", "1111111111111111111111111111111", "111111111111111111111111111111111"):
+            with self.subTest(invalid=invalid):
+                self.assertFalse(main._balmz_is_canonical_solana_pubkey(invalid))
+
     def test_solana_supply_rejects_non_string_authority_metadata(self):
         mint = "So11111111111111111111111111111111111111112"
         raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
