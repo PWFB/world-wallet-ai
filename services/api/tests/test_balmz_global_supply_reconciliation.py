@@ -91,6 +91,24 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["reason"], "devnet_mint_rejected")
         rpc.assert_not_called()
 
+
+    def test_admin_authorization_runs_before_any_chain_or_audit_operation(self):
+        user = {"id": "not-admin", "email": "user@example.com"}
+        with (
+            patch.object(main, "require_world_wallet_admin", side_effect=PermissionError("admin_required")) as authorize,
+            patch.object(main, "_balmz_reconcile_evm_supply") as evm,
+            patch.object(main, "_balmz_reconcile_solana_supply") as solana,
+            patch.object(main, "_balmz_reconcile_ethereum_reserve") as reserve,
+            patch.object(main, "record_admin_event") as audit,
+        ):
+            with self.assertRaises(PermissionError):
+                main.balmz_global_supply_reconciliation(user)
+        authorize.assert_called_once_with(user)
+        evm.assert_not_called()
+        solana.assert_not_called()
+        reserve.assert_not_called()
+        audit.assert_not_called()
+
     def test_endpoint_cannot_claim_full_reconciliation_without_reserve_evidence(self):
         user = {"id": "owner", "email": "owner@example.com"}
         verified = {"network": "test", "status": "VERIFIED", "observed_supply": "10000000000", "allocation_matches": True}
