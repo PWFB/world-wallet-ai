@@ -493,12 +493,19 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     setVerificationBusy(key);
     setMessage("");
     try {
-      // Restore or repair the WalletConnect session before asking the owner to sign.
-      // A previously paired session can survive in storage with an incomplete CAIP-155
-      // namespace; Universal Provider then rejects requests with
-      // "Missing or invalid. request() chainId: eip155:<id>" before OKX can show approval.
-      const walletConnectProjectId = String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim();
       const expectedChain = { ethereum: 1, bnb: 56, sepolia: 11155111 }[item.network];
+      const savedExternalConnection = getSavedExternalConnections().find(connection =>
+        String(connection.walletId || "") === String(walletId) &&
+        Number(connection.chainId) === expectedChain &&
+        String(connection.address || "").toLowerCase() === String(item.address || "").toLowerCase()
+      );
+      const expectedProviderId = String(savedExternalConnection?.providerId || savedExternalConnection?.provider || "").toLowerCase();
+      // A Binance-linked address must be proved through Binance's injected provider.
+      // Do not open or silently use a WalletConnect/OKX session for that record.
+      const useWalletConnect = !["binance", "okx"].includes(expectedProviderId);
+      const walletConnectProjectId = useWalletConnect
+        ? String(import.meta.env.VITE_WALLETCONNECT_PROJECT_ID || "").trim()
+        : "";
       const initializeWalletConnectProvider = async () => {
         const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
         const initialized = await EthereumProvider.init({
@@ -518,14 +525,14 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         installWalletConnectListeners(initialized);
         return initialized;
       };
-      if (!walletConnectProviderRef.current && walletConnectProjectId) {
+      if (useWalletConnect && !walletConnectProviderRef.current && walletConnectProjectId) {
         await initializeWalletConnectProvider();
       }
 
       // Keep old saved public addresses untouched, but replace a stale WalletConnect
       // pairing if it did not approve the requested chain or personal_sign method.
       let walletConnectProvider = walletConnectProviderRef.current;
-      if (walletConnectProvider?.session) {
+      if (useWalletConnect && walletConnectProvider?.session) {
         const namespace = walletConnectProvider.session.namespaces?.eip155;
         const approvedChains = Array.isArray(namespace?.chains) ? namespace.chains : [];
         const approvedAccounts = Array.isArray(namespace?.accounts) ? namespace.accounts : [];
@@ -550,24 +557,30 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
       // If no usable saved session remains, open a fresh WalletConnect hand-off.
       // The owner must approve it in OKX; no signature or transaction is automatic.
-      if (walletConnectProvider && !walletConnectProvider.session) {
+      if (useWalletConnect && walletConnectProvider && !walletConnectProvider.session) {
         await withProviderTimeout(
           walletConnectProvider.connect(),
           180000,
           "WalletConnect ownership-verification connection"
         );
       }
-      const providerCandidates = [
-        // WalletConnect is a first-class signing provider for addresses saved from its session.
-        // Keep it ahead of injected providers so verification uses the same approved session.
-        walletConnectProviderRef.current,
-        externalProvider,
-        window.binancew3w?.ethereum,
-        ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
-        window.ethereum,
-        window.okxwallet,
-        window.coinbaseWalletExtension,
-      ].filter((candidate, index, all) =>
+      const providerCandidates = (
+        expectedProviderId === "binance"
+          ? [window.binancew3w?.ethereum]
+          : expectedProviderId === "okx"
+            ? [window.okxwallet, externalProvider?.isOKXWallet || externalProvider?.isOkxWallet ? externalProvider : null]
+            : expectedProviderId === "walletconnect"
+              ? [walletConnectProviderRef.current]
+              : [
+                  walletConnectProviderRef.current,
+                  externalProvider,
+                  window.binancew3w?.ethereum,
+                  ...(Array.isArray(window.ethereum?.providers) ? window.ethereum.providers : []),
+                  window.ethereum,
+                  window.okxwallet,
+                  window.coinbaseWalletExtension,
+                ]
+      ).filter((candidate, index, all) =>
         candidate && typeof candidate.request === "function" && all.indexOf(candidate) === index
       );
       // Match the exact saved address first, but do not stop at the first provider:
@@ -595,7 +608,12 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         }
       }
       if (!matchingProviders.length) {
-        throw new Error("Connect the wallet that owns this exact address, then retry. No recovery phrase or private key is needed.");
+        const providerHint = expectedProviderId === "binance"
+          ? "Open World Wallet AI inside Binance Wallet's DApp browser and connect the same Binance account."
+          : expectedProviderId === "okx"
+            ? "Open World Wallet AI inside OKX Wallet's DApp browser and connect the same OKX account."
+            : "Connect the wallet that owns this exact address.";
+        throw new Error(providerHint + " No recovery phrase or private key is needed.");
       }
 
       const expectedChainHex = { ethereum: "0x1", bnb: "0x38", sepolia: "0xaa36a7" }[item.network];
