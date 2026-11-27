@@ -64,19 +64,35 @@ async function walletAuthHeaders(accessToken, extra = {}) {
 function transactionExplorerUrl(transaction) {
   const hash = String(transaction?.tx_hash || transaction?.transaction_hash || "").trim();
   if (!hash) return "";
-  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
-  const asset = String(transaction?.asset || transaction?.symbol || "").toUpperCase();
-  if (network === "solana_devnet" || asset === "BALMZ-SOL-DEVNET") return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}?cluster=devnet`;
-  if (network === "bitcoin" || asset === "BTC") return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
-  if (network === "bnb" || asset === "BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
-  if (network === "sepolia" || asset === "BALMZ-SEP") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
-  if (network === "ethereum" || ["ETH","USDT","USDC","BALMZ"].includes(asset)) return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
-  if (asset === "USDT-BNB") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
-  if (asset === "SOL") return `https://solscan.io/tx/${encodeURIComponent(hash)}`;
-  if (asset === "XRP") return `https://xrpscan.com/tx/${encodeURIComponent(hash)}`;
-  if (asset === "ADA") return `https://cardanoscan.io/transaction/${encodeURIComponent(hash)}`;
-  if (asset === "LTC") return `https://blockchair.com/litecoin/transaction/${encodeURIComponent(hash)}`;
-  if (asset === "DOGE") return `https://blockchair.com/dogecoin/transaction/${encodeURIComponent(hash)}`;
+  const network = String(transaction?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+  const evmHash = /^0x[a-f0-9]{64}$/i.test(hash);
+  const hexHash = /^[a-f0-9]{64}$/i.test(hash);
+  const solanaSignature = /^[1-9A-HJ-NP-Za-km-z]{64,88}$/.test(hash);
+
+  if (network === "ethereum" || network === "bnb" || network === "sepolia" || network === "polygon") {
+    if (!evmHash) return "";
+    if (network === "bnb") return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
+    if (network === "sepolia") return `https://sepolia.etherscan.io/tx/${encodeURIComponent(hash)}`;
+    if (network === "polygon") return `https://polygonscan.com/tx/${encodeURIComponent(hash)}`;
+    return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
+  }
+  if (network === "solana_mainnet" || network === "solana_devnet") {
+    if (!solanaSignature) return "";
+    const cluster = network === "solana_devnet" ? "?cluster=devnet" : "";
+    return `https://explorer.solana.com/tx/${encodeURIComponent(hash)}${cluster}`;
+  }
+  if (network === "bitcoin" || network === "litecoin" || network === "dogecoin") {
+    if (!hexHash) return "";
+    if (network === "litecoin") return `https://blockchair.com/litecoin/transaction/${encodeURIComponent(hash)}`;
+    if (network === "dogecoin") return `https://blockchair.com/dogecoin/transaction/${encodeURIComponent(hash)}`;
+    return `https://blockstream.info/tx/${encodeURIComponent(hash)}`;
+  }
+  if (network === "xrp" || network === "cardano") {
+    if (!hexHash) return "";
+    return network === "xrp"
+      ? `https://xrpscan.com/tx/${encodeURIComponent(hash)}`
+      : `https://cardanoscan.io/transaction/${encodeURIComponent(hash)}`;
+  }
   return "";
 }
 
