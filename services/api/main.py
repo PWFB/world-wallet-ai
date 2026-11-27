@@ -10218,6 +10218,15 @@ def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_s
         return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
 
+def _balmz_solana_context_slot(response):
+    """Read a strict RPC context slot; booleans and stringified slots are invalid."""
+    context = response.get("context") if isinstance(response, dict) else None
+    slot = context.get("slot") if isinstance(context, dict) else None
+    if isinstance(slot, bool) or not isinstance(slot, int) or slot < 0:
+        raise ValueError("mint_context_slot_invalid")
+    return slot
+
+
 def _balmz_reconcile_solana_supply(mint):
     if not mint:
         return {"network": "solana", "status": "NOT_CONFIGURED", "observed_supply": None,
@@ -10228,6 +10237,7 @@ def _balmz_reconcile_solana_supply(mint):
     try:
         require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
         account = rpc_call(SOLANA_MAINNET_RPC_URL, "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "finalized"}])
+        account_slot = _balmz_solana_context_slot(account)
         value = account.get("value") if isinstance(account, dict) else None
         if not isinstance(value, dict) or value.get("owner") != SOLANA_SPL_TOKEN_PROGRAM_ID or value.get("executable") is not False:
             raise ValueError("mint_account_owner_or_executable_invalid")
@@ -10239,7 +10249,14 @@ def _balmz_reconcile_solana_supply(mint):
         raw = info.get("supply")
         if not isinstance(raw, str) or not re.fullmatch(r"(0|[1-9][0-9]*)", raw):
             raise ValueError("mint_supply_invalid")
-        token_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getTokenSupply", [mint, {"commitment": "finalized"}])
+        token_result = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getTokenSupply",
+            [mint, {"commitment": "finalized", "minContextSlot": account_slot}],
+        )
+        token_slot = _balmz_solana_context_slot(token_result)
+        if token_slot != account_slot:
+            raise ValueError("mint_snapshot_slot_mismatch")
         token_value = token_result.get("value") if isinstance(token_result, dict) else None
         token_amount = token_value.get("amount") if isinstance(token_value, dict) else None
         if (not isinstance(token_value, dict)
@@ -10259,10 +10276,12 @@ def _balmz_reconcile_solana_supply(mint):
                 "raw_supply": raw, "mint_address": mint,
                 "mint_authority_configured": info.get("mintAuthority") is not None,
                 "freeze_authority_configured": info.get("freezeAuthority") is not None,
+                "context_slot": account_slot, "commitment": "finalized",
                 "reason": None if matched else "supply_does_not_match_approved_allocation"}
     except Exception as exc:
         allowed = {"mint_account_owner_or_executable_invalid", "mint_metadata_invalid", "mint_supply_invalid",
-                   "mint_supply_rpc_mismatch", "supply_not_whole_token_aligned"}
+                   "mint_supply_rpc_mismatch", "mint_context_slot_invalid", "mint_snapshot_slot_mismatch",
+                   "supply_not_whole_token_aligned"}
         reason = str(exc) if str(exc) in allowed else "mainnet_rpc_or_mint_verification_failed"
         return {"network": "solana", "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
                 "allocation_matches": False, "reason": reason}
