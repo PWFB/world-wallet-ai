@@ -118,6 +118,30 @@ class EvmSecondaryRpcUrlSecurityTests(unittest.TestCase):
         chain_id.assert_not_called()
         rpc.assert_not_called()
 
+    def test_rejects_ambiguous_legacy_numeric_ip_hosts_before_rpc(self):
+        args = ("0x1234", "0x" + "a" * 64, "0x60016000", 123, 18, "BALMZ Token", "BALMZ")
+        for secondary_url in (
+            "https://127.1",
+            "https://0177.0.0.1",
+            "https://0x7f000001",
+            "https://2130706433",
+        ):
+            with self.subTest(secondary_url=secondary_url):
+                with patch.object(main, "evm_chain_id") as chain_id, patch.object(main, "rpc_call") as rpc:
+                    result = main._balmz_evm_independent_rpc_corroboration(
+                        "https://127.0.0.1",
+                        secondary_url,
+                        self.CONTRACT,
+                        1,
+                        *args,
+                    )
+                self.assertEqual(
+                    result,
+                    {"status": "FAILED", "reason": "invalid_rpc_provider_hostname"},
+                )
+                chain_id.assert_not_called()
+                rpc.assert_not_called()
+
     def test_accepts_secure_secondary_url_for_chain_verification(self):
         block_tag, block_hash, code, raw_supply, decimals, name, symbol = self.PRIMARY_ARGS
 
