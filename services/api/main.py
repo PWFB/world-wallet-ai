@@ -5973,6 +5973,71 @@ def prepare_balmz_presale_delivery(
     }
 
 
+@app.get("/api/v1/admin/balmz/presale/deliveries")
+def list_admin_balmz_presale_deliveries(
+    state: str = "active", limit: int = 50, user: dict = Depends(current_user)
+):
+    """Admin-only queue of unsigned delivery previews awaiting review or reconciliation."""
+    require_world_wallet_admin(user)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
+    allowed_states = {"prepared", "approved", "broadcasting", "submitted", "finalized", "failed", "reconciliation_required", "cancelled"}
+    if state == "active":
+        state_filter = ("prepared", "approved", "broadcasting", "submitted", "reconciliation_required")
+    elif state == "all":
+        state_filter = tuple(sorted(allowed_states))
+    elif state in allowed_states:
+        state_filter = (state,)
+    else:
+        raise HTTPException(status_code=400, detail="Unsupported delivery state filter")
+    placeholders = ",".join(["%s"] * len(state_filter))
+    with db() as conn:
+        rows = conn.execute(
+            "SELECT id,allocation_id,owner_id,status,recipient_address,mint_address,token_program_id,"
+            "source_token_account,destination_token_account,authority_address,amount_base_units,decimals,"
+            "estimated_fee_lamports,last_valid_block_height,unsigned_transaction_base64,message_sha256,"
+            "approval_expires_at,tx_signature,finalized_slot,failure_code,created_at,updated_at "
+            "FROM balmz_presale_delivery_attempts WHERE status IN (" + placeholders + ") "
+            "ORDER BY created_at ASC LIMIT %s",
+            (*state_filter, limit),
+        ).fetchall()
+    items = []
+    for row in rows:
+        items.append({
+            "delivery_id": row[0],
+            "allocation_id": row[1],
+            "owner_id": row[2],
+            "state": row[3],
+            "recipient_address": row[4],
+            "mint_address": row[5],
+            "token_program_id": row[6],
+            "source_token_account": row[7],
+            "destination_token_account": row[8],
+            "authority_address": row[9],
+            "amount_base_units": str(row[10]),
+            "decimals": int(row[11]),
+            "estimated_fee_lamports": int(row[12]),
+            "last_valid_block_height": int(row[13]),
+            "unsigned_transaction_base64": row[14] if row[3] in {"prepared", "approved"} else None,
+            "message_sha256": row[15],
+            "approval_expires_at": row[16].isoformat() if row[16] else None,
+            "tx_signature": row[17],
+            "finalized_slot": row[18],
+            "failure_code": row[19],
+            "created_at": row[20].isoformat() if row[20] else None,
+            "updated_at": row[21].isoformat() if row[21] else None,
+        })
+    return {
+        "deliveries": items,
+        "count": len(items),
+        "state_filter": state,
+        "limit": limit,
+        "read_only": True,
+        "transaction_authorized": False,
+        "presale_release_gate_changed": False,
+    }
+
+
 @app.post("/api/v1/admin/balmz/presale/delivery/{delivery_id}/approve")
 def approve_balmz_presale_delivery(delivery_id: str, user: dict = Depends(current_user)):
     """Admin approval binds to the complete prepared message digest and delivery fields."""
