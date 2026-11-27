@@ -99,8 +99,8 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             if data == "0x" + selectors["totalAllocation()"]: value = allocation
             elif data == "0x" + selectors["released()"]: value = allocation // 4
             elif data.startswith("0x" + selectors["balanceOf(address)"]): value = allocation * 3 // 4
-            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"token()").hexdigest()[:8] + "0" * 24 + token[2:]: value = int(token, 16)
-            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"beneficiary()").hexdigest()[:8] + "0" * 24 + beneficiary[2:]: value = int(beneficiary, 16)
+            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"token()").hexdigest()[:8]: value = int(token, 16)
+            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"beneficiary()").hexdigest()[:8]: value = int(beneficiary, 16)
             else: raise AssertionError(data)
             return "0x" + format(value, "064x")
         with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", side_effect=fake_rpc):
