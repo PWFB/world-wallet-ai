@@ -376,7 +376,13 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         contract = "0x" + "1" * 40
         for invalid_code in ("0x", "0x0", "0x123", "0xgg"):
             with self.subTest(invalid_code=invalid_code):
-                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value=invalid_code):
+                def fake_rpc(_url, method, _params):
+                    if method == "eth_getBlockByNumber":
+                        return {"number": "0x123", "hash": "0x" + "a" * 64}
+                    if method == "eth_getCode":
+                        return invalid_code
+                    raise AssertionError("invalid bytecode must stop contract reads")
+                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
                     result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
                 self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
                 self.assertEqual(result["reason"], "contract_bytecode_missing")
@@ -384,7 +390,15 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
 
     def test_evm_valid_bytecode_requires_even_hex_byte_pairs(self):
         contract = "0x" + "1" * 40
-        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value="0x60016000"):
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getBlockByNumber":
+                return {"number": "0x123", "hash": "0x" + "a" * 64}
+            if method == "eth_getCode":
+                return "0x60016000"
+            if method == "eth_call":
+                return "malformed ABI result"
+            raise AssertionError(method)
+        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
         self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
         self.assertEqual(result["reason"], "rpc_or_metadata_verification_failed")
