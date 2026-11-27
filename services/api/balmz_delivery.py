@@ -199,6 +199,8 @@ def parse_spl_token_account(
     decimals = token_amount.get("decimals") if isinstance(token_amount, dict) else None
     if not isinstance(raw_amount, str) or not _DECIMAL_INTEGER.fullmatch(raw_amount):
         raise BalmzDeliveryValidationError("token_account_amount_invalid")
+    if int(raw_amount) > _U64_MAX:
+        raise BalmzDeliveryValidationError("token_account_amount_out_of_range")
     if isinstance(decimals, bool) or decimals != 9:
         raise BalmzDeliveryValidationError("token_account_decimals_invalid")
     return {"amount_base_units": raw_amount, "context_slot": str(slot), "state": "initialized"}

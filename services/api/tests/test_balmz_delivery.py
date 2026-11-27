@@ -301,5 +301,51 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
             )
 
 
+
+    def test_token_account_rejects_balance_outside_u64_range(self):
+        response = {
+            "context": {"slot": 123},
+            "value": {
+                "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "executable": False,
+                "data": {"parsed": {"type": "account", "info": {
+                    "mint": self.mint,
+                    "owner": str(self.authority.pubkey()),
+                    "state": "initialized",
+                    "tokenAmount": {"amount": str(1 << 64), "decimals": 9},
+                }}},
+            },
+        }
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "token_account_amount_out_of_range"):
+            delivery.parse_spl_token_account(
+                response,
+                expected_mint=self.mint,
+                expected_owner=str(self.authority.pubkey()),
+                expected_token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+            )
+
+    def test_token_account_accepts_zero_balance_with_canonical_amount(self):
+        response = {
+            "context": {"slot": 123},
+            "value": {
+                "owner": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+                "executable": False,
+                "data": {"parsed": {"type": "account", "info": {
+                    "mint": self.mint,
+                    "owner": str(self.authority.pubkey()),
+                    "state": "initialized",
+                    "tokenAmount": {"amount": "0", "decimals": 9},
+                }}},
+            },
+        }
+        result = delivery.parse_spl_token_account(
+            response,
+            expected_mint=self.mint,
+            expected_owner=str(self.authority.pubkey()),
+            expected_token_program="TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
+        )
+        self.assertEqual(result["amount_base_units"], "0")
+
+
 if __name__ == "__main__":
     unittest.main()
