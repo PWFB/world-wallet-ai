@@ -445,6 +445,47 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
             self.assertTrue(any("no on-chain account" in warning for warning in result["warnings"]))
 
 
+    def test_delivery_status_queries_are_owner_scoped_and_excludes_stale_recipient_proofs(self):
+        from unittest.mock import MagicMock
+
+        now = datetime.now(timezone.utc)
+        allocation_rows = [
+            ("allocation-1", "12.000000001", "12000000001", "payment-signature", 12345, now)
+        ]
+        recipient_rows = [
+            (VALID_RECEIVER, now - timedelta(days=2)),
+            ("11111111111111111111111111111111", now - timedelta(days=31)),
+        ]
+        allocation_cursor = MagicMock()
+        allocation_cursor.fetchall.return_value = allocation_rows
+        recipient_cursor = MagicMock()
+        recipient_cursor.fetchall.return_value = recipient_rows
+        connection = MagicMock()
+        connection.execute.side_effect = [allocation_cursor, recipient_cursor]
+        database_context = MagicMock()
+        database_context.__enter__.return_value = connection
+
+        with patch.object(main, "db", return_value=database_context):
+            result = main.balmz_presale_delivery_status({"id": "buyer-a"})
+
+        self.assertEqual(result["allocation_count"], 1)
+        self.assertEqual(result["allocations"][0]["token_amount"], "12.000000001")
+        self.assertEqual(result["allocations"][0]["delivery_state"], "allocated_delivery_pending")
+        self.assertEqual(result["recipient"]["verified_mainnet_addresses"], [VALID_RECEIVER])
+        self.assertTrue(result["recipient"]["recipient_selection_required"])
+        self.assertIsNone(result["recipient"]["auto_selected_recipient"])
+        self.assertFalse(result["delivery_enabled"])
+        self.assertFalse(result["transaction_authorized"])
+        self.assertFalse(result["presale_release_gate_changed"])
+
+        self.assertEqual(connection.execute.call_count, 2)
+        allocation_sql, allocation_params = connection.execute.call_args_list[0].args
+        recipient_sql, recipient_params = connection.execute.call_args_list[1].args
+        self.assertIn("WHERE owner_id=%s", allocation_sql)
+        self.assertIn("WHERE w.owner_id=%s", recipient_sql)
+        self.assertEqual(allocation_params, ("buyer-a",))
+        self.assertEqual(recipient_params, ("buyer-a",))
+
     def test_delivery_recipient_proof_freshness_accepts_thirty_days_and_rejects_older(self):
         now = datetime(2026, 11, 27, 12, 0, tzinfo=timezone.utc)
         self.assertTrue(main._balmz_delivery_recipient_proof_is_current(now - timedelta(days=29), now))
