@@ -2,11 +2,11 @@
 
 ## Status and scope
 
-This document defines the proposed production delivery process for settled BALMZ-SOL presale allocations. It is a design specification, not an implementation or authorization to distribute tokens.
+This document records the delivery security model for settled BALMZ-SOL allocations. A fail-closed API implementation now exists in `services/api/balmz_delivery.py` and `services/api/main.py`; this design remains the security contract, not authorization to distribute tokens.
 
-The current presale settlement flow verifies a finalized native-SOL payment and records a database allocation. It does not transfer BALMZ-SOL. Until a separately reviewed implementation is merged, tested, configured, and explicitly approved, every allocation must remain visibly marked as **allocated — token delivery pending**.
+The settlement flow verifies finalized native-SOL payment and records a database allocation. The delivery API can prepare and submit a separately wallet-signed transfer only when all release gates are approved. Every allocation remains **allocated — token delivery pending** until finalized transfer evidence is verified.
 
-This design does not authorize minting, transfers, treasury signing, authority changes, payment acceptance, or changes to any of the five release gates.
+This design does not authorize minting, treasury movements, authority changes, payment acceptance, or changes to any of the six release gates.
 
 ## Required invariants
 
@@ -61,9 +61,9 @@ The signer must return the signed transaction and signature without exposing key
 
 Do not store signed transaction bytes longer than operationally necessary. Never log full signed payloads or signer credentials.
 
-## Database model requirements for a future implementation
+## Implemented delivery-attempt ledger
 
-A future migration should add a delivery-attempt ledger with at least:
+The `balmz_presale_delivery_attempts` Postgres table records the allocation/owner, explicit recipient, mint/program, source and destination token accounts, authority, exact base units and decimals, finalized account-observation slots, fee estimate, blockhash expiry, unsigned transaction bytes, message digest, approval actor/time/expiry, transaction signature, finality slot, and sanitized failure state.
 
 - immutable allocation-ledger foreign key, unique across successful deliveries;
 - recipient address and recipient-proof reference;
