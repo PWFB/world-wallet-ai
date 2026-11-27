@@ -94,7 +94,7 @@ export async function signPreparedSolanaDelivery({
   const unsigned = decodePreparedSolanaDelivery(unsignedTransactionBase64, expectedAuthority, expectedTransfer);
   const expectedMessage = unsigned.serializeMessage();
   const signed = await provider.signTransaction(unsigned);
-  if (!signed || typeof signed.serialize !== "function" || !signed.message) {
+  if (!signed || typeof signed.serialize !== "function" || typeof signed.serializeMessage !== "function") {
     throw new Error("The wallet did not return a signed Solana transaction.");
   }
   const actualMessage = signed.serializeMessage();
