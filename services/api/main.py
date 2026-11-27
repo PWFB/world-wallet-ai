@@ -150,9 +150,11 @@ BALMZ_DELIVERY_AUTHORITY_ADDRESS = os.getenv("WORLD_WALLET_BALMZ_SOLANA_DELIVERY
 try:
     BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS = int(os.getenv("WORLD_WALLET_BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS", "0"))
     BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS = int(os.getenv("WORLD_WALLET_BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS", "0"))
+    BALMZ_DELIVERY_MAX_FEE_LAMPORTS = int(os.getenv("WORLD_WALLET_BALMZ_DELIVERY_MAX_FEE_LAMPORTS", "0"))
 except ValueError:
     BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS = 0
     BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS = 0
+    BALMZ_DELIVERY_MAX_FEE_LAMPORTS = 0
 BALMZ_GLOBAL_MAX_SUPPLY = 31_000_000_000
 BALMZ_SOLANA_MAINNET_ALLOCATION = 10_000_000_000
 BALMZ_SOLANA_INITIAL_PRESALE_TRANCHE = 1_000_000_000
@@ -966,6 +968,7 @@ def init_db():
           authority_address TEXT NOT NULL,
           amount_base_units BIGINT NOT NULL CHECK(amount_base_units > 0),
           decimals SMALLINT NOT NULL CHECK(decimals = 9),
+          estimated_fee_lamports BIGINT NOT NULL CHECK(estimated_fee_lamports >= 0),
           mint_context_slot BIGINT NOT NULL CHECK(mint_context_slot >= 0),
           source_context_slot BIGINT NOT NULL CHECK(source_context_slot >= 0),
           destination_context_slot BIGINT NOT NULL CHECK(destination_context_slot >= 0),
@@ -5782,8 +5785,12 @@ def prepare_balmz_presale_delivery(
         raise HTTPException(status_code=503, detail="BALMZ token delivery release gates are not approved")
     if not DATABASE_URL or not BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT or not BALMZ_DELIVERY_AUTHORITY_ADDRESS:
         raise HTTPException(status_code=503, detail="The isolated BALMZ delivery source account and authority are not configured")
-    if BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS <= 0 or BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS <= 0:
-        raise HTTPException(status_code=503, detail="BALMZ delivery amount limits are not configured")
+    if (
+        BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS <= 0
+        or BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS <= 0
+        or BALMZ_DELIVERY_MAX_FEE_LAMPORTS <= 0
+    ):
+        raise HTTPException(status_code=503, detail="BALMZ delivery amount and fee limits are not configured")
     if not valid_solana_address(body.recipient_address):
         raise HTTPException(status_code=400, detail="Recipient must be a valid Solana Mainnet address")
     if not valid_solana_address(BALMZ_DELIVERY_AUTHORITY_ADDRESS) or not valid_solana_address(BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT):
@@ -5885,18 +5892,39 @@ def prepare_balmz_presale_delivery(
             )
         except BalmzDeliveryValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        fee_response = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getFeeForMessage",
+            [unsigned["message_base64"], {"commitment": "finalized"}],
+        )
+        estimated_fee_lamports = fee_response.get("value") if isinstance(fee_response, dict) else None
+        if (
+            isinstance(estimated_fee_lamports, bool)
+            or not isinstance(estimated_fee_lamports, int)
+            or estimated_fee_lamports < 0
+            or estimated_fee_lamports > BALMZ_DELIVERY_MAX_FEE_LAMPORTS
+        ):
+            raise HTTPException(status_code=409, detail="Estimated transaction fee is unavailable or exceeds the configured ceiling")
+        fee_balance = rpc_call(
+            SOLANA_MAINNET_RPC_URL,
+            "getBalance",
+            [BALMZ_DELIVERY_AUTHORITY_ADDRESS, {"commitment": "finalized"}],
+        )
+        fee_balance_lamports = fee_balance.get("value") if isinstance(fee_balance, dict) else None
+        if isinstance(fee_balance_lamports, bool) or not isinstance(fee_balance_lamports, int) or fee_balance_lamports < estimated_fee_lamports:
+            raise HTTPException(status_code=409, detail="The configured delivery fee payer does not have enough finalized SOL for the estimated fee")
         delivery_id = "bdel_" + secrets.token_urlsafe(18)
         conn.execute(
             """INSERT INTO balmz_presale_delivery_attempts
             (id,allocation_id,owner_id,recipient_address,mint_address,token_program_id,
              source_token_account,destination_token_account,authority_address,amount_base_units,decimals,
-             mint_context_slot,source_context_slot,destination_context_slot,recent_blockhash,
+             estimated_fee_lamports,mint_context_slot,source_context_slot,destination_context_slot,recent_blockhash,
              last_valid_block_height,unsigned_transaction_base64,message_sha256,status)
-            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,9,%s,%s,%s,%s,%s,%s,%s,'prepared')""",
+            VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,9,%s,%s,%s,%s,%s,%s,%s,%s,'prepared')""",
             (
                 delivery_id, body.allocation_id, user["id"], body.recipient_address, BALMZ_SOLANA_MAINNET_MINT,
                 SOLANA_SPL_TOKEN_PROGRAM_ID, BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT, recipient_token_account,
-                BALMZ_DELIVERY_AUTHORITY_ADDRESS, amount, int(mint_proof["context_slot"]),
+                BALMZ_DELIVERY_AUTHORITY_ADDRESS, amount, estimated_fee_lamports, int(mint_proof["context_slot"]),
                 int(source_state["context_slot"]), int(destination_state["context_slot"]), blockhash,
                 last_valid_height, unsigned["unsigned_transaction_base64"], unsigned["message_sha256"],
             ),
@@ -5915,6 +5943,8 @@ def prepare_balmz_presale_delivery(
         "amount_base_units": str(amount),
         "decimals": 9,
         "amount_tokens": str(Decimal(amount) / Decimal(10 ** 9)),
+        "estimated_fee_lamports": estimated_fee_lamports,
+        "maximum_fee_lamports": BALMZ_DELIVERY_MAX_FEE_LAMPORTS,
         "authority_address": BALMZ_DELIVERY_AUTHORITY_ADDRESS,
         "fee_payer_address": BALMZ_DELIVERY_AUTHORITY_ADDRESS,
         "recent_blockhash": blockhash,
@@ -6076,7 +6106,7 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
         row = conn.execute(
             "SELECT id,owner_id,status,recipient_address,mint_address,source_token_account,"
             "destination_token_account,authority_address,amount_base_units,decimals,tx_signature,"
-            "finalized_slot,message_sha256 FROM balmz_presale_delivery_attempts WHERE id=%s",
+            "finalized_slot,message_sha256,estimated_fee_lamports FROM balmz_presale_delivery_attempts WHERE id=%s",
             (delivery_id,),
         ).fetchone()
     if not row:
@@ -6138,6 +6168,7 @@ def get_balmz_presale_delivery_status(delivery_id: str, user: dict = Depends(cur
         "tx_signature": row[10],
         "finalized_slot": finalized_slot,
         "message_sha256": row[12],
+        "estimated_fee_lamports": row[13],
         "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
         "transaction_authorized": False,
         "presale_release_gate_changed": False,
