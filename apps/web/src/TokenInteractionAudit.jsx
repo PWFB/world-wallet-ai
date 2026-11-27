@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
+import { mergeAuditPages, tokenTransferIdentity } from "./token-audit-pagination.js";
 
 const NETWORK_OPTIONS = [
   { value: "ethereum,bnb,sepolia", label: "Ethereum + BNB + Sepolia" },
@@ -20,34 +21,6 @@ function ExplorerLink({ network, hash, children }) {
   const safeHash = String(hash || "");
   if (!/^0x[a-fA-F0-9]{64}$/.test(safeHash)) return <span>{children || "Unavailable"}</span>;
   return <a href={explorerBase(network) + "/tx/" + safeHash} target="_blank" rel="noreferrer">{children || safeHash.slice(0, 12) + "…"}</a>;
-}
-
-function mergeAuditPages(previous, next) {
-  if (!previous || !next || Number(next.page) <= 1) return next;
-  const mergedNetworks = (next.networks || []).map(network => {
-    const oldNetwork = (previous.networks || []).find(item => item.network === network.network);
-    const addresses = (network.addresses || []).map(address => {
-      const oldAddress = (oldNetwork?.addresses || []).find(item => item.address.toLowerCase() === address.address.toLowerCase());
-      const mergeUnique = (left, right, keyOf) => {
-        const seen = new Set();
-        return [...(left || []), ...(right || [])].filter(item => {
-          const key = keyOf(item);
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        });
-      };
-      return {
-        ...address,
-        token_transfers: mergeUnique(oldAddress?.token_transfers, address.token_transfers, item => item.tx_hash || JSON.stringify(item)),
-        approvals: mergeUnique(oldAddress?.approvals, address.approvals, item => (item.tx_hash || "") + ":" + (item.log_index || "")),
-        current_allowance_checks: address.current_allowance_checks || oldAddress?.current_allowance_checks || [],
-        warnings: mergeUnique(oldAddress?.warnings, address.warnings, item => item),
-      };
-    });
-    return { ...network, addresses };
-  });
-  return { ...next, networks: mergedNetworks };
 }
 
 function Panel({ title, children, note }) {
@@ -195,7 +168,7 @@ export default function TokenInteractionAudit({ accessToken, apiBaseUrl }) {
           {!address.token_transfers?.length ? <p className="muted">No transfer records on this page.</p> :
             <div style={{ overflowX: "auto" }}><table style={{ width: "100%", minWidth: 640 }}>
               <thead><tr><th>Token</th><th>Amount</th><th>Direction</th><th>Transaction</th><th>BALMZ match</th><th>RPC verification</th></tr></thead>
-              <tbody>{address.token_transfers.map((tx, index) => <tr key={tx.tx_hash || index}>
+              <tbody>{address.token_transfers.map((tx, index) => <tr key={tokenTransferIdentity(tx, index)}>
                 <td>{tx.token_symbol || "Unknown"}<small style={{ display: "block" }}>{tx.token_contract_address || "Contract unavailable"}</small></td>
                 <td>{tx.amount ?? tx.amount_raw} {tx.amount === null ? "raw units" : ""}</td>
                 <td>{String(tx.from_address || "").toLowerCase() === address.address.toLowerCase() ? "Sent" : String(tx.to_address || "").toLowerCase() === address.address.toLowerCase() ? "Received" : "Related"}</td>
