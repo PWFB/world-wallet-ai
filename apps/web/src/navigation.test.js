@@ -294,14 +294,17 @@ test("transaction detail explorer links require a network-specific valid transac
 });
 
 
-test("Binance-linked address verification uses only the Binance provider and skips WalletConnect", () => {
+test("Binance-linked ownership stays Binance-only while OKX accepts matching WalletConnect proof", () => {
   const start = featureSource.indexOf("const verifyAddressOwnership = async item =>");
   const end = featureSource.indexOf("const checkAddressBalance", start);
   const verifyFlow = featureSource.slice(start, end);
-  assert.match(verifyFlow, /expectedProviderId === "binance"[\s\S]*?\[window\.binancew3w\?\.ethereum\]/);
-  assert.match(verifyFlow, /const useWalletConnect = !\["binance", "okx"\]\.includes\(expectedProviderId\)/);
-  assert.match(verifyFlow, /if \(useWalletConnect && !walletConnectProviderRef\.current && walletConnectProjectId\)/);
-  assert.match(verifyFlow, /if \(useWalletConnect && walletConnectProvider && !walletConnectProvider\.session\)/);
+  assert.match(verifyFlow, /expectedProviderId === "binance"[\\s\\S]*?\\[window\\.binancew3w\\?\\.ethereum\\]/);
+  assert.match(verifyFlow, /const useWalletConnect = expectedProviderId !== "binance"/);
+  assert.match(verifyFlow, /expectedProviderId === "okx"[\\s\\S]*?walletConnectProviderRef\\.current/);
+  assert.match(verifyFlow, /expectedProviderId === "binance"[\\s\\S]*?\\[window\\.binancew3w\\?\\.ethereum\\]/);
+  assert.match(verifyFlow, /if \\(useWalletConnect && !walletConnectProviderRef\\.current && walletConnectProjectId\\)/);
+  assert.match(verifyFlow, /if \\(useWalletConnect && walletConnectProvider && !walletConnectProvider\\.session\\)/);
   assert.match(verifyFlow, /Open World Wallet AI inside Binance Wallet's DApp browser/);
+  assert.match(verifyFlow, /WalletConnect QR or OKX Wallet's DApp browser/);
   assert.match(verifyFlow, /ownership_verified !== true/);
 });
