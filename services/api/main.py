@@ -2102,20 +2102,32 @@ def rpc_call(url: str, method: str, params: list):
 
 
 
-def require_solana_rpc_cluster(url: str, expected_genesis_hash: str, cluster_name: str):
-    """Fail closed on insecure Mainnet RPC URLs and unexpected Solana clusters."""
-    if not url:
-        raise ValueError(f"{cluster_name} RPC is not configured")
-    if cluster_name == "Solana Mainnet":
+def _balmz_require_secure_solana_mainnet_rpc_url(url: str):
+    """Validate a public HTTPS Solana Mainnet RPC endpoint without ambiguous URL parts."""
+    try:
         parsed = urlparse(url) if isinstance(url, str) else None
+        port = parsed.port if parsed else None
         if (
             not parsed
             or parsed.scheme.lower() != "https"
             or not parsed.hostname
             or parsed.username is not None
             or parsed.password is not None
+            or parsed.fragment
+            or (port is not None and not 1 <= port <= 65535)
         ):
-            raise ValueError("Solana Mainnet RPC requires a valid HTTPS endpoint without embedded credentials")
+            raise ValueError("solana_mainnet_rpc_url_invalid")
+        return parsed
+    except (TypeError, ValueError):
+        raise ValueError("solana_mainnet_rpc_url_invalid")
+
+
+def require_solana_rpc_cluster(url: str, expected_genesis_hash: str, cluster_name: str):
+    """Fail closed on insecure Mainnet RPC URLs and unexpected Solana clusters."""
+    if not url:
+        raise ValueError(f"{cluster_name} RPC is not configured")
+    if cluster_name == "Solana Mainnet":
+        _balmz_require_secure_solana_mainnet_rpc_url(url)
     actual_genesis_hash = rpc_call(url, "getGenesisHash", [])
     if actual_genesis_hash != expected_genesis_hash:
         raise ValueError(f"Configured {cluster_name} RPC returned an unexpected Solana cluster genesis hash")
@@ -10977,10 +10989,8 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
     if not secondary_rpc_url:
         return {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"}
     try:
-        secondary = urlparse(secondary_rpc_url)
-        primary = urlparse(primary_rpc_url)
-        if secondary.scheme != "https" or not secondary.hostname:
-            raise ValueError("secondary_rpc_url_invalid")
+        secondary = _balmz_require_secure_solana_mainnet_rpc_url(secondary_rpc_url)
+        primary = _balmz_require_secure_solana_mainnet_rpc_url(primary_rpc_url)
         if secondary.hostname.lower() == (primary.hostname or "").lower():
             raise ValueError("secondary_rpc_provider_not_independent")
         require_solana_rpc_cluster(secondary_rpc_url, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
@@ -11010,7 +11020,7 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
                 "context_slot": primary_slot, "commitment": "finalized",
                 "same_finalized_slot": True}
     except Exception as exc:
-        allowed = {"secondary_rpc_url_invalid", "secondary_rpc_provider_not_independent",
+        allowed = {"solana_mainnet_rpc_url_invalid", "secondary_rpc_provider_not_independent",
                    "secondary_rpc_mint_state_mismatch", "secondary_rpc_supply_mismatch"}
         reason = str(exc) if str(exc) in allowed else "secondary_rpc_verification_failed"
         return {"status": "FAILED", "reason": reason}
