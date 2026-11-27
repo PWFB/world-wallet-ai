@@ -10187,11 +10187,16 @@ def _balmz_reconcile_solana_supply(mint):
         if not isinstance(info, dict) or parsed.get("type") != "mint" or info.get("isInitialized") is not True or info.get("decimals") != 9:
             raise ValueError("mint_metadata_invalid")
         raw = info.get("supply")
-        if not isinstance(raw, str) or not raw.isdigit():
+        if not isinstance(raw, str) or not re.fullmatch(r"(0|[1-9][0-9]*)", raw):
             raise ValueError("mint_supply_invalid")
         token_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getTokenSupply", [mint, {"commitment": "finalized"}])
         token_value = token_result.get("value") if isinstance(token_result, dict) else None
-        if not isinstance(token_value, dict) or token_value.get("amount") != raw or token_value.get("decimals") != 9:
+        token_amount = token_value.get("amount") if isinstance(token_value, dict) else None
+        if (not isinstance(token_value, dict)
+                or not isinstance(token_amount, str)
+                or not re.fullmatch(r"(0|[1-9][0-9]*)", token_amount)
+                or token_amount != raw
+                or token_value.get("decimals") != 9):
             raise ValueError("mint_supply_rpc_mismatch")
         raw_int = int(raw)
         if raw_int % (10 ** 9):
