@@ -8,6 +8,18 @@ import main
 
 
 class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
+    def test_evm_chain_id_accepts_canonical_json_rpc_quantities(self):
+        for raw, expected in (("0x0", 0), ("0x1", 1), ("0x38", 56), ("0xaa36a7", 11155111)):
+            with self.subTest(raw=raw), patch.object(main, "rpc_call", return_value=raw):
+                self.assertEqual(main.evm_chain_id("https://rpc.example"), expected)
+
+    def test_evm_chain_id_rejects_noncanonical_or_malformed_quantities(self):
+        invalid_values = (None, "", True, 1, "0x", "0x00", "0x01", "0X1", "1", "0x+1", "0x-1", "0xgg", " 0x1")
+        for raw in invalid_values:
+            with self.subTest(raw=raw), patch.object(main, "rpc_call", return_value=raw):
+                with self.assertRaisesRegex(ValueError, "invalid_chain_id"):
+                    main.evm_chain_id("https://rpc.example")
+
     def test_uint256_decoder_requires_exact_abi_word(self):
         self.assertEqual(main._balmz_decode_uint256_rpc("0x" + format(123, "064x")), 123)
         for invalid in (None, "0x01", "123", "0x" + "g" * 64, True):
@@ -251,11 +263,21 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             elif data == "0x" + main.keccak.new(digest_bits=256, data=b"beneficiary()").hexdigest()[:8]: value = int(beneficiary, 16)
             else: raise AssertionError(data)
             return "0x" + format(value, "064x")
-        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", side_effect=fake_rpc):
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_ethereum_reserve("https://rpc.example", token, vesting, beneficiary)
         self.assertEqual(result["status"], "VERIFIED")
         self.assertEqual(result["allocation_raw"], str(allocation))
         self.assertEqual(result["reserve_balance_raw"], str(allocation * 3 // 4))
+
+    def test_ethereum_reserve_requires_chain_id_one_before_contract_reads(self):
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "evm_chain_id", return_value=56) as chain_id, patch.object(main, "rpc_call") as rpc:
+            result = main._balmz_reconcile_ethereum_reserve(
+                "https://rpc.example", "0x" + "1" * 40, "0x" + "2" * 40, "0x" + "3" * 40
+            )
+        self.assertEqual(result["status"], "CONTRACT_INVALID")
+        self.assertEqual(result["reason"], "wrong_chain_id")
+        chain_id.assert_called_once_with("https://rpc.example")
+        rpc.assert_not_called()
 
     def test_reserve_fails_closed_when_beneficiary_mismatches(self):
         with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", return_value="0x" + "0" * 64):

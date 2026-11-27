@@ -2068,9 +2068,11 @@ def solana_spl_token_balance(owner_address: str, mint_address: str = BALMZ_SOLAN
 
 
 def evm_chain_id(url: str):
-    """Return the connected EVM RPC chain ID as an integer."""
+    """Return a canonical JSON-RPC EVM chain ID, rejecting malformed quantities."""
     raw = rpc_call(url, "eth_chainId", [])
-    return int(raw, 16) if raw else None
+    if not isinstance(raw, str) or not re.fullmatch(r"0x(?:0|[1-9a-fA-F][0-9a-fA-F]*)", raw):
+        raise ValueError("invalid_chain_id")
+    return int(raw[2:], 16)
 
 
 def require_ethereum_mainnet_rpc(url: str):
@@ -10095,6 +10097,8 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
                 "allocation_matches": False, "read_only": True}
     try:
         _balmz_require_secure_evm_mainnet_rpc_url(rpc_url)
+        if evm_chain_id(rpc_url) != 1:
+            raise ValueError("wrong_chain_id")
         code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, "latest"])
         if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("vesting_bytecode_missing")
@@ -10121,7 +10125,7 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
                 "released_raw": str(released), "reserve_balance_raw": str(reserve_balance),
                 "allocation_matches": True, "read_only": True}
     except Exception as exc:
-        allowed = {"insecure_mainnet_rpc_url", "vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
+        allowed = {"insecure_mainnet_rpc_url", "wrong_chain_id", "vesting_bytecode_missing", "vesting_token_mismatch", "vesting_beneficiary_mismatch",
                    "vesting_allocation_mismatch", "vesting_reserve_balance_insufficient"}
         reason = str(exc) if str(exc) in allowed else "vesting_rpc_or_metadata_verification_failed"
         return {"status": "CONTRACT_INVALID", "reason": reason, "allocation_matches": False, "read_only": True}
