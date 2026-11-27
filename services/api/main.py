@@ -5531,7 +5531,7 @@ def _balmz_presale_sol_usd_quote():
 @app.post("/api/v1/balmz/presale/intents")
 def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depends(current_user)):
     """Create a server-priced, short-lived payment intent; disabled unless explicitly configured."""
-    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED):
+    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and intent gates are not approved")
     if not DATABASE_URL or not user.get("id"):
         raise HTTPException(status_code=503,detail="Presale payment intents require the configured account database")
@@ -5582,7 +5582,7 @@ def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depen
 @app.post("/api/v1/balmz/presale/settle")
 def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Depends(current_user)):
     """Verify and atomically record a finalized payment once; this does not transfer tokens."""
-    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED):
+    if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and settlement gates are not approved")
     if not DATABASE_URL:
         raise HTTPException(status_code=503,detail="Presale settlement requires the configured account database")
@@ -6149,8 +6149,12 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
     """List the caller's settled allocations and verified recipient candidates; never sends tokens."""
     with db() as conn:
         allocations = conn.execute(
-            "SELECT id,token_amount,token_base_units,tx_signature,finalized_slot,created_at "
-            "FROM balmz_presale_allocation_ledger WHERE owner_id=%s ORDER BY created_at DESC",
+            "SELECT a.id,a.token_amount,a.token_base_units,a.tx_signature,a.finalized_slot,a.created_at,"
+            "d.status,d.tx_signature,d.id "
+            "FROM balmz_presale_allocation_ledger a LEFT JOIN LATERAL ("
+            "SELECT status,tx_signature,id FROM balmz_presale_delivery_attempts "
+            "WHERE allocation_id=a.id ORDER BY created_at DESC LIMIT 1"
+            ") d ON TRUE WHERE a.owner_id=%s ORDER BY a.created_at DESC",
             (user["id"],),
         ).fetchall()
         addresses = conn.execute(
@@ -6175,15 +6179,16 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
                 "payment_signature": row[3],
                 "payment_finalized_slot": int(row[4]),
                 "allocated_at": row[5].isoformat() if row[5] else None,
-                "delivery_state": "allocated_delivery_pending",
-                "token_delivery_signature": None,
+                "delivery_state": row[6] or "allocated_delivery_pending",
+                "token_delivery_signature": row[7],
+                "delivery_id": row[8],
             }
             for row in allocations
         ],
         "allocation_count": len(allocations),
         "recipient": recipient,
         "recipient_ownership_proof_freshness_days": 30,
-        "delivery_enabled": False,
+        "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
         "transaction_authorized": False,
         "presale_release_gate_changed": False,
         "notice": "This endpoint reports database allocations and verified recipient candidates only. It does not prepare, sign, broadcast, or deliver tokens.",
@@ -6216,6 +6221,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "liquidity_mechanism_configured": False,
         # CI status is not inferred from runtime settings.
         "regression_suite_verified": BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED,
+        "delivery_infrastructure_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
     }
     warnings = list(mint_status["warnings"]) + list(receiver_status["warnings"])
     if recipient_is_valid:
@@ -6241,8 +6247,9 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"] and readiness["receiving_address_system_account_verified"]),
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"] and readiness["receiving_address_system_account_verified"]),
         "production_network": "solana_mainnet",
+        "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
         "production_mint": configured_mint,
         "devnet_mint": BALMZ_SOLANA_DEVNET_MINT,
         "devnet_mint_is_test_only": True,
