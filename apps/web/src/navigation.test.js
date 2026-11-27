@@ -313,7 +313,9 @@ test("Binance-linked ownership stays Binance-only while OKX accepts matching Wal
 
 
 test("mobile network selectors use aligned label-and-select columns", () => {
-  assert.match(appCssSource, /grid-template-areas:[\\s\\S]*"environment-label network-label \\."[\\s\\S]*"environment-select network-select refresh"/);
+  assert.ok(appCssSource.includes('grid-template-areas:'));
+  assert.ok(appCssSource.includes('"environment-label network-label ."'));
+  assert.ok(appCssSource.includes('"environment-select network-select refresh"'));
   assert.match(appSource, /id="mobile-environment-select"/);
   assert.match(appSource, /id="mobile-network-select"/);
 });
