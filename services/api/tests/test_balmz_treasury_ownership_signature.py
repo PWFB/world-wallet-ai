@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 def _base58_encode(raw: bytes) -> str:
     alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-    leading_zeroes = len(raw) - len(raw.lstrip(b"\\x00"))
+    leading_zeroes = len(raw) - len(raw.lstrip(b"\x00"))
     value = int.from_bytes(raw, "big")
     encoded = ""
     while value:
@@ -30,9 +30,9 @@ class BalmzTreasuryOwnershipSignatureTests(unittest.TestCase):
         )
         self.address = _base58_encode(public_key)
         self.message = (
-            "World Wallet AI BALMZ-SOL treasury ownership proof\\n"
-            "Network: Solana Mainnet\\n"
-            f"Treasury: {self.address}\\n"
+            "World Wallet AI BALMZ-SOL treasury ownership proof\n"
+            "Network: Solana Mainnet\n"
+            f"Treasury: {self.address}\n"
             "This message does not authorize a transaction."
         )
         self.signature = base64.b64encode(
