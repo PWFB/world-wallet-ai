@@ -8,6 +8,18 @@ import main
 
 
 class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
+    def test_evm_chain_id_accepts_canonical_json_rpc_quantities(self):
+        for raw, expected in (("0x0", 0), ("0x1", 1), ("0x38", 56), ("0xaa36a7", 11155111)):
+            with self.subTest(raw=raw), patch.object(main, "rpc_call", return_value=raw):
+                self.assertEqual(main.evm_chain_id("https://rpc.example"), expected)
+
+    def test_evm_chain_id_rejects_noncanonical_or_malformed_quantities(self):
+        invalid_values = (None, "", True, 1, "0x", "0x00", "0x01", "0X1", "1", "0x+1", "0x-1", "0xgg", " 0x1")
+        for raw in invalid_values:
+            with self.subTest(raw=raw), patch.object(main, "rpc_call", return_value=raw):
+                with self.assertRaisesRegex(ValueError, "invalid_chain_id"):
+                    main.evm_chain_id("https://rpc.example")
+
     def test_uint256_decoder_requires_exact_abi_word(self):
         self.assertEqual(main._balmz_decode_uint256_rpc("0x" + format(123, "064x")), 123)
         for invalid in (None, "0x01", "123", "0x" + "g" * 64, True):
