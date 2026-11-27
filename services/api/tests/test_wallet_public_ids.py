@@ -79,6 +79,7 @@ class WalletPublicIdTests(unittest.TestCase):
         with patch.object(main, "DATABASE_URL", "postgresql://test"), patch.object(main, "db", return_value=self.database):
             main.init_db()
         ddl = "\n".join(sql for sql, _ in self.connection.statements)
+        self.assertEqual(self.connection.statements[0][0], "SELECT pg_advisory_xact_lock(728194210)")
         self.assertIn("CREATE SEQUENCE IF NOT EXISTS wallets_wallet_number_seq", ddl)
         self.assertIn("ALTER TABLE wallets ADD COLUMN IF NOT EXISTS wallet_number BIGINT", ddl)
         self.assertIn("UPDATE wallets SET wallet_number=nextval('wallets_wallet_number_seq') WHERE wallet_number IS NULL", ddl)
