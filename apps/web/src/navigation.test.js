@@ -305,3 +305,12 @@ test("Binance-linked address verification uses only the Binance provider and ski
   assert.match(verifyFlow, /Open World Wallet AI inside Binance Wallet's DApp browser/);
   assert.match(verifyFlow, /ownership_verified !== true/);
 });
+
+
+test("verified Mainnet balance checks time out instead of leaving Portfolio in a permanent checking state", () => {
+  assert.match(appSource, /const controller = new AbortController\(\)/);
+  assert.match(appSource, /setTimeout\(\(\) => controller\.abort\(\), 20000\)/);
+  assert.match(appSource, /Verified Mainnet balance check timed out after 20 seconds/);
+  assert.match(appSource, /controller\.abort\(\)/);
+  assert.match(appSource, /Balances remain unavailable/);
+});
