@@ -7,6 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main
 
 
+def _abi_string(value):
+    raw = value.encode("utf-8")
+    padded = raw + (b"\\x00" * ((-len(raw)) % 32))
+    return "0x" + (32).to_bytes(32, "big").hex() + len(raw).to_bytes(32, "big").hex() + padded.hex()
+
+
 class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
     def test_evm_mainnet_rpc_rejects_insecure_fallback_endpoint(self):
         with (
@@ -209,6 +215,12 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             if method == "eth_getCode":
                 seen_tags.append(params[1])
                 return "0x60016000"
+            if method == "eth_call" and params[0]["data"] == "0x06fdde03":
+                seen_tags.append(params[1])
+                return _abi_string("BALMZ Token")
+            if method == "eth_call" and params[0]["data"] == "0x95d89b41":
+                seen_tags.append(params[1])
+                return _abi_string("BALMZ")
             if method == "eth_call" and params[0]["data"] == "0x18160ddd":
                 seen_tags.append(params[1])
                 return "0x" + format(raw_supply, "064x")
@@ -221,10 +233,37 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["status"], "VERIFIED")
         self.assertEqual(result["observed_supply"], "11000000000")
         self.assertEqual(result["raw_supply"], str(raw_supply))
-        self.assertEqual(seen_tags, [block_tag, block_tag, block_tag])
+        self.assertEqual(seen_tags, [block_tag, block_tag, block_tag, block_tag, block_tag])
         self.assertEqual(result["block_number"], str(int(block_tag, 16)))
         self.assertEqual(result["block_hash"], block_hash)
         self.assertEqual(result["commitment"], "finalized")
+
+    def test_evm_supply_rejects_wrong_name_or_symbol_before_supply_reads(self):
+        contract = "0x" + "1" * 40
+        block = {"number": "0x123", "hash": "0x" + "a" * 64}
+        for selector, response in (
+            ("0x06fdde03", _abi_string("Not BALMZ")),
+            ("0x95d89b41", _abi_string("FAKE")),
+        ):
+            with self.subTest(selector=selector):
+                calls = []
+                def fake_rpc(_url, method, params):
+                    if method == "eth_getBlockByNumber":
+                        return block
+                    if method == "eth_getCode":
+                        return "0x60016000"
+                    if method == "eth_call":
+                        calls.append(params[0]["data"])
+                        if params[0]["data"] == "0x06fdde03":
+                            return _abi_string("Not BALMZ") if selector == "0x06fdde03" else _abi_string("BALMZ Token")
+                        if params[0]["data"] == "0x95d89b41":
+                            return response
+                    raise AssertionError(method)
+                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
+                    result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "unexpected_token_identity")
+                self.assertNotIn("0x18160ddd", calls)
 
     def test_evm_supply_rejects_malformed_finalized_block_before_contract_reads(self):
         contract = "0x" + "1" * 40
