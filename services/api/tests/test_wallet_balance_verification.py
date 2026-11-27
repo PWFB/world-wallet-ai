@@ -206,3 +206,64 @@ class WalletBalanceVerificationTests(unittest.TestCase):
 
         self.assertNotIn("sepolia", {item["network"] for item in result["assets"]})
         self.assertNotIn("solana_devnet", {item["network"] for item in result["assets"]})
+
+
+    def test_solana_balance_reader_rejects_coerced_decimals_and_noncanonical_amounts(self):
+        owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+        for decimals, amount in ((True, "1"), (9.0, "1"), ("9", "1"), (9, "01"), (9, "١")):
+            response = {"value": [{
+                "account": {"data": {"parsed": {"info": {
+                    "mint": mint,
+                    "tokenAmount": {"decimals": decimals, "amount": amount},
+                }}}}}
+            ]}
+            with (
+                patch.object(main, "require_solana_rpc_cluster"),
+                patch.object(main, "rpc_call", return_value=response),
+                self.assertRaises(ValueError),
+            ):
+                main._read_verified_solana_spl_balance(
+                    owner, mint, rpc_url="https://solana.invalid",
+                    expected_genesis_hash="mainnet", cluster_name="Solana Mainnet", decimals=9,
+                )
+
+    def test_solana_balance_reader_rejects_account_amount_above_u64(self):
+        owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+        response = {"value": [{
+            "account": {"data": {"parsed": {"info": {
+                "mint": mint,
+                "tokenAmount": {"decimals": 9, "amount": str(1 << 64)},
+            }}}}
+        ]}
+        with (
+            patch.object(main, "require_solana_rpc_cluster"),
+            patch.object(main, "rpc_call", return_value=response),
+            self.assertRaisesRegex(ValueError, "unsigned 64-bit"),
+        ):
+            main._read_verified_solana_spl_balance(
+                owner, mint, rpc_url="https://solana.invalid",
+                expected_genesis_hash="mainnet", cluster_name="Solana Mainnet", decimals=9,
+            )
+
+    def test_solana_balance_reader_accepts_canonical_zero_and_max_u64(self):
+        owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
+        mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
+        response = {"value": [
+            {"account": {"data": {"parsed": {"info": {
+                "mint": mint, "tokenAmount": {"decimals": 9, "amount": "0"},
+            }}}}},
+            {"account": {"data": {"parsed": {"info": {
+                "mint": mint, "tokenAmount": {"decimals": 9, "amount": str((1 << 64) - 1)},
+            }}}}},
+        ]}
+        with (
+            patch.object(main, "require_solana_rpc_cluster"),
+            patch.object(main, "rpc_call", return_value=response),
+        ):
+            result = main._read_verified_solana_spl_balance(
+                owner, mint, rpc_url="https://solana.invalid",
+                expected_genesis_hash="mainnet", cluster_name="Solana Mainnet", decimals=9,
+            )
+        self.assertEqual(result, Decimal((1 << 64) - 1) / (Decimal(10) ** 9))
