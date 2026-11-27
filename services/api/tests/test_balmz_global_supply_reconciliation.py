@@ -458,6 +458,8 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             result = main.balmz_global_supply_reconciliation(user)
         self.assertEqual(result["status"], "PARTIAL_DEPLOYMENT")
         self.assertEqual(result["ethereum_reserve_evidence"]["status"], "NOT_CONFIGURED")
+        self.assertTrue(result["read_only"])
+        self.assertFalse(result["transaction_authorized"])
         self.assertFalse(result["presale_release_gate_changed"])
 
     def test_reserve_verifies_immutable_fields_and_remaining_balance(self):
