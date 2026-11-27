@@ -309,3 +309,26 @@ test("Binance-linked ownership stays Binance-only while OKX accepts matching Wal
   assert.match(verifyFlow, /WalletConnect QR or OKX Wallet's DApp browser/);
   assert.match(verifyFlow, /ownership_verified !== true/);
 });
+
+
+test("Transactions reloads and clears prior-wallet rows when the active wallet changes", () => {
+  const start = featureSource.indexOf("async function loadTransactionHistory");
+  const end = featureSource.indexOf("async function verifyDevnetDeposit", start);
+  const historyLoader = featureSource.slice(start, end);
+  assert.match(historyLoader, /const requestedWalletId = activeWalletId/);
+  assert.match(historyLoader, /historyRequestGenerationRef\.current/);
+  assert.match(historyLoader, /requestedWalletId !== activeWalletId/);
+  assert.match(featureSource, /\[active, accessToken, apiBaseUrl, activeWalletId\]/);
+  assert.match(featureSource, /setHistoryTransactions\(\[\]\)/);
+  assert.match(featureSource, /transaction history.*active wallet/i);
+});
+
+test("Transactions rejects incomplete transaction arrays and inconsistent paging metadata", () => {
+  const start = featureSource.indexOf("async function loadTransactionHistory");
+  const end = featureSource.indexOf("async function verifyDevnetDeposit", start);
+  const historyLoader = featureSource.slice(start, end);
+  assert.match(historyLoader, /Array\.isArray\(data\.transactions\)/);
+  assert.match(historyLoader, /Number\.isSafeInteger\(rawPagination\.offset\)/);
+  assert.match(historyLoader, /rawPagination\.has_more === \(offset \+ data\.transactions\.length < rawPagination\.total\)/);
+  assert.match(historyLoader, /malformed record/);
+});

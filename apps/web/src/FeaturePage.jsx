@@ -1347,6 +1347,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [syncMessage, setSyncMessage] = useState("");
   const [historyTransactions, setHistoryTransactions] = useState([]);
   const [historyPagination, setHistoryPagination] = useState({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+  const historyRequestGenerationRef = useRef(0);
   const [walletReconciliation, setWalletReconciliation] = useState(null);
   const [walletReconciliationBusy, setWalletReconciliationBusy] = useState(false);
   const [walletReconciliationError, setWalletReconciliationError] = useState("");
@@ -1705,26 +1706,78 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
   async function loadTransactionHistory({ offset = 0, append = false } = {}) {
-    if (!accessToken || historyBusy) return;
+    const requestGeneration = ++historyRequestGenerationRef.current;
+    const requestedWalletId = activeWalletId;
+    if (!accessToken) {
+      setHistoryTransactions([]);
+      setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+      setHistoryError("Sign in to load transaction history.");
+      setHistoryBusy(false);
+      return;
+    }
+    if (!requestedWalletId) {
+      setHistoryTransactions([]);
+      setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+      setHistoryError("Select an active wallet to load transaction history.");
+      setHistoryBusy(false);
+      return;
+    }
     setHistoryBusy(true);
     setHistoryError("");
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/transactions?limit=50&offset=" + offset, {
         headers: await walletAuthHeaders(accessToken),
+        cache: "no-store",
       });
       const data = await response.json();
+      if (requestGeneration !== historyRequestGenerationRef.current) return;
+      if (requestedWalletId !== activeWalletId) return;
       if (!response.ok) throw new Error(data.detail || "Could not load transaction history.");
-      const rows = Array.isArray(data.transactions) ? data.transactions.map(item => ({
-        ...item,
-        raw_amount: item.raw_amount ?? item.amount,
-        time: item.time ? new Date(item.time).toLocaleString() : "Time unavailable",
-      })) : [];
+      if (!Array.isArray(data.transactions)) {
+        throw new Error("The transaction service returned an invalid history list. No empty history was assumed.");
+      }
+      const rawPagination = data.pagination;
+      const nextOffset = rawPagination?.next_offset;
+      const validPagination = rawPagination && typeof rawPagination === "object" && !Array.isArray(rawPagination) &&
+        Number.isSafeInteger(rawPagination.limit) && rawPagination.limit > 0 && rawPagination.limit <= 100 &&
+        Number.isSafeInteger(rawPagination.offset) && rawPagination.offset === offset &&
+        Number.isSafeInteger(rawPagination.total) && rawPagination.total >= 0 &&
+        typeof rawPagination.has_more === "boolean" &&
+        (nextOffset === null || (Number.isSafeInteger(nextOffset) && nextOffset >= 0)) &&
+        rawPagination.total >= offset + data.transactions.length &&
+        rawPagination.has_more === (offset + data.transactions.length < rawPagination.total) &&
+        (!rawPagination.has_more || nextOffset === offset + data.transactions.length);
+      if (!validPagination) {
+        throw new Error("The transaction service returned inconsistent pagination metadata. Refresh history before continuing.");
+      }
+      const rows = data.transactions.map(item => {
+        if (!item || typeof item !== "object" || item.id === null || item.id === undefined || typeof item.type !== "string") {
+          throw new Error("The transaction service returned a malformed record. No transaction was inferred.");
+        }
+        const parsedTime = item.time ? Date.parse(item.time) : NaN;
+        return {
+          ...item,
+          raw_amount: item.raw_amount ?? item.amount,
+          time: Number.isFinite(parsedTime) ? new Date(parsedTime).toLocaleString() : "Time unavailable",
+        };
+      });
+      if (requestGeneration !== historyRequestGenerationRef.current || requestedWalletId !== activeWalletId) return;
       setHistoryTransactions(previous => append ? [...previous, ...rows.filter(row => !previous.some(old => String(old.id) === String(row.id)))] : rows);
-      setHistoryPagination(data.pagination || { limit: 50, offset: 0, total: rows.length, has_more: false, next_offset: null });
+      setHistoryPagination({
+        limit: rawPagination.limit,
+        offset: rawPagination.offset,
+        total: rawPagination.total,
+        has_more: rawPagination.has_more,
+        next_offset: rawPagination.next_offset,
+      });
     } catch (error) {
-      setHistoryError(error.message || "Could not load transaction history.");
+      if (requestGeneration === historyRequestGenerationRef.current && requestedWalletId === activeWalletId) {
+        setHistoryError(error.message || "Could not load transaction history.");
+      }
     } finally {
-      setHistoryBusy(false);
+      if (requestGeneration === historyRequestGenerationRef.current && requestedWalletId === activeWalletId) {
+        setHistoryBusy(false);
+      }
     }
   }
 
@@ -1787,10 +1840,21 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   }
 
   useEffect(() => {
-    if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active) || !accessToken) return;
-    // Keep confirmed rows visible while a fresh page loads.
+    if (!["Transactions", "Receive", "Deposit", "Proof of Reserves"].includes(active)) return undefined;
+    // Never let a response from the previous active wallet overwrite this wallet's
+    // transaction list. The API scopes rows to the server-side active wallet.
+    historyRequestGenerationRef.current += 1;
+    setHistoryTransactions([]);
+    setHistoryPagination({ limit: 50, offset: 0, total: 0, has_more: false, next_offset: null });
+    setHistoryError("");
+    if (!accessToken || !activeWalletId) {
+      setHistoryBusy(false);
+      setHistoryError(!accessToken ? "Sign in to load transaction history." : "Select an active wallet to load transaction history.");
+      return () => { historyRequestGenerationRef.current += 1; };
+    }
     loadTransactionHistory({ offset: 0, append: false });
-  }, [active, accessToken, apiBaseUrl]);
+    return () => { historyRequestGenerationRef.current += 1; };
+  }, [active, accessToken, apiBaseUrl, activeWalletId]);
 
   useEffect(() => {
     if (active !== "Transactions" || !accessToken) return;
