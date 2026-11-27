@@ -260,7 +260,7 @@ class WalletBalanceVerificationTests(unittest.TestCase):
         with (
             patch.object(main, "require_solana_rpc_cluster"),
             patch.object(main, "rpc_call", return_value=response),
-            self.assertRaisesRegex(ValueError, "unsigned 64-bit"),
+            self.assertRaisesRegex(ValueError, "malformed SPL token-account data"),
         ):
             main._read_verified_solana_spl_balance(
                 owner, mint, rpc_url="https://solana.invalid",
