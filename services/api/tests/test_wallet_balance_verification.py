@@ -212,12 +212,22 @@ class WalletBalanceVerificationTests(unittest.TestCase):
         owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
         mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
         for decimals, amount in ((True, "1"), (9.0, "1"), ("9", "1"), (9, "01"), (9, "١")):
-            response = {"value": [{
-                "account": {"data": {"parsed": {"info": {
-                    "mint": mint,
-                    "tokenAmount": {"decimals": decimals, "amount": amount},
-                }}}}}
-            ]}
+            response = {
+                "value": [
+                    {
+                        "account": {
+                            "data": {
+                                "parsed": {
+                                    "info": {
+                                        "mint": mint,
+                                        "tokenAmount": {"decimals": decimals, "amount": amount},
+                                    }
+                                }
+                            }
+                        }
+                    }
+                ]
+            }
             with (
                 patch.object(main, "require_solana_rpc_cluster"),
                 patch.object(main, "rpc_call", return_value=response),
@@ -231,12 +241,22 @@ class WalletBalanceVerificationTests(unittest.TestCase):
     def test_solana_balance_reader_rejects_account_amount_above_u64(self):
         owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
         mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
-        response = {"value": [{
-            "account": {"data": {"parsed": {"info": {
-                "mint": mint,
-                "tokenAmount": {"decimals": 9, "amount": str(1 << 64)},
-            }}}}
-        ]}
+        response = {
+            "value": [
+                {
+                    "account": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "mint": mint,
+                                    "tokenAmount": {"decimals": 9, "amount": str(1 << 64)},
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        }
         with (
             patch.object(main, "require_solana_rpc_cluster"),
             patch.object(main, "rpc_call", return_value=response),
@@ -250,14 +270,34 @@ class WalletBalanceVerificationTests(unittest.TestCase):
     def test_solana_balance_reader_accepts_canonical_zero_and_max_u64(self):
         owner = "7FNyayYwgfrGb3mCsRttuJUkFQgsgDtrYBhhddKS6iVN"
         mint = "HBSuf6Dm9r2ebkwLUoaY8ScR2rq5L2CPTJpCbqMbtndF"
-        response = {"value": [
-            {"account": {"data": {"parsed": {"info": {
-                "mint": mint, "tokenAmount": {"decimals": 9, "amount": "0"},
-            }}}}},
-            {"account": {"data": {"parsed": {"info": {
-                "mint": mint, "tokenAmount": {"decimals": 9, "amount": str((1 << 64) - 1)},
-            }}}}},
-        ]}
+        response = {
+            "value": [
+                {
+                    "account": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "mint": mint,
+                                    "tokenAmount": {"decimals": 9, "amount": "0"},
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "account": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "mint": mint,
+                                    "tokenAmount": {"decimals": 9, "amount": str((1 << 64) - 1)},
+                                }
+                            }
+                        }
+                    }
+                },
+            ]
+        }
         with (
             patch.object(main, "require_solana_rpc_cluster"),
             patch.object(main, "rpc_call", return_value=response),
