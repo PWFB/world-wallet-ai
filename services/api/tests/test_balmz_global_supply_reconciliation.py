@@ -307,6 +307,26 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertFalse(result["allocation_matches"])
 
 
+    def test_evm_supply_rejects_wrong_chain_before_contract_reads(self):
+        contract = "0x" + "1" * 40
+        for network, expected_chain_id, observed_chain_id in (
+            ("ethereum", 1, 56),
+            ("bnb", 56, 1),
+        ):
+            with self.subTest(network=network):
+                with (
+                    patch.object(main, "evm_chain_id", return_value=observed_chain_id) as chain_id,
+                    patch.object(main, "rpc_call") as rpc,
+                ):
+                    result = main._balmz_reconcile_evm_supply(
+                        network, "https://rpc.example", contract, expected_chain_id, 10_000_000_000
+                    )
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "wrong_chain_id")
+                self.assertIsNone(result["observed_supply"])
+                chain_id.assert_called_once_with("https://rpc.example")
+                rpc.assert_not_called()
+
     def test_evm_bytecode_must_be_nonempty_complete_bytes(self):
         contract = "0x" + "1" * 40
         for invalid_code in ("0x", "0x0", "0x123", "0xgg"):
