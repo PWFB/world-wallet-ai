@@ -10045,3 +10045,122 @@ except ModuleNotFoundError:
     from bankconnect import build_bankconnect_router
 
 app.include_router(build_bankconnect_router(db, current_user))
+
+
+# Read-only cross-chain BALMZ production supply reconciliation.
+BALMZ_ETH_VESTING_CONTRACT = os.getenv("WORLD_WALLET_BALMZ_ETH_VESTING_CONTRACT", "").strip()
+
+def _balmz_decode_uint256_rpc(value):
+    """Decode a strict 32-byte ABI uint256 result without float conversion."""
+    if not isinstance(value, str) or not re.fullmatch(r"0x[0-9a-fA-F]{64}", value):
+        raise ValueError("Malformed ABI uint256 response")
+    return int(value[2:], 16)
+
+def _balmz_global_supply_summary(chains):
+    required = ("ethereum", "bnb", "solana")
+    if any(chains.get(name, {}).get("status") == "NOT_CONFIGURED" for name in required):
+        status = "NOT_CONFIGURED"
+    elif any(chains.get(name, {}).get("status") != "VERIFIED" for name in required):
+        status = "PARTIAL_DEPLOYMENT"
+    else:
+        total = sum(int(chains[name]["observed_supply"]) for name in required)
+        status = "RECONCILED" if total == BALMZ_GLOBAL_MAX_SUPPLY else ("GLOBAL_CAP_EXCEEDED" if total > BALMZ_GLOBAL_MAX_SUPPLY else "PARTIAL_DEPLOYMENT")
+    total_observed = None
+    if all(isinstance(chains.get(name, {}).get("observed_supply"), str) and chains[name]["observed_supply"].isdigit() for name in required):
+        total_observed = str(sum(int(chains[name]["observed_supply"]) for name in required))
+    return {"status": status, "global_max_supply": str(BALMZ_GLOBAL_MAX_SUPPLY),
+            "observed_global_supply": total_observed, "read_only": True,
+            "transaction_authorized": False, "presale_release_gate_changed": False}
+
+def _balmz_reconcile_evm_supply(network, rpc_url, contract, chain_id, expected_supply):
+    if not contract:
+        return {"network": network, "status": "NOT_CONFIGURED", "observed_supply": None,
+                "allocation_matches": False, "reason": "production_token_contract_not_configured"}
+    if not valid_evm_address(contract):
+        return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
+                "allocation_matches": False, "reason": "invalid_contract_address"}
+    try:
+        if evm_chain_id(rpc_url) != chain_id:
+            raise ValueError("wrong_chain_id")
+        code = rpc_call(rpc_url, "eth_getCode", [contract, "latest"])
+        if not isinstance(code, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", code) or code.lower() == "0x":
+            raise ValueError("contract_bytecode_missing")
+        raw = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x18160ddd"}, "latest"]))
+        decimals = _balmz_decode_uint256_rpc(rpc_call(rpc_url, "eth_call", [{"to": contract, "data": "0x313ce567"}, "latest"]))
+        if decimals != 18:
+            raise ValueError("unexpected_token_decimals")
+        scale = 10 ** decimals
+        if raw % scale:
+            raise ValueError("supply_not_whole_token_aligned")
+        observed = raw // scale
+        matched = observed == expected_supply
+        return {"network": network, "status": "VERIFIED" if matched else "SUPPLY_MISMATCH",
+                "expected_allocation": str(expected_supply), "observed_supply": str(observed),
+                "allocation_matches": matched, "chain_id": chain_id, "decimals": decimals,
+                "raw_supply": str(raw), "contract_address": contract,
+                "reason": None if matched else "supply_does_not_match_approved_allocation"}
+    except Exception as exc:
+        allowed = {"wrong_chain_id", "contract_bytecode_missing", "unexpected_token_decimals", "supply_not_whole_token_aligned"}
+        reason = str(exc) if str(exc) in allowed else "rpc_or_metadata_verification_failed"
+        return {"network": network, "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
+                "allocation_matches": False, "reason": reason}
+
+def _balmz_reconcile_solana_supply(mint):
+    if not mint:
+        return {"network": "solana", "status": "NOT_CONFIGURED", "observed_supply": None,
+                "allocation_matches": False, "reason": "production_mainnet_mint_not_configured"}
+    if mint == BALMZ_SOLANA_DEVNET_MINT:
+        return {"network": "solana", "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
+                "allocation_matches": False, "reason": "devnet_mint_rejected"}
+    try:
+        require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
+        account = rpc_call(SOLANA_MAINNET_RPC_URL, "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "finalized"}])
+        value = account.get("value") if isinstance(account, dict) else None
+        if not isinstance(value, dict) or value.get("owner") != SOLANA_SPL_TOKEN_PROGRAM_ID or value.get("executable") is not False:
+            raise ValueError("mint_account_owner_or_executable_invalid")
+        data = value.get("data")
+        parsed = data.get("parsed") if isinstance(data, dict) else None
+        info = parsed.get("info") if isinstance(parsed, dict) else None
+        if not isinstance(info, dict) or parsed.get("type") != "mint" or info.get("isInitialized") is not True or info.get("decimals") != 9:
+            raise ValueError("mint_metadata_invalid")
+        raw = info.get("supply")
+        if not isinstance(raw, str) or not raw.isdigit():
+            raise ValueError("mint_supply_invalid")
+        token_result = rpc_call(SOLANA_MAINNET_RPC_URL, "getTokenSupply", [mint, {"commitment": "finalized"}])
+        token_value = token_result.get("value") if isinstance(token_result, dict) else None
+        if not isinstance(token_value, dict) or token_value.get("amount") != raw or token_value.get("decimals") != 9:
+            raise ValueError("mint_supply_rpc_mismatch")
+        raw_int = int(raw)
+        if raw_int % (10 ** 9):
+            raise ValueError("supply_not_whole_token_aligned")
+        observed = raw_int // (10 ** 9)
+        matched = observed == BALMZ_SOLANA_MAINNET_ALLOCATION
+        return {"network": "solana", "status": "VERIFIED" if matched else "SUPPLY_MISMATCH",
+                "expected_allocation": str(BALMZ_SOLANA_MAINNET_ALLOCATION), "observed_supply": str(observed),
+                "allocation_matches": matched, "cluster": "mainnet-beta", "decimals": 9,
+                "raw_supply": raw, "mint_address": mint,
+                "mint_authority_configured": info.get("mintAuthority") is not None,
+                "freeze_authority_configured": info.get("freezeAuthority") is not None,
+                "reason": None if matched else "supply_does_not_match_approved_allocation"}
+    except Exception as exc:
+        allowed = {"mint_account_owner_or_executable_invalid", "mint_metadata_invalid", "mint_supply_invalid",
+                   "mint_supply_rpc_mismatch", "supply_not_whole_token_aligned"}
+        reason = str(exc) if str(exc) in allowed else "mainnet_rpc_or_mint_verification_failed"
+        return {"network": "solana", "status": "CONTRACT_OR_MINT_INVALID", "observed_supply": None,
+                "allocation_matches": False, "reason": reason}
+
+@app.get("/api/v1/admin/balmz/global-supply-reconciliation")
+def balmz_global_supply_reconciliation(user: dict = Depends(current_user)):
+    """Admin-only read-only supply observation; missing reserve proof cannot pass."""
+    require_world_wallet_admin(user)
+    chains = {
+        "ethereum": _balmz_reconcile_evm_supply("ethereum", ETH_RPC_URL, BALMZ_ETH_CONTRACT, 1, 11_000_000_000),
+        "bnb": _balmz_reconcile_evm_supply("bnb", BSC_RPC_URL, BALMZ_BNB_CONTRACT, 56, 10_000_000_000),
+        "solana": _balmz_reconcile_solana_supply(BALMZ_SOLANA_MAINNET_MINT),
+    }
+    summary = _balmz_global_supply_summary(chains)
+    if summary["status"] == "RECONCILED" and not BALMZ_ETH_VESTING_CONTRACT:
+        summary["status"] = "PARTIAL_DEPLOYMENT"
+    summary["ethereum_reserve_evidence"] = "CONFIGURED_REQUIRES_INDEPENDENT_REVIEW" if BALMZ_ETH_VESTING_CONTRACT else "NOT_CONFIGURED"
+    record_admin_event(user, "balmz_global_supply_reconciliation", "read_only")
+    return {**summary, "chains": chains}
