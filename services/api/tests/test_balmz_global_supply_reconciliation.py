@@ -582,8 +582,6 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertIsNone(result["observed_supply"])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
     def test_evm_secondary_rpc_corroborates_same_finalized_snapshot_and_token_state(self):
         contract = "0x" + "1" * 40
@@ -640,3 +638,7 @@ if __name__ == "__main__":
             "0x1", "0x" + "a" * 64, "0x6000", 1, 18, "BALMZ Token", "BALMZ"
         )
         self.assertEqual(result, {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"})
+
+
+if __name__ == "__main__":
+    unittest.main()
