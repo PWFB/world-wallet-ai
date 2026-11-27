@@ -104,6 +104,8 @@ The API reads these **server-side Render environment variables**:
 
 - `WORLD_WALLET_BALMZ_SOLANA_MAINNET_MINT`: production SPL mint address (not the Devnet mint).
 - `WORLD_WALLET_BALMZ_PRESALE_RECEIVING_ADDRESS`: the verified public Mainnet treasury address.
+- `WORLD_WALLET_BALMZ_SOLANA_DELIVERY_SOURCE_TOKEN_ACCOUNT` and `WORLD_WALLET_BALMZ_SOLANA_DELIVERY_AUTHORITY`: the distribution token account and public owner/fee-payer address.
+- `WORLD_WALLET_BALMZ_DELIVERY_MAX_PER_TX_BASE_UNITS`, `WORLD_WALLET_BALMZ_DELIVERY_DAILY_LIMIT_BASE_UNITS`, and `WORLD_WALLET_BALMZ_DELIVERY_MAX_FEE_LAMPORTS`: explicit delivery limits.
 - `WORLD_WALLET_SOLANA_MAINNET_RPC_URL`: optional Mainnet RPC override.
 
 Set them only after checking the address and production mint. Do not put these values or any secret keys in frontend variables, source control, or chat. The current backend endpoint is read-only: it reports readiness and observed balance but does not move funds or enable payments.
@@ -118,12 +120,13 @@ Important limits:
 - A recorded allocation is not token delivery, and there is no automatic refund transaction. Any refund requires a separately reviewed and explicitly approved outbound SOL transaction.
 - The configured treasury must be independently proven to be controlled by the authorized project owner. A positive balance, System Program ownership, or an ordinary user's verified wallet address is not proof of founder/treasury control.
 - The generic wallet-address message-signing challenge is scoped to an account's attached wallet. Do not treat that flag as treasury-owner approval unless a separate, audited control binds the exact configured treasury address to the designated project administrator.
-- The current five server-side release flags must remain false until the evidence below is complete:
+- The five existing release flags and the separate delivery flag must remain false until the evidence below is complete:
   - `WORLD_WALLET_BALMZ_PRESALE_INTENTS_ENABLED`
   - `WORLD_WALLET_BALMZ_PRESALE_SETTLEMENT_ENABLED`
   - `WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED`
   - `WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED`
   - `WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED`
+  - `WORLD_WALLET_BALMZ_PRESALE_DELIVERY_ENABLED`
 
 Do not change these flags as part of routine deployment or testing. The API fails closed while required flags or readiness checks are false.
 
