@@ -115,3 +115,51 @@ test("provider discovery accepts supported injected Solana wallets only", () => 
   assert.equal(discoverSolanaSigningProvider({ phantom: { solana: provider } }), provider);
   assert.equal(discoverSolanaSigningProvider({ solflare: { connect() {} } }), null);
 });
+
+
+test("prepared delivery rejects a mismatched source, mint, destination, amount, or decimals", () => {
+  const authority = Keypair.generate();
+  const recipient = Keypair.generate();
+  const { encoded, expectedTransfer } = prepared(authority, recipient);
+  for (const [field, value] of [
+    ["sourceTokenAccount", Keypair.generate().publicKey.toBase58()],
+    ["mintAddress", Keypair.generate().publicKey.toBase58()],
+    ["destinationTokenAccount", Keypair.generate().publicKey.toBase58()],
+    ["amountBaseUnits", "2"],
+    ["decimals", 8],
+  ]) {
+    assert.throws(
+      () => decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58(), { ...expectedTransfer, [field]: value }),
+      /does not match|amount or decimals/,
+      field,
+    );
+  }
+});
+
+test("wallet helper rejects a wallet that changes the approved transaction message", async () => {
+  const authority = Keypair.generate();
+  const recipient = Keypair.generate();
+  const otherRecipient = Keypair.generate();
+  const { encoded, expectedTransfer } = prepared(authority, recipient);
+  const provider = {
+    publicKey: authority.publicKey,
+    async signTransaction(transaction) {
+      const changed = Transaction.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false }));
+      changed.instructions[0].keys[2] = {
+        ...changed.instructions[0].keys[2],
+        pubkey: otherRecipient.publicKey,
+      };
+      changed.partialSign(authority);
+      return changed;
+    },
+  };
+  await assert.rejects(
+    signPreparedSolanaDelivery({
+      unsignedTransactionBase64: encoded,
+      expectedAuthority: authority.publicKey.toBase58(),
+      expectedTransfer,
+      provider,
+    }),
+    /changed the approved transaction message/,
+  );
+});
