@@ -1274,6 +1274,9 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   const [presaleDelivery, setPresaleDelivery] = useState(null);
   const [presaleDeliveryBusy, setPresaleDeliveryBusy] = useState(false);
   const [presaleDeliveryError, setPresaleDeliveryError] = useState("");
+  const [presaleRecipientSelections, setPresaleRecipientSelections] = useState({});
+  const [presalePrepareBusy, setPresalePrepareBusy] = useState("");
+  const [presalePrepareNotice, setPresalePrepareNotice] = useState("");
   const [presaleBudgetUsd, setPresaleBudgetUsd] = useState("70");
   const [presaleInterest, setPresaleInterest] = useState(null);
   const [presaleInterestBusy, setPresaleInterestBusy] = useState(false);
@@ -2224,8 +2227,38 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="presale-estimate-result"><span>Recorded allocations</span><strong>{Number(presaleDelivery.allocation_count || 0).toLocaleString("en-US")}</strong></div>
           {presaleDelivery.allocations?.length ? <div className="tool-list">{presaleDelivery.allocations.map(item => <div className="tool-row" key={item.allocation_id}>
             <div><b>{formatTokenAmountExact(item.token_amount)} BALMZ-SOL</b><small>Allocation recorded {item.allocated_at ? new Date(item.allocated_at).toLocaleString() : "—"}</small><small>Payment signature: {item.payment_signature ? item.payment_signature.slice(0, 10) + "…" + item.payment_signature.slice(-8) : "Unavailable"}</small></div>
-            <strong>Token delivery pending</strong>
+            <div className="presale-treasury-actions">
+              <select
+                aria-label={"Choose a verified Solana Mainnet recipient for allocation " + item.allocation_id}
+                value={presaleRecipientSelections[item.allocation_id] || ""}
+                onChange={event => setPresaleRecipientSelections(current => ({ ...current, [item.allocation_id]: event.target.value }))}
+              >
+                <option value="">Select recipient wallet</option>
+                {(presaleDelivery.recipient?.verified_mainnet_addresses || []).map(address => <option key={address} value={address}>{address.slice(0, 8)}…{address.slice(-6)}</option>)}
+              </select>
+              <button type="button" className="secondary" disabled={Boolean(presalePrepareBusy) || !presaleRecipientSelections[item.allocation_id]} onClick={async () => {
+                setPresalePrepareBusy(item.allocation_id); setPresalePrepareNotice(""); setPresaleDeliveryError("");
+                try {
+                  const headers = await walletAuthHeaders(accessToken, { "Content-Type": "application/json" });
+                  const response = await fetch(apiBaseUrl + "/api/v1/balmz/presale/delivery/prepare", {
+                    method: "POST", headers,
+                    body: JSON.stringify({ allocation_id: item.allocation_id, recipient_address: presaleRecipientSelections[item.allocation_id] }),
+                  });
+                  const data = await response.json();
+                  if (!response.ok) throw new Error(data.detail || "Could not prepare the unsigned token-delivery preview.");
+                  setPresalePrepareNotice("Unsigned delivery preview " + data.delivery_id + " created for " + data.amount_tokens + " BALMZ-SOL. No tokens were signed or transferred. Admin review is next.");
+                  const refreshHeaders = await walletAuthHeaders(accessToken);
+                  const refreshResponse = await fetch(apiBaseUrl + "/api/v1/balmz/presale/delivery-status", { cache: "no-store", headers: refreshHeaders });
+                  const refreshData = await refreshResponse.json();
+                  if (refreshResponse.ok) setPresaleDelivery(refreshData);
+                } catch (error) {
+                  setPresaleDeliveryError(error.message || "Could not prepare the delivery preview.");
+                } finally { setPresalePrepareBusy(""); }
+              }}>{presalePrepareBusy === item.allocation_id ? "Preparing…" : "Prepare delivery preview"}</button>
+            </div>
+            <strong>{item.delivery_state || "allocated_delivery_pending"}</strong>
           </div>)}</div> : <div className="live-chart-empty">No settled BALMZ-SOL allocations are recorded for this wallet.</div>}
+          {presalePrepareNotice && <div className="security-note" role="status">{presalePrepareNotice}</div>}
           <div className="security-note"><b>Recipient wallet:</b> {presaleDelivery.recipient?.verified_mainnet_addresses?.length ? presaleDelivery.recipient.verified_mainnet_addresses.join(" · ") : "No fresh, verified Solana Mainnet recipient address is available."}</div>
           <div className="security-note">Recipient selection is always required; no address is automatically selected. Ownership proof freshness: {presaleDelivery.recipient_ownership_proof_freshness_days || 30} days.</div>
           <div className="presale-warning">A database allocation is not an on-chain token balance. Token delivery is disabled; this page does not prepare, sign, broadcast, or transfer tokens.</div>
