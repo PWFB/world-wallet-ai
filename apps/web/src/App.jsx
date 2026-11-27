@@ -1025,7 +1025,7 @@ function App() {
               if (Array.isArray(live.updates)) {
                 setSyncedBalanceAssets([...new Set(live.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
                 setSyncedBalanceNetworks([...new Set(live.updates.map(item => {
-                  const network = String(item?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+                  const network = String(item?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
                   const symbol = String(item?.asset || "").trim().toUpperCase();
                   return network && symbol ? network + ":" + symbol : "";
                 }).filter(Boolean))]);
@@ -2599,7 +2599,7 @@ function App() {
           <FeaturePage accountUserId={accountUserId} accountName={user?.name || ""} accountEmail={user?.email || ""} selectedAsset={selectedCoin} selectedCoin={selectedCoin} setSelectedCoin={setSelectedCoin} walletCoinCatalog={walletCoinCatalogWithRegistry} marketPrices={marketPrices} marketPricesUpdatedAt={marketPricesUpdatedAt} marketPricesError={marketPricesError} marketPricesLoading={marketPricesLoading} refreshMarketPrices={refreshMarketPrices} focusedTransaction={focusedTransaction} setFocusedTransaction={setFocusedTransaction} active={active} wallet={wallet} walletBalanceText={walletBalanceText} walletBalanceCaption={walletBalanceCaption} unpricedAssets={walletUnpricedAssets} walletRefreshMessage={syncMessage} syncedBalanceAssets={syncedBalanceAssets} syncedBalanceNetworks={syncedBalanceNetworks} assets={assets} activity={activity} accessToken={accessToken} apiBaseUrl={API_BASE_URL} setActive={setActive} onWalletUpdated={(data) => { if (data?.wallet) { const incomingWalletId = data.wallet.wallet_id || data.wallet.id; const activeWalletId = wallet?.wallet_id || wallet?.id; if (incomingWalletId && activeWalletId && incomingWalletId !== activeWalletId) { setSyncedBalanceAssets([]); setSyncedBalanceNetworks([]); } setWallet(data.wallet); } if (data?.assets) setAssets((data.assets || []).map(asset => ({ ...asset, icon: asset.symbol.startsWith("BALMZ") ? "B" : asset.symbol === "USDT" ? "$" : asset.symbol === "ETH" ? "Ξ" : asset.symbol === "BNB" ? "◆" : "•" }))); if (Array.isArray(data?.updates)) {
             setSyncedBalanceAssets([...new Set(data.updates.map(item => String(item?.asset || "").trim().toUpperCase()).filter(Boolean))]);
             setSyncedBalanceNetworks([...new Set(data.updates.map(item => {
-              const network = String(item?.network || "").trim().toLowerCase().replace(/[\\s-]+/g, "_");
+              const network = String(item?.network || "").trim().toLowerCase().replace(/[\s-]+/g, "_");
               const symbol = String(item?.asset || "").trim().toUpperCase();
               return network && symbol ? network + ":" + symbol : "";
             }).filter(Boolean))]);
