@@ -201,7 +201,13 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
                     "mintAuthority": False, "freezeAuthority": None
                 }}}}
         }
-        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", return_value=account):
+        def fake_rpc(_url, method, params):
+            if method == "getAccountInfo":
+                return account
+            if method == "getTokenSupply":
+                return {"context": {"slot": 777}, "value": {"amount": raw_supply, "decimals": 9}}
+            raise AssertionError(method)
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_solana_supply(mint)
         self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
         self.assertEqual(result["reason"], "mint_authority_metadata_invalid")
