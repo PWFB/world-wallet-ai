@@ -1180,7 +1180,7 @@ function BalmzDeliveryAdminPanel({ accessToken, apiBaseUrl }) {
   const [notice, setNotice] = useState("");
 
   const refresh = async () => {
-    setLoading(true); setError(""); setNotice("");
+    setLoading(true); setError("");
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/admin/balmz/presale/deliveries?state=active", {
         cache: "no-store", headers: await walletAuthHeaders(accessToken),
