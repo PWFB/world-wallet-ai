@@ -10,7 +10,7 @@ function decodeBase64(value) {
   return bytes;
 }
 
-export function decodePreparedSolanaDelivery(unsignedTransactionBase64, expectedAuthority) {
+export function decodePreparedSolanaDelivery(unsignedTransactionBase64, expectedAuthority, expectedTransfer) {
   if (typeof expectedAuthority !== "string" || !expectedAuthority.trim()) {
     throw new Error("The configured delivery authority is unavailable.");
   }
@@ -45,6 +45,24 @@ export function decodePreparedSolanaDelivery(unsignedTransactionBase64, expected
   if (instructionAccounts.some(address => !address)) {
     throw new Error("The SPL TransferChecked instruction contains an invalid account.");
   }
+  if (!expectedTransfer || typeof expectedTransfer !== "object") {
+    throw new Error("The expected BALMZ delivery fields are required before signing.");
+  }
+  const [source, mint, destination, authority] = instructionAccounts;
+  if (
+    source !== expectedTransfer.sourceTokenAccount ||
+    mint !== expectedTransfer.mintAddress ||
+    destination !== expectedTransfer.destinationTokenAccount ||
+    authority !== expectedAuthority ||
+    instruction.keys[3]?.isSigner !== true
+  ) {
+    throw new Error("The prepared SPL transfer does not match the expected mint, token accounts, or authority.");
+  }
+  const amount = new DataView(data.buffer, data.byteOffset, data.byteLength).getBigUint64(1, true);
+  const decimals = data[9];
+  if (amount.toString() !== String(expectedTransfer.amountBaseUnits) || decimals !== Number(expectedTransfer.decimals)) {
+    throw new Error("The prepared SPL transfer amount or decimals do not match the allocation.");
+  }
   return transaction;
 }
 
@@ -73,7 +91,7 @@ export async function signPreparedSolanaDelivery({
     throw new Error("Connect the wallet that controls the configured BALMZ distribution account.");
   }
 
-  const unsigned = decodePreparedSolanaDelivery(unsignedTransactionBase64, expectedAuthority);
+  const unsigned = decodePreparedSolanaDelivery(unsignedTransactionBase64, expectedAuthority, expectedTransfer);
   const expectedMessage = unsigned.serializeMessage();
   const signed = await provider.signTransaction(unsigned);
   if (!signed || typeof signed.serialize !== "function" || !signed.message) {
