@@ -1175,9 +1175,14 @@ function App() {
     );
     setBalanceVerificationBusy(true);
     setBalanceVerificationError("");
+    // A slow or unreachable RPC must not leave the Portfolio in a permanent
+    // "Checking verified Mainnet balances…" state.
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), 20000);
     fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
       headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" },
       cache: "no-store",
+      signal: controller.signal,
     })
       .then(async response => {
         const data = await response.json().catch(() => ({}));
@@ -1188,13 +1193,20 @@ function App() {
       .catch(error => {
         if (!cancelled) {
           setBalanceVerificationReport(null);
-          setBalanceVerificationError(error.message || "Verified balance service unavailable.");
+          setBalanceVerificationError(error?.name === "AbortError"
+            ? "Verified Mainnet balance check timed out after 20 seconds. Balances remain unavailable; retry after the RPC provider recovers."
+            : (error.message || "Verified balance service unavailable."));
         }
       })
       .finally(() => {
+        window.clearTimeout(timeoutId);
         if (!cancelled) setBalanceVerificationBusy(false);
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+      controller.abort();
+    };
   }, [accessToken, wallet?.wallet_id, wallet?.id]);
 
   useEffect(() => {
@@ -2431,10 +2443,27 @@ function App() {
                 <div><h2>Verified network addresses &amp; asset trace</h2><span>Public addresses and contract balances returned by the read-only chain verifier</span></div>
                 <button type="button" className="text-btn" onClick={() => {
                   setBalanceVerificationBusy(true);
-                  fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
-                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
-                    .catch(error => setBalanceVerificationError(error.message || "Balance verification unavailable."))
-                    .finally(() => setBalanceVerificationBusy(false));
+                  const controller = new AbortController();
+                  const timeoutId = window.setTimeout(() => controller.abort(), 20000);
+                  fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
+                    headers: { Authorization: "Bearer " + accessToken },
+                    cache: "no-store",
+                    signal: controller.signal,
+                  })
+                    .then(async response => {
+                      const data = await response.json().catch(() => ({}));
+                      if (!response.ok) throw new Error(data.detail || "Balance verification failed.");
+                      if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report.");
+                      setBalanceVerificationReport(data);
+                      setBalanceVerificationError("");
+                    })
+                    .catch(error => setBalanceVerificationError(error?.name === "AbortError"
+                      ? "Verified Mainnet balance check timed out after 20 seconds. Balances remain unavailable; retry after the RPC provider recovers."
+                      : (error.message || "Balance verification unavailable.")))
+                    .finally(() => {
+                      window.clearTimeout(timeoutId);
+                      setBalanceVerificationBusy(false);
+                    });
                 }} disabled={balanceVerificationBusy}>{balanceVerificationBusy ? "Checking…" : "↻ Refresh verified balances"}</button>
               </div>
               {balanceVerificationError && <div className="market-price-error" role="status">{balanceVerificationError}</div>}
