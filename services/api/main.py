@@ -10762,7 +10762,7 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
     try:
         secondary = _balmz_require_secure_evm_mainnet_rpc_url(secondary_rpc_url)
         primary = urlparse(primary_rpc_url)
-        if secondary.hostname.lower() == primary.hostname.lower():
+        if secondary.hostname.rstrip(".").lower() == (primary.hostname or "").rstrip(".").lower():
             raise ValueError("secondary_rpc_provider_not_independent")
         if evm_chain_id(secondary_rpc_url) != chain_id:
             raise ValueError("secondary_rpc_wrong_chain_id")
