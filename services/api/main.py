@@ -10894,7 +10894,7 @@ def _balmz_is_canonical_solana_pubkey(value):
         number = number * 58 + digit
     decoded = number.to_bytes((number.bit_length() + 7) // 8, "big") if number else b""
     leading_zeroes = len(value) - len(value.lstrip("1"))
-    decoded = (b"\\x00" * leading_zeroes) + decoded
+    decoded = bytes(leading_zeroes) + decoded
     if len(decoded) != 32:
         return False
     # Re-encode to reject non-canonical base58 representations.
