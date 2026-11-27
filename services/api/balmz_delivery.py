@@ -110,6 +110,7 @@ def build_unsigned_transfer_checked(
         raise BalmzDeliveryValidationError("unsigned_transaction_encoding_failed")
     return {
         "unsigned_transaction_base64": base64.b64encode(wire).decode("ascii"),
+        "message_base64": base64.b64encode(message_bytes).decode("ascii"),
         "message_sha256": hashlib.sha256(message_bytes).hexdigest(),
         "amount_base_units": amount,
         "decimals": decimals,
