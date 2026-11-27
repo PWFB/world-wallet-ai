@@ -56,9 +56,39 @@ export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", setAc
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Wallet activity trace could not be loaded.");
-      const page = Array.isArray(data.events) ? data.events : [];
+      if (!Array.isArray(data.events)) {
+        throw new Error("The activity service returned an invalid event list. Transaction history remains unavailable.");
+      }
+      const page = data.events;
+      if (!page.every(item =>
+        item && typeof item === "object" && !Array.isArray(item) &&
+        typeof item.id === "string" && item.id.length > 0 &&
+        typeof item.event_type === "string" && item.event_type.length > 0
+      )) {
+        throw new Error("The activity service returned malformed records. No transaction history was inferred.");
+      }
+      const pageInfo = data.pagination;
+      const nextOffset = pageInfo?.next_offset;
+      const validPagination = pageInfo && typeof pageInfo === "object" && !Array.isArray(pageInfo) &&
+        Number.isSafeInteger(pageInfo.limit) && pageInfo.limit > 0 && pageInfo.limit <= 100 &&
+        Number.isSafeInteger(pageInfo.offset) && pageInfo.offset === offset &&
+        Number.isSafeInteger(pageInfo.total) && pageInfo.total >= 0 &&
+        typeof pageInfo.has_more === "boolean" &&
+        (nextOffset === null || (Number.isSafeInteger(nextOffset) && nextOffset >= 0)) &&
+        pageInfo.total >= offset + page.length &&
+        pageInfo.has_more === (offset + page.length < pageInfo.total) &&
+        (!pageInfo.has_more || nextOffset === offset + page.length);
+      if (!validPagination) {
+        throw new Error("The activity service returned inconsistent pagination metadata. Refresh transaction history before continuing.");
+      }
       setEvents(current => append ? [...current, ...page.filter(item => !current.some(old => old.event_type === item.event_type && old.id === item.id))] : page);
-      setPagination(data.pagination || { limit: 100, offset, total: page.length, has_more: false, next_offset: null });
+      setPagination({
+        limit: pageInfo.limit,
+        offset: pageInfo.offset,
+        total: pageInfo.total,
+        has_more: pageInfo.has_more,
+        next_offset: pageInfo.next_offset,
+      });
       setLastLoaded(new Date().toISOString());
       return data;
     } catch (cause) {
