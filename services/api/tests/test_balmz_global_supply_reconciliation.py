@@ -9,7 +9,7 @@ import main
 
 def _abi_string(value):
     raw = value.encode("utf-8")
-    padded = raw + (b"\\x00" * ((-len(raw)) % 32))
+    padded = raw + bytes((-len(raw)) % 32)
     return "0x" + (32).to_bytes(32, "big").hex() + len(raw).to_bytes(32, "big").hex() + padded.hex()
 
 
