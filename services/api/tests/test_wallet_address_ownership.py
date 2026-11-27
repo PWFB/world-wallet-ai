@@ -21,9 +21,11 @@ class FakeConnection:
     def __init__(self, challenge):
         self.challenge = list(challenge)
         self.statements = []
+        self.params = []
 
     def execute(self, sql, params=None):
         self.statements.append(sql)
+        self.params.append(params)
         normalized = " ".join(sql.split()).lower()
         if normalized.startswith("select network,address,message,expires_at,used_at"):
             return Result(tuple(self.challenge))
@@ -115,6 +117,12 @@ class WalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(result["status"], "verified")
         self.assertTrue(result["ownership_verified"])
         self.assertTrue(any("FOR UPDATE" in sql.upper() for sql in connection.statements))
+        challenge_lookup = next(
+            (sql, params) for sql, params in zip(connection.statements, connection.params)
+            if "SELECT network,address,message,expires_at,used_at FROM wallet_address_challenges" in sql
+        )
+        self.assertIn("AND wallet_id=%s AND owner_id=%s", challenge_lookup[0])
+        self.assertEqual(challenge_lookup[1], ("wac_test_challenge_1234", "wallet_test", "user_test"))
         self.assertIsNotNone(connection.challenge[4])
 
     def test_erc1271_smart_wallet_signature_verifies_with_read_only_mainnet_call(self):
