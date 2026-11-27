@@ -6141,6 +6141,8 @@ def submit_wallet_signed_balmz_delivery(
     require_world_wallet_admin(user)
     if not _balmz_presale_delivery_release_gates_pass():
         raise HTTPException(status_code=503, detail="BALMZ delivery release gates are not approved")
+    if not _balmz_global_supply_is_verified_for_delivery():
+        raise HTTPException(status_code=503, detail="Independent Ethereum, BNB and Solana supply corroboration plus Ethereum reserve proof are required before broadcasting token delivery")
     require_solana_rpc_cluster(SOLANA_MAINNET_RPC_URL, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
 
     with db() as conn:
