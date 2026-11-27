@@ -9,3 +9,5 @@ pycryptodome==3.23.0
 cryptography==50.0.0
 psycopg-pool==3.2.6
 eth-account==0.13.7
+solana==0.41.0
+solders==0.29.0

@@ -15,7 +15,8 @@
     "test:navigation": "node --test src/navigation.test.js src/eip6963-wallets.test.js src/walletconnect-evm.test.js",
     "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js",
     "test:wallet-signatures": "node --test src/wallet-signatures.test.js",
-    "test:token-amount": "node --test src/token-amount.test.js"
+    "test:token-amount": "node --test src/token-amount.test.js",
+    "test:solana-delivery": "node --test src/solana-delivery-wallet.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",
@@ -24,7 +25,8 @@
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
     "@capacitor/core": "^8.6.0",
-    "@walletconnect/ethereum-provider": "2.21.1"
+    "@walletconnect/ethereum-provider": "2.21.1",
+    "@solana/web3.js": "1.98.4"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",

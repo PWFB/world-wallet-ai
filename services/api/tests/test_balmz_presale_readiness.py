@@ -450,7 +450,7 @@ class BalmzPresaleReadinessTests(unittest.TestCase):
 
         now = datetime.now(timezone.utc)
         allocation_rows = [
-            ("allocation-1", "12.000000001", "12000000001", "payment-signature", 12345, now)
+            ("allocation-1", "12.000000001", "12000000001", "payment-signature", 12345, now, None, None, None)
         ]
         recipient_rows = [
             (VALID_RECEIVER, now - timedelta(days=2)),

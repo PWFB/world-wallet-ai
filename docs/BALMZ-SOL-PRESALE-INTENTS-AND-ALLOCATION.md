@@ -19,8 +19,9 @@ All flags default to false and must remain unset until the release has been inde
 - `WORLD_WALLET_BALMZ_PRESALE_RELEASE_APPROVED`
 - `WORLD_WALLET_BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED`
 - `WORLD_WALLET_BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED`
+- `WORLD_WALLET_BALMZ_PRESALE_DELIVERY_ENABLED`
 
-Both endpoints fail closed unless their relevant feature flag, explicit release approval, and treasury ownership verification are true. Intent creation additionally checks the production mint, exact 10B supply, revoked mint/freeze authorities, Mainnet treasury account, and a fresh SOL/USD quote. The status endpoint reports payment acceptance enabled only when all required flags and the observable mint/treasury checks pass.
+Both payment endpoints now also fail closed unless the separate token-delivery gate is enabled; payment acceptance cannot open while the buyer delivery path is disabled. The delivery preview/approval/submit endpoints independently require all six release gates. Intent creation additionally checks the production mint, exact 10B supply, revoked mint/freeze authorities, Mainnet treasury account, and a fresh SOL/USD quote. The status endpoint reports payment acceptance enabled only when all required flags and the observable mint/treasury checks pass.
 
 ## Endpoints
 
@@ -31,7 +32,7 @@ Both endpoints fail closed unless their relevant feature flag, explicit release 
 
 - No Render environment variables are changed by this code change. The feature flags are not enabled.
 - No payment instructions are exposed while gates are closed. Do not ask customers to send funds until release approval.
-- The allocation ledger records a database entitlement only. It does not mint, transfer, or deliver BALMZ-SOL on-chain.
+- The allocation ledger records a database entitlement only. The separate delivery workflow prepares an unsigned `TransferChecked` transaction, requires exact-message administrator approval, accepts a wallet-signed transaction, broadcasts once, and marks delivery only after finalized-chain verification.
 - No refund, chargeback, overpayment credit, partial payment, or treasury reconciliation workflow is implemented. Non-exact transfers are rejected and require a separate manual support/refund process.
 - A finalized transaction and a configured treasury balance do not independently prove legal ownership or authority. The treasury ownership flag requires separate wallet-native proof and project-owner review.
 - A database ledger is not proof of reserves and is not a token custody system.
