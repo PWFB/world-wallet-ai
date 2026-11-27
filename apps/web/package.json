@@ -14,7 +14,8 @@
     "test:wallet-safety": "node --test src/wallet-safety.test.js src/wallet-addresses.test.js src/verified-balances.test.js",
     "test:navigation": "node --test src/navigation.test.js src/eip6963-wallets.test.js src/walletconnect-evm.test.js",
     "test:wallet-backups": "node --test src/google-drive-wallet-backup.test.js",
-    "test:wallet-signatures": "node --test src/wallet-signatures.test.js"
+    "test:wallet-signatures": "node --test src/wallet-signatures.test.js",
+    "test:token-amount": "node --test src/token-amount.test.js"
   },
   "dependencies": {
     "react": "^18.2.0",

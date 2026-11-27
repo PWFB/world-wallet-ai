@@ -68,6 +68,8 @@ jobs:
         run: npm run test:wallet-backups
       - name: Run in-app EVM signature verification tests
         run: npm run test:wallet-signatures
+      - name: Run exact token amount formatting tests
+        run: npm run test:token-amount
       - name: Run sidebar navigation regression tests
         run: npm run test:navigation
       - name: Build World Wallet web app
