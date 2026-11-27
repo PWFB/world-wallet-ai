@@ -5813,6 +5813,11 @@ def prepare_balmz_presale_delivery(
         destination_state = _balmz_delivery_read_token_account(
             recipient_token_account, BALMZ_SOLANA_MAINNET_MINT, body.recipient_address
         )
+        if (
+            int(source_state["context_slot"]) < int(mint_proof["context_slot"])
+            or int(destination_state["context_slot"]) < int(source_state["context_slot"])
+        ):
+            raise BalmzDeliveryValidationError("token_account_snapshot_slot_regression")
         block = rpc_call(SOLANA_MAINNET_RPC_URL, "getLatestBlockhash", [{"commitment": "finalized"}])
         block_value = block.get("value") if isinstance(block, dict) else None
         blockhash = block_value.get("blockhash") if isinstance(block_value, dict) else None
@@ -5871,6 +5876,9 @@ def prepare_balmz_presale_delivery(
         ).fetchone()
         if active:
             raise HTTPException(status_code=409, detail="This allocation already has an active delivery attempt")
+        # Serialize the cross-allocation daily cap check; the allocation row lock
+        # above only serializes attempts for this one buyer allocation.
+        conn.execute("SELECT id FROM balmz_presale_allocation_state WHERE id=1 FOR UPDATE")
         daily = conn.execute(
             "SELECT COALESCE(SUM(amount_base_units),0) FROM balmz_presale_delivery_attempts "
             "WHERE created_at >= NOW()-INTERVAL '24 hours' AND status IN ('approved','broadcasting','submitted','finalized','reconciliation_required')"
@@ -5897,6 +5905,10 @@ def prepare_balmz_presale_delivery(
             "getFeeForMessage",
             [unsigned["message_base64"], {"commitment": "finalized"}],
         )
+        fee_context = fee_response.get("context") if isinstance(fee_response, dict) else None
+        fee_context_slot = fee_context.get("slot") if isinstance(fee_context, dict) else None
+        if isinstance(fee_context_slot, bool) or not isinstance(fee_context_slot, int) or fee_context_slot < block_slot:
+            raise HTTPException(status_code=503, detail="Fee estimate was not evaluated at or after the finalized transaction context")
         estimated_fee_lamports = fee_response.get("value") if isinstance(fee_response, dict) else None
         if (
             isinstance(estimated_fee_lamports, bool)
