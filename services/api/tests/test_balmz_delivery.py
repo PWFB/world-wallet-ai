@@ -213,6 +213,23 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
                 main.prepare_balmz_presale_delivery(request, {"id": "buyer-1"})
         self.assertEqual(caught.exception.status_code, 503)
 
+    def test_wallet_signed_submission_requires_independent_global_supply_proof(self):
+        import main
+        body = main.BalmzPresaleDeliverySubmitRequest(signed_transaction_base64="A" * 120)
+        with (
+            patch.object(main, "require_world_wallet_admin", return_value="admin@example.test"),
+            patch.object(main, "_balmz_presale_delivery_release_gates_pass", return_value=True),
+            patch.object(main, "_balmz_global_supply_is_verified_for_delivery", return_value=False),
+            patch.object(main, "require_solana_rpc_cluster") as cluster,
+            patch.object(main, "db") as database,
+        ):
+            with self.assertRaises(main.HTTPException) as caught:
+                main.submit_wallet_signed_balmz_delivery("delivery-test-123", body, {"id": "admin"})
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertIn("Independent Ethereum, BNB and Solana", caught.exception.detail)
+        cluster.assert_not_called()
+        database.assert_not_called()
+
     def test_admin_delivery_queue_rejects_invalid_filters_before_database_access(self):
         import main
         with patch.object(main, "require_world_wallet_admin", return_value="admin@example.test"):
