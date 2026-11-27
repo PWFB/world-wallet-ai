@@ -286,6 +286,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         for invalid in invalid_amounts:
             with self.subTest(invalid=invalid):
                 account = {
+                    "context": {"slot": 777},
                     "value": {
                         "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
                         "executable": False,
