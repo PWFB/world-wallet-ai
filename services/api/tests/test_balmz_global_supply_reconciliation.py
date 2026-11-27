@@ -251,7 +251,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             elif data == "0x" + main.keccak.new(digest_bits=256, data=b"beneficiary()").hexdigest()[:8]: value = int(beneficiary, 16)
             else: raise AssertionError(data)
             return "0x" + format(value, "064x")
-        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", side_effect=fake_rpc):
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_ethereum_reserve("https://rpc.example", token, vesting, beneficiary)
         self.assertEqual(result["status"], "VERIFIED")
         self.assertEqual(result["allocation_raw"], str(allocation))
