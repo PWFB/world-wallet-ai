@@ -10765,7 +10765,10 @@ def _balmz_evm_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url,
         primary = urlparse(primary_rpc_url)
         def canonical_host(host):
             try:
-                return ipaddress.ip_address(host).compressed.lower()
+                address = ipaddress.ip_address(host)
+                if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+                    return str(address.ipv4_mapped)
+                return address.compressed.lower()
             except ValueError:
                 try:
                     return host.encode("idna").decode("ascii").rstrip(".").lower()
