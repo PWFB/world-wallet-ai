@@ -30,7 +30,16 @@ function prepared(authority, recipient) {
     feePayer: authority.publicKey,
     recentBlockhash: "11111111111111111111111111111111",
   }).add(instruction);
-  return Buffer.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
+  return {
+    encoded: Buffer.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64"),
+    expectedTransfer: {
+      sourceTokenAccount: source.publicKey.toBase58(),
+      mintAddress: mint.publicKey.toBase58(),
+      destinationTokenAccount: recipient.publicKey.toBase58(),
+      amountBaseUnits: "1",
+      decimals: 9,
+    },
+  };
 }
 
 test("prepared delivery decoding requires the expected authority as fee payer and signer", () => {
@@ -39,7 +48,7 @@ test("prepared delivery decoding requires the expected authority as fee payer an
   const encoded = prepared(authority, recipient);
   const decoded = decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58());
   assert.equal(decoded.feePayer.toBase58(), authority.publicKey.toBase58());
-  assert.throws(() => decodePreparedSolanaDelivery(encoded, recipient.publicKey.toBase58()), /configured delivery authority/);
+  assert.throws(() => decodePreparedSolanaDelivery(encoded, recipient.publicKey.toBase58(), expectedTransfer), /configured delivery authority/);
 });
 
 test("wallet helper signs only the exact prepared message", async () => {
@@ -95,7 +104,7 @@ test("prepared transaction rejects a non-token instruction even when it has one 
     lamports: 1,
   }));
   const encoded = Buffer.from(transaction.serialize({ requireAllSignatures: false, verifySignatures: false })).toString("base64");
-  assert.throws(() => decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58()), /classic SPL Token instruction/);
+  assert.throws(() => decodePreparedSolanaDelivery(encoded, authority.publicKey.toBase58(), { sourceTokenAccount: "", mintAddress: "", destinationTokenAccount: "", amountBaseUnits: "1", decimals: 9 }), /classic SPL Token instruction/);
 });
 
 test("provider discovery accepts supported injected Solana wallets only", () => {
