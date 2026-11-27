@@ -292,3 +292,16 @@ test("transaction detail explorer links require a network-specific valid transac
   assert.match(featureSource, /if \(network === "bitcoin" \|\| network === "litecoin" \|\| network === "dogecoin"\)/);
   assert.match(featureSource, /return "";/);
 });
+
+
+test("Binance-linked address verification uses only the Binance provider and skips WalletConnect", () => {
+  const start = featureSource.indexOf("const verifyAddressOwnership = async item =>");
+  const end = featureSource.indexOf("const checkAddressBalance", start);
+  const verifyFlow = featureSource.slice(start, end);
+  assert.match(verifyFlow, /expectedProviderId === "binance"[\s\S]*?\[window\.binancew3w\?\.ethereum\]/);
+  assert.match(verifyFlow, /const useWalletConnect = !\["binance", "okx"\]\.includes\(expectedProviderId\)/);
+  assert.match(verifyFlow, /if \(useWalletConnect && !walletConnectProviderRef\.current && walletConnectProjectId\)/);
+  assert.match(verifyFlow, /if \(useWalletConnect && walletConnectProvider && !walletConnectProvider\.session\)/);
+  assert.match(verifyFlow, /Open World Wallet AI inside Binance Wallet's DApp browser/);
+  assert.match(verifyFlow, /ownership_verified !== true/);
+});
