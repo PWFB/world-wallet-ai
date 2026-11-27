@@ -544,19 +544,22 @@ def db():
                 from psycopg_pool import ConnectionPool
                 _DB_POOL = ConnectionPool(
                     conninfo=DATABASE_URL,
-                    min_size=1,
-                    max_size=3,
-                    timeout=5,
-                    max_idle=300,
+                    # Render can briefly run old and new instances during a rolling
+                    # deploy. Keep the per-process Neon footprint small and allow
+                    # transient connection pressure to clear before failing startup.
+                    min_size=0,
+                    max_size=2,
+                    timeout=20,
+                    max_idle=180,
                     max_lifetime=1800,
-                    reconnect_timeout=10,
+                    reconnect_timeout=30,
                     kwargs={
-                        "connect_timeout": 5,
+                        "connect_timeout": 10,
                         "application_name": "world-wallet-ai-api",
                     },
                     open=True,
                 )
-    return _DB_POOL.connection(timeout=5)
+    return _DB_POOL.connection(timeout=20)
 
 
 @app.on_event("shutdown")
