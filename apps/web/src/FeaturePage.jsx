@@ -3387,7 +3387,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           <div className="tool-list">{nftProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="eth-mainnet"?"Ethereum Mainnet":"BNB Chain Mainnet"}</b><small>{item.message}{item.ok?" · probe items: "+item.probe_items:""}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
           <small className="muted">Tested {nftProviderTest.tested_at?new Date(nftProviderTest.tested_at).toLocaleString():"just now"} · {nftProviderTest.notice}</small>
         </>}
-        <div className="panel-head" style={{marginTop:22}}><div><h2>Etherscan API V2 connectivity</h2><span>Read-only API key checks for Ethereum, BNB Chain, and Sepolia</span></div><button className="secondary" disabled={etherscanProviderTestBusy} onClick={async()=>{
+        <div className="panel-head" style={{marginTop:22}}><div><h2>Etherscan API V2 connectivity</h2><span>Read-only API key checks for Ethereum, BNB Chain, Sepolia, and Polygon PoS</span></div><button className="secondary" disabled={etherscanProviderTestBusy} onClick={async()=>{
           setEtherscanProviderTestBusy(true);setEtherscanProviderTest(null);setEtherscanProviderTestError("");
           try {
             const response=await fetch(apiBaseUrl+"/api/v1/admin/etherscan-provider/test",{method:"POST",headers:{Authorization:"Bearer "+accessToken}});
@@ -3398,7 +3398,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         }}>{etherscanProviderTestBusy?"Testing…":"Test Etherscan API"}</button></div>
         {etherscanProviderTestError&&<div className="feature-error" role="alert">{etherscanProviderTestError}</div>}
         {etherscanProviderTest&&<><div className={etherscanProviderTest.success?"feature-success":"feature-error"} role="status">{etherscanProviderTest.success?"Etherscan API V2 is responding on all configured EVM networks.":"One or more Etherscan API V2 checks did not pass."}</div>
-          <div className="tool-list">{etherscanProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="ethereum"?"Ethereum Mainnet":item.network==="bnb"?"BNB Chain Mainnet":"Ethereum Sepolia"}</b><small>Chain ID {item.chain_id} · {item.message}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
+          <div className="tool-list">{etherscanProviderTest.results?.map(item=><div className="tool-row" key={item.network}><div><b>{item.network==="ethereum"?"Ethereum Mainnet":item.network==="bnb"?"BNB Chain Mainnet":item.network==="sepolia"?"Ethereum Sepolia":item.network==="polygon"?"Polygon PoS Mainnet":"Unknown network"}</b><small>Chain ID {item.chain_id} · {item.message}</small></div><strong className={item.ok?"positive":"neutral"}>{item.ok?"Connected":"Check needed"}</strong></div>)}</div>
           <small className="muted">Tested {etherscanProviderTest.tested_at?new Date(etherscanProviderTest.tested_at).toLocaleString():"just now"} · {etherscanProviderTest.notice}</small>
         </>}
         <div className="security-note">Etherscan is a read-only explorer provider. Its API key remains on the backend and is never returned to this page. It cannot sign wallet transactions, authorize deploys, or pay gas.</div>
