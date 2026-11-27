@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
+const activityTraceSource = readFileSync(new URL("./ActivityTrace.jsx", import.meta.url), "utf8");
 const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
 const returnCenterSource = readFileSync(new URL("./MainnetReturnCenter.jsx", import.meta.url), "utf8");
 const aptSource = readFileSync(new URL("../../../apps/android-aptido/app/src/main/java/com/balmz/aptido/MainActivity.kt", import.meta.url), "utf8");
@@ -308,4 +309,26 @@ test("Binance-linked ownership stays Binance-only while OKX accepts matching Wal
   assert.match(verifyFlow, /Open World Wallet AI inside Binance Wallet's DApp browser/);
   assert.match(verifyFlow, /WalletConnect QR or OKX Wallet's DApp browser/);
   assert.match(verifyFlow, /ownership_verified !== true/);
+});
+
+
+test("Transactions rejects malformed history records and inconsistent pagination", () => {
+  assert.match(activityTraceSource, /Array\.isArray\(data\.events\)/);
+  assert.match(activityTraceSource, /typeof item\.id === "string"/);
+  assert.match(activityTraceSource, /typeof item\.event_type === "string"/);
+  assert.match(activityTraceSource, /Number\.isSafeInteger\(pageInfo\.offset\)/);
+  assert.match(activityTraceSource, /pageInfo\.has_more === \(offset \+ page\.length < pageInfo\.total\)/);
+  assert.match(activityTraceSource, /inconsistent pagination metadata/);
+});
+
+test("Transactions only presents saved receipt states and deduplicates paginated rows by record identity", () => {
+  assert.match(activityTraceSource, /function friendlyStatus\(event\)/);
+  assert.match(activityTraceSource, /"Confirmed"/);
+  assert.match(activityTraceSource, /"Pending"/);
+  assert.match(activityTraceSource, /"Failed"/);
+  assert.match(activityTraceSource, /"Not broadcast \/ unknown"/);
+  assert.match(activityTraceSource, /old\.event_type === item\.event_type && old\.id === item\.id/);
+  assert.match(activityTraceSource, /event\.tx_hash/);
+  assert.match(activityTraceSource, /event\.network/);
+  assert.match(activityTraceSource, /No transaction or wallet audit records were returned for this wallet/);
 });
