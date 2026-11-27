@@ -270,9 +270,12 @@ def verify_finalized_delivery_observation(
     expected = {
         "program": "spl-token",
         "programId": expected_token_program,
-        "type": "transferChecked",
     }
-    if any(instruction.get(key) != value for key, value in expected.items()):
+    if (
+        any(instruction.get(key) != value for key, value in expected.items())
+        or not isinstance(parsed, dict)
+        or parsed.get("type") != "transferChecked"
+    ):
         raise BalmzDeliveryValidationError("delivery_instruction_program_or_type_mismatch")
     if not isinstance(info, dict):
         raise BalmzDeliveryValidationError("delivery_instruction_info_invalid")
