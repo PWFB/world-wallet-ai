@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { getNeonAccessToken } from "./auth-client.js";
 import { isUsableNeonAccessToken } from "./neon-token.js";
+import { mergeAuditPages, tokenTransferIdentity } from "./token-audit-pagination.js";
 
 const NETWORK_OPTIONS = [
   { value: "ethereum,bnb,sepolia", label: "Ethereum + BNB + Sepolia" },
@@ -22,7 +23,6 @@ function ExplorerLink({ network, hash, children }) {
   return <a href={explorerBase(network) + "/tx/" + safeHash} target="_blank" rel="noreferrer">{children || safeHash.slice(0, 12) + "…"}</a>;
 }
 
-import { mergeAuditPages, tokenTransferIdentity } from "./token-audit-pagination.js";
 function Panel({ title, children, note }) {
   return <article className="panel action-panel" style={{ marginBottom: 16 }}>
     <h2 style={{ marginTop: 0 }}>{title}</h2>
