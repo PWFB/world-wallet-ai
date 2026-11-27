@@ -1160,6 +1160,18 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   </section>;
 }
 
+function formatBaseUnitsExact(value, decimals = 9) {
+  try {
+    const amount = BigInt(String(value));
+    const scale = 10n ** BigInt(decimals);
+    const whole = (amount / scale).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, ",");
+    const fraction = (amount % scale).toString().padStart(decimals, "0").replace(/0+$/, "");
+    return whole + (fraction ? "." + fraction : "");
+  } catch {
+    return "Unavailable";
+  }
+}
+
 function BalmzDeliveryAdminPanel({ accessToken, apiBaseUrl }) {
   const [deliveries, setDeliveries] = useState([]);
   const [busyId, setBusyId] = useState("");
@@ -1234,7 +1246,7 @@ function BalmzDeliveryAdminPanel({ accessToken, apiBaseUrl }) {
     {deliveries.length === 0 ? <div className="live-chart-empty">No active delivery previews loaded. Admin refresh is read-only.</div> : <div className="tool-list">
       {deliveries.map(delivery => <div className="tool-row" key={delivery.delivery_id}>
         <div>
-          <b>{formatTokenAmountExact(Number(delivery.amount_base_units) / (10 ** Number(delivery.decimals)))} BALMZ-SOL · {delivery.state}</b>
+          <b>{formatBaseUnitsExact(delivery.amount_base_units, Number(delivery.decimals))} BALMZ-SOL · {delivery.state}</b>
           <small>Recipient: {delivery.recipient_address}</small>
           <small>Mint: {delivery.mint_address}</small>
           <small>Message SHA-256: {delivery.message_sha256}</small>
