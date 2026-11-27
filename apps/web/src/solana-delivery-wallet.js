@@ -29,21 +29,19 @@ export function decodePreparedSolanaDelivery(unsignedTransactionBase64, expected
   if (message.instructions.length !== 1) {
     throw new Error("The prepared transaction does not contain exactly one instruction.");
   }
-  const instruction = message.instructions[0];
+  const instruction = transaction.instructions[0];
   const tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
-  const instructionProgram = message.accountKeys[instruction.programIdIndex]?.toBase58?.() || "";
-  if (instructionProgram !== tokenProgram) {
+  if (instruction.programId?.toBase58?.() !== tokenProgram) {
     throw new Error("The prepared transaction is not a classic SPL Token instruction.");
   }
-  const data = Buffer.from(instruction.data, "base64");
-  if (data.length !== 10 || data[0] !== 12) {
+  const data = instruction.data;
+  if (!(data instanceof Uint8Array) || data.length !== 10 || data[0] !== 12) {
     throw new Error("The prepared transaction is not exactly one SPL TransferChecked instruction.");
   }
-  const accountIndexes = instruction.accounts || [];
-  if (accountIndexes.length !== 4) {
+  if (!Array.isArray(instruction.keys) || instruction.keys.length !== 4) {
     throw new Error("The SPL TransferChecked instruction has an unexpected account layout.");
   }
-  const instructionAccounts = accountIndexes.map(index => message.accountKeys[index]?.toBase58?.() || "");
+  const instructionAccounts = instruction.keys.map(account => account.pubkey?.toBase58?.() || "");
   if (instructionAccounts.some(address => !address)) {
     throw new Error("The SPL TransferChecked instruction contains an invalid account.");
   }
