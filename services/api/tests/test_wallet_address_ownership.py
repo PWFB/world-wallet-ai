@@ -336,8 +336,6 @@ class WalletAddressOwnershipTests(unittest.TestCase):
         self.assertEqual(caught.exception.status_code, 403)
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 class WalletAddressAttachConnection:
@@ -423,3 +421,6 @@ class WalletAddressAttachTests(unittest.TestCase):
             if sql.startswith("select id from wallets where id=%s and owner_id=%s")
         )
         self.assertEqual(owner_lookup, ("wallet_foreign", "user_test"))
+
+if __name__ == "__main__":
+    unittest.main()
