@@ -749,5 +749,44 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
                 ):
                     self.assertFalse(main._balmz_global_supply_is_verified_for_delivery())
 
+    def test_delivery_supply_gate_fails_closed_when_rpc_or_reserve_raises(self):
+        failure_points = (
+            "_balmz_reconcile_evm_supply",
+            "_balmz_reconcile_solana_supply",
+            "_balmz_reconcile_ethereum_reserve",
+            "_balmz_global_supply_summary",
+        )
+        for failure_point in failure_points:
+            with self.subTest(failure_point=failure_point):
+                patches = {
+                    "_balmz_reconcile_evm_supply": patch.object(
+                        main, "_balmz_reconcile_evm_supply",
+                        side_effect=RuntimeError("provider unavailable") if failure_point == "_balmz_reconcile_evm_supply"
+                        else [{"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}}] * 2,
+                    ),
+                    "_balmz_reconcile_solana_supply": patch.object(
+                        main, "_balmz_reconcile_solana_supply",
+                        side_effect=RuntimeError("provider unavailable") if failure_point == "_balmz_reconcile_solana_supply"
+                        else {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+                    ),
+                    "_balmz_reconcile_ethereum_reserve": patch.object(
+                        main, "_balmz_reconcile_ethereum_reserve",
+                        side_effect=RuntimeError("provider unavailable") if failure_point == "_balmz_reconcile_ethereum_reserve"
+                        else {"status": "VERIFIED"},
+                    ),
+                    "_balmz_global_supply_summary": patch.object(
+                        main, "_balmz_global_supply_summary",
+                        side_effect=RuntimeError("summary unavailable") if failure_point == "_balmz_global_supply_summary"
+                        else {"status": "RECONCILED"},
+                    ),
+                }
+                with (
+                    patches["_balmz_reconcile_evm_supply"],
+                    patches["_balmz_reconcile_solana_supply"],
+                    patches["_balmz_reconcile_ethereum_reserve"],
+                    patches["_balmz_global_supply_summary"],
+                ):
+                    self.assertFalse(main._balmz_global_supply_is_verified_for_delivery())
+
 if __name__ == "__main__":
     unittest.main()
