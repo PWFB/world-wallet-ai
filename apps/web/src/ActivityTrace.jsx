@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 function short(value) {
   const text = String(value || "");
@@ -30,7 +30,7 @@ function friendlyStatus(event) {
   return "Not broadcast / unknown";
 }
 
-export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", setActive }) {
+export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", walletId = "", setActive }) {
   const [events, setEvents] = useState([]);
   const [pagination, setPagination] = useState({ limit: 100, offset: 0, total: 0, has_more: false, next_offset: null });
   const [loading, setLoading] = useState(false);
@@ -40,10 +40,22 @@ export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", setAc
   const [statusFilter, setStatusFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [lastLoaded, setLastLoaded] = useState(null);
+  const requestGenerationRef = useRef(0);
 
   const loadPage = useCallback(async (offset = 0, append = false) => {
+    const requestGeneration = ++requestGenerationRef.current;
     if (!accessToken || !apiBaseUrl) {
+      setEvents([]);
+      setPagination({ limit: 100, offset: 0, total: 0, has_more: false, next_offset: null });
       setError("Sign in and complete the wallet PIN check to load activity.");
+      setLoading(false);
+      return null;
+    }
+    if (!walletId) {
+      setEvents([]);
+      setPagination({ limit: 100, offset: 0, total: 0, has_more: false, next_offset: null });
+      setError("Select an active wallet to load its transaction history.");
+      setLoading(false);
       return null;
     }
     setLoading(true);
@@ -56,6 +68,7 @@ export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", setAc
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || "Wallet activity trace could not be loaded.");
+      if (requestGeneration !== requestGenerationRef.current) return null;
       if (!Array.isArray(data.events)) {
         throw new Error("The activity service returned an invalid event list. Transaction history remains unavailable.");
       }
@@ -92,17 +105,22 @@ export default function ActivityTrace({ accessToken = "", apiBaseUrl = "", setAc
       setLastLoaded(new Date().toISOString());
       return data;
     } catch (cause) {
-      setError(cause?.message || "Wallet activity trace failed.");
+      if (requestGeneration === requestGenerationRef.current) {
+        setError(cause?.message || "Wallet activity trace failed.");
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (requestGeneration === requestGenerationRef.current) setLoading(false);
     }
-  }, [accessToken, apiBaseUrl]);
+  }, [accessToken, apiBaseUrl, walletId]);
 
   useEffect(() => {
+    requestGenerationRef.current += 1;
     setEvents([]);
     setPagination({ limit: 100, offset: 0, total: 0, has_more: false, next_offset: null });
+    setLastLoaded(null);
     loadPage(0, false);
+    return () => { requestGenerationRef.current += 1; };
   }, [loadPage]);
 
   async function loadAllPages() {
