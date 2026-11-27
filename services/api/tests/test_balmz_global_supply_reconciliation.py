@@ -122,15 +122,24 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["reason"], "mint_supply_rpc_mismatch")
         self.assertIsNone(result["observed_supply"])
 
-    def test_evm_supply_reads_chain_bytecode_supply_and_decimals(self):
+    def test_evm_supply_reads_all_contract_data_at_one_finalized_block(self):
         contract = "0x" + "1" * 40
         raw_supply = 11_000_000_000 * (10 ** 18)
+        block_tag = "0x1234"
+        block_hash = "0x" + "a" * 64
+        seen_tags = []
         def fake_rpc(_url, method, params):
+            if method == "eth_getBlockByNumber":
+                self.assertEqual(params, ["finalized", False])
+                return {"number": block_tag, "hash": block_hash}
             if method == "eth_getCode":
+                seen_tags.append(params[1])
                 return "0x60016000"
             if method == "eth_call" and params[0]["data"] == "0x18160ddd":
+                seen_tags.append(params[1])
                 return "0x" + format(raw_supply, "064x")
             if method == "eth_call" and params[0]["data"] == "0x313ce567":
+                seen_tags.append(params[1])
                 return "0x" + format(18, "064x")
             raise AssertionError(method)
         with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
@@ -138,6 +147,29 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["status"], "VERIFIED")
         self.assertEqual(result["observed_supply"], "11000000000")
         self.assertEqual(result["raw_supply"], str(raw_supply))
+        self.assertEqual(seen_tags, [block_tag, block_tag, block_tag])
+        self.assertEqual(result["block_number"], str(int(block_tag, 16)))
+        self.assertEqual(result["block_hash"], block_hash)
+        self.assertEqual(result["commitment"], "finalized")
+
+    def test_evm_supply_rejects_malformed_finalized_block_before_contract_reads(self):
+        contract = "0x" + "1" * 40
+        for block in (
+            None,
+            {"number": "0x01", "hash": "0x" + "a" * 64},
+            {"number": "0x1", "hash": "0x1234"},
+            {"number": "latest", "hash": "0x" + "a" * 64},
+        ):
+            with self.subTest(block=block):
+                def fake_rpc(_url, method, _params):
+                    if method == "eth_getBlockByNumber":
+                        return block
+                    raise AssertionError("contract read must not occur")
+                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
+                    result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "finalized_block_metadata_invalid")
+                self.assertIsNone(result["observed_supply"])
 
     def test_evm_mainnet_supply_requires_https_rpc_without_credentials(self):
         contract = "0x" + "1" * 40
@@ -269,9 +301,17 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         for sig in ("totalAllocation()", "released()", "balanceOf(address)"):
             digest = main.keccak.new(digest_bits=256); digest.update(sig.encode("ascii"))
             selectors[sig] = digest.hexdigest()[:8]
+        block_tag = "0x2345"
+        block_hash = "0x" + "b" * 64
+        seen_tags = []
         def fake_rpc(_url, method, params):
-            if method == "eth_getCode": return "0x60016000"
+            if method == "eth_getBlockByNumber":
+                return {"number": block_tag, "hash": block_hash}
+            if method == "eth_getCode":
+                seen_tags.append(params[1])
+                return "0x60016000"
             data = params[0]["data"]
+            seen_tags.append(params[1])
             if data == "0x" + selectors["totalAllocation()"]: value = allocation
             elif data == "0x" + selectors["released()"]: value = allocation // 4
             elif data.startswith("0x" + selectors["balanceOf(address)"]): value = allocation * 3 // 4
@@ -284,6 +324,11 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertEqual(result["status"], "VERIFIED")
         self.assertEqual(result["allocation_raw"], str(allocation))
         self.assertEqual(result["reserve_balance_raw"], str(allocation * 3 // 4))
+        self.assertTrue(seen_tags)
+        self.assertEqual(set(seen_tags), {block_tag})
+        self.assertEqual(result["block_number"], str(int(block_tag, 16)))
+        self.assertEqual(result["block_hash"], block_hash)
+        self.assertEqual(result["commitment"], "finalized")
 
     def test_ethereum_reserve_requires_chain_id_one_before_contract_reads(self):
         with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "evm_chain_id", return_value=56) as chain_id, patch.object(main, "rpc_call") as rpc:
@@ -331,7 +376,13 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         contract = "0x" + "1" * 40
         for invalid_code in ("0x", "0x0", "0x123", "0xgg"):
             with self.subTest(invalid_code=invalid_code):
-                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value=invalid_code):
+                def fake_rpc(_url, method, _params):
+                    if method == "eth_getBlockByNumber":
+                        return {"number": "0x123", "hash": "0x" + "a" * 64}
+                    if method == "eth_getCode":
+                        return invalid_code
+                    raise AssertionError("invalid bytecode must stop contract reads")
+                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
                     result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
                 self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
                 self.assertEqual(result["reason"], "contract_bytecode_missing")
@@ -339,7 +390,15 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
 
     def test_evm_valid_bytecode_requires_even_hex_byte_pairs(self):
         contract = "0x" + "1" * 40
-        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value="0x60016000"):
+        def fake_rpc(_url, method, _params):
+            if method == "eth_getBlockByNumber":
+                return {"number": "0x123", "hash": "0x" + "a" * 64}
+            if method == "eth_getCode":
+                return "0x60016000"
+            if method == "eth_call":
+                return "malformed ABI result"
+            raise AssertionError(method)
+        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", side_effect=fake_rpc):
             result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
         self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
         self.assertEqual(result["reason"], "rpc_or_metadata_verification_failed")
