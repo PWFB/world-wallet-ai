@@ -24,7 +24,8 @@
     "ethers": "^6.15.0",
     "solc": "^0.8.30",
     "@capacitor/core": "^8.6.0",
-    "@walletconnect/ethereum-provider": "2.21.1"
+    "@walletconnect/ethereum-provider": "2.21.1",
+    "@solana/web3.js": "1.98.4"
   },
   "devDependencies": {
     "@types/react": "^18.2.43",
