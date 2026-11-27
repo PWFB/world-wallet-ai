@@ -718,5 +718,36 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
 
 
 
+    def test_delivery_supply_gate_requires_independent_rpc_proof_for_every_chain(self):
+        chains = {
+            "ethereum": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+            "bnb": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+            "solana": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+        }
+        with (
+            patch.object(main, "_balmz_reconcile_evm_supply", side_effect=[chains["ethereum"], chains["bnb"]]),
+            patch.object(main, "_balmz_reconcile_solana_supply", return_value=chains["solana"]),
+            patch.object(main, "_balmz_reconcile_ethereum_reserve", return_value={"status": "VERIFIED"}),
+            patch.object(main, "_balmz_global_supply_summary", return_value={"status": "RECONCILED"}),
+        ):
+            self.assertTrue(main._balmz_global_supply_is_verified_for_delivery())
+
+    def test_delivery_supply_gate_rejects_missing_or_failed_independent_rpc_proof(self):
+        for network in ("ethereum", "bnb", "solana"):
+            with self.subTest(network=network):
+                chains = {
+                    "ethereum": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+                    "bnb": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+                    "solana": {"status": "VERIFIED", "independent_rpc": {"status": "VERIFIED"}},
+                }
+                chains[network]["independent_rpc"] = {"status": "NOT_CONFIGURED"}
+                with (
+                    patch.object(main, "_balmz_reconcile_evm_supply", side_effect=[chains["ethereum"], chains["bnb"]]),
+                    patch.object(main, "_balmz_reconcile_solana_supply", return_value=chains["solana"]),
+                    patch.object(main, "_balmz_reconcile_ethereum_reserve", return_value={"status": "VERIFIED"}),
+                    patch.object(main, "_balmz_global_supply_summary", return_value={"status": "RECONCILED"}),
+                ):
+                    self.assertFalse(main._balmz_global_supply_is_verified_for_delivery())
+
 if __name__ == "__main__":
     unittest.main()

@@ -5565,6 +5565,8 @@ def create_balmz_presale_intent(body: BalmzPresaleIntentRequest,user: dict=Depen
     """Create a server-priced, short-lived payment intent; disabled unless explicitly configured."""
     if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and intent gates are not approved")
+    if not _balmz_global_supply_is_verified_for_delivery():
+        raise HTTPException(status_code=503, detail="Independent Ethereum, BNB and Solana supply corroboration plus Ethereum reserve proof are required before creating presale intents")
     if not DATABASE_URL or not user.get("id"):
         raise HTTPException(status_code=503,detail="Presale payment intents require the configured account database")
     if not valid_solana_address(body.payer_address):
@@ -5616,6 +5618,8 @@ def settle_balmz_presale_intent(body:BalmzPresaleSettlementRequest,user:dict=Dep
     """Verify and atomically record a finalized payment once; this does not transfer tokens."""
     if not (BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED):
         raise HTTPException(status_code=503,detail="BALMZ presale release, treasury ownership, and settlement gates are not approved")
+    if not _balmz_global_supply_is_verified_for_delivery():
+        raise HTTPException(status_code=503, detail="Independent Ethereum, BNB and Solana supply corroboration plus Ethereum reserve proof are required before settlement")
     if not DATABASE_URL:
         raise HTTPException(status_code=503,detail="Presale settlement requires the configured account database")
     with db() as conn:
@@ -5788,7 +5792,17 @@ def _balmz_global_supply_is_verified_for_delivery() -> bool:
         ETH_RPC_URL, BALMZ_ETH_CONTRACT, BALMZ_ETH_VESTING_CONTRACT, BALMZ_ETH_RESERVE_BENEFICIARY
     )
     summary = _balmz_global_supply_summary(chains)
-    return summary.get("status") == "RECONCILED" and reserve.get("status") == "VERIFIED"
+    independent_rpc_verified = all(
+        isinstance(chains.get(network), dict)
+        and isinstance(chains[network].get("independent_rpc"), dict)
+        and chains[network]["independent_rpc"].get("status") == "VERIFIED"
+        for network in ("ethereum", "bnb", "solana")
+    )
+    return bool(
+        summary.get("status") == "RECONCILED"
+        and reserve.get("status") == "VERIFIED"
+        and independent_rpc_verified
+    )
 
 
 def _balmz_delivery_read_token_account(address: str, mint: str, owner: str):
@@ -5812,6 +5826,8 @@ def prepare_balmz_presale_delivery(
     """Create one exact unsigned TransferChecked preview for a buyer allocation."""
     if not _balmz_presale_delivery_release_gates_pass():
         raise HTTPException(status_code=503, detail="BALMZ token delivery release gates are not approved")
+    if not _balmz_global_supply_is_verified_for_delivery():
+        raise HTTPException(status_code=503, detail="Independent global supply and Ethereum reserve proof are required before token delivery")
     if not DATABASE_URL or not BALMZ_DELIVERY_SOURCE_TOKEN_ACCOUNT or not BALMZ_DELIVERY_AUTHORITY_ADDRESS:
         raise HTTPException(status_code=503, detail="The isolated BALMZ delivery source account and authority are not configured")
     if (
@@ -6364,6 +6380,11 @@ def balmz_presale_delivery_status(user: dict = Depends(current_user)):
 @app.get("/api/v1/balmz/presale/status")
 def balmz_presale_status(user: dict = Depends(current_user)):
     """Return launch readiness truthfully; no payment or transfer is initiated by this endpoint."""
+    global_supply_independent_rpc_verified = (
+        _balmz_global_supply_is_verified_for_delivery()
+        if _balmz_presale_delivery_release_gates_pass()
+        else False
+    )
     configured_mint = BALMZ_SOLANA_MAINNET_MINT if valid_solana_address(BALMZ_SOLANA_MAINNET_MINT) else None
     receiver_status = _verify_balmz_presale_receiver(BALMZ_PRESALE_RECEIVING_ADDRESS)
     recipient_is_valid = receiver_status["address_format_valid"]
@@ -6388,6 +6409,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         # CI status is not inferred from runtime settings.
         "regression_suite_verified": BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED,
         "delivery_infrastructure_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
+        "global_supply_and_independent_rpc_verified": global_supply_independent_rpc_verified,
     }
     warnings = list(mint_status["warnings"]) + list(receiver_status["warnings"])
     if recipient_is_valid:
@@ -6413,7 +6435,7 @@ def balmz_presale_status(user: dict = Depends(current_user)):
         "target_decimals": BALMZ_SOLANA_DEVNET_DECIMALS,
         "launch_target": "1 BALMZ-SOL = 1 SOL",
         "launch_price_guaranteed": False,
-        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"] and readiness["receiving_address_system_account_verified"]),
+        "payment_acceptance_enabled": bool(BALMZ_PRESALE_INTENTS_ENABLED and BALMZ_PRESALE_SETTLEMENT_ENABLED and BALMZ_PRESALE_RELEASE_APPROVED and BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED and BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED and BALMZ_PRESALE_DELIVERY_ENABLED and readiness["production_mint_verified"] and readiness["supply_matches_target"] and readiness["mint_authority_revoked"] and readiness["freeze_authority_revoked"] and readiness["receiving_address_mainnet_verified"] and readiness["receiving_address_account_exists"] and readiness["receiving_address_system_account_verified"] and readiness["global_supply_and_independent_rpc_verified"]),
         "production_network": "solana_mainnet",
         "delivery_enabled": BALMZ_PRESALE_DELIVERY_ENABLED,
         "production_mint": configured_mint,
