@@ -7,6 +7,12 @@ except ModuleNotFoundError:
     import main
 
 
+def abi_string(value):
+    raw = value.encode("utf-8")
+    padded = raw.hex() + ("0" * ((32 - len(raw) % 32) % 32) * 2)
+    return "0x" + format(32, "064x") + format(len(raw), "064x") + padded
+
+
 class EvmSecondaryRpcUrlSecurityTests(unittest.TestCase):
     CONTRACT = "0x" + "1" * 40
     PRIMARY_ARGS = (
@@ -54,9 +60,9 @@ class EvmSecondaryRpcUrlSecurityTests(unittest.TestCase):
                 return code
             selector = params[0]["data"]
             if selector == "0x06fdde03":
-                return _abi_string("BALMZ Token")
+                return abi_string("BALMZ Token")
             if selector == "0x95d89b41":
-                return _abi_string("BALMZ")
+                return abi_string("BALMZ")
             if selector == "0x18160ddd":
                 return "0x" + format(raw_supply, "064x")
             if selector == "0x313ce567":
