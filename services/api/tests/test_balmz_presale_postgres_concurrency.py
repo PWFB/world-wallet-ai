@@ -174,6 +174,7 @@ class BalmzPresalePostgresConcurrencyTests(unittest.TestCase):
             BALMZ_PRESALE_RELEASE_APPROVED=True,
             BALMZ_PRESALE_TREASURY_OWNERSHIP_VERIFIED=True,
             BALMZ_PRESALE_REGRESSION_SUITE_VERIFIED=True,
+            BALMZ_PRESALE_DELIVERY_ENABLED=True,
             BALMZ_PRESALE_RECEIVING_ADDRESS=TREASURY,
         )
 
