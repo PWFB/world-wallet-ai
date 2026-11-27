@@ -2,6 +2,7 @@ import base64
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -152,8 +153,8 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
             recipient_address=str(Pubkey.new_unique()),
         )
         with (
-            unittest.mock.patch.object(main, "BALMZ_PRESALE_DELIVERY_ENABLED", False),
-            unittest.mock.patch.object(main, "DATABASE_URL", ""),
+            patch.object(main, "BALMZ_PRESALE_DELIVERY_ENABLED", False),
+            patch.object(main, "DATABASE_URL", ""),
         ):
             with self.assertRaises(main.HTTPException) as caught:
                 main.prepare_balmz_presale_delivery(request, {"id": "buyer-1"})
