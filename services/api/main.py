@@ -10985,7 +10985,7 @@ def _balmz_solana_context_slot(response):
 def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_url, mint, primary_slot,
                                                   primary_raw_supply, primary_decimals, primary_owner,
                                                   primary_mint_authority, primary_freeze_authority):
-    """Compare a second Solana provider's finalized mint state at the same context slot."""
+    """Corroborate finalized mint state from an independent provider no older than the primary slot."""
     if not secondary_rpc_url:
         return {"status": "NOT_CONFIGURED", "reason": "secondary_rpc_not_configured"}
     try:
@@ -10994,13 +10994,16 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
         if secondary.hostname.lower() == (primary.hostname or "").lower():
             raise ValueError("secondary_rpc_provider_not_independent")
         require_solana_rpc_cluster(secondary_rpc_url, SOLANA_MAINNET_GENESIS_HASH, "Solana Mainnet")
-        account = rpc_call(secondary_rpc_url, "getAccountInfo", [mint, {"encoding": "jsonParsed", "commitment": "finalized"}])
+        account = rpc_call(
+            secondary_rpc_url, "getAccountInfo",
+            [mint, {"encoding": "jsonParsed", "commitment": "finalized", "minContextSlot": primary_slot}],
+        )
         slot = _balmz_solana_context_slot(account)
         value = account.get("value") if isinstance(account, dict) else None
         data = value.get("data") if isinstance(value, dict) else None
         parsed = data.get("parsed") if isinstance(data, dict) else None
         info = parsed.get("info") if isinstance(parsed, dict) else None
-        if (slot != primary_slot or not isinstance(value, dict)
+        if (slot < primary_slot or not isinstance(value, dict)
                 or value.get("owner") != primary_owner or value.get("executable") is not False
                 or not isinstance(parsed, dict) or parsed.get("type") != "mint"
                 or not isinstance(info, dict) or info.get("isInitialized") is not True
@@ -11009,16 +11012,21 @@ def _balmz_solana_independent_rpc_corroboration(primary_rpc_url, secondary_rpc_u
                 or info.get("mintAuthority") != primary_mint_authority
                 or info.get("freezeAuthority") != primary_freeze_authority):
             raise ValueError("secondary_rpc_mint_state_mismatch")
-        supply = rpc_call(secondary_rpc_url, "getTokenSupply", [mint, {"commitment": "finalized"}])
+        supply = rpc_call(
+            secondary_rpc_url, "getTokenSupply",
+            [mint, {"commitment": "finalized", "minContextSlot": primary_slot}],
+        )
         supply_slot = _balmz_solana_context_slot(supply)
         token_value = supply.get("value") if isinstance(supply, dict) else None
-        if (supply_slot != primary_slot or not isinstance(token_value, dict)
+        if (supply_slot < primary_slot or not isinstance(token_value, dict)
                 or token_value.get("amount") != primary_raw_supply
                 or token_value.get("decimals") != primary_decimals):
             raise ValueError("secondary_rpc_supply_mismatch")
         return {"status": "VERIFIED", "reason": None, "provider_host": secondary.hostname,
-                "context_slot": primary_slot, "commitment": "finalized",
-                "same_finalized_slot": True}
+                "context_slot": primary_slot, "secondary_account_slot": slot,
+                "secondary_supply_slot": supply_slot, "commitment": "finalized",
+                "min_context_slot_enforced": True,
+                "same_finalized_slot": slot == primary_slot and supply_slot == primary_slot}
     except Exception as exc:
         allowed = {"solana_mainnet_rpc_url_invalid", "secondary_rpc_provider_not_independent",
                    "secondary_rpc_mint_state_mismatch", "secondary_rpc_supply_mismatch"}
