@@ -16,7 +16,7 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import Transaction
 from spl.token.constants import TOKEN_PROGRAM_ID
-from spl.token.instructions import transfer_checked
+from spl.token.instructions import get_associated_token_address, transfer_checked
 from spl.token.models import TransferCheckedParams
 
 
@@ -56,6 +56,13 @@ def canonical_base_units(value: Any) -> int:
     if amount < 1 or amount > _U64_MAX:
         raise BalmzDeliveryValidationError("token_base_units_out_of_range")
     return amount
+
+
+def derive_associated_token_address(owner_address: str, mint_address: str) -> str:
+    """Derive the canonical Associated Token Account for a wallet and SPL mint."""
+    owner = _pubkey(owner_address, "owner_address")
+    mint = _pubkey(mint_address, "mint_address")
+    return str(get_associated_token_address(owner, mint, TOKEN_PROGRAM_ID))
 
 
 def build_unsigned_transfer_checked(
