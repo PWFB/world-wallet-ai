@@ -195,5 +195,24 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
         self.assertFalse(result["allocation_matches"])
 
 
+    def test_evm_bytecode_must_be_nonempty_complete_bytes(self):
+        contract = "0x" + "1" * 40
+        for invalid_code in ("0x", "0x0", "0x123", "0xgg"):
+            with self.subTest(invalid_code=invalid_code):
+                with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value=invalid_code):
+                    result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
+                self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+                self.assertEqual(result["reason"], "contract_bytecode_missing")
+                self.assertIsNone(result["observed_supply"])
+
+    def test_evm_valid_bytecode_requires_even_hex_byte_pairs(self):
+        contract = "0x" + "1" * 40
+        with patch.object(main, "evm_chain_id", return_value=1), patch.object(main, "rpc_call", return_value="0x60016000"):
+            result = main._balmz_reconcile_evm_supply("ethereum", "https://rpc.example", contract, 1, 11_000_000_000)
+        self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+        self.assertEqual(result["reason"], "rpc_or_metadata_verification_failed")
+        self.assertIsNone(result["observed_supply"])
+
+
 if __name__ == "__main__":
     unittest.main()
