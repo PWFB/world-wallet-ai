@@ -190,6 +190,16 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
                 main.prepare_balmz_presale_delivery(request, {"id": "buyer-1"})
         self.assertEqual(caught.exception.status_code, 503)
 
+    def test_admin_delivery_queue_rejects_invalid_filters_before_database_access(self):
+        import main
+        with patch.object(main, "require_world_wallet_admin", return_value="admin@example.test"):
+            with self.assertRaises(main.HTTPException) as invalid_limit:
+                main.list_admin_balmz_presale_deliveries(state="active", limit=101, user={"id": "admin"})
+            self.assertEqual(invalid_limit.exception.status_code, 400)
+            with self.assertRaises(main.HTTPException) as invalid_state:
+                main.list_admin_balmz_presale_deliveries(state="unknown", limit=50, user={"id": "admin"})
+            self.assertEqual(invalid_state.exception.status_code, 400)
+
     def test_finalized_observation_requires_exact_transferchecked_metadata(self):
         signature = "5" * 64
         response = {
