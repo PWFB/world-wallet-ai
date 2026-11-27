@@ -289,6 +289,8 @@ def verify_finalized_delivery_observation(
         or info.get("destination") != expected_destination
         or info.get("authority") != expected_authority
         or observed_amount != str(amount)
+        or isinstance(observed_decimals, bool)
+        or not isinstance(observed_decimals, int)
         or observed_decimals != expected_decimals
     ):
         raise BalmzDeliveryValidationError("delivery_instruction_fields_mismatch")
