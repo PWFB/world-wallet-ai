@@ -80,6 +80,7 @@ export function discoverSolanaSigningProvider(scope = globalThis) {
 export async function signPreparedSolanaDelivery({
   unsignedTransactionBase64,
   expectedAuthority,
+  expectedTransfer,
   provider = discoverSolanaSigningProvider(),
 }) {
   if (!provider) throw new Error("No supported Solana wallet with signTransaction was detected.");
