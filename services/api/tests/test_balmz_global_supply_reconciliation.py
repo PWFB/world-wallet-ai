@@ -143,7 +143,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             if method == "getAccountInfo":
                 return account
             if method == "getTokenSupply":
-                self.assertEqual(params[1], {"commitment": "finalized", "minContextSlot": 777})
+                self.assertEqual(params[1], {"commitment": "finalized"})
                 return {"context": {"slot": 777}, "value": {"amount": raw_supply, "decimals": 9}}
             raise AssertionError(method)
         with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
@@ -172,7 +172,7 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             if method == "getAccountInfo":
                 return account
             if method == "getTokenSupply":
-                self.assertEqual(params[1]["minContextSlot"], 777)
+                self.assertEqual(params[1], {"commitment": "finalized"})
                 return {"context": {"slot": 778}, "value": {"amount": raw_supply, "decimals": 9}}
             raise AssertionError(method)
         with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
