@@ -570,6 +570,10 @@ def init_db():
     if not DATABASE_URL:
         return
     with db() as conn:
+        # Serialize schema initialization across Render instances. The lock is
+        # transaction-scoped and is released automatically on commit/rollback.
+        # Without it, concurrent startup DDL can deadlock on shared relations.
+        conn.execute("SELECT pg_advisory_xact_lock(728194210)")
         conn.execute("""
         CREATE TABLE IF NOT EXISTS users(
           id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, name TEXT NOT NULL,
