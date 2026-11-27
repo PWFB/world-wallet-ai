@@ -10079,6 +10079,14 @@ def _balmz_require_secure_evm_mainnet_rpc_url(rpc_url):
                 or parsed.username is not None or parsed.password is not None
                 or parsed.fragment or (port is not None and not 1 <= port <= 65535)):
             raise ValueError("insecure_mainnet_rpc_url")
+        if rpc_url == ETH_RPC_URL and ETH_PUBLIC_RPC_URL and ETH_PUBLIC_RPC_URL != rpc_url:
+            fallback = urlparse(ETH_PUBLIC_RPC_URL)
+            fallback_port = fallback.port
+            if (fallback.scheme.lower() != "https" or not fallback.hostname
+                    or fallback.username is not None or fallback.password is not None
+                    or fallback.fragment
+                    or (fallback_port is not None and not 1 <= fallback_port <= 65535)):
+                raise ValueError("insecure_mainnet_rpc_url")
         return parsed
     except (TypeError, ValueError):
         raise ValueError("insecure_mainnet_rpc_url")
