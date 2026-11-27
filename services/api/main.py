@@ -10080,7 +10080,7 @@ def _balmz_reconcile_ethereum_reserve(rpc_url, token_contract, vesting_contract,
                 "allocation_matches": False, "read_only": True}
     try:
         code = rpc_call(rpc_url, "eth_getCode", [vesting_contract, "latest"])
-        if not isinstance(code, str) or not re.fullmatch(r"0x[0-9a-fA-F]+", code) or code.lower() == "0x":
+        if not isinstance(code, str) or not re.fullmatch(r"0x(?:[0-9a-fA-F]{2})+", code):
             raise ValueError("vesting_bytecode_missing")
         observed_token = _balmz_eth_call_address(rpc_url, vesting_contract, "token()")
         beneficiary = _balmz_eth_call_address(rpc_url, vesting_contract, "beneficiary()")
