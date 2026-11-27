@@ -77,12 +77,48 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
             patch.object(main, "record_admin_event"),
             patch.object(main, "_balmz_reconcile_evm_supply", side_effect=[{**verified, "observed_supply": "11000000000"}, verified]),
             patch.object(main, "_balmz_reconcile_solana_supply", return_value=verified),
-            patch.object(main, "BALMZ_ETH_VESTING_CONTRACT", ""),
+            patch.object(main, "_balmz_reconcile_ethereum_reserve", return_value={"status": "NOT_CONFIGURED", "read_only": True}),
         ):
             result = main.balmz_global_supply_reconciliation(user)
         self.assertEqual(result["status"], "PARTIAL_DEPLOYMENT")
-        self.assertEqual(result["ethereum_reserve_evidence"], "NOT_CONFIGURED")
+        self.assertEqual(result["ethereum_reserve_evidence"]["status"], "NOT_CONFIGURED")
         self.assertFalse(result["presale_release_gate_changed"])
+
+    def test_reserve_verifies_immutable_fields_and_remaining_balance(self):
+        vesting = "0x" + "2" * 40
+        token = "0x" + "1" * 40
+        beneficiary = "0x" + "3" * 40
+        allocation = main.BALMZ_ETH_RESERVE_ALLOCATION_RAW
+        selectors = {}
+        for sig in ("totalAllocation()", "released()", "balanceOf(address)"):
+            digest = main.keccak.new(digest_bits=256); digest.update(sig.encode("ascii"))
+            selectors[sig] = digest.hexdigest()[:8]
+        def fake_rpc(_url, method, params):
+            if method == "eth_getCode": return "0x60016000"
+            data = params[0]["data"]
+            if data == "0x" + selectors["totalAllocation()"]: value = allocation
+            elif data == "0x" + selectors["released()"]: value = allocation // 4
+            elif data.startswith("0x" + selectors["balanceOf(address)"]): value = allocation * 3 // 4
+            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"token()").hexdigest()[:8] + "0" * 24 + token[2:]: value = int(token, 16)
+            elif data == "0x" + main.keccak.new(digest_bits=256, data=b"beneficiary()").hexdigest()[:8] + "0" * 24 + beneficiary[2:]: value = int(beneficiary, 16)
+            else: raise AssertionError(data)
+            return "0x" + format(value, "064x")
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_reconcile_ethereum_reserve("https://rpc.example", token, vesting, beneficiary)
+        self.assertEqual(result["status"], "VERIFIED")
+        self.assertEqual(result["allocation_raw"], str(allocation))
+        self.assertEqual(result["reserve_balance_raw"], str(allocation * 3 // 4))
+
+    def test_reserve_fails_closed_when_beneficiary_mismatches(self):
+        with patch.object(main, "valid_evm_address", return_value=True), patch.object(main, "rpc_call", return_value="0x" + "0" * 64):
+            result = main._balmz_reconcile_ethereum_reserve("https://rpc.example", "0x" + "1"*40, "0x" + "2"*40, "0x" + "3"*40)
+        self.assertEqual(result["status"], "CONTRACT_INVALID")
+        self.assertFalse(result["allocation_matches"])
+
+    def test_reserve_requires_both_contract_and_beneficiary_configuration(self):
+        result = main._balmz_reconcile_ethereum_reserve("https://rpc.example", "0x" + "1"*40, "", "")
+        self.assertEqual(result["status"], "NOT_CONFIGURED")
+        self.assertFalse(result["allocation_matches"])
 
 
 if __name__ == "__main__":
