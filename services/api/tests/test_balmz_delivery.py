@@ -248,5 +248,58 @@ class BalmzDeliveryTransactionTests(unittest.TestCase):
             )
 
 
+
+    def test_finalized_delivery_rejects_failed_chain_execution(self):
+        signature = "5" * 64
+        response = {
+            "slot": 500,
+            "meta": {"err": {"InstructionError": [0, "Custom"]}, "innerInstructions": []},
+            "transaction": {"signatures": [signature], "message": {
+                "accountKeys": [{"pubkey": str(self.authority.pubkey()), "signer": True}],
+                "instructions": [],
+            }},
+        }
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "delivery_transaction_failed"):
+            delivery.verify_finalized_delivery_observation(
+                response, expected_signature=signature, expected_mint=self.mint,
+                expected_source=self.source, expected_destination=self.destination,
+                expected_authority=str(self.authority.pubkey()), expected_amount_base_units="1250000000",
+            )
+
+    def test_finalized_delivery_rejects_unexpected_inner_instruction(self):
+        signature = "5" * 64
+        response = {
+            "slot": 500,
+            "meta": {"err": None, "innerInstructions": [{"index": 0, "instructions": [{"program": "system"}]}]},
+            "transaction": {"signatures": [signature], "message": {
+                "accountKeys": [{"pubkey": str(self.authority.pubkey()), "signer": True}],
+                "instructions": [{"program": "spl-token"}],
+            }},
+        }
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "unexpected_delivery_instruction_set"):
+            delivery.verify_finalized_delivery_observation(
+                response, expected_signature=signature, expected_mint=self.mint,
+                expected_source=self.source, expected_destination=self.destination,
+                expected_authority=str(self.authority.pubkey()), expected_amount_base_units="1250000000",
+            )
+
+    def test_finalized_delivery_rejects_authority_key_without_signer_flag(self):
+        signature = "5" * 64
+        response = {
+            "slot": 500,
+            "meta": {"err": None, "innerInstructions": []},
+            "transaction": {"signatures": [signature], "message": {
+                "accountKeys": [{"pubkey": str(self.authority.pubkey()), "signer": False}],
+                "instructions": [],
+            }},
+        }
+        with self.assertRaisesRegex(delivery.BalmzDeliveryValidationError, "delivery_authority_signature_missing"):
+            delivery.verify_finalized_delivery_observation(
+                response, expected_signature=signature, expected_mint=self.mint,
+                expected_source=self.source, expected_destination=self.destination,
+                expected_authority=str(self.authority.pubkey()), expected_amount_base_units="1250000000",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
