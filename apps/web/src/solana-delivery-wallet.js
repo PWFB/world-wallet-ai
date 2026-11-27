@@ -29,6 +29,24 @@ export function decodePreparedSolanaDelivery(unsignedTransactionBase64, expected
   if (message.instructions.length !== 1) {
     throw new Error("The prepared transaction does not contain exactly one instruction.");
   }
+  const instruction = message.instructions[0];
+  const tokenProgram = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+  const instructionProgram = message.accountKeys[instruction.programIdIndex]?.toBase58?.() || "";
+  if (instructionProgram !== tokenProgram) {
+    throw new Error("The prepared transaction is not a classic SPL Token instruction.");
+  }
+  const data = Buffer.from(instruction.data, "base64");
+  if (data.length !== 10 || data[0] !== 12) {
+    throw new Error("The prepared transaction is not exactly one SPL TransferChecked instruction.");
+  }
+  const accountIndexes = instruction.accounts || [];
+  if (accountIndexes.length !== 4) {
+    throw new Error("The SPL TransferChecked instruction has an unexpected account layout.");
+  }
+  const instructionAccounts = accountIndexes.map(index => message.accountKeys[index]?.toBase58?.() || "");
+  if (instructionAccounts.some(address => !address)) {
+    throw new Error("The SPL TransferChecked instruction contains an invalid account.");
+  }
   return transaction;
 }
 
