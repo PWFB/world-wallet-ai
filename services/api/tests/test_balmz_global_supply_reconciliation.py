@@ -60,6 +60,40 @@ class BalmzGlobalSupplyReconciliationTests(unittest.TestCase):
                 self.assertEqual(result["status"], "PARTIAL_DEPLOYMENT")
                 self.assertIsNone(result["observed_global_supply"])
 
+
+    def test_solana_mainnet_cluster_mismatch_stops_before_mint_reads(self):
+        with patch.object(main, "require_solana_rpc_cluster", side_effect=ValueError("wrong_genesis_hash")), patch.object(main, "rpc_call") as rpc:
+            result = main._balmz_reconcile_solana_supply("So11111111111111111111111111111111111111112")
+        self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+        self.assertEqual(result["reason"], "mainnet_rpc_or_mint_verification_failed")
+        self.assertIsNone(result["observed_supply"])
+        rpc.assert_not_called()
+
+    def test_solana_parsed_supply_must_match_finalized_token_supply(self):
+        mint = "So11111111111111111111111111111111111111112"
+        raw_supply = str(main.BALMZ_SOLANA_MAINNET_ALLOCATION * (10 ** 9))
+        account = {
+            "value": {
+                "owner": main.SOLANA_SPL_TOKEN_PROGRAM_ID,
+                "executable": False,
+                "data": {"parsed": {"type": "mint", "info": {
+                    "isInitialized": True, "decimals": 9, "supply": raw_supply,
+                    "mintAuthority": None, "freezeAuthority": None
+                }}}
+            }
+        }
+        def fake_rpc(_url, method, params):
+            if method == "getAccountInfo":
+                return account
+            if method == "getTokenSupply":
+                return {"value": {"amount": str(int(raw_supply) + 1), "decimals": 9}}
+            raise AssertionError(method)
+        with patch.object(main, "require_solana_rpc_cluster"), patch.object(main, "rpc_call", side_effect=fake_rpc):
+            result = main._balmz_reconcile_solana_supply(mint)
+        self.assertEqual(result["status"], "CONTRACT_OR_MINT_INVALID")
+        self.assertEqual(result["reason"], "mint_supply_rpc_mismatch")
+        self.assertIsNone(result["observed_supply"])
+
     def test_evm_supply_reads_chain_bytecode_supply_and_decimals(self):
         contract = "0x" + "1" * 40
         raw_supply = 11_000_000_000 * (10 ** 18)
