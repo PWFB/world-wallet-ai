@@ -43,13 +43,15 @@ class DatabasePoolTests(unittest.TestCase):
             first = main.db()
             second = main.db()
 
-        self.assertEqual(first, ("connection-context", 5))
-        self.assertEqual(second, ("connection-context", 5))
+        self.assertEqual(first, ("connection-context", 20))
+        self.assertEqual(second, ("connection-context", 20))
         self.assertEqual(len(FakeConnectionPool.instances), 1)
         pool = FakeConnectionPool.instances[0]
-        self.assertEqual(pool.kwargs["max_size"], 3)
-        self.assertEqual(pool.kwargs["min_size"], 1)
-        self.assertEqual(pool.kwargs["kwargs"]["connect_timeout"], 5)
+        self.assertEqual(pool.kwargs["max_size"], 2)
+        self.assertEqual(pool.kwargs["min_size"], 0)
+        self.assertEqual(pool.kwargs["timeout"], 20)
+        self.assertEqual(pool.kwargs["reconnect_timeout"], 30)
+        self.assertEqual(pool.kwargs["kwargs"]["connect_timeout"], 10)
         self.assertEqual(pool.connection_calls, 2)
 
     def test_shutdown_closes_the_initialized_pool(self):
