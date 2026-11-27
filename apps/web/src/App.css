@@ -1622,9 +1622,12 @@
   .app-shell .top-actions .top-network-switch { display: none; }
   .app-shell .mobile-network-switch-row {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) 42px;
-    align-items: center;
-    gap: 9px;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 42px;
+    grid-template-areas:
+      "environment-label network-label ."
+      "environment-select network-select refresh";
+    align-items: end;
+    gap: 7px 10px;
     width: calc(100% - 24px);
     margin: 10px 12px 12px;
     padding: 10px;
@@ -1636,10 +1639,16 @@
   }
   .app-shell .mobile-network-switch-row label {
     font-size: 10px;
+    grid-row: auto;
     font-weight: 800;
     letter-spacing: .08em;
     white-space: nowrap;
   }
+  .app-shell .mobile-network-switch-row label:nth-of-type(1) { grid-area: environment-label; }
+  .app-shell .mobile-network-switch-row select:nth-of-type(1) { grid-area: environment-select; }
+  .app-shell .mobile-network-switch-row label:nth-of-type(2) { grid-area: network-label; }
+  .app-shell .mobile-network-switch-row select:nth-of-type(2) { grid-area: network-select; }
+  .app-shell .mobile-network-switch-row .mobile-network-refresh { grid-area: refresh; }
   .app-shell .mobile-network-switch-row select {
     display: block;
     width: 100%;

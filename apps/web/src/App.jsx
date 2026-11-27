@@ -97,6 +97,21 @@ function AssetIcon({ symbol, fallback = "•", logoUrl: registryLogoUrl = "" }) 
 const money = value => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "Unavailable" : `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("Verified balance request timed out after 30 seconds. Balance remains unavailable; retry after checking network or RPC connectivity.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 function authErrorMessage(error, fallback) {
   if (!error) return fallback;
   const message = error.message || error.error_description || error.code || fallback;
@@ -1175,7 +1190,7 @@ function App() {
     );
     setBalanceVerificationBusy(true);
     setBalanceVerificationError("");
-    fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", {
+    fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification", {
       headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" },
       cache: "no-store",
     })
@@ -2431,8 +2446,9 @@ function App() {
                 <div><h2>Verified network addresses &amp; asset trace</h2><span>Public addresses and contract balances returned by the read-only chain verifier</span></div>
                 <button type="button" className="text-btn" onClick={() => {
                   setBalanceVerificationBusy(true);
-                  fetch(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken }, cache: "no-store" })
-                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
+                  setBalanceVerificationError("");
+                  fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" }, cache: "no-store" })
+                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
                     .catch(error => setBalanceVerificationError(error.message || "Balance verification unavailable."))
                     .finally(() => setBalanceVerificationBusy(false));
                 }} disabled={balanceVerificationBusy}>{balanceVerificationBusy ? "Checking…" : "↻ Refresh verified balances"}</button>
