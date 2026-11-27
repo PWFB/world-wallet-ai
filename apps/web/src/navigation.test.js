@@ -312,6 +312,14 @@ test("Binance-linked ownership stays Binance-only while OKX accepts matching Wal
 });
 
 
+test("Transactions history is scoped to the current active wallet", () => {
+  assert.match(featureSource, /<ActivityTrace accessToken=\{accessToken\} apiBaseUrl=\{apiBaseUrl\} walletId=\{activeWalletId\}/);
+  assert.match(activityTraceSource, /walletId = ""/);
+  assert.match(activityTraceSource, /\[accessToken, apiBaseUrl, walletId\]/);
+  assert.match(activityTraceSource, /requestGenerationRef\.current/);
+  assert.match(activityTraceSource, /Select an active wallet to load its transaction history/);
+});
+
 test("Transactions rejects malformed history records and inconsistent pagination", () => {
   assert.match(activityTraceSource, /Array\.isArray\(data\.events\)/);
   assert.match(activityTraceSource, /typeof item\.id === "string"/);
