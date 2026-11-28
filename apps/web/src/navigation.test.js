@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const appCssSource = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 const featureSource = readFileSync(new URL("./FeaturePage.jsx", import.meta.url), "utf8");
+const walletVaultSource = readFileSync(new URL("./WalletVault.jsx", import.meta.url), "utf8");
 const balmzAiSource = readFileSync(new URL("./BalmzAI.jsx", import.meta.url), "utf8");
 const returnCenterSource = readFileSync(new URL("./MainnetReturnCenter.jsx", import.meta.url), "utf8");
 const aptSource = readFileSync(new URL("../../../apps/android-aptido/app/src/main/java/com/balmz/aptido/MainActivity.kt", import.meta.url), "utf8");
@@ -406,6 +407,11 @@ test("missing wallet balances stay unavailable and cannot be treated as zero", (
 test("known zero wallet balances remain distinct from unavailable balances", () => {
   assert.match(featureSource, /parsedSelectedAssetAvailable >= 0\s*\? parsedSelectedAssetAvailable\s*: null/);
   assert.match(featureSource, /selectedAssetAvailable === null \? "Unavailable" : number\(selectedAssetAvailable\)/);
+});
+
+test("WalletVault follows the active server wallet instead of retaining a local-only selection", () => {
+  assert.match(walletVaultSource, /setSelectedId\(activeEntry\?\.walletId \|\| \(!activeWalletId \? localSelection\?\.walletId : ""\) \|\| ""\)/);
+  assert.match(walletVaultSource, /This imported wallet is local-only until attached/);
 });
 
 test("Wallets address balance refresh is bounded and leaves timed-out data unavailable", () => {
