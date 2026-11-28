@@ -1154,7 +1154,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       <button className="secondary" onClick={loadWallets} disabled={busy}>{busy ? "Working…" : "↻ Refresh"}</button>
     </div>
     {message && <div className={/unable|invalid|failed|enter|select/i.test(message) ? "feature-error" : "feature-success"}>{message}</div>}
-    <WalletVault accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
+    <WalletVault key={accountUserId || "anonymous"} accessToken={accessToken} apiBaseUrl={apiBaseUrl} userId={accountUserId} allowedServerWalletIds={wallets.map(item => item.id)} serverWalletNumberById={Object.fromEntries(wallets.map(item => [item.id, item.wallet_number || ""]))} activeWalletId={walletId} onWalletSelected={switchWallet} onWalletCreated={async () => { await loadWallets(); await refreshActiveWallet(); }} />
     <div className="feature-grid">
       <article className="panel action-panel">
         <p className="feature-kicker">WALLET STRUCTURE</p>
