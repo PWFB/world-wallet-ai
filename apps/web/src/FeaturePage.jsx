@@ -1949,18 +1949,19 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
   );
 
   const selectedWalletAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset) || null;
-  const selectedAssetAvailable = Math.max(0, Number(
-    selectedWalletAsset?.available_balance ??
-    selectedWalletAsset?.available ??
-    selectedWalletAsset?.balance ??
-    0
-  ));
+  const rawSelectedAssetAvailable = selectedWalletAsset?.available_balance ?? selectedWalletAsset?.available ?? selectedWalletAsset?.balance;
+  const parsedSelectedAssetAvailable = rawSelectedAssetAvailable === null || rawSelectedAssetAvailable === undefined || rawSelectedAssetAvailable === ""
+    ? NaN
+    : Number(rawSelectedAssetAvailable);
+  const selectedAssetAvailable = Number.isFinite(parsedSelectedAssetAvailable) && parsedSelectedAssetAvailable >= 0
+    ? parsedSelectedAssetAvailable
+    : null;
   const parsedAmountForGuard = Number(amount);
-  const amountExceedsAvailable = Number.isFinite(parsedAmountForGuard) && parsedAmountForGuard > selectedAssetAvailable;
+  const amountExceedsAvailable = selectedAssetAvailable !== null && Number.isFinite(parsedAmountForGuard) && parsedAmountForGuard > selectedAssetAvailable;
   const amountInvalid = amount !== "" && (!Number.isFinite(parsedAmountForGuard) || parsedAmountForGuard <= 0);
 
   function useMaxAvailable() {
-    if (!selectedWalletAsset || selectedAssetAvailable <= 0) {
+    if (!selectedWalletAsset || selectedAssetAvailable === null || selectedAssetAvailable <= 0) {
       setMessage("No available balance is currently available for this asset.");
       return;
     }
@@ -2129,7 +2130,13 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
       if (!destination.trim()) throw new Error("Enter a destination address.");
       const selectedAsset = assets.find(item => item.symbol === asset && item.network === network) || assets.find(item => item.symbol === asset);
       if (!selectedAsset) throw new Error("Select a supported wallet asset.");
-      const availableBalance = Math.max(0, Number(selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance ?? 0));
+      const rawAvailableBalance = selectedAsset.available_balance ?? selectedAsset.available ?? selectedAsset.balance;
+      const availableBalance = rawAvailableBalance === null || rawAvailableBalance === undefined || rawAvailableBalance === ""
+        ? NaN
+        : Number(rawAvailableBalance);
+      if (!Number.isFinite(availableBalance) || availableBalance < 0) {
+        throw new Error(`The available ${asset} balance is unavailable. Refresh wallet data before submitting; no zero balance was assumed.`);
+      }
       if (parsedAmount > availableBalance) throw new Error(`Amount exceeds the available ${asset} balance of ${number(availableBalance)}.`);
 
       const isLiveEvm = ["ethereum", "bnb", "sepolia"].includes(network) && ["ETH", "BNB", "USDT", "USDT-BNB", "BALMZ", "BALMZ-BNB", "BALMZ-SEP"].includes(asset);
@@ -2927,7 +2934,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
           </div>
           <label>Note <span className="wallet-optional">(optional)</span><textarea value={note} onChange={e => setNote(e.target.value)} maxLength="200" placeholder="Add a note for your records"/></label>
           {message && <div role="status" className={/accepted|broadcast|verified|reconciled/i.test(message) ? "feature-success" : "feature-error"}>{message}</div>}
-          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset <= 0 || !destination.trim() || !selectedSourceAddress || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
+          <button className="primary feature-submit wallet-submit" disabled={busy || !amount || amountInvalid || amountExceedsAvailable || availableForAsset === null || availableForAsset <= 0 || !destination.trim() || !selectedSourceAddress || !assets.some(item => item.symbol === asset) || !networkOptions.length || !network} onClick={() => submit(send ? "/api/v1/transfers" : "/api/v1/withdrawals")}>{busy ? "Processing securely…" : send ? "Continue to wallet confirmation →" : "Submit withdrawal request →"}</button>
           <p className="wallet-form-footnote">You will see a wallet approval prompt for supported live transfers. Never share a recovery phrase or private key with anyone.</p>
         </article>
         <aside className="wallet-review-column">
@@ -3036,7 +3043,7 @@ export default function FeaturePage({ accountName = "", accountEmail = "", selec
         </article>
         <aside className="wallet-review-column">
           {renderIncomingHistoryPanel("Received history", "No incoming transactions are recorded for this asset and network yet.")}
-          <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{number(selectedAssetAvailable)} {asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{selectedWalletAsset?.price_available === false || selectedWalletAsset?.value_usd == null ? "Price unavailable" : money(selectedWalletAsset.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
+          <article className="panel wallet-review-card wallet-receive-sidecard"><span className="feature-kicker">RECEIVING ASSET</span><div className="wallet-receive-asset"><span>{asset === "BTC" ? "₿" : asset === "ETH" ? "Ξ" : asset === "BNB" ? "◆" : asset === "USDT" || asset === "USDC" ? "$" : asset.slice(0,1)}</span><div><b>{asset}</b><small>{assets.find(item => item.symbol === asset)?.name || asset}</small></div></div><div className="wallet-summary-divider"/><div className="wallet-summary-row"><span>Available balance</span><b>{selectedAssetAvailable === null ? "Unavailable" : number(selectedAssetAvailable) + " " + asset}</b></div><div className="wallet-summary-row"><span>USD value</span><b>{selectedWalletAsset?.price_available === false || selectedWalletAsset?.value_usd == null ? "Price unavailable" : money(selectedWalletAsset.value_usd)}</b></div><div className="wallet-summary-row"><span>Addresses shown</span><b>{compatibleAddresses.length}</b></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">✓</span><div><b>Public address only</b><p>Receiving does not require sharing a private key. Only share the public address shown for the matching network.</p></div></article>
           <article className="panel wallet-safety-card"><span className="wallet-safety-shield">!</span><div><b>Testnet warning</b><p>Sepolia and Solana Devnet addresses are for testing. Test tokens are not mainnet funds.</p></div></article>
         </aside>
