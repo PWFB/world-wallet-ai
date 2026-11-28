@@ -151,7 +151,7 @@ export default function WalletVault({ accessToken, apiBaseUrl, onWalletCreated, 
     const activeEntry = entries.find(item => item.serverWalletId === activeWalletId || item.walletId === activeWalletId);
     const localSelection = entries.find(item => item.walletId === selectedId && !item.serverWalletId);
     const keepFreshlyGeneratedRecovery = Boolean(activeEntry && generated && String(generated.walletId) === String(activeEntry.walletId));
-    setSelectedId(activeEntry?.walletId || localSelection?.walletId || "");
+    setSelectedId(activeEntry?.walletId || (!activeWalletId ? localSelection?.walletId : "") || "");
     if (keepFreshlyGeneratedRecovery) return;
     setUnlocked(null);
     setUnlockedAddresses(null);
