@@ -210,6 +210,8 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
   const [addressBalances, setAddressBalances] = useState({});
   const [verificationBusy, setVerificationBusy] = useState("");
   const balanceRequestGeneration = useRef(0);
+  const walletLoadGeneration = useRef(0);
+  const walletLoadContextRef = useRef("");
   const [showAddressForm, setShowAddressForm] = useState(false);
   const [discoveredWallets, setDiscoveredWallets] = useState([]);
   const [discoveringWallets, setDiscoveringWallets] = useState(false);
@@ -218,32 +220,65 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => { const refreshLocal = () => { try { const v = JSON.parse(localStorage.getItem("world_wallet_encrypted_vault_v1") || "[]"); setLocalEntries(Array.isArray(v) ? v : []); } catch { setLocalEntries([]); } }; window.addEventListener("world-wallet-local-vault-updated", refreshLocal); window.addEventListener("storage", refreshLocal); return () => { window.removeEventListener("world-wallet-local-vault-updated", refreshLocal); window.removeEventListener("storage", refreshLocal); }; }, []);
 
-  const loadAddresses = async id => {
-    if (!id) return;
+  const loadAddresses = async (id, generation = walletLoadGeneration.current) => {
+    if (!id) {
+      if (generation === walletLoadGeneration.current) {
+        setWalletAddresses([]);
+        setAddressesLoadedForWallet("");
+      }
+      return;
+    }
     try {
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + id + "/addresses", { headers: await walletAuthHeaders(accessToken) });
+      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(id) + "/addresses", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
+      if (generation !== walletLoadGeneration.current) return;
       setWalletAddresses(response.ok ? (data.addresses || []) : []);
       setAddressesLoadedForWallet(response.ok ? id : "");
-    } catch { setWalletAddresses([]); setAddressesLoadedForWallet(""); }
+    } catch {
+      if (generation !== walletLoadGeneration.current) return;
+      setWalletAddresses([]);
+      setAddressesLoadedForWallet("");
+    }
   };
 
   const loadWallets = async () => {
+    const generation = ++walletLoadGeneration.current;
+    const context = String(accountUserId || accessToken || "");
+    if (walletLoadContextRef.current !== context) {
+      walletLoadContextRef.current = context;
+      setWallets([]);
+      setWalletId("");
+      setWalletAddresses([]);
+      setAddressesLoadedForWallet("");
+      setAddressBalances({});
+    }
     setBusy(true);
     try {
       const response = await fetch(apiBaseUrl + "/api/v1/wallets", { headers: await walletAuthHeaders(accessToken) });
       const data = await response.json();
+      if (generation !== walletLoadGeneration.current) return;
       if (!response.ok) throw new Error(data.detail || "Unable to load wallets.");
-      setWallets(data.wallets || []);
-      const activeId = data.active_wallet_id || data.wallets?.find(w => w.active)?.id || "";
+      const nextWallets = Array.isArray(data.wallets) ? data.wallets : [];
+      setWallets(nextWallets);
+      const activeId = data.active_wallet_id || nextWallets.find(w => w.active)?.id || "";
       setWalletId(activeId);
-      if (activeId) await loadAddresses(activeId);
+      await loadAddresses(activeId, generation);
     } catch (error) {
+      if (generation !== walletLoadGeneration.current) return;
+      setWallets([]);
+      setWalletId("");
+      setWalletAddresses([]);
+      setAddressesLoadedForWallet("");
       setMessage(error.message || "Unable to load wallets.");
-    } finally { setBusy(false); }
+    } finally {
+      if (generation === walletLoadGeneration.current) setBusy(false);
+    }
   };
 
-  useEffect(() => { loadWallets(); }, [accessToken]);
+  useEffect(() => {
+    loadWallets();
+    return () => { walletLoadGeneration.current += 1; };
+  }, [accessToken, accountUserId]);
 
   // Restore the owner-supplied OKX Mainnet address only for the configured backend admin.
   // The server enforces the admin identity and stores this address as unverified; this
