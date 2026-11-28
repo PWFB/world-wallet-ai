@@ -511,9 +511,9 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const { default: EthereumProvider } = await import("@walletconnect/ethereum-provider");
         const initialized = await EthereumProvider.init({
           projectId: walletConnectProjectId,
-          // Request all supported EVM networks as required session chains.
-          // Ethereum Mainnet must not be left as an optional or silently omitted chain.
-          chains: [1, 56, 11155111],
+          // Ownership proof is scoped to the address being verified. Do not
+          // require unrelated EVM networks to be approved by the wallet session.
+          chains: [expectedChain],
           showQrModal: true,
           metadata: {
             name: "World Wallet AI",
@@ -537,14 +537,11 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
         const namespace = walletConnectProvider.session.namespaces?.eip155;
         const approvedChains = Array.isArray(namespace?.chains) ? namespace.chains : [];
         const approvedAccounts = Array.isArray(namespace?.accounts) ? namespace.accounts : [];
-        const allSupportedChains = [1, 56, 11155111];
-        const missingChains = allSupportedChains.filter(chainId => {
-          const chainReference = "eip155:" + chainId;
-          return !approvedChains.includes(chainReference) &&
-            !approvedAccounts.some(account => String(account).startsWith(chainReference + ":"));
-        });
+        const expectedChainReference = "eip155:" + expectedChain;
+        const expectedChainApproved = approvedChains.includes(expectedChainReference) ||
+          approvedAccounts.some(account => String(account).startsWith(expectedChainReference + ":"));
         const approvedMethods = Array.isArray(namespace?.methods) ? namespace.methods : [];
-        if (missingChains.length || !approvedMethods.includes("personal_sign")) {
+        if (!expectedChainApproved || !approvedMethods.includes("personal_sign")) {
           try {
             await walletConnectProvider.disconnect();
           } catch {}
