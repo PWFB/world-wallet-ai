@@ -50,6 +50,23 @@ const number = value => Number(value || 0).toLocaleString("en-US", { minimumFrac
 
 
 
+const WALLET_ADDRESS_BALANCE_TIMEOUT_MS = 20000;
+
+async function fetchWalletAddressBalanceWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), WALLET_ADDRESS_BALANCE_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("Wallet address balance request timed out after 20 seconds. Balance remains unavailable; retry after checking network or RPC connectivity.");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+}
+
 async function walletAuthHeaders(accessToken, extra = {}) {
   // A PIN-session token is already the app's second-factor bearer. Never
   // replace it with a first-factor Neon token during refresh.
@@ -793,7 +810,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     setAddressBalances(previous => ({ ...previous, [key]: { ...(previous[key] || {}), loading: true, error: "" } }));
     try {
       const query = new URLSearchParams({ network: item.network, address: item.address });
-      const response = await fetch(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(requestedWalletId) + "/addresses/balance?" + query.toString(), {
+      const response = await fetchWalletAddressBalanceWithTimeout(apiBaseUrl + "/api/v1/wallets/" + encodeURIComponent(requestedWalletId) + "/addresses/balance?" + query.toString(), {
         headers: await walletAuthHeaders(accessToken),
       });
       const data = await response.json();
