@@ -140,7 +140,7 @@ test("Wallets ignores stale list and address responses after an account switch",
   assert.match(featureSource, /walletLoadContextRef\.current !== context/);
   assert.match(featureSource, /setWalletAddresses\(\[\]\)/);
   assert.match(featureSource, /\[accessToken, accountUserId\]/);
-  assert.match(featureSource, /return \(\) => \{ walletLoadGeneration\.current \+= 1; \}/);
+  assert.match(featureSource, /return \(\) => \{\s*walletLoadGeneration\.current \+= 1;\s*balanceRequestGeneration\.current \+= 1;/);
 });
 
 test("cached portfolio snapshots are isolated by authenticated account", () => {
