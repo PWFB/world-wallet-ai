@@ -449,29 +449,36 @@ function App() {
   const [networkStatus, setNetworkStatus] = useState({});
   const [user, setUser] = useState(null);
   const accountUserId = String(user?.id || user?.userId || user?.user_id || user?.sub || "");
+  const portfolioCacheAccountRef = useRef("");
   useEffect(() => {
     if (!accountUserId) {
+      portfolioCacheAccountRef.current = "";
       setWallet(fallbackWallet);
       setAssets(fallbackAssets);
       return;
     }
-    try {
-      const cacheKey = "world_wallet_portfolio_cache_v2:" + accountUserId;
-      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
-      if (cached?.user_id === accountUserId && cached.wallet && typeof cached.wallet === "object" && Array.isArray(cached.assets)) {
-        setWallet(cached.wallet);
-        setAssets(cached.assets);
-      } else {
+    // On account changes, hydrate that account's snapshot and return before
+    // writing anything. This prevents the previous account's in-memory wallet
+    // from being copied into the newly signed-in account's cache.
+    if (portfolioCacheAccountRef.current !== accountUserId) {
+      portfolioCacheAccountRef.current = accountUserId;
+      try {
+        const cacheKey = "world_wallet_portfolio_cache_v2:" + accountUserId;
+        const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+        if (cached?.user_id === accountUserId && cached.wallet && typeof cached.wallet === "object" && Array.isArray(cached.assets)) {
+          setWallet(cached.wallet);
+          setAssets(cached.assets);
+        } else {
+          setWallet(fallbackWallet);
+          setAssets(fallbackAssets);
+        }
+      } catch {
         setWallet(fallbackWallet);
         setAssets(fallbackAssets);
       }
-    } catch {
-      setWallet(fallbackWallet);
-      setAssets(fallbackAssets);
+      return;
     }
-  }, [accountUserId]);
-  useEffect(() => {
-    if (!accountUserId || !wallet || !Array.isArray(assets) || wallet === fallbackWallet) return;
+    if (!wallet || !Array.isArray(assets) || wallet === fallbackWallet) return;
     try {
       const cacheKey = "world_wallet_portfolio_cache_v2:" + accountUserId;
       localStorage.setItem(cacheKey, JSON.stringify({
