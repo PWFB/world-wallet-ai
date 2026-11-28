@@ -119,14 +119,14 @@ test("dashboard omits duplicate environment and chain catalogue cards while keep
 
 
 test("Wallet balance requests are invalidated when the account changes or the Wallets screen unmounts", () => {
-  assert.match(featureSource, /walletLoadContextRef\\.current = context;\\s*balanceRequestGeneration\\.current \\+= 1;/);
-  assert.match(featureSource, /return \\(\\) => \\{\\s*walletLoadGeneration\\.current \\+= 1;\\s*balanceRequestGeneration\\.current \\+= 1;/);
-  assert.match(featureSource, /balanceRequestGeneration\\.current/);
+  assert.match(featureSource, /walletLoadContextRef\.current = context;\s*balanceRequestGeneration\.current \+= 1;/);
+  assert.match(featureSource, /return \(\) => \{\s*walletLoadGeneration\.current \+= 1;\s*balanceRequestGeneration\.current \+= 1;/);
+  assert.match(featureSource, /balanceRequestGeneration\.current/);
 });
 
 test("Wallet balance refresh controls do not show the ambiguous Checking label", () => {
-  assert.match(featureSource, /balance\\?\\.loading \\? "Refreshing…" : "Refresh balance"/);
-  assert.doesNotMatch(featureSource, /balance\\?\\.loading \\? "Checking…"/);
+  assert.match(featureSource, /balance\?\.loading \? "Refreshing…" : "Refresh balance"/);
+  assert.doesNotMatch(featureSource, /balance\?\.loading \? "Checking…"/);
 });
 
 test("WalletVault remounts when the authenticated account changes", () => {
