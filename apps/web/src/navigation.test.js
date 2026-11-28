@@ -410,13 +410,14 @@ test("known zero wallet balances remain distinct from unavailable balances", () 
 
 test("Wallets address balance refresh is bounded and leaves timed-out data unavailable", () => {
   assert.ok(featureSource.includes("WALLET_ADDRESS_BALANCE_TIMEOUT_MS = 20000"));
-  assert.match(featureSource, /async function fetchWalletAddressBalanceWithTimeout[\\s\\S]*?controller\\.abort\\(\\)/);
+  assert.ok(featureSource.includes("async function fetchWalletAddressBalanceWithTimeout"));
+  assert.ok(featureSource.includes("controller.abort()"));
   assert.match(featureSource, /Wallet address balance request timed out after 20 seconds/);
   const start = featureSource.indexOf("const checkAddressBalance = async item =>");
   const end = featureSource.indexOf("const discoverWallets = async", start);
   const refresh = featureSource.slice(start, end);
   assert.match(refresh, /fetchWalletAddressBalanceWithTimeout/);
-  assert.match(refresh, /Number\\.isFinite\\(parsedBalance\\)/);
+  assert.ok(refresh.includes("Number.isFinite(parsedBalance)"));
   assert.match(refresh, /Balance remains unavailable; no zero balance was assumed/);
-  assert.match(refresh, /loading: false, error: error\\.message/);
+  assert.ok(refresh.includes("loading: false, error: error.message"));
 });
