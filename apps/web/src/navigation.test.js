@@ -117,6 +117,16 @@ test("dashboard omits duplicate environment and chain catalogue cards while keep
   assert.match(appSource, /web3-balance-grid/);
 });
 
+test("Wallets ignores stale list and address responses after an account switch", () => {
+  assert.match(featureSource, /const walletLoadGeneration = useRef\(0\)/);
+  assert.match(featureSource, /const generation = \+\+walletLoadGeneration\.current/);
+  assert.match(featureSource, /generation !== walletLoadGeneration\.current/);
+  assert.match(featureSource, /walletLoadContextRef\.current !== context/);
+  assert.match(featureSource, /setWalletAddresses\(\[\]\)/);
+  assert.match(featureSource, /\[accessToken, accountUserId\]/);
+  assert.match(featureSource, /return \(\) => \{ walletLoadGeneration\.current \+= 1; \}/);
+});
+
 test("cached portfolio snapshots are isolated by authenticated account", () => {
   assert.match(appSource, /world_wallet_portfolio_cache_v2:/);
   assert.match(appSource, /cached\?\.user_id === accountUserId/);
