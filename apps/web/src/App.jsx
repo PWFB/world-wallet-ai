@@ -1413,7 +1413,7 @@ function App() {
     let token = accessToken;
     const normalizeNetwork = normalizeNetworkId;
     const authorizedFetch = async (url, options = {}) => {
-      const makeRequest = currentToken => fetch(url, {
+      const makeRequest = currentToken => fetchWithTimeout(url, {
         ...options,
         headers: { ...(options.headers || {}), Authorization: "Bearer " + currentToken },
         cache: "no-store",
@@ -1445,10 +1445,7 @@ function App() {
           ? balanceVerificationReport
           : null;
         if (!report) {
-          const verificationResponse = await fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification", {
-            headers: { Authorization: "Bearer " + token, Accept: "application/json" },
-            cache: "no-store",
-          });
+          const verificationResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification");
           const verificationData = await verificationResponse.json().catch(() => ({}));
           if (!verificationResponse.ok) throw new Error(verificationData.detail || "Verified Mainnet balance check failed.");
           report = validateBalanceVerificationReport(verificationData);
