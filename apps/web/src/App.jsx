@@ -301,28 +301,11 @@ function App() {
   const [selectedCoin, setSelectedCoin] = useState(null);
   const [focusedTransaction, setFocusedTransaction] = useState(null);
   const [showBalance, setShowBalance] = useState(true);
-  const [wallet, setWallet] = useState(() => {
-    try {
-      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_portfolio_v1") || "null");
-      return cached?.wallet && typeof cached.wallet === "object" ? cached.wallet : fallbackWallet;
-    } catch { return fallbackWallet; }
-  });
-  const [assets, setAssets] = useState(() => {
-    try {
-      const cached = JSON.parse(localStorage.getItem("world_wallet_last_confirmed_portfolio_v1") || "null");
-      return Array.isArray(cached?.assets) ? cached.assets : fallbackAssets;
-    } catch { return fallbackAssets; }
-  });
-  useEffect(() => {
-    if (!wallet || !Array.isArray(assets) || wallet === fallbackWallet) return;
-    try {
-      localStorage.setItem("world_wallet_last_confirmed_portfolio_v1", JSON.stringify({
-        wallet,
-        assets,
-        savedAt: new Date().toISOString(),
-      }));
-    } catch {}
-  }, [wallet, assets]);
+  // Never hydrate a wallet snapshot before the authenticated account is known.
+  // The previous single global cache could briefly expose another account's
+  // portfolio on a shared browser/device.
+  const [wallet, setWallet] = useState(fallbackWallet);
+  const [assets, setAssets] = useState(fallbackAssets);
   const [syncedBalanceAssets, setSyncedBalanceAssets] = useState([]);
   const [syncedBalanceNetworks, setSyncedBalanceNetworks] = useState([]);
   const [hasVerifiedMainnetBalance, setHasVerifiedMainnetBalance] = useState(false);
@@ -466,6 +449,39 @@ function App() {
   const [networkStatus, setNetworkStatus] = useState({});
   const [user, setUser] = useState(null);
   const accountUserId = String(user?.id || user?.userId || user?.user_id || user?.sub || "");
+  useEffect(() => {
+    if (!accountUserId) {
+      setWallet(fallbackWallet);
+      setAssets(fallbackAssets);
+      return;
+    }
+    try {
+      const cacheKey = "world_wallet_portfolio_cache_v2:" + accountUserId;
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+      if (cached?.user_id === accountUserId && cached.wallet && typeof cached.wallet === "object" && Array.isArray(cached.assets)) {
+        setWallet(cached.wallet);
+        setAssets(cached.assets);
+      } else {
+        setWallet(fallbackWallet);
+        setAssets(fallbackAssets);
+      }
+    } catch {
+      setWallet(fallbackWallet);
+      setAssets(fallbackAssets);
+    }
+  }, [accountUserId]);
+  useEffect(() => {
+    if (!accountUserId || !wallet || !Array.isArray(assets) || wallet === fallbackWallet) return;
+    try {
+      const cacheKey = "world_wallet_portfolio_cache_v2:" + accountUserId;
+      localStorage.setItem(cacheKey, JSON.stringify({
+        user_id: accountUserId,
+        wallet,
+        assets,
+        savedAt: new Date().toISOString(),
+      }));
+    } catch {}
+  }, [accountUserId, wallet, assets]);
   const activeWalletServerId = String(wallet?.wallet_id || wallet?.id || "");
   const balanceSyncContextRef = useRef("");
   useEffect(() => {
