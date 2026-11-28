@@ -117,6 +117,10 @@ test("dashboard omits duplicate environment and chain catalogue cards while keep
   assert.match(appSource, /web3-balance-grid/);
 });
 
+test("WalletVault remounts when the authenticated account changes", () => {
+  assert.match(featureSource, /<WalletVault key=\{accountUserId \|\| "anonymous"\}/);
+});
+
 test("Wallets ignores stale list and address responses after an account switch", () => {
   assert.match(featureSource, /const walletLoadGeneration = useRef\(0\)/);
   assert.match(featureSource, /const generation = \+\+walletLoadGeneration\.current/);
