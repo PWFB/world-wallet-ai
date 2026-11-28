@@ -390,7 +390,7 @@ test("missing wallet balances stay unavailable and cannot be treated as zero", (
   assert.match(featureSource, /rawSelectedAssetAvailable === null \|\| rawSelectedAssetAvailable === undefined \|\| rawSelectedAssetAvailable === ""/);
   assert.match(featureSource, /selectedAssetAvailable = Number\.isFinite\(parsedSelectedAssetAvailable\).*?\? parsedSelectedAssetAvailable\s*: null/s);
   assert.match(featureSource, /availableForAsset === null \|\| availableForAsset <= 0/);
-  assert.match(featureSource, /availableBalance is unavailable\. Refresh wallet data before submitting; no zero balance was assumed/);
+  assert.match(featureSource, /balance is unavailable\. Refresh wallet data before submitting; no zero balance was assumed/);
   assert.doesNotMatch(featureSource, /Math\.max\(0, Number\(selectedAsset\.available_balance/);
 });
 
