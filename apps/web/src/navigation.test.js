@@ -385,3 +385,16 @@ test("verified portfolio balance loading is time-bounded and reports unavailable
   assert.match(appSource, /Verified balance request timed out after 30 seconds/);
   assert.ok(appSource.includes('fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification"'));
 });
+
+test("missing wallet balances stay unavailable and cannot be treated as zero", () => {
+  assert.match(featureSource, /rawSelectedAssetAvailable === null \|\| rawSelectedAssetAvailable === undefined \|\| rawSelectedAssetAvailable === ""/);
+  assert.match(featureSource, /selectedAssetAvailable = Number\.isFinite\(parsedSelectedAssetAvailable\).*?\? parsedSelectedAssetAvailable\s*: null/s);
+  assert.match(featureSource, /availableForAsset === null \|\| availableForAsset <= 0/);
+  assert.match(featureSource, /availableBalance is unavailable\. Refresh wallet data before submitting; no zero balance was assumed/);
+  assert.doesNotMatch(featureSource, /Math\.max\(0, Number\(selectedAsset\.available_balance/);
+});
+
+test("known zero wallet balances remain distinct from unavailable balances", () => {
+  assert.match(featureSource, /parsedSelectedAssetAvailable >= 0\s*\? parsedSelectedAssetAvailable\s*: null/);
+  assert.match(featureSource, /selectedAssetAvailable === null \? "Unavailable" : number\(selectedAssetAvailable\)/);
+});
