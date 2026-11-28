@@ -379,11 +379,19 @@ test("mobile network selectors use aligned label-and-select columns", () => {
   assert.match(appSource, /id="mobile-network-select"/);
 });
 
-test("verified portfolio balance loading is time-bounded and reports unavailable data", () => {
-  assert.match(appSource, /async function fetchWithTimeout/);
-  assert.match(appSource, /timeoutMs = 30000/);
-  assert.match(appSource, /Verified balance request timed out after 30 seconds/);
-  assert.ok(appSource.includes('fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification"'));
+test("verified portfolio balance loading is bounded, validated, and reports unavailable data", () => {
+  assert.ok(appSource.includes("BALANCE_VERIFICATION_TIMEOUT_MS = 20000"));
+  assert.match(appSource, /async function fetchWithTimeout[\s\S]*?controller\.abort\(\)/);
+  assert.ok(appSource.includes("Verified Mainnet balance verification timed out after 20 seconds"));
+  assert.match(appSource, /function validateBalanceVerificationReport/);
+  assert.match(appSource, /Array\.isArray\(data\.assets\)/);
+  assert.ok(appSource.includes('fetchWithTimeout(url, {'));
+  assert.ok(appSource.includes('authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification")'));
+  const manualRefresh = appSource.slice(appSource.indexOf("↻ Refresh verified balances"));
+  assert.match(manualRefresh, /fetchWithTimeout/);
+  assert.match(manualRefresh, /validateBalanceVerificationReport/);
+  assert.match(manualRefresh, /setBalanceVerificationReport\(null\)/);
+  assert.ok(appSource.includes("Balance is unavailable; retry"));
 });
 
 test("missing wallet balances stay unavailable and cannot be treated as zero", () => {

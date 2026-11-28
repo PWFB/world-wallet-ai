@@ -97,14 +97,23 @@ function AssetIcon({ symbol, fallback = "•", logoUrl: registryLogoUrl = "" }) 
 const money = value => value === null || value === undefined || value === "" || !Number.isFinite(Number(value)) ? "Unavailable" : `${Number(value).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const number = value => Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 4 });
 
-async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+const BALANCE_VERIFICATION_TIMEOUT_MS = 20000;
+
+function validateBalanceVerificationReport(data) {
+  if (!data || typeof data !== "object" || !Array.isArray(data.assets)) {
+    throw new Error("Balance verification returned an invalid asset report. Balance remains unavailable; retry after checking the wallet session and RPC configuration.");
+  }
+  return data;
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = BALANCE_VERIFICATION_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
     if (error?.name === "AbortError") {
-      throw new Error("Verified balance request timed out after 30 seconds. Balance remains unavailable; retry after checking network or RPC connectivity.");
+      throw new Error("Verified Mainnet balance verification timed out after 20 seconds. Balance is unavailable; retry after checking network or RPC connectivity.");
     }
     throw error;
   } finally {
@@ -1244,8 +1253,8 @@ function App() {
       .then(async response => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.detail || "Verified Mainnet balances could not be loaded.");
-        if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report.");
-        if (!cancelled) setBalanceVerificationReport(data);
+        const report = validateBalanceVerificationReport(data);
+        if (!cancelled) setBalanceVerificationReport(report);
       })
       .catch(error => {
         if (!cancelled) {
@@ -1404,7 +1413,7 @@ function App() {
     let token = accessToken;
     const normalizeNetwork = normalizeNetworkId;
     const authorizedFetch = async (url, options = {}) => {
-      const makeRequest = currentToken => fetch(url, {
+      const makeRequest = currentToken => fetchWithTimeout(url, {
         ...options,
         headers: { ...(options.headers || {}), Authorization: "Bearer " + currentToken },
         cache: "no-store",
@@ -1439,7 +1448,7 @@ function App() {
           const verificationResponse = await authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification");
           const verificationData = await verificationResponse.json().catch(() => ({}));
           if (!verificationResponse.ok) throw new Error(verificationData.detail || "Verified Mainnet balance check failed.");
-          report = verificationData;
+          report = validateBalanceVerificationReport(verificationData);
           setBalanceVerificationReport(verificationData);
           setBalanceVerificationError("");
         }
@@ -2495,8 +2504,8 @@ function App() {
                   setBalanceVerificationBusy(true);
                   setBalanceVerificationError("");
                   fetchWithTimeout(API_BASE_URL + "/api/v1/wallet/balance-verification", { headers: { Authorization: "Bearer " + accessToken, Accept: "application/json" }, cache: "no-store" })
-                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); if (!Array.isArray(data.assets)) throw new Error("Balance verification returned an invalid asset report."); setBalanceVerificationReport(data); setBalanceVerificationError(""); })
-                    .catch(error => setBalanceVerificationError(error.message || "Balance verification unavailable."))
+                    .then(async response => { const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.detail || "Balance verification failed."); setBalanceVerificationReport(validateBalanceVerificationReport(data)); setBalanceVerificationError(""); })
+                    .catch(error => { setBalanceVerificationReport(null); setBalanceVerificationError(error.message || "Balance verification unavailable; retry when the wallet session and RPC service are available."); })
                     .finally(() => setBalanceVerificationBusy(false));
                 }} disabled={balanceVerificationBusy}>{balanceVerificationBusy ? "Checking…" : "↻ Refresh verified balances"}</button>
               </div>
