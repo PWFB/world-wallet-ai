@@ -246,6 +246,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
     const context = String(accountUserId || accessToken || "");
     if (walletLoadContextRef.current !== context) {
       walletLoadContextRef.current = context;
+      balanceRequestGeneration.current += 1;
       setWallets([]);
       setWalletId("");
       setWalletAddresses([]);
@@ -277,7 +278,10 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
 
   useEffect(() => {
     loadWallets();
-    return () => { walletLoadGeneration.current += 1; };
+    return () => {
+      walletLoadGeneration.current += 1;
+      balanceRequestGeneration.current += 1;
+    };
   }, [accessToken, accountUserId]);
 
   // Restore the owner-supplied OKX Mainnet address only for the configured backend admin.
@@ -491,7 +495,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
       setWalletAddresses(listData.addresses);
       setAddressesLoadedForWallet(walletId);
       setAddress("");
-      if (ownershipVerified) setMessage("Address saved and ownership signature verified. No transaction was sent. Checking live wallet data…");
+      if (ownershipVerified) setMessage("Address saved and ownership signature verified. No transaction was sent. Refreshing live wallet data…");
       else if (!["ethereum", "sepolia", "bnb"].includes(network)) setMessage("Public address saved for " + network + ". This address has not undergone native ownership verification.");
 
       // Address persistence is independent of chain refresh. A missing RPC or
@@ -1210,7 +1214,7 @@ function WalletManager({ accessToken, apiBaseUrl, setActive, onTransactionsUpdat
               <div className="address-row-actions">
                 <button className="secondary" onClick={() => navigator.clipboard?.writeText(a.address)}>Copy</button>
                 {!a.local && ["ethereum", "sepolia", "bnb"].includes(a.network) && !a.ownership_verified && <button className="secondary" disabled={Boolean(verificationBusy) || busy} onClick={() => verifyAddressOwnership(a)}>{verificationBusy === key ? "Sign in wallet…" : "Verify ownership"}</button>}
-                {!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Checking…" : "Check balance"}</button>}
+                {!a.local && <button className="secondary" disabled={Boolean(balance?.loading)} onClick={() => checkAddressBalance(a)}>{balance?.loading ? "Refreshing…" : "Refresh balance"}</button>}
               </div>
             </div>;
           }) : <button type="button" className="live-chart-empty" onClick={() => { setShowAddressForm(true); document.getElementById("connect-public-address")?.scrollIntoView({ behavior: "smooth", block: "start" }); }} style={{ width: "100%", cursor: "pointer", textAlign: "left" }}>No public network addresses connected to this wallet. Tap here to add or connect an address →</button>}
