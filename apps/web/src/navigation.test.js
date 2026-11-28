@@ -387,10 +387,11 @@ test("verified portfolio balance loading is bounded, validated, and reports unav
   assert.match(appSource, /Array\.isArray\(data\.assets\)/);
   assert.ok(appSource.includes('fetchWithTimeout(url, {'));
   assert.ok(appSource.includes('authorizedFetch(API_BASE_URL + "/api/v1/wallet/balance-verification")'));
-  const manualRefresh = appSource.slice(appSource.indexOf("↻ Refresh verified balances"));
+  const manualRefreshStart = appSource.lastIndexOf('setBalanceVerificationBusy(true);', appSource.indexOf("↻ Refresh verified balances"));
+  const manualRefresh = appSource.slice(manualRefreshStart, appSource.indexOf("↻ Refresh verified balances"));
   assert.match(manualRefresh, /fetchWithTimeout/);
   assert.match(manualRefresh, /validateBalanceVerificationReport/);
-  assert.match(manualRefresh, /setBalanceVerificationReport\(null\)/);
+  assert.match(appSource, /\.catch\(error => \{ setBalanceVerificationReport\(null\); setBalanceVerificationError\(error\.message/);
   assert.ok(appSource.includes("Balance is unavailable; retry"));
 });
 
