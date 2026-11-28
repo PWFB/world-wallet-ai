@@ -153,15 +153,18 @@ test("Wallets page exposes a provider-specific OKX EVM connection flow", () => {
   assert.match(featureSource, /No transaction was sent/);
 });
 
-test("WalletConnect requires Ethereum Mainnet, BNB Mainnet and Sepolia for address ownership signing", () => {
-  assert.ok((featureSource.match(/chains: \[1, 56, 11155111\]/g) || []).length >= 2,
-    "both WalletConnect initialization paths must require all supported EVM chains");
-  assert.doesNotMatch(featureSource, /optionalChains: \[11155111\]/,
-    "Sepolia must not be optional while the session is expected to support all three networks");
-  assert.match(featureSource, /sessionSupportsAllNetworks/);
-  assert.match(featureSource, /missingChains/);
-  assert.match(featureSource, /personal_sign/);
-  assert.match(featureSource, /OKX connected without approving all required networks/);
+test("WalletConnect ownership proof requires only the target EVM chain and personal_sign", () => {
+  assert.match(featureSource, /chains: \[1, 56, 11155111\]/,
+    "the general WalletConnect connection can still request all supported EVM networks");
+  const proofStart = featureSource.indexOf("const verifyAddressOwnership");
+  const proofEnd = featureSource.indexOf("const checkAddressBalance", proofStart);
+  const proofFlow = featureSource.slice(proofStart, proofEnd);
+  assert.match(proofFlow, /chains: \[expectedChain\]/,
+    "ownership verification must request only the chain for the selected address");
+  assert.match(proofFlow, /expectedChainReference/);
+  assert.match(proofFlow, /expectedChainApproved/);
+  assert.doesNotMatch(proofFlow, /allSupportedChains/);
+  assert.match(proofFlow, /personal_sign/);
 });
 
 test("OKX connection records remain separate from Binance records for the same chain and address", () => {
