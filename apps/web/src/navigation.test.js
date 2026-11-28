@@ -117,6 +117,13 @@ test("dashboard omits duplicate environment and chain catalogue cards while keep
   assert.match(appSource, /web3-balance-grid/);
 });
 
+test("cached portfolio snapshots are isolated by authenticated account", () => {
+  assert.match(appSource, /world_wallet_portfolio_cache_v2:/);
+  assert.match(appSource, /cached\?\.user_id === accountUserId/);
+  assert.match(appSource, /if \(!accountUserId\) \{/);
+  assert.doesNotMatch(appSource, /localStorage\.getItem\("world_wallet_last_confirmed_portfolio_v1"\)/);
+});
+
 test("BALMZ presale offers wallet-linked early-access registration without enabling payments", () => {
   assert.match(featureSource, /BALMZ Presale early access/);
   assert.match(featureSource, /Register for presale updates/);
